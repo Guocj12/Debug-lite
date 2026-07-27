@@ -1,8 +1,8 @@
 {
   "characters": [
-    {"id":"warrior","name":"战士","maxHp":120,"maxMp":60,"maxSp":100,"atk":18,"def":10,"desc":"均衡近战","color":"#00ffff","shape":"square","size":20,"defaultSkills":["warrior_slash","warrior_charge","warrior_whirlwind"]},
-    {"id":"archer","name":"射手","maxHp":80,"maxMp":80,"maxSp":80,"atk":14,"def":5,"desc":"远程弹幕","color":"#00ff44","shape":"triangle","size":18,"defaultSkills":["archer_arrow","archer_rain","archer_snipe"]},
-    {"id":"mage","name":"法师","maxHp":60,"maxMp":150,"maxSp":60,"atk":24,"def":3,"desc":"范围法术","color":"#ff44ff","shape":"diamond","size":16,"defaultSkills":["mage_fireball","mage_lightning","mage_shield"]},
-    {"id":"assassin","name":"刺客","maxHp":70,"maxMp":50,"maxSp":120,"atk":22,"def":4,"desc":"高机动背刺","color":"#ff0000","shape":"triangle2","size":16,"defaultSkills":["assassin_backstab","assassin_shadowstep","assassin_poison"]}
+    {"id":"warrior","name":"战士","maxHp":120,"maxMp":60,"maxSp":100,"atk":18,"def":10,"desc":"均衡近战","color":"#00ffff","shape":"square","size":20,"defaultSkills":["warrior_whirlwind","warrior_heavy","warrior_shieldbash"]},
+    {"id":"archer","name":"射手","maxHp":80,"maxMp":80,"maxSp":80,"atk":14,"def":5,"desc":"远程弹幕","color":"#00ff44","shape":"triangle","size":18,"defaultSkills":["archer_precise","archer_rapid","archer_rain"]},
+    {"id":"mage","name":"法师","maxHp":60,"maxMp":150,"maxSp":60,"atk":24,"def":3,"desc":"范围法术","color":"#ff44ff","shape":"diamond","size":16,"defaultSkills":["mage_ice","mage_fireball","mage_shield"]},
+    {"id":"assassin","name":"刺客","maxHp":70,"maxMp":50,"maxSp":120,"atk":22,"def":4,"desc":"高机动背刺","color":"#ff0000","shape":"triangle2","size":16,"defaultSkills":["assassin_shadowstep","assassin_dagger","assassin_poison"]}
   ]
 }

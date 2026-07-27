@@ -1,29 +1,14 @@
-// Battle Engine - 16tick回合制战斗引擎
-
+// Battle Engine v3 - Cooldowns, exhaust, debuff true damage
 const skillsData = require('../data/skills.json');
-const config = require('../data/config.json');
-
 class BattleEngine {
-  constructor() {
-    this.state = null;
-    this.p1Actions = [];
-    this.p2Actions = [];
-  }
-
-  init(s) { this.state = s; }
-
+  constructor() { this.state = null; this.p1Actions = []; this.p2Actions = []; }
+  init(s) { this.state = s; s._cooldowns_p1 = {}; s._cooldowns_p2 = {}; }
   setActions(a1, a2) { this.p1Actions = a1; this.p2Actions = a2; }
-
   getState() { return JSON.parse(JSON.stringify(this.state)); }
 
-  // 执行全部16tick
   executeAll() {
-    const frames = [];
-    const s = this.state;
+    const frames = [], s = this.state;
     s.bullets = [];
-    s._effects_p1 = [];
-    s._effects_p2 = [];
-
     for (let tick = 0; tick < 16; tick++) {
       const frame = this.executeTick(tick);
       frames.push(frame);
@@ -34,15 +19,24 @@ class BattleEngine {
 
   executeTick(tick) {
     const s = this.state;
+    // Tick cooldowns
+    for (const k of ['p1', 'p2']) {
+      const cd = s['_cooldowns_' + k];
+      for (const sk in cd) { if (cd[sk] > 0) cd[sk]--; }
+    }
+
     const a1 = this.p1Actions[tick] || 'wait';
     const a2 = this.p2Actions[tick] || 'wait';
 
     const p1Stunned = this.tickEffects(s, 'p1');
     const p2Stunned = this.tickEffects(s, 'p2');
-    const p1Act = p1Stunned ? 'stunned' : a1;
-    const p2Act = p2Stunned ? 'stunned' : a2;
+    let p1Act = p1Stunned ? 'stunned' : a1;
+    let p2Act = p2Stunned ? 'stunned' : a2;
 
-    // 记录tick开始时的位置（for动画插值）
+    // Frozen override
+    if (s.p1._frozen) { p1Act = 'stunned'; s.p1._frozen = false; s.p1._wasFrozen = true; }
+    if (s.p2._frozen) { p2Act = 'stunned'; s.p2._frozen = false; s.p2._wasFrozen = true; }
+
     const p1FromX = s.p1.x, p1FromFacing = s.p1.facing;
     const p2FromX = s.p2.x, p2FromFacing = s.p2.facing;
 
@@ -51,400 +45,284 @@ class BattleEngine {
     const collision = this.checkCollision(s.p1, s.p2, p1Intent, p2Intent);
     this.applyMovement(s.p1, s.p2, p1Intent, p2Intent, collision, p1Act, p2Act);
 
-    const p1SkillResult = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2');
-    const p2SkillResult = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1');
+    const p1SR = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2', tick);
+    const p2SR = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1', tick);
 
-    // shield bullets maintenance
     this.updateBullets(s);
 
-    // resource regen
     s.p1.sp = Math.min(s.p1.maxSp, s.p1.sp + 2);
     s.p2.sp = Math.min(s.p2.maxSp, s.p2.sp + 2);
     s.p1.mp = Math.min(s.p1.maxMp, s.p1.mp + 1);
     s.p2.mp = Math.min(s.p2.maxMp, s.p2.mp + 1);
 
     return {
-      tick,
-      p1: this.clonePlayer(s.p1), p2: this.clonePlayer(s.p2),
+      tick, p1: this.clonePlayer(s.p1), p2: this.clonePlayer(s.p2),
       p1FromX, p1FromFacing, p2FromX, p2FromFacing,
       bullets: JSON.parse(JSON.stringify(s.bullets)),
-      events: [...(p1SkillResult?.events || []), ...(p2SkillResult?.events || []), ...(collision?.events || [])],
-      animData: this.getAnimData([...(p1SkillResult?.events||[]),...(p2SkillResult?.events||[]),...(collision?.events||[])]),
+      events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || [])],
+      animData: this.getAnimData([...(p1SR?.events||[]),...(p2SR?.events||[]),...(collision?.events||[])]),
       p1Act, p2Act, p1Stunned, p2Stunned,
     };
   }
 
   getAnimData(events) {
     const anims = require('../data/skills.json').animations || {};
-    return events.map(ev => {
-      let animKey = null;
-      if (ev.type === 'collision') animKey = 'collision';
-      else if (ev.type === 'melee_hit') animKey = 'melee_hit';
-      else if (ev.type === 'melee_miss') animKey = 'melee_miss';
-      else if (ev.type === 'bullet_hit') animKey = 'bullet_hit';
-      else if (ev.type === 'bullet_clash') animKey = 'bullet_clash';
-      else if (ev.type === 'bullet_trail') animKey = 'bullet_fly';
-      else if (ev.type === 'dash' || ev.type === 'dash_hit') animKey = 'dash';
-      else if (ev.type === 'dodged') animKey = 'dodge';
-      else if (ev.type === 'teleport') animKey = 'teleport';
-      else if (ev.type === 'aoe_hit' || ev.type === 'aoe_cast') animKey = 'aoe';
-      const cfg = animKey ? (anims[animKey] || null) : null;
-      return { ...ev, anim: cfg };
-    });
+    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall' };
+    return events.map(ev => ({ ...ev, anim: anims[map[ev.type]] || null }));
   }
 
   getMoveIntent(player, action) {
-    const intent = { dx: 0, isDodge: false, isDefend: false, isTurn: false };
-    if (action === 'move_left' || action === '左') intent.dx = -1 * player.facing * player.facing; // generic
-    if (action === 'move_left') intent.dx = -1;
-    if (action === 'move_right') intent.dx = 1;
-    if (action === 'dodge_left') { intent.dx = -2; intent.isDodge = true; }
-    if (action === 'dodge_right') { intent.dx = 2; intent.isDodge = true; }
-    if (action === 'defend' || action === '防') intent.isDefend = true;
-    if (action === 'turn' || action === '转向') intent.isTurn = true;
-    return intent;
+    const i = { dx: 0, isDodge: false, isDefend: false, isTurn: false };
+    if (action === 'move_left') i.dx = -1;
+    if (action === 'move_right') i.dx = 1;
+    if (action === 'dodge_left') { i.dx = -2; i.isDodge = true; }
+    if (action === 'dodge_right') { i.dx = 2; i.isDodge = true; }
+    if (action === 'defend') i.isDefend = true;
+    if (action === 'turn') i.isTurn = true;
+    return i;
   }
 
   checkCollision(p1, p2, i1, i2) {
-    const events = [];
-    const p1Dest = p1.x + i1.dx;
-    const p2Dest = p2.x + i2.dx;
-
-    // 都在移动且目标冲突
+    const events = [], p1D = p1.x + i1.dx, p2D = p2.x + i2.dx;
     if (i1.dx !== 0 && i2.dx !== 0) {
-      if (p1Dest === p2Dest) {
-        // 同目标格：碰撞
-        const dmg1 = Math.max(1, Math.floor(p2.atk * 0.3));
-        const dmg2 = Math.max(1, Math.floor(p1.atk * 0.3));
-        p1.hp = Math.max(0, p1.hp - dmg1);
-        p2.hp = Math.max(0, p2.hp - dmg2);
-        events.push({ type: 'collision', pos: p1Dest, dmg1, dmg2 });
+      if (p1D === p2D) {
+        const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
+        p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
+        events.push({ type: 'collision', pos: p1D, dmg1: d1, dmg2: d2 });
         return { type: 'both', events };
       }
-      if (p1Dest === p2.x && p2Dest === p1.x) {
-        // 交叉穿越：碰撞在中间
-        const midX = Math.floor((p1.x + p2.x) / 2);
-        const dmg1 = Math.max(1, Math.floor(p2.atk * 0.25));
-        const dmg2 = Math.max(1, Math.floor(p1.atk * 0.25));
-        p1.hp = Math.max(0, p1.hp - dmg1);
-        p2.hp = Math.max(0, p2.hp - dmg2);
-        events.push({ type: 'collision', pos: midX, dmg1, dmg2 });
-        return { type: 'cross', events };
-      }
     }
-
-    // P1移向P2位置
-    if (i1.dx !== 0 && p1Dest === p2.x && i2.dx === 0) {
-      const dmg1 = Math.max(1, Math.floor(p2.atk * 0.3));
-      const dmg2 = Math.max(1, Math.floor(p1.atk * 0.3));
-      p1.hp = Math.max(0, p1.hp - dmg1);
-      p2.hp = Math.max(0, p2.hp - dmg2);
-      events.push({ type: 'collision', pos: p2.x, dmg1, dmg2 });
+    if (i1.dx !== 0 && p1D === p2.x && i2.dx === 0 && !i1.isDodge) {
+      const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
+      p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
+      events.push({ type: 'collision', pos: p2.x, dmg1: d1, dmg2: d2 });
       return { type: 'p1Blocked', events };
     }
-    if (i2.dx !== 0 && p2Dest === p1.x && i1.dx === 0) {
-      const dmg1 = Math.max(1, Math.floor(p2.atk * 0.3));
-      const dmg2 = Math.max(1, Math.floor(p1.atk * 0.3));
-      p1.hp = Math.max(0, p1.hp - dmg1);
-      p2.hp = Math.max(0, p2.hp - dmg2);
-      events.push({ type: 'collision', pos: p1.x, dmg1, dmg2 });
+    if (i2.dx !== 0 && p2D === p1.x && i1.dx === 0 && !i2.isDodge) {
+      const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
+      p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
+      events.push({ type: 'collision', pos: p1.x, dmg1: d1, dmg2: d2 });
       return { type: 'p2Blocked', events };
     }
     return null;
   }
 
   applyMovement(p1, p2, i1, i2, collision, a1, a2) {
-    // 转向
-    if (i1.isTurn) {
-      p1.facing *= -1;
+    if (i1.isTurn) p1.facing *= -1;
+    if (i2.isTurn) p2.facing *= -1;
+    if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.5);
+    if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.5);
+    if (collision) return;
+    if (i1.dx !== 0 && !i1.isTurn) {
+      let d = p1.x + i1.dx; d = Math.max(0, Math.min(15, d));
+      if (!i1.isDodge && d === p2.x) d = p1.x;
+      if (i1.isDodge && d === p2.x) d = p2.x + (i1.dx > 0 ? -1 : 1);
+      p1.x = Math.max(0, Math.min(15, d));
     }
-    if (i2.isTurn) {
-      p2.facing *= -1;
+    if (i2.dx !== 0 && !i2.isTurn) {
+      let d = p2.x + i2.dx; d = Math.max(0, Math.min(15, d));
+      if (!i2.isDodge && d === p1.x) d = p2.x;
+      if (i2.isDodge && d === p1.x) d = p1.x + (i2.dx > 0 ? -1 : 1);
+      p2.x = Math.max(0, Math.min(15, d));
     }
-
-    // 非dodge的转向类技能也算
-    // 防御（不减移动，但应用防御buff）
-    if (i1.isDefend) {
-      p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.5);
-    }
-    if (i2.isDefend) {
-      p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.5);
-    }
-
-    // 移动
-    if (collision) {
-      // 碰撞：不移动
-    } else {
-      if (i1.dx !== 0 && !i1.isTurn) {
-        let dest = p1.x + i1.dx;
-        dest = Math.max(0, Math.min(15, dest));
-        // dodge穿过对方
-        if (i1.isDodge) {
-          if (p2.x >= Math.min(p1.x, dest) && p2.x <= Math.max(p1.x, dest)) {
-            // 穿过，不受阻
-          } else if (dest === p2.x) {
-            // dodge 终点有敌人，停旁边
-            dest = p2.x + (i1.dx > 0 ? -1 : 1);
-            dest = Math.max(0, Math.min(15, dest));
-          }
-        } else {
-          if (dest === p2.x) dest = p1.x; // 不能站同一格
-        }
-        p1.x = Math.max(0, Math.min(15, dest));
-      }
-      if (i2.dx !== 0 && !i2.isTurn) {
-        let dest = p2.x + i2.dx;
-        dest = Math.max(0, Math.min(15, dest));
-        if (i2.isDodge) {
-          if (p1.x >= Math.min(p2.x, dest) && p1.x <= Math.max(p2.x, dest)) { /* 穿过 */ }
-          else if (dest === p1.x) { dest = p1.x + (i2.dx > 0 ? -1 : 1); dest = Math.max(0, Math.min(15, dest)); }
-        } else {
-          if (dest === p1.x) dest = p2.x;
-        }
-        p2.x = Math.max(0, Math.min(15, dest));
-      }
-    }
-
-    // Dodge无敌标记
-    p1._dodging = i1.isDodge;
-    p2._dodging = i2.isDodge;
+    p1._dodging = i1.isDodge; p2._dodging = i2.isDodge;
   }
 
-  executeAction(caster, target, action, casterKey, targetKey) {
+  executeAction(caster, target, action, cKey, tKey, tick) {
     const events = [];
-    // 通用技能
-    if (['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'stunned', 'wait'].includes(action)) {
+    if (['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'stunned', 'wait'].includes(action)) return { events };
+
+    const idxMap = { skill1: 0, skill2: 1, skill3: 2 };
+    const idx = idxMap[action];
+    if (idx === undefined) return { events };
+
+    const sid = caster.skills?.[idx];
+    if (!sid) return { events };
+
+    const allSk = { ...skillsData.skills, ...(caster.customSkills || {}) };
+    const sk = allSk[sid];
+    if (!sk) return { events };
+
+    // Check cooldown
+    const cdKey = '_cooldowns_' + cKey;
+    if (this.state[cdKey]?.[sid] > 0) {
+      events.push({ type: 'on_cooldown', actor: cKey, skillId: sid });
       return { events };
     }
 
-    // 技能 (skill1/skill2/skill3)
-    const skillIdxMap = { 'skill1': 0, 'skill2': 1, 'skill3': 2, '技1': 0, '技2': 1, '技3': 2 };
-    const idx = skillIdxMap[action];
-    if (idx === undefined) return { events };
+    // Check resources - if insufficient, EXHAUST
+    const hasMp = (caster.mp || 0) >= (sk.mpCost || 0);
+    const hasSp = (caster.sp || 0) >= (sk.spCost || 0);
+    if (!hasMp || !hasSp) {
+      events.push({ type: 'exhausted', actor: cKey, skillId: sid });
+      return { events };
+    }
+    caster.mp -= (sk.mpCost || 0);
+    caster.sp -= (sk.spCost || 0);
+    // Set cooldown
+    if (sk.cooldown) this.state[cdKey][sid] = sk.cooldown;
 
-    const skillId = caster.skills?.[idx];
-    if (!skillId) return { events };
-
-    const allSkills = { ...skillsData.skills, ...(caster.customSkills || {}) };
-    const skill = allSkills[skillId];
-    if (!skill) return { events };
-
-    // 检查资源
-    if ((caster.mp || 0) < (skill.mpCost || 0)) return { events: [{ type: 'noMp', actor: casterKey }] };
-    if ((caster.sp || 0) < (skill.spCost || 0)) return { events: [{ type: 'noSp', actor: casterKey }] };
-    caster.mp -= (skill.mpCost || 0);
-    caster.sp -= (skill.spCost || 0);
-
-    // 释放方向
     const dir = caster.facing;
-    // back direction for "behind" skills
-    let targetX = target.x;
-    let isBehind = false;
-    if (dir === 1 && caster.x > targetX) isBehind = true;
-    if (dir === -1 && caster.x < targetX) isBehind = true;
+    const isBehind = (dir === 1 && caster.x > target.x) || (dir === -1 && caster.x < target.x);
 
-    switch (skill.type) {
+    switch (sk.type) {
       case 'melee': {
-        const range = skill.range || 1;
-        let dist = Math.abs(caster.x - target.x);
+        const rg = sk.range || 1;
+        const dist = Math.abs(caster.x - target.x);
         let inRange = false;
-        if (skill.direction === 'forward') {
-          inRange = dist <= range && ((dir === 1 && target.x >= caster.x) || (dir === -1 && target.x <= caster.x));
-        } else if (skill.direction === 'around') {
-          inRange = dist <= range;
-        } else if (skill.direction === 'behind') {
-          inRange = dist <= range && isBehind;
-        }
-
+        if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && target.x >= caster.x) || (dir === -1 && target.x <= caster.x));
+        else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
+        else if (sk.direction === 'around') inRange = dist <= rg;
         if (inRange) {
-          let ratio = skill.damageRatio || 1;
-          if (skill.backstabBonus && isBehind) ratio *= skill.backstabBonus;
-          const dmg = this.calcDamage(caster.atk, ratio, target.def, skill.effect);
-
-          // dodge中不受伤害
-          if (!target._dodging) {
-            target.hp = Math.max(0, target.hp - dmg);
-          } else {
-            events.push({ type: 'dodged', actor: targetKey });
-          }
-
-          events.push({ type: 'melee_hit', actor: casterKey, target: targetKey, dmg, skillId });
-
-          // dot debuff
-          if (skill.effect === 'dot_debuff') {
-            target._effects = target._effects || [];
-            target._effects.push({
-              type: 'dot', dmgPerTick: Math.max(1, Math.floor(caster.atk * (skill.dotDamage || 0.05))),
-              ticks: skill.dotTicks || 3
-            });
-          }
-        } else {
-          events.push({ type: 'melee_miss', actor: casterKey });
-        }
-        break;
-      }
-
-      case 'projectile': {
-        const bx = caster.x + dir;
-        let hitTarget = false;
-        const traj = [];
-        const bState = this.state;
-        for (let scan = 0; scan <= (skill.bulletRange || 99); scan++) {
-          const sx = caster.x + dir * (scan + 1);
-          if (sx < 0 || sx > 15) break;
-          traj.push(sx);
-          if (sx === target.x) {
-            if (!target._dodging) {
-              const dmg = this.calcDamage(caster.atk, skill.damageRatio || 1, target.def, skill.effect);
-              target.hp = Math.max(0, target.hp - dmg);
-              events.push({ type: 'bullet_hit', actor: casterKey, target: targetKey, dmg, x: sx, skillId, color: skill.color });
-            } else {
-              events.push({ type: 'dodged', actor: targetKey, x: sx });
-            }
-            hitTarget = true;
-            const enemyBullets = bState.bullets.filter(b => b.owner !== casterKey);
-            for (const eb of enemyBullets) {
-              if (eb.x === sx) {
-                if ((skill.bulletPriority || 4) < (eb.priority || 4)) {
-                  bState.bullets = bState.bullets.filter(b => b !== eb);
-                  events.push({ type: 'bullet_clash', x: sx, winner: casterKey });
-                } else if ((skill.bulletPriority || 4) > (eb.priority || 4)) {
-                  events.push({ type: 'bullet_clash', x: sx, winner: eb.owner });
-                  hitTarget = false;
-                } else {
-                  bState.bullets = bState.bullets.filter(b => b !== eb);
-                  events.push({ type: 'bullet_clash', x: sx, winner: 'both' });
-                  hitTarget = false;
-                }
-                break;
-              }
-            }
-            break;
-          }
-          const enemyBullets2 = bState.bullets.filter(b => b.owner !== casterKey && !b.isShield);
-          for (const eb of enemyBullets2) {
-            if (eb.x === sx) {
-              if ((skill.bulletPriority || 4) < (eb.priority || 4)) {
-                bState.bullets = bState.bullets.filter(b => b !== eb);
-                events.push({ type: 'bullet_clash', x: sx, winner: casterKey });
-              } else if ((skill.bulletPriority || 4) > (eb.priority || 4)) {
-                events.push({ type: 'bullet_clash', x: sx, winner: eb.owner });
-                hitTarget = true;
-                break;
-              } else {
-                bState.bullets = bState.bullets.filter(b => b !== eb);
-                events.push({ type: 'bullet_clash', x: sx, winner: 'both' });
-                hitTarget = true;
-                break;
-              }
-            }
-          }
-          if (hitTarget) break;
-        }
-        events.push({ type: 'bullet_trail', actor: casterKey, skillId, traj, color: skill.color, priority: skill.bulletPriority || 4 });
-        break;
-      }
-
-      case 'targeted': {
-        // 定点AOE: 对target位置附近范围
-        const aoeR = skill.aoeRadius || 0;
-        const tgtRange = skill.targetRange || 8;
-        let aoeX = target.x + (Math.random() > 0.5 ? aoeR : -aoeR);
-        aoeX = Math.max(0, Math.min(15, aoeX));
-        let dist2 = Math.abs(caster.x - aoeX);
-        if (dist2 <= tgtRange) {
-          const distToTarget = Math.abs(target.x - aoeX);
-          if (distToTarget <= aoeR + 1) {
-            const dmg = this.calcDamage(caster.atk, skill.damageRatio || 0.6, target.def, skill.effect);
-            if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
-            events.push({ type: 'aoe_hit', actor: casterKey, target: targetKey, dmg, pos: aoeX });
-          }
-        }
-        events.push({ type: 'aoe_cast', actor: casterKey, skillId, pos: aoeX });
-        break;
-      }
-
-      case 'dash': {
-        const dashDist = skill.range || 4;
-        const dest = caster.x + dir * dashDist;
-        const clamped = Math.max(0, Math.min(15, dest));
-        // 检测路径上的敌人
-        const start = Math.min(caster.x, clamped);
-        const end = Math.max(caster.x, clamped);
-        if (target.x >= start && target.x <= end) {
-          const dmg = this.calcDamage(caster.atk, skill.damageRatio || 1, target.def, skill.effect);
+          let ratio = sk.damageRatio || 1;
+          if (sk.backstabRatio && isBehind) ratio = sk.backstabRatio;
+          const dmg = this.calcDmg(caster.atk, ratio, target.def, sk.effect);
           if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
-          events.push({ type: 'dash_hit', actor: casterKey, target: targetKey, dmg });
-        }
-        caster.x = (clamped === target.x) ? Math.max(0, Math.min(15, target.x + (dir > 0 ? -1 : 1))) : clamped;
-        events.push({ type: 'dash', actor: casterKey, from: caster.x, to: clamped });
+          else events.push({ type: 'dodged', actor: tKey });
+          const evType = sk.effect === 'stun_damage' ? 'stun_hit' : (sk.effect === 'true_damage' && isBehind ? 'backstab_hit' : 'melee_hit');
+          events.push({ type: evType, actor: cKey, target: tKey, dmg, skillId: sid });
+          if (sk.effect === 'stun_damage' && sk.stunDuration) {
+            target._effects = target._effects || [];
+            target._effects.push({ type: 'stun', ticks: sk.stunDuration });
+          }
+        } else { events.push({ type: 'melee_miss', actor: cKey }); }
         break;
       }
-
-      case 'teleport': {
-        if (skill.effect === 'teleport_back') {
-          const behindX = target.x - dir;
-          const tpX = Math.max(0, Math.min(15, behindX));
-          if (tpX === target.x) caster.x = Math.max(0, Math.min(15, behindX - dir));
-          else caster.x = tpX;
-          events.push({ type: 'teleport', actor: casterKey, to: caster.x });
+      case 'projectile': {
+        const bState = this.state;
+        const range = sk.bulletRange || 99;
+        const pri = sk.bulletPriority || 4;
+        const shots = sk.multiShot || 1;
+        for (let s = 0; s < shots; s++) {
+          let hitDone = false;
+          for (let scan = 1; scan <= range; scan++) {
+            const sx = caster.x + dir * scan;
+            if (sx < 0 || sx > 15) break;
+            // Check enemy bullets at this position
+            const enemyB = bState.bullets.filter(b => b.owner !== cKey && !b.isShield);
+            let blocked = false;
+            for (const eb of enemyB) {
+              if (eb.x === sx) {
+                if (pri < eb.priority) bState.bullets = bState.bullets.filter(b => b !== eb);
+                else if (pri > eb.priority) { blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: eb.owner }); }
+                else { bState.bullets = bState.bullets.filter(b => b !== eb); blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: 'both' }); }
+                break;
+              }
+            }
+            if (blocked) break;
+            if (sx === target.x) {
+              if (!target._dodging) {
+                const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+                target.hp = Math.max(0, target.hp - dmg);
+                const evT = sk.effect === 'freeze_damage' ? 'freeze_hit' : (sk.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
+                events.push({ type: evT, actor: cKey, target: tKey, dmg, x: sx, skillId: sid, color: sk.color });
+                if (sk.effect === 'freeze_damage') { target._frozen = true; target._effects = target._effects || []; target._effects.push({ type: 'freeze', ticks: sk.freezeDuration || 1 }); }
+                if (sk.effect === 'poison_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'poison', ticks: sk.poisonTicks || 5, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.poisonRatio || 0.08))) }); }
+              } else { events.push({ type: 'dodged', actor: tKey, x: sx }); }
+              hitDone = true; break;
+            }
+          }
         }
+        events.push({ type: 'bullet_trail', actor: cKey, skillId: sid, color: sk.color });
+        break;
+      }
+      case 'targeted_aoe': {
+        const aoeR = sk.aoeRadius || 1;
+        const tX = target.x;
+        let hitCount = 0;
+        for (let ox = -aoeR; ox <= aoeR; ox++) {
+          const ax = tX + ox;
+          if (ax < 0 || ax > 15) continue;
+          if (ax === target.x) {
+            if (!target._dodging) {
+              const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+              target.hp = Math.max(0, target.hp - dmg);
+              const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
+              events.push({ type: evT, actor: cKey, target: tKey, dmg, pos: ax, skillId: sid });
+              if (sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.burnRatio || 0.1))) }); }
+              hitCount++;
+            }
+          }
+        }
+        events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, pos: tX, color: sk.color });
+        break;
+      }
+      case 'dash': {
+        const dDist = sk.range || 3;
+        let dest = caster.x + dir * dDist;
+        dest = Math.max(0, Math.min(15, dest));
+        const startX = Math.min(caster.x, dest), endX = Math.max(caster.x, dest);
+        if (target.x >= startX && target.x <= endX && !target._dodging) {
+          const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+          target.hp = Math.max(0, target.hp - dmg);
+          events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid });
+          // Knockback
+          if (sk.knockback) {
+            const kbDir = dir;
+            let tNewX = target.x + kbDir * sk.knockback;
+            tNewX = Math.max(0, Math.min(15, tNewX));
+            if (tNewX === caster.x) tNewX += kbDir; // avoid overlap
+            if (tNewX === dest) tNewX += kbDir;
+            tNewX = Math.max(0, Math.min(15, tNewX));
+            target.x = tNewX;
+            events.push({ type: 'knockback', actor: tKey, from: target.x, to: tNewX });
+          }
+          // Avoid overlap after dash
+          if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
+          dest = Math.max(0, Math.min(15, dest));
+        }
+        // Defense buff during dash
+        if (sk.defBuff) caster._defDash = Math.floor(caster.def * sk.defBuff);
+        caster.x = dest;
+        events.push({ type: 'dash', actor: cKey, to: dest, skillId: sid });
+        break;
+      }
+      case 'teleport_backstab': {
+        const behindX = target.x - dir;
+        let tpX = Math.max(0, Math.min(15, behindX));
+        if (tpX === target.x) tpX = Math.max(0, Math.min(15, behindX - dir));
+        caster.x = tpX;
+        // Face the enemy
+        if (caster.x > target.x) caster.facing = -1;
+        else if (caster.x < target.x) caster.facing = 1;
+        events.push({ type: 'teleport', actor: cKey, to: tpX, skillId: sid });
+        break;
+      }
+      case 'shield_wall': {
+        const sX = caster.x + dir;
+        this.state.bullets.push({ id: sid + '_' + Date.now(), x: sX, dir, priority: sk.bulletPriority || 2, isShield: true, color: sk.color, owner: cKey });
+        events.push({ type: 'shield_wall', actor: cKey, x: sX, skillId: sid, color: sk.color });
         break;
       }
     }
-
     return { events };
+  }
+
+  calcDmg(atk, ratio, def, effect) {
+    const base = atk * ratio;
+    if (effect === 'true_damage' || effect === 'true_damage_backstab') return Math.max(1, Math.floor(base));
+    return Math.max(1, Math.floor(base - (def || 0)));
   }
 
   updateBullets(s) {
     for (const b of s.bullets) {
-      if (b.isShield) {
-        b.x = (b.owner === 'p1' ? s.p1.x : s.p2.x) + (b.owner === 'p1' ? s.p1.facing : s.p2.facing);
-        b.traveled = 0;
-      }
-    }
-  }
-
-  resolveBullets(s) {
-    const shields = s.bullets.filter(b => b.isShield);
-    for (let i = 0; i < shields.length; i++) {
-      for (let j = i + 1; j < shields.length; j++) {
-        if (shields[i].owner !== shields[j].owner && shields[i].x === shields[j].x) {
-          s.bullets = s.bullets.filter(b => b !== shields[i] && b !== shields[j]);
-        }
-      }
+      if (b.isShield) { b.x = (b.owner === 'p1' ? s.p1.x : s.p2.x) + (b.owner === 'p1' ? s.p1.facing : s.p2.facing); }
     }
   }
 
   tickEffects(s, key) {
-    const player = s[key];
-    let stunned = false;
-    player._effects = (player._effects || []).filter(e => {
-      if (e.type === 'dot') {
-        if (!player._dodging) {
-          player.hp = Math.max(0, player.hp - (e.dmgPerTick || 1));
-        }
-        e.ticks--;
-        return e.ticks > 0;
+    const p = s[key]; let stunned = false;
+    p._effects = (p._effects || []).filter(e => {
+      if ((e.type === 'dot' || e.type === 'burn' || e.type === 'poison') && e.ticks > 0) {
+        if (!p._dodging) p.hp = Math.max(0, p.hp - (e.dmgPerTick || 1));
+        e.ticks--; return e.ticks > 0;
       }
-      if (e.type === 'stun') {
-        e.ticks--;
-        stunned = true;
-        return e.ticks > 0;
-      }
-      return true;
+      if ((e.type === 'stun' || e.type === 'freeze') && e.ticks > 0) { stunned = true; e.ticks--; return e.ticks > 0; }
+      return false;
     });
-    // 重置tick buffs
-    player._defBuff = 0;
-    player._dodging = false;
+    p._defBuff = 0; p._dodging = false;
+    if (p._defDash) { p._defBuff = (p._defBuff || 0) + p._defDash; p._defDash = 0; }
     return stunned;
-  }
-
-  calcDamage(atk, ratio, def, effect) {
-    const base = atk * ratio;
-    if (effect === 'true_damage') return Math.max(1, Math.floor(base));
-    const defVal = def || 0;
-    return Math.max(1, Math.floor(base - defVal));
   }
 
   clonePlayer(p) {
@@ -453,10 +331,8 @@ class BattleEngine {
       mp: p.mp, maxMp: p.maxMp, sp: p.sp, maxSp: p.maxSp,
       atk: p.atk, def: p.def, charId: p.charId,
       effects: JSON.parse(JSON.stringify(p._effects || [])),
-      dodging: p._dodging || false,
-      defBuff: p._defBuff || 0,
+      dodging: p._dodging || false, defBuff: p._defBuff || 0,
     };
   }
 }
-
 module.exports = BattleEngine;

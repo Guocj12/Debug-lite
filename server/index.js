@@ -211,7 +211,7 @@ io.on('connection', (socket) => {
     r.pSkills[socket.id] = d.skillIds || pChar.defaultSkills;
     // Puppet: any char, but massive HP
     r.pChars['TRAIN-' + rid] = 'warrior';
-    r.pSkills['TRAIN-' + rid] = ['warrior_slash', 'warrior_charge', 'warrior_whirlwind'];
+    r.pSkills['TRAIN-' + rid] = ['warrior_whirlwind', 'warrior_heavy', 'warrior_shieldbash'];
     r.puppet = true;
     socket.emit('trainStart', { roomId: rid, n: 1 });
     r.startPrepare();
