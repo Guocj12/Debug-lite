@@ -57,6 +57,7 @@ class GameRoom {
   }
 
   startPrepare() {
+    if (this.players.length < 2) { this.state = 'finished'; return; }
     this.state = 'prepare'; this.round++;
     this.pReady[this.players[0].sid] = false;
     this.pReady[this.players[1].sid] = false;
@@ -83,6 +84,7 @@ class GameRoom {
   clearTimer() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
 
   runBattle() {
+    if (this.players.length < 2) { this.state = 'finished'; return; }
     this.state = 'battle';
     const a1 = (this.pActions[this.players[0].sid] || []).slice(0, TICKS);
     const a2 = (this.pActions[this.players[1].sid] || []).slice(0, TICKS);
@@ -101,8 +103,8 @@ class GameRoom {
       io.to(this.id).emit('gameOver', { winner: w, p1Hp: s.p1.hp, p2Hp: s.p2.hp, reason: this.round >= this.maxRounds ? 'maxRounds' : 'death' });
       this.clearTimer();
     } else {
-      // Wait for client animation (16 ticks * 1000ms + buffer)
-      setTimeout(() => this.startPrepare(), 17000);
+      // Wait for client animation (16 ticks * 600ms + buffer)
+      setTimeout(() => this.startPrepare(), 11000);
     }
   }
 }

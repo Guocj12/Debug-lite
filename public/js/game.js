@@ -6,7 +6,7 @@ const AE={ctx:null,on:true,vol:0.15,init(){try{this.ctx=new(window.AudioContext|
 const Sprites={_defs:{},_cache:{},load(d){this._defs=d||{}},get(name){if(this._cache[name])return this._cache[name];const d=this._defs[name];if(!d)return null;const frames=d.frames||[d.pixels||[]];this._cache[name]={frames,w:d.w||5,h:d.h||5,color:d.color||'#fff',dur:d.frameDur||100};return this._cache[name]},draw(ctx,spr,frame,x,y,scale,alpha){if(!spr)return;const f=spr.frames[Math.min(frame,spr.frames.length-1)];const s=scale||1;ctx.globalAlpha=alpha||1;for(let r=0;r<spr.h;r++)for(let c=0;c<spr.w;c++){const ch=f[r]?.[c];if(!ch||ch===' ')continue;ctx.fillStyle=ch==='#'?spr.color:ch;ctx.fillRect(x+c*s,y+r*s,s,s)}ctx.globalAlpha=1}};
 
 // Particle system
-const FX={list:[],spawn(x,y,cfg){const{dur=300,color='#fff',count=5,spread=4,type='burst'}=cfg||{};for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2;const spd=(Math.random()*.7+.3)*spread;this.list.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-2,life:dur,mlife:dur,color,size:1+Math.random()*3,type})}},spawnTrail(x,y,cfg){const{color='#fff',len=5}=cfg||{};for(let i=0;i<len;i++)this.list.push({x:x-(Math.random()-.5)*8,y:y-(Math.random()-.5)*4,vx:(Math.random()-.5)*1.5,vy:(Math.random()-.5)*2,life:200+Math.random()*200,mlife:400,color,size:1+Math.random()*2,type:'trail'})},spawnRing(x,y,cfg){const{color='#fff',radius=20,count=8}=cfg||{};for(let i=0;i<count;i++){const a=i/count*Math.PI*2;this.list.push({x,y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:300,mlife:300,color,size:2,type:'ring'})}},update(dt){for(let i=this.list.length-1;i>=0;i--){const p=this.list[i];p.x+=p.vx*dt*.06;p.y+=p.vy*dt*.06;p.life-=dt;if(p.type==='ring'){p.vx*=.95;p.vy*=.95}if(p.life<=0)this.list.splice(i,1)}},draw(ctx){for(const p of this.list){const a=p.life/p.mlife;ctx.globalAlpha=a;ctx.fillStyle=p.color;const s=p.size*a;ctx.fillRect(p.x-s/2,p.y-s/2,s,s)}ctx.globalAlpha=1},clear(){this.list=[]}};
+const FX={list:[],spawn(x,y,cfg){const{dur=500,color='#fff',count=8,spread=4}=cfg||{};for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2;const spd=(Math.random()*.5+.5)*spread;this.list.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-1.5,life:dur,mlife:dur,color,size:2+Math.random()*4})}},spawnTrail(x,y,cfg){const{color='#fff',len=5}=cfg||{};for(let i=0;i<len;i++)this.list.push({x:x-(Math.random()-.5)*10,y:y-(Math.random()-.5)*6,vx:Math.random()-.5,vy:-Math.random()*2,life:300+Math.random()*200,mlife:500,color,size:2+Math.random()*2,type:'trail'})},spawnRing(x,y,cfg){const{color='#fff',count=10}=cfg||{};for(let i=0;i<count;i++){const a=i/count*Math.PI*2;this.list.push({x,y,vx:Math.cos(a)*2.5,vy:Math.sin(a)*2.5,life:400,mlife:400,color,size:2.5,type:'ring'})}},update(dt){for(let i=this.list.length-1;i>=0;i--){const p=this.list[i];p.x+=p.vx*(dt/16);p.y+=p.vy*(dt/16);p.life-=dt;if(p.type==='ring'){p.vx*=.97;p.vy*=.97}if(p.life<=0)this.list.splice(i,1)}},draw(ctx){for(const p of this.list){const a=Math.max(0,p.life/p.mlife);ctx.globalAlpha=a;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size)}ctx.globalAlpha=1},clear(){this.list=[]}};
 
 // Tween engine
 const Tween={_list:[],to(target,props,dur,cb){const t={target,start:{},to:{...props},dur,elapsed:0,cb};for(const k in props)t.start[k]=target[k]??0;this._list.push(t)},update(dt){for(let i=this._list.length-1;i>=0;i--){const t=this._list[i];t.elapsed+=dt;const p=Math.min(1,t.elapsed/t.dur),ep=1-Math.pow(1-p,3);for(const k in t.to)t.target[k]=t.start[k]+(t.to[k]-t.start[k])*ep;if(p>=1){for(const k in t.to)t.target[k]=t.to[k];t.cb&&t.cb();this._list.splice(i,1)}}},clear(){this._list=[]}};
@@ -84,7 +84,7 @@ G._mode='prepare';G.round=d.round;G.ready=false;G.actions=[];G._previewStack=[];
 // Reset local cooldown tracking
 [0,1,2].forEach(i=>{const sid=G.selSkills[i];if(sid)G['_cd_'+sid]=0});
 G.state={p1:clonePlayer(d.p1),p2:clonePlayer(d.p2),bullets:d.bullets||[]};
-G._origStateP1={x:d.p1.x,facing:d.p1.facing};
+G._origStateP1={x:d.p1.x,facing:d.p1.facing,mp:d.p1.mp,sp:d.p1.sp};
 $('rnd').textContent='ROUND '+d.round;$('tm').textContent=d.time||60;
 $('tmrArea').style.display='';$('actionQueuePanel').classList.remove('hidden');
 $('rdyBtn').disabled=false;$('rdyBtn').textContent='✅ 完成';
@@ -110,19 +110,18 @@ function clonePlayer(p){return{...p,_dotStacks:p._dotStacks||0,_stunned:p._stunn
 function updateHUD(p1,p2){[['p1',p1],['p2',p2]].forEach(([pre,p])=>{const mh=p.maxHp||1,mm=p.maxMp||1,ms=p.maxSp||1;$(pre+'hp').style.width=Math.max(0,(p.hp||0)/mh*100)+'%';$(pre+'hpt').textContent=(p.hp||0)+'/'+mh;$(pre+'mp').style.width=Math.max(0,(p.mp||0)/mm*100)+'%';$(pre+'mpt').textContent=(p.mp||0)+'/'+mm;$(pre+'sp').style.width=Math.max(0,(p.sp||0)/ms*100)+'%';$(pre+'spt').textContent=(p.sp||0)+'/'+ms})}
 
 // ============ ACTION QUEUE ============
-function renderActionButtons(){const btns=[['◀左','move_left'],['▶右','move_right'],['◀◀闪','dodge_left'],['▶▶闪','dodge_right'],['🛡防','defend'],['🔄转','turn'],['技1','skill1'],['技2','skill2'],['技3','skill3']],ab=$('abtns');ab.innerHTML='';btns.forEach(([l,v])=>{const b=document.createElement('button');b.className='ab';b.textContent=l;b.onclick=()=>addAction(v);ab.appendChild(b)})}
-function addAction(a){if(G.actions.length>=G.maxAct)return;// Check cooldowns for skill actions
-if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)return;const cdKey='_cd_'+sid;const rem=(G[cdKey]||0);if(rem>0)return;// on cooldown, silently block
-// Check resource preview
-const sk=G._skillDataCache?.[sid];if(sk){const p=G.state?.p1;if(p&&((p.mp||0)<(sk.mpCost||0)||(p.sp||0)<(sk.spCost||0)))return}// insufficient resources
-G[cdKey]=(sk?.cooldown||0)+1}// set tentative cooldown for queue preview
-G.actions.push(a);renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions});previewAction(a);AE.sfx('tick')}
-function previewAction(a){if(!G.state)return;const p1=G.state.p1;G._previewStack.push({x:p1.x,facing:p1.facing});if(a==='move_left')p1.x=Math.max(0,p1.x-1);if(a==='move_right')p1.x=Math.min(15,p1.x+1);if(a==='dodge_left'){p1.x=Math.max(0,p1.x-2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='dodge_right'){p1.x=Math.min(15,p1.x+2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='turn')p1.facing*=-1;drawField()}
-function undoAction(){const removed=G.actions.pop();// If removed a skill, restore cooldown
-if(removed==='skill1'||removed==='skill2'||removed==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[removed];const sid=G.selSkills[idx];if(sid){const cdKey='_cd_'+sid;if(G[cdKey]>0)G[cdKey]--}}renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions});if(G._previewStack.length){const prev=G._previewStack.pop();if(G.state?.p1){G.state.p1.x=prev.x;G.state.p1.facing=prev.facing}}drawField()}
-function clearActions(){// Reset all cooldowns
-G.actions.forEach(a=>{if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(sid){const cdKey='_cd_'+sid;G[cdKey]=0}}});G.actions=[];G._previewStack=[];renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:[]});if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing}drawField()}
-function randomFill(){const pool=['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];G.actions=[];for(let i=0;i<16;i++)G.actions.push(pool[Math.floor(Math.random()*pool.length)]);renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions});AE.sfx('tick')}
+function tickCooldowns(){G.selSkills.forEach(sid=>{if(!sid)return;const k='_cd_'+sid;if((G[k]||0)>0)G[k]--})}
+function renderActionButtons(){tickCooldowns();const btns=[['◀左','move_left'],['▶右','move_right'],['◀◀闪','dodge_left'],['▶▶闪','dodge_right'],['🛡防','defend'],['🔄转','turn']];G.selSkills.forEach((sid,i)=>{const sk=G._skillDataCache?.[sid];const cdRem=G['_cd_'+sid]||0;const cdStr=cdRem>0?' CD'+cdRem:'';const mpCost=sk?.mpCost||0;const spCost=sk?.spCost||0;const label='技'+(i+1)+cdStr+' MP'+mpCost+' SP'+spCost;btns.push([label,'skill'+(i+1)])});const ab=$('abtns');ab.innerHTML='';btns.forEach(([l,v])=>{const b=document.createElement('button');b.className='ab';b.onclick=()=>addAction(v);b.textContent=l;ab.appendChild(b)})}
+function addAction(a){if(G.actions.length>=G.maxAct)return;
+const p1=G.state?.p1;if(!p1)return;
+if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)return;const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)return;const sk=G._skillDataCache?.[sid];if(sk){if((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0))return;G[cdKey]=sk.cooldown||0;// Set cooldown
+// Deduct SP/MP from preview state
+p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}
+G.actions.push(a);renderActionSlots();renderActionButtons();updateHUD(G.state.p1,G.state.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});previewAction(a);AE.sfx('tick')}
+function previewAction(a){if(!G.state)return;const p1=G.state.p1;G._previewStack.push({x:p1.x,facing:p1.facing,mp:p1.mp,sp:p1.sp,act:a});if(a==='move_left')p1.x=Math.max(0,p1.x-1);if(a==='move_right')p1.x=Math.min(15,p1.x+1);if(a==='dodge_left'){p1.x=Math.max(0,p1.x-2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='dodge_right'){p1.x=Math.min(15,p1.x+2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='turn')p1.facing*=-1;drawField()}
+function undoAction(){const removed=G.actions.pop();if(removed==='skill1'||removed==='skill2'||removed==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[removed];const sid=G.selSkills[idx];if(sid){const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)G[cdKey]--;const sk=G._skillDataCache?.[sid];if(sk&&G.state?.p1){G.state.p1.mp+=sk.mpCost||0;G.state.p1.sp+=sk.spCost||0}}}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});if(G._previewStack.length){const prev=G._previewStack.pop();if(G.state?.p1){G.state.p1.x=prev.x;G.state.p1.facing=prev.facing}}drawField()}
+function clearActions(){G.actions.forEach(a=>{if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(sid)G['_cd_'+sid]=0}});G.actions=[];G._previewStack=[];renderActionSlots();renderActionButtons();if(G.socket)G.socket.emit('updateActions',{actions:[]});if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp||G.state.p1.mp;G.state.p1.sp=G._origStateP1.sp||G.state.p1.sp}updateHUD(G.state?.p1,G.state?.p2);drawField()}
+function randomFill(){const pool=['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];G.actions=[];clearActions();for(let i=0;i<16;i++){const a=pool[Math.floor(Math.random()*pool.length)];if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)continue;if((G['_cd_'+sid]||0)>0)continue;const sk=G._skillDataCache?.[sid];if(sk&&G.state?.p1&&(G.state.p1.mp<(sk.mpCost||0)||G.state.p1.sp<(sk.spCost||0)))continue;G['_cd_'+sid]=sk?.cooldown||0;if(sk&&G.state?.p1){G.state.p1.mp-=sk.mpCost||0;G.state.p1.sp-=sk.spCost||0}}G.actions.push(a);if(G.actions.length>=16)break}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});AE.sfx('tick')}
 function renderActionSlots(){const slots=$('aslots');$('acnt').textContent='('+G.actions.length+'/16)';slots.innerHTML='';const lb={move_left:'◀',move_right:'▶',dodge_left:'◀◀',dodge_right:'▶▶',defend:'🛡',turn:'🔄',skill1:'技1',skill2:'技2',skill3:'技3'};G.actions.forEach((a,i)=>{const d=document.createElement('div');d.className='as';d.innerHTML='<span class="sn">'+(i+1)+'</span>'+(lb[a]||a);d.onclick=()=>{G.actions.splice(i,1);renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions})};slots.appendChild(d)});for(let i=G.actions.length;i<16;i++){const d=document.createElement('div');d.className='as';d.style.opacity='0.3';d.innerHTML='<span class="sn">'+(i+1)+'</span>⋯';slots.appendChild(d)}}
 function readyBattle(){G.ready=true;$('rdyBtn').disabled=true;$('rdyBtn').textContent='⏳ 已准备';G.socket.emit('ready');if(G.mode==='ai')G.socket.emit('aiReady',{roomId:G.roomId});if(G.mode==='train')G.socket.emit('trainReady',{roomId:G.roomId});AE.sfx('skill')}
 function quitBattle(){stopAll();if(G.socket){G.socket.emit('leaveRoom');}nav('menu')}
@@ -130,52 +129,51 @@ function quitBattle(){stopAll();if(G.socket){G.socket.emit('leaveRoom');}nav('me
 // ============ BATTLE ANIMATION ============
 function playBattleAnim(frames,final){
 FX.clear();Tween.clear();
-const TD=1000; // 1 second per tick = 16 seconds total
-let prevP1=null,prevP2=null;
+const TD=600;
 function next(idx){
 if(idx>=frames.length){
-// All done, keep final state drawn but don't change _mode
 G.state={p1:clonePlayer(final.p1),p2:clonePlayer(final.p2),bullets:final.bullets||[]};
 updateHUD(final.p1,final.p2);drawField();
-// Backend will send prepareStart when ready
 return;}
 const f=frames[idx];
-const pp1=prevP1||{p1:{x:f.p1FromX||f.p1.x,hp:f.p1.hp,mp:f.p1.mp,sp:f.p1.sp}};
-const pp2=prevP2||{p2:{x:f.p2FromX||f.p2.x,hp:f.p2.hp,mp:f.p2.mp,sp:f.p2.sp}};
-prevP1=f;prevP2=f;
-const ist={p1:{...f.p1,x:pp1.p1.x,hp:pp1.p1.hp,mp:pp1.p1.mp,sp:pp1.p1.sp,_isDodging:f.p1Act==='dodge_left'||f.p1Act==='dodge_right',_isDashing:f.p1Act==='dash',_dotStacks:(f.p1.effects||[]).filter(e=>e.type==='dot').length,_stunned:f.p1Stunned},p2:{...f.p2,x:pp2.p2.x,hp:pp2.p2.hp,mp:pp2.p2.mp,sp:pp2.p2.sp,_isDodging:f.p2Act==='dodge_left'||f.p2Act==='dodge_right',_isDashing:f.p2Act==='dash',_dotStacks:(f.p2.effects||[]).filter(e=>e.type==='dot').length,_stunned:f.p2Stunned},bullets:f.bullets||[]};
+const startP1X=f.p1FromX!==undefined?f.p1FromX:f.p1.x;
+const startP2X=f.p2FromX!==undefined?f.p2FromX:f.p2.x;
+const ist={p1:{...f.p1,x:startP1X,hp:f.p1.hp,mp:f.p1.mp,sp:f.p1.sp,_isDodging:f.p1Act==='dodge_left'||f.p1Act==='dodge_right',_isDashing:f.p1Act==='dash',_dotStacks:(f.p1.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p1Stunned},p2:{...f.p2,x:startP2X,hp:f.p2.hp,mp:f.p2.mp,sp:f.p2.sp,_isDodging:f.p2Act==='dodge_left'||f.p2Act==='dodge_right',_isDashing:f.p2Act==='dash',_dotStacks:(f.p2.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p2Stunned},bullets:f.bullets||[]};
 G.state=ist;
-Tween.to(ist.p1,{x:f.p1.x,hp:f.p1.hp,mp:f.p1.mp,sp:f.p1.sp},TD*.6);
-Tween.to(ist.p2,{x:f.p2.x,hp:f.p2.hp,mp:f.p2.mp,sp:f.p2.sp},TD*.6);
-(f.events||[]).forEach(ev=>{const cw=$('fc').width/16,gy=$('fc').height*.7;const ad=ev.anim||{};const col=ev.color||ad.color||'#fff';const cnt=ad.particles||6;const sprd=ad.spread||4;
-if(ev.type==='collision'){FX.spawnRing((ev.pos+.5)*cw,gy-15,{color:'#ffff00',count:12});AE.sfx('block')}
-if(ev.type==='melee_hit'){FX.spawn((f.p2.x+.5)*cw,gy-10,{color:'#ff4444',count:8,spread:5});AE.sfx('hit')}
-if(ev.type==='stun_hit'){FX.spawnRing((f.p2.x+.5)*cw,gy-10,{color:'#ffff00',count:10});AE.sfx('hit')}
-if(ev.type==='backstab_hit'){FX.spawnRing((f.p2.x+.5)*cw,gy-10,{color:'#ff0000',count:14});AE.sfx('skill')}
-if(ev.type==='bullet_hit'){const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-20,{color:col,count:cnt});FX.spawn(bx,gy-20,{color:col,count:cnt,spread:sprd});AE.sfx('bullet')}
-if(ev.type==='freeze_hit'){const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-20,{color:'#88ccff',count:10});AE.sfx('block')}
-if(ev.type==='burn_hit'){FX.spawnRing((ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw),gy-15,{color:'#ff6600',count:12});AE.sfx('hit')}
-if(ev.type==='poison_hit'){FX.spawnRing((ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw),gy-20,{color:'#88ff00',count:8});AE.sfx('bullet')}
-if(ev.type==='bullet_clash'){FX.spawnRing((ev.x+.5)*cw,gy-20,{color:'#ffffff',count:8})}
-if(ev.type==='bullet_trail'){FX.spawnTrail((ev.traj?.[0]+.5)*cw,gy-20,{color:col,len:4})}
-if(ev.type==='dash'||ev.type==='dash_hit'){ist.p1._isDashing=true;ist.p2._isDashing=true;AE.sfx('dodge')}
-if(ev.type==='dodged')AE.sfx('dodge');
-if(ev.type==='aoe_hit'||ev.type==='aoe_cast'){FX.spawnRing((ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw),gy-15,{color:col,count:16})}
-if(ev.type==='knockback'){FX.spawnRing((ev.to!==undefined?(ev.to+.5)*cw:(f.p2.x+.5)*cw),gy-15,{color:'#ffaa00',count:8});AE.sfx('block')}
-if(ev.type==='teleport'){FX.spawnRing((ev.to+.5)*cw,gy-10,{color:'#ff00ff',count:10});AE.sfx('dodge')}
-if(ev.type==='shield_wall'){FX.spawnRing((ev.x+.5)*cw,gy-15,{color:'#4488ff',count:6})}
-if(ev.type==='exhausted'){AE.sfx('block')}
-if(ev.type==='on_cooldown'){}
+Tween.to(ist.p1,{x:f.p1.x},TD*.5);
+Tween.to(ist.p2,{x:f.p2.x},TD*.5);
+// Spawn particles for ALL event types - generous and visible
+const cw=$('fc').width/16,gy=$('fc').height*.7;
+(f.events||[]).forEach(ev=>{
+switch(ev.type){
+case'collision':FX.spawnRing((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:16});FX.spawn((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:12,spread:6});AE.sfx('block');break;
+case'melee_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:12});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:14,spread:6});AE.sfx('hit');break;
+case'stun_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:14});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:10,spread:5});AE.sfx('hit');break;
+case'backstab_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:18});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:16,spread:7});AE.sfx('skill');break;
+case'bullet_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:ev.color||'#ff8800',count:14});FX.spawn(bx,gy-18,{color:ev.color||'#ff8800',count:12,spread:6});AE.sfx('bullet');break;}
+case'freeze_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:'#88ccff',count:14});FX.spawn(bx,gy-18,{color:'#88ccff',count:10,spread:4});AE.sfx('block');break;}
+case'burn_hit':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:'#ff6600',count:16});FX.spawn(px,gy-12,{color:'#ff6600',count:12,spread:5});AE.sfx('hit');break;}
+case'poison_hit':{const px=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-18,{color:'#88ff00',count:10});FX.spawn(px,gy-18,{color:'#88ff00',count:8,spread:4});AE.sfx('bullet');break;}
+case'bullet_clash':FX.spawnRing((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:10});FX.spawn((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:6,spread:3});break;
+case'bullet_trail':FX.spawnTrail((ev.traj?.[0]+.5)*cw,gy-18,{color:ev.color||'#fff',len:5});break;
+case'dash':case'dash_hit':ist.p1._isDashing=true;FX.spawnTrail(startP1X*cw,gy-8,{color:'#00ddff',len:6});AE.sfx('dodge');break;
+case'dodged':FX.spawnTrail((f.p2.x+.5)*cw,gy-8,{color:'#8888ff',len:5});AE.sfx('dodge');break;
+case'aoe_hit':case'aoe_cast':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:ev.color||'#ff4444',count:20});FX.spawn(px,gy-12,{color:ev.color||'#ff4444',count:16,spread:8});break;}
+case'knockback':FX.spawnRing((ev.to!==undefined?(ev.to+.5)*cw:(f.p2.x+.5)*cw),gy-12,{color:'#ffaa00',count:12});FX.spawn((f.p2.x+.5)*cw,gy-12,{color:'#ffaa00',count:8,spread:5});AE.sfx('block');break;
+case'teleport':FX.spawnRing((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:14});FX.spawn((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:10,spread:5});AE.sfx('dodge');break;
+case'shield_wall':FX.spawnRing((ev.x+.5)*cw,gy-12,{color:'#4488ff',count:8});break;
+}
 });
-const logs=(f.events||[]).map(ev=>{if(ev.type==='collision')return'<span class="l ld">💥碰撞!</span>';if(ev.type==='melee_hit')return'<span class="l ld">⚔'+ev.actor+'命中 -'+ev.dmg+'</span>';if(ev.type==='melee_miss')return'<span class="l">'+ev.actor+'落空</span>';if(ev.type==='bullet_hit')return'<span class="l ls">🎯弹幕 -'+ev.dmg+'</span>';if(ev.type==='bullet_clash')return'<span class="l lb">💫弹幕相消</span>';if(ev.type==='dodged')return'<span class="l lb">💨闪避!</span>';if(ev.type==='dash')return'<span class="l ls">🏃冲刺</span>';if(ev.type==='dash_hit')return'<span class="l ld">冲撞 -'+ev.dmg+'</span>';if(ev.type==='aoe_hit')return'<span class="l ld">💣AOE -'+ev.dmg+'</span>';if(ev.type==='teleport')return'<span class="l ls">✨传送</span>';return''}).filter(Boolean);
-if(logs.length)$('logc').innerHTML=logs.slice(-4).join('');
+// Log
+const logs=(f.events||[]).map(ev=>{const m={collision:'💥碰撞!',melee_hit:'⚔'+ev.actor+' 命中 -'+ev.dmg,melee_miss:ev.actor+' 落空',bullet_hit:'🎯弹幕 -'+ev.dmg,bullet_clash:'💫弹幕相消',dodged:'💨闪避!',dash:'🏃冲刺',dash_hit:'冲撞 -'+ev.dmg,aoe_hit:'💣AOE -'+ev.dmg,stun_hit:'⚡眩晕 -'+ev.dmg,freeze_hit:'❄冰冻 -'+ev.dmg,burn_hit:'🔥燃烧 -'+ev.dmg,poison_hit:'☠中毒 -'+ev.dmg,teleport:'✨传送',knockback:'💢击退'};return m[ev.type]?'<span class="l ld">'+m[ev.type]+'</span>':''}).filter(Boolean);
+if(logs.length)$('logc').innerHTML=logs.slice(-3).join('');
 const t0=performance.now();
 function anim(ts){const dt=ts-t0;Tween.update(dt);FX.update(16);
-if(Math.floor(dt/150)%2===0&&ist.p1._dotStacks>0){FX.spawn((ist.p1.x+.5)*$('fc').width/16,$('fc').height*.62,{color:'#44ff44',count:1,spread:1})}
-if(Math.floor(dt/150)%2===0&&ist.p2._dotStacks>0){FX.spawn((ist.p2.x+.5)*$('fc').width/16,$('fc').height*.62,{color:'#44ff44',count:1,spread:1})}
+if(dt<100&&Math.floor(dt/30)%2===0&&ist.p1._dotStacks>0)FX.spawn((ist.p1.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#44ff44',count:2,spread:2});
+if(dt<100&&Math.floor(dt/30)%2===0&&ist.p2._dotStacks>0)FX.spawn((ist.p2.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#ff6600',count:2,spread:2});
 drawField();
 if(dt<TD)requestAnimationFrame(anim);
-else{G.state={p1:clonePlayer(f.p1),p2:clonePlayer(f.p2),bullets:f.bullets||[]};updateHUD(f.p1,f.p2);drawField();setTimeout(()=>next(idx+1),50)}}
+else{G.state={p1:clonePlayer(f.p1),p2:clonePlayer(f.p2),bullets:f.bullets||[]};updateHUD(f.p1,f.p2);drawField();setTimeout(()=>next(idx+1),20)}}
 requestAnimationFrame(anim)}
 next(0)}
 

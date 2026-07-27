@@ -44,12 +44,12 @@ body{background:var(--bg);color:var(--txt);font-family:'Press Start 2P',monospac
 .pi{flex:1;background:var(--panel);border:1px solid var(--border);padding:5px}
 .pi.mir{text-align:right}
 .pn{font-size:.35rem;color:var(--c1);margin-bottom:3px}
-.bar-c{background:#0a0a14;border:1px solid #222;height:10px;position:relative;margin:2px 0}
+.bar-c{background:#0a0a14;border:1px solid #222;height:12px;position:relative;margin:3px 0}
 .bar{height:100%;transition:width .3s}
 .bar-hp{background:linear-gradient(90deg,#c00,#f33);box-shadow:0 0 4px rgba(255,0,0,.5)}
-.bar-mp{background:linear-gradient(90deg,#04c,#38f);height:6px;box-shadow:0 0 3px rgba(0,68,255,.5)}
-.bar-sp{background:linear-gradient(90deg,#0a0,#4f4);height:6px;box-shadow:0 0 3px rgba(0,255,68,.4)}
-.bar-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:.25rem;color:#fff;text-shadow:1px 1px 2px #000}
+.bar-mp{background:linear-gradient(90deg,#04c,#38f);height:7px;box-shadow:0 0 3px rgba(0,68,255,.5)}
+.bar-sp{background:linear-gradient(90deg,#0a0,#4f4);height:7px;box-shadow:0 0 3px rgba(0,255,68,.4)}
+.bar-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:.3rem;color:#fff;text-shadow:1px 1px 2px #000}
 .tmr{text-align:center;min-width:60px}
 .tmr .rnd{font-size:.35rem;color:var(--c3);text-shadow:0 0 5px var(--c3)}
 .tmr .t{font-size:1.1rem;color:var(--c1);text-shadow:0 0 10px var(--c1)}
