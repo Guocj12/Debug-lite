@@ -34,11 +34,11 @@
     "assassin_poison":{"id":"assassin_poison","name":"毒瓶","charId":"assassin","type":"projectile","effect":"poison_debuff","damageRatio":0.4,"poisonRatio":0.08,"direction":"forward","mpCost":12,"spCost":15,"cooldown":4,"bulletPriority":4,"bulletRange":4,"poisonTicks":5,"desc":"平射4格+中毒5tick","color":"#88ff00","anim_hit":"poison","anim_cast":"bullet_fly","sfx_cast":"bullet","sfx_hit":"hit"}
   },
   "genericSkills":[
-    {"id":"move_left","name":"左移","type":"move","spCost":3},
-    {"id":"move_right","name":"右移","type":"move","spCost":3},
+    {"id":"move_left","name":"左移","type":"move","spCost":0},
+    {"id":"move_right","name":"右移","type":"move","spCost":0},
     {"id":"dodge_left","name":"左闪","type":"dodge","spCost":10},
     {"id":"dodge_right","name":"右闪","type":"dodge","spCost":10},
-    {"id":"defend","name":"防御","type":"defend","spCost":5},
+    {"id":"defend","name":"防御","type":"defend","spCost":0},
     {"id":"turn","name":"转向","type":"turn","spCost":0}
   ]
 }

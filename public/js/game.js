@@ -86,7 +86,7 @@ G._mode='prepare';G.round=d.round;G.ready=false;G.actions=[];G._previewStack=[];
 G.state={p1:clonePlayer(d.p1),p2:clonePlayer(d.p2),bullets:d.bullets||[]};
 G._origStateP1={x:d.p1.x,facing:d.p1.facing,mp:d.p1.mp,sp:d.p1.sp};
 $('rnd').textContent='ROUND '+d.round;$('tm').textContent=d.time||60;
-$('tmrArea').style.display='';$('actionQueuePanel').classList.remove('hidden');
+$('tmrArea').style.display='';$('actionQueuePanel').classList.remove('hidden');$('battleQueuePanel').classList.add('hidden');
 $('rdyBtn').disabled=false;$('rdyBtn').textContent='✅ 完成';
 $('logc').innerHTML='';
 updateHUD(d.p1,d.p2);renderActionSlots();renderActionButtons();drawField();
@@ -98,9 +98,9 @@ stopAll();
 G._mode='battle';
 $('tmrArea').style.display='none';
 $('actionQueuePanel').classList.add('hidden');
+$('battleQueuePanel').classList.remove('hidden');
 $('logc').innerHTML='';
-// Start from previous state for smooth transition
-playBattleAnim(d.frames,d.final);
+playBattleAnim(d.frames,d.final,d);
 nav('battle');
 }
 
@@ -112,65 +112,58 @@ function updateHUD(p1,p2){[['p1',p1],['p2',p2]].forEach(([pre,p])=>{const mh=p.m
 // ============ ACTION QUEUE ============
 function tickCooldowns(){G.selSkills.forEach(sid=>{if(!sid)return;const k='_cd_'+sid;if((G[k]||0)>0)G[k]--})}
 function renderActionButtons(){tickCooldowns();const btns=[['◀左','move_left'],['▶右','move_right'],['◀◀闪','dodge_left'],['▶▶闪','dodge_right'],['🛡防','defend'],['🔄转','turn']];G.selSkills.forEach((sid,i)=>{const sk=G._skillDataCache?.[sid];const cdRem=G['_cd_'+sid]||0;const cdStr=cdRem>0?' CD'+cdRem:'';const mpCost=sk?.mpCost||0;const spCost=sk?.spCost||0;const label='技'+(i+1)+cdStr+' MP'+mpCost+' SP'+spCost;btns.push([label,'skill'+(i+1)])});const ab=$('abtns');ab.innerHTML='';btns.forEach(([l,v])=>{const b=document.createElement('button');b.className='ab';b.onclick=()=>addAction(v);b.textContent=l;ab.appendChild(b)})}
-function addAction(a){if(G.actions.length>=G.maxAct)return;
-const p1=G.state?.p1;if(!p1)return;
-if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)return;const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)return;const sk=G._skillDataCache?.[sid];if(sk){if((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0))return;G[cdKey]=sk.cooldown||0;// Set cooldown
-// Deduct SP/MP from preview state
-p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}
+function addAction(a){if(G.actions.length>=G.maxAct)return;const p1=G.state?.p1;if(!p1)return;
+if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)return;const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)return;const sk=G._skillDataCache?.[sid];if(sk){if((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0))return;G[cdKey]=sk.cooldown||0;p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}
 G.actions.push(a);renderActionSlots();renderActionButtons();updateHUD(G.state.p1,G.state.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});previewAction(a);AE.sfx('tick')}
 function previewAction(a){if(!G.state)return;const p1=G.state.p1;G._previewStack.push({x:p1.x,facing:p1.facing,mp:p1.mp,sp:p1.sp,act:a});if(a==='move_left')p1.x=Math.max(0,p1.x-1);if(a==='move_right')p1.x=Math.min(15,p1.x+1);if(a==='dodge_left'){p1.x=Math.max(0,p1.x-2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='dodge_right'){p1.x=Math.min(15,p1.x+2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='turn')p1.facing*=-1;drawField()}
 function undoAction(){const removed=G.actions.pop();if(removed==='skill1'||removed==='skill2'||removed==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[removed];const sid=G.selSkills[idx];if(sid){const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)G[cdKey]--;const sk=G._skillDataCache?.[sid];if(sk&&G.state?.p1){G.state.p1.mp+=sk.mpCost||0;G.state.p1.sp+=sk.spCost||0}}}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});if(G._previewStack.length){const prev=G._previewStack.pop();if(G.state?.p1){G.state.p1.x=prev.x;G.state.p1.facing=prev.facing}}drawField()}
-function clearActions(){G.actions.forEach(a=>{if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(sid)G['_cd_'+sid]=0}});G.actions=[];G._previewStack=[];renderActionSlots();renderActionButtons();if(G.socket)G.socket.emit('updateActions',{actions:[]});if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp||G.state.p1.mp;G.state.p1.sp=G._origStateP1.sp||G.state.p1.sp}updateHUD(G.state?.p1,G.state?.p2);drawField()}
-function randomFill(){const pool=['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];G.actions=[];clearActions();for(let i=0;i<16;i++){const a=pool[Math.floor(Math.random()*pool.length)];if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)continue;if((G['_cd_'+sid]||0)>0)continue;const sk=G._skillDataCache?.[sid];if(sk&&G.state?.p1&&(G.state.p1.mp<(sk.mpCost||0)||G.state.p1.sp<(sk.spCost||0)))continue;G['_cd_'+sid]=sk?.cooldown||0;if(sk&&G.state?.p1){G.state.p1.mp-=sk.mpCost||0;G.state.p1.sp-=sk.spCost||0}}G.actions.push(a);if(G.actions.length>=16)break}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});AE.sfx('tick')}
+function clearActions(){G.actions.forEach(a=>{if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(sid)G['_cd_'+sid]=0}});G.actions=[];G._previewStack=[];renderActionSlots();renderActionButtons();if(G.socket)G.socket.emit('updateActions',{actions:[]});if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp;G.state.p1.sp=G._origStateP1.sp}updateHUD(G.state?.p1,G.state?.p2);drawField()}
+function randomFill(){G.actions=[];G._previewStack=[];if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp;G.state.p1.sp=G._origStateP1.sp}const pool=['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];for(let i=0;i<16;i++){const a=pool[Math.floor(Math.random()*pool.length)];if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)continue;if((G['_cd_'+sid]||0)>0)continue;const sk=G._skillDataCache?.[sid];const p1=G.state?.p1;if(sk&&p1&&((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0)))continue;G['_cd_'+sid]=sk?.cooldown||0;if(sk&&p1){p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}G.actions.push(a);if(G.actions.length>=16)break}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});AE.sfx('tick')}
 function renderActionSlots(){const slots=$('aslots');$('acnt').textContent='('+G.actions.length+'/16)';slots.innerHTML='';const lb={move_left:'◀',move_right:'▶',dodge_left:'◀◀',dodge_right:'▶▶',defend:'🛡',turn:'🔄',skill1:'技1',skill2:'技2',skill3:'技3'};G.actions.forEach((a,i)=>{const d=document.createElement('div');d.className='as';d.innerHTML='<span class="sn">'+(i+1)+'</span>'+(lb[a]||a);d.onclick=()=>{G.actions.splice(i,1);renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions})};slots.appendChild(d)});for(let i=G.actions.length;i<16;i++){const d=document.createElement('div');d.className='as';d.style.opacity='0.3';d.innerHTML='<span class="sn">'+(i+1)+'</span>⋯';slots.appendChild(d)}}
 function readyBattle(){G.ready=true;$('rdyBtn').disabled=true;$('rdyBtn').textContent='⏳ 已准备';G.socket.emit('ready');if(G.mode==='ai')G.socket.emit('aiReady',{roomId:G.roomId});if(G.mode==='train')G.socket.emit('trainReady',{roomId:G.roomId});AE.sfx('skill')}
 function quitBattle(){stopAll();if(G.socket){G.socket.emit('leaveRoom');}nav('menu')}
 
 // ============ BATTLE ANIMATION ============
-function playBattleAnim(frames,final){
+function playBattleAnim(frames,final,d){
 FX.clear();Tween.clear();
 const TD=600;
+const lb={move_left:'◀',move_right:'▶',dodge_left:'◀◀',dodge_right:'▶▶',defend:'🛡',turn:'🔄',skill1:'技1',skill2:'技2',skill3:'技3',wait:'·',stunned:'💫'};
+function renderBQ(tick){const f=frames[tick];if(!f)return;const a1=f.p1Actions||[],a2=f.p2Actions||[];let h1='',h2='';for(let i=0;i<16;i++){const c=i===tick?'bq-slot active':'bq-slot';h1+='<span class="'+c+'">'+(lb[a1[i]]||'·')+'</span>';h2+='<span class="'+c+'">'+(lb[a2[i]]||'·')+'</span>'}$('bqP1').innerHTML=h1;$('bqP2').innerHTML=h2;$('bqTick').textContent='Tick '+(tick+1)+'/16';}
 function next(idx){
 if(idx>=frames.length){
 G.state={p1:clonePlayer(final.p1),p2:clonePlayer(final.p2),bullets:final.bullets||[]};
-updateHUD(final.p1,final.p2);drawField();
+updateHUD(final.p1,final.p2);drawField();$('battleQueuePanel').classList.add('hidden');
 return;}
 const f=frames[idx];
-const startP1X=f.p1FromX!==undefined?f.p1FromX:f.p1.x;
-const startP2X=f.p2FromX!==undefined?f.p2FromX:f.p2.x;
-const ist={p1:{...f.p1,x:startP1X,hp:f.p1.hp,mp:f.p1.mp,sp:f.p1.sp,_isDodging:f.p1Act==='dodge_left'||f.p1Act==='dodge_right',_isDashing:f.p1Act==='dash',_dotStacks:(f.p1.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p1Stunned},p2:{...f.p2,x:startP2X,hp:f.p2.hp,mp:f.p2.mp,sp:f.p2.sp,_isDodging:f.p2Act==='dodge_left'||f.p2Act==='dodge_right',_isDashing:f.p2Act==='dash',_dotStacks:(f.p2.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p2Stunned},bullets:f.bullets||[]};
+const ist={p1:{...f.p1,_isDodging:f.p1Act==='dodge_left'||f.p1Act==='dodge_right',_isDashing:f.p1Act==='dash',_dotStacks:(f.p1.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p1Stunned},p2:{...f.p2,_isDodging:f.p2Act==='dodge_left'||f.p2Act==='dodge_right',_isDashing:f.p2Act==='dash',_dotStacks:(f.p2.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p2Stunned},bullets:f.bullets||[]};
 G.state=ist;
-Tween.to(ist.p1,{x:f.p1.x},TD*.5);
-Tween.to(ist.p2,{x:f.p2.x},TD*.5);
-// Spawn particles for ALL event types - generous and visible
 const cw=$('fc').width/16,gy=$('fc').height*.7;
 (f.events||[]).forEach(ev=>{
 switch(ev.type){
-case'collision':FX.spawnRing((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:16});FX.spawn((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:12,spread:6});AE.sfx('block');break;
-case'melee_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:12});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:14,spread:6});AE.sfx('hit');break;
-case'stun_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:14});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:10,spread:5});AE.sfx('hit');break;
-case'backstab_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:18});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:16,spread:7});AE.sfx('skill');break;
-case'bullet_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:ev.color||'#ff8800',count:14});FX.spawn(bx,gy-18,{color:ev.color||'#ff8800',count:12,spread:6});AE.sfx('bullet');break;}
-case'freeze_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:'#88ccff',count:14});FX.spawn(bx,gy-18,{color:'#88ccff',count:10,spread:4});AE.sfx('block');break;}
-case'burn_hit':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:'#ff6600',count:16});FX.spawn(px,gy-12,{color:'#ff6600',count:12,spread:5});AE.sfx('hit');break;}
-case'poison_hit':{const px=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-18,{color:'#88ff00',count:10});FX.spawn(px,gy-18,{color:'#88ff00',count:8,spread:4});AE.sfx('bullet');break;}
-case'bullet_clash':FX.spawnRing((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:10});FX.spawn((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:6,spread:3});break;
-case'bullet_trail':FX.spawnTrail((ev.traj?.[0]+.5)*cw,gy-18,{color:ev.color||'#fff',len:5});break;
-case'dash':case'dash_hit':ist.p1._isDashing=true;FX.spawnTrail(startP1X*cw,gy-8,{color:'#00ddff',len:6});AE.sfx('dodge');break;
-case'dodged':FX.spawnTrail((f.p2.x+.5)*cw,gy-8,{color:'#8888ff',len:5});AE.sfx('dodge');break;
-case'aoe_hit':case'aoe_cast':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:ev.color||'#ff4444',count:20});FX.spawn(px,gy-12,{color:ev.color||'#ff4444',count:16,spread:8});break;}
-case'knockback':FX.spawnRing((ev.to!==undefined?(ev.to+.5)*cw:(f.p2.x+.5)*cw),gy-12,{color:'#ffaa00',count:12});FX.spawn((f.p2.x+.5)*cw,gy-12,{color:'#ffaa00',count:8,spread:5});AE.sfx('block');break;
-case'teleport':FX.spawnRing((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:14});FX.spawn((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:10,spread:5});AE.sfx('dodge');break;
-case'shield_wall':FX.spawnRing((ev.x+.5)*cw,gy-12,{color:'#4488ff',count:8});break;
-}
-});
-// Log
+case'collision':FX.spawnRing((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:16});FX.spawn((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:14,spread:6});AE.sfx('block');break;
+case'melee_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:14});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:16,spread:6});AE.sfx('hit');break;
+case'stun_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:16});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:12,spread:5});AE.sfx('hit');break;
+case'backstab_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:20});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:18,spread:7});AE.sfx('skill');break;
+case'bullet_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:ev.color||'#ff8800',count:16});FX.spawn(bx,gy-18,{color:ev.color||'#ff8800',count:14,spread:6});AE.sfx('bullet');break;}
+case'freeze_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:'#88ccff',count:16});FX.spawn(bx,gy-18,{color:'#88ccff',count:12,spread:5});AE.sfx('block');break;}
+case'burn_hit':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:'#ff6600',count:18});FX.spawn(px,gy-12,{color:'#ff6600',count:14,spread:5});AE.sfx('hit');break;}
+case'poison_hit':{const px=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-18,{color:'#88ff00',count:12});FX.spawn(px,gy-18,{color:'#88ff00',count:10,spread:4});AE.sfx('bullet');break;}
+case'bullet_clash':FX.spawnRing((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:12});FX.spawn((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:8,spread:4});break;
+case'bullet_trail':FX.spawnTrail((ev.traj?.[0]+.5)*cw,gy-18,{color:ev.color||'#fff',len:6});break;
+case'dash':case'dash_hit':ist.p1._isDashing=true;FX.spawnTrail((ist.p1.x+.5)*cw,gy-8,{color:'#00ddff',len:7});AE.sfx('dodge');break;
+case'dodged':FX.spawnTrail((f.p2.x+.5)*cw,gy-8,{color:'#8888ff',len:6});AE.sfx('dodge');break;
+case'aoe_hit':case'aoe_cast':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:ev.color||'#ff4444',count:24});FX.spawn(px,gy-12,{color:ev.color||'#ff4444',count:20,spread:8});break;}
+case'knockback':FX.spawnRing((ev.to!==undefined?(ev.to+.5)*cw:(f.p2.x+.5)*cw),gy-12,{color:'#ffaa00',count:14});FX.spawn((f.p2.x+.5)*cw,gy-12,{color:'#ffaa00',count:10,spread:6});AE.sfx('block');break;
+case'teleport':FX.spawnRing((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:16});FX.spawn((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:12,spread:5});AE.sfx('dodge');break;
+case'shield_wall':FX.spawnRing((ev.x+.5)*cw,gy-12,{color:'#4488ff',count:10});break;
+}});
 const logs=(f.events||[]).map(ev=>{const m={collision:'💥碰撞!',melee_hit:'⚔'+ev.actor+' 命中 -'+ev.dmg,melee_miss:ev.actor+' 落空',bullet_hit:'🎯弹幕 -'+ev.dmg,bullet_clash:'💫弹幕相消',dodged:'💨闪避!',dash:'🏃冲刺',dash_hit:'冲撞 -'+ev.dmg,aoe_hit:'💣AOE -'+ev.dmg,stun_hit:'⚡眩晕 -'+ev.dmg,freeze_hit:'❄冰冻 -'+ev.dmg,burn_hit:'🔥燃烧 -'+ev.dmg,poison_hit:'☠中毒 -'+ev.dmg,teleport:'✨传送',knockback:'💢击退'};return m[ev.type]?'<span class="l ld">'+m[ev.type]+'</span>':''}).filter(Boolean);
 if(logs.length)$('logc').innerHTML=logs.slice(-3).join('');
+renderBQ(idx);
 const t0=performance.now();
-function anim(ts){const dt=ts-t0;Tween.update(dt);FX.update(16);
-if(dt<100&&Math.floor(dt/30)%2===0&&ist.p1._dotStacks>0)FX.spawn((ist.p1.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#44ff44',count:2,spread:2});
-if(dt<100&&Math.floor(dt/30)%2===0&&ist.p2._dotStacks>0)FX.spawn((ist.p2.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#ff6600',count:2,spread:2});
+function anim(ts){const dt=ts-t0;FX.update(16);
+if(dt<300&&Math.floor(dt/40)%2===0&&ist.p1._dotStacks>0)FX.spawn((ist.p1.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#44ff44',count:2,spread:2});
+if(dt<300&&Math.floor(dt/40)%2===0&&ist.p2._dotStacks>0)FX.spawn((ist.p2.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#ff6600',count:2,spread:2});
 drawField();
 if(dt<TD)requestAnimationFrame(anim);
 else{G.state={p1:clonePlayer(f.p1),p2:clonePlayer(f.p2),bullets:f.bullets||[]};updateHUD(f.p1,f.p2);drawField();setTimeout(()=>next(idx+1),20)}}

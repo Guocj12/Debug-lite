@@ -58,6 +58,7 @@ class BattleEngine {
     return {
       tick, p1: this.clonePlayer(s.p1), p2: this.clonePlayer(s.p2),
       p1FromX, p1FromFacing, p2FromX, p2FromFacing,
+      p1Actions: [...this.p1Actions], p2Actions: [...this.p2Actions],
       bullets: JSON.parse(JSON.stringify(s.bullets)),
       events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || [])],
       animData: this.getAnimData([...(p1SR?.events||[]),...(p2SR?.events||[]),...(collision?.events||[])]),

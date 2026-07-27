@@ -76,3 +76,9 @@ body{background:var(--bg);color:var(--txt);font-family:'Press Start 2P',monospac
 .edp p{font-size:.45rem;color:var(--c1);margin:5px 0}
 .edp .h{font-size:.3rem;color:#555}
 @media(max-width:500px){.n1{font-size:1rem}.n1.sm{font-size:.65rem}.btn{font-size:.4rem;padding:7px 10px}.cg{gap:6px}.abtns{grid-template-columns:repeat(4,1fr)}.sg{grid-template-columns:repeat(3,1fr)}}
+/* Battle queue display */
+.bq-row{display:flex;align-items:center;gap:4px;margin:2px 0}
+.bq-label{font-size:.28rem;color:var(--c1);min-width:22px}
+.bq-slots{display:flex;flex-wrap:wrap;gap:1px}
+.bq-slot{font-size:.22rem;padding:2px 3px;background:#12122a;border:1px solid #1a1a2e;color:#666}
+.bq-slot.active{color:var(--c3);border-color:var(--c3);background:#1a1a0a;box-shadow:0 0 4px var(--c3)}
