@@ -101,7 +101,8 @@ class GameRoom {
       io.to(this.id).emit('gameOver', { winner: w, p1Hp: s.p1.hp, p2Hp: s.p2.hp, reason: this.round >= this.maxRounds ? 'maxRounds' : 'death' });
       this.clearTimer();
     } else {
-      setTimeout(() => this.startPrepare(), 600);
+      // Wait for client animation (16 ticks * 1000ms + buffer)
+      setTimeout(() => this.startPrepare(), 17000);
     }
   }
 }
@@ -194,6 +195,7 @@ io.on('connection', (socket) => {
     for (let i = 0; i < 16; i++) actions.push(pool[Math.floor(Math.random() * pool.length)]);
     r.pActions[aiSid] = actions;
     r.pReady[aiSid] = true;
+    if (r.state === 'prepare' && r.bothReady()) { r.clearTimer(); r.runBattle(); }
   });
 
   // === Training Mode ===
@@ -225,6 +227,7 @@ io.on('connection', (socket) => {
     for (let i = 0; i < 16; i++) actions.push('wait');
     r.pActions[trainSid] = actions;
     r.pReady[trainSid] = true;
+    if (r.state === 'prepare' && r.bothReady()) { r.clearTimer(); r.runBattle(); }
   });
 
   socket.on('leaveRoom', () => {
