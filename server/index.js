@@ -20,7 +20,7 @@ class GameRoom {
     this.id = id; this.players = [];
     this.pActions = {}; this.pReady = {}; this.pChars = {}; this.pSkills = {}; this.pCustom = {};
     this.state = 'waiting'; this.round = 0; this.maxRounds = 30; this.prepTime = 60;
-    this.timer = null; this.engine = null;
+    this.timer = null; this.engine = null; this.puppet = false;
   }
 
   addPlayer(sid, name) {
@@ -47,10 +47,12 @@ class GameRoom {
     const c1 = chars.find(c => c.id === (this.pChars[p1.sid] || 'warrior')) || chars[0];
     const c2 = chars.find(c => c.id === (this.pChars[p2.sid] || 'warrior')) || chars[0];
 
+    const p2MaxHp = this.puppet ? 2147483647 : c2.maxHp;
+
     this.engine = new BattleEngine();
     this.engine.init({
       p1: { id: 'P1', charId: c1.id, x: 5, facing: 1, hp: c1.maxHp, maxHp: c1.maxHp, mp: c1.maxMp, maxMp: c1.maxMp, sp: c1.maxSp, maxSp: c1.maxSp, atk: c1.atk, def: c1.def, skills: this.pSkills[p1.sid] || c1.defaultSkills, customSkills: this.pCustom[p1.sid] || {} },
-      p2: { id: 'P2', charId: c2.id, x: 10, facing: -1, hp: c2.maxHp, maxHp: c2.maxHp, mp: c2.maxMp, maxMp: c2.maxMp, sp: c2.maxSp, maxSp: c2.maxSp, atk: c2.atk, def: c2.def, skills: this.pSkills[p2.sid] || c2.defaultSkills, customSkills: this.pCustom[p2.sid] || {} },
+      p2: { id: 'P2', charId: c2.id, x: 10, facing: -1, hp: p2MaxHp, maxHp: p2MaxHp, mp: c2.maxMp, maxMp: c2.maxMp, sp: c2.maxSp, maxSp: c2.maxSp, atk: c2.atk, def: c2.def, skills: this.pSkills[p2.sid] || c2.defaultSkills, customSkills: this.pCustom[p2.sid] || {} },
     });
   }
 
@@ -194,12 +196,43 @@ io.on('connection', (socket) => {
     r.pReady[aiSid] = true;
   });
 
+  // === Training Mode ===
+  socket.on('startTrain', (d) => {
+    const rid = 'TR-' + uuidv4().substring(0, 4);
+    const r = new GameRoom(rid); rooms.set(rid, r);
+    r.addPlayer(socket.id, d.name || 'Player');
+    r.addPlayer('TRAIN-' + rid, '训练假人');
+    socket.join(rid);
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    r.pChars[socket.id] = d.charId || 'warrior';
+    r.pSkills[socket.id] = d.skillIds || pChar.defaultSkills;
+    // Puppet: any char, but massive HP
+    r.pChars['TRAIN-' + rid] = 'warrior';
+    r.pSkills['TRAIN-' + rid] = ['warrior_slash', 'warrior_charge', 'warrior_whirlwind'];
+    r.puppet = true;
+    socket.emit('trainStart', { roomId: rid, n: 1 });
+    r.startPrepare();
+  });
+
+  socket.on('trainReady', (d) => {
+    const r = rooms.get(d.roomId);
+    if (!r) return;
+    const trainSid = r.players.find(p => p.name === '训练假人')?.sid;
+    if (!trainSid) return;
+    // Puppet always does wait (does nothing)
+    const actions = [];
+    for (let i = 0; i < 16; i++) actions.push('wait');
+    r.pActions[trainSid] = actions;
+    r.pReady[trainSid] = true;
+  });
+
   socket.on('leaveRoom', () => {
     for (const [rid, r] of rooms) {
       if (r.players.find(p => p.sid === socket.id)) {
         r.remove(socket.id); socket.leave(rid);
         io.to(rid).emit('playerLeft');
-        if (r.players.length === 0 || rid.startsWith('AI-')) { r.clearTimer(); rooms.delete(rid); }
+        if (r.players.length === 0 || rid.startsWith('AI-') || rid.startsWith('TR-')) { r.clearTimer(); rooms.delete(rid); }
         break;
       }
     }
@@ -209,7 +242,7 @@ io.on('connection', (socket) => {
     for (const [rid, r] of rooms) {
       if (r.players.find(p => p.sid === socket.id)) {
         r.remove(socket.id); io.to(rid).emit('playerLeft');
-        if (r.players.length === 0 || rid.startsWith('AI-')) { r.clearTimer(); rooms.delete(rid); }
+        if (r.players.length === 0 || rid.startsWith('AI-') || rid.startsWith('TR-')) { r.clearTimer(); rooms.delete(rid); }
         break;
       }
     }

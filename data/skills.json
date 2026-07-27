@@ -1,4 +1,20 @@
 {
+  "animations": {
+    "melee_hit": { "type":"flash", "duration":200, "color":"#ffffff", "particles":8, "spread":4 },
+    "melee_miss": { "type":"slash_trail", "duration":150, "color":"#888888" },
+    "bullet_fly": { "type":"trail", "duration":300, "trailLen":3, "particles":2 },
+    "bullet_hit": { "type":"explosion", "duration":300, "color":"#ff8800", "particles":10, "spread":5 },
+    "bullet_clash": { "type":"spark", "duration":200, "color":"#ffffff", "particles":6, "spread":3 },
+    "dash": { "type":"blur", "duration":200, "trailLen":4, "color":"#00ddff" },
+    "dodge": { "type":"blur", "duration":200, "trailLen":3, "color":"#8888ff" },
+    "collision": { "type":"shockwave", "duration":300, "color":"#ffff00", "particles":12, "spread":6 },
+    "defend": { "type":"shield_ring", "duration":250, "color":"#4488ff" },
+    "teleport": { "type":"flash", "duration":200, "color":"#ff00ff", "particles":8 },
+    "aoe": { "type":"explosion", "duration":400, "color":"#ff4444", "particles":16, "spread":8 },
+    "dot_tick": { "type":"drip", "duration":300, "color":"#44ff44", "particles":2, "spread":1 },
+    "stun": { "type":"spark_ring", "duration":300, "color":"#ffff00", "particles":4, "spread":3 },
+    "buff": { "type":"glow_ring", "duration":500, "color":"#4488ff" }
+  },
   "skills": {
     "warrior_slash": {
       "id":"warrior_slash","name":"横斩","charId":"warrior",
@@ -6,7 +22,8 @@
       "damageRatio":1.5,"range":2,"mpCost":8,"spCost":5,
       "direction":"forward","desc":"前方2格近战斩击",
       "bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
-      "color":"#00ffff","icon":[0,1,1,1,0,0,1,0,1,0,1,0,1,0,1,1,1,0,0,1,1,1,0,0,1]
+      "color":"#00ffff","icon":[0,1,1,1,0,0,1,0,1,0,1,0,1,0,1,1,1,0,0,1,1,1,0,0,1],
+      "anim_hit":"melee_hit","anim_cast":"melee_hit"
     },
     "warrior_charge": {
       "id":"warrior_charge","name":"冲锋","charId":"warrior",
@@ -14,7 +31,8 @@
       "damageRatio":1.0,"range":4,"mpCost":12,"spCost":15,
       "direction":"forward","desc":"向前冲刺4格，路径撞伤",
       "bulletPriority":4,"bulletSpeed":0,"bulletRange":0,
-      "color":"#00ddff","icon":[0,1,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,1,0,1,0,0,1,0,0]
+      "color":"#00ddff","icon":[0,1,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,1,0,1,0,0,1,0,0],
+      "anim_hit":"dash","anim_cast":"dash"
     },
     "warrior_whirlwind": {
       "id":"warrior_whirlwind","name":"旋风斩","charId":"warrior",
@@ -22,7 +40,8 @@
       "damageRatio":0.8,"range":1,"mpCost":15,"spCost":10,
       "direction":"around","desc":"周身1格AOE",
       "bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
-      "color":"#00ccff","icon":[0,1,1,0,1,0,0,1,1,1,0,1,0,1,1,0,0,0,1,0,0,0,1,0,0]
+      "color":"#00ccff","icon":[0,1,1,0,1,0,0,1,1,1,0,1,0,1,1,0,0,0,1,0,0,0,1,0,0],
+      "anim_hit":"melee_hit","anim_cast":"aoe"
     },
     "archer_arrow": {
       "id":"archer_arrow","name":"穿刺箭","charId":"archer",
@@ -30,7 +49,8 @@
       "damageRatio":1.2,"range":0,"mpCost":5,"spCost":3,
       "direction":"forward","desc":"直射弹幕，射程无限",
       "bulletPriority":4,"bulletSpeed":1,"bulletRange":99,
-      "color":"#00ff44","icon":[0,1,1,0,0,0,1,1,1,1,1,1,0,1,0,1,0,0,1,1,0,0,0,1,1]
+      "color":"#00ff44","icon":[0,1,1,0,0,0,1,1,1,1,1,1,0,1,0,1,0,0,1,1,0,0,0,1,1],
+      "anim_hit":"bullet_hit","anim_cast":"bullet_fly"
     },
     "archer_rain": {
       "id":"archer_rain","name":"箭雨","charId":"archer",
@@ -39,7 +59,8 @@
       "direction":"target","desc":"指定3格范围天降箭雨",
       "bulletPriority":0,"bulletSpeed":0,"bulletRange":0,
       "aoeRadius":1,"targetRange":8,"color":"#44ff44",
-      "icon":[0,1,1,0,0,1,0,1,0,0,0,0,1,1,0,1,0,0,1,0,0,1,0,0,1]
+      "icon":[0,1,1,0,0,1,0,1,0,0,0,0,1,1,0,1,0,0,1,0,0,1,0,0,1],
+      "anim_hit":"aoe","anim_cast":"aoe"
     },
     "archer_snipe": {
       "id":"archer_snipe","name":"狙击","charId":"archer",
@@ -47,7 +68,8 @@
       "damageRatio":2.5,"range":0,"mpCost":30,"spCost":20,
       "direction":"forward","desc":"高伤贯穿弹幕(1级优先)",
       "bulletPriority":1,"bulletSpeed":1,"bulletRange":99,
-      "color":"#ffff00","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,1,1,1,0,0,1,1,0,1,0,1,0]
+      "color":"#ffff00","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,1,1,1,0,0,1,1,0,1,0,1,0],
+      "anim_hit":"bullet_hit","anim_cast":"bullet_fly"
     },
     "mage_fireball": {
       "id":"mage_fireball","name":"火球术","charId":"mage",
@@ -55,7 +77,8 @@
       "damageRatio":1.8,"range":0,"mpCost":12,"spCost":5,
       "direction":"forward","desc":"中速弹幕，射程6格",
       "bulletPriority":3,"bulletSpeed":1,"bulletRange":6,
-      "color":"#ff8800","icon":[0,1,0,0,1,0,0,1,0,0,1,1,0,1,1,1,0,0,0,1,1,0,0,0,1]
+      "color":"#ff8800","icon":[0,1,0,0,1,0,0,1,0,0,1,1,0,1,1,1,0,0,0,1,1,0,0,0,1],
+      "anim_hit":"bullet_hit","anim_cast":"bullet_fly"
     },
     "mage_lightning": {
       "id":"mage_lightning","name":"闪电链","charId":"mage",
@@ -63,7 +86,8 @@
       "damageRatio":1.2,"range":0,"mpCost":25,"spCost":15,
       "direction":"forward","desc":"1级优先激光贯穿",
       "bulletPriority":1,"bulletSpeed":1,"bulletRange":99,
-      "color":"#ffff44","icon":[0,1,1,0,0,0,0,0,1,0,0,0,1,1,1,1,1,0,0,0,1,0,0,0,1]
+      "color":"#ffff44","icon":[0,1,1,0,0,0,0,0,1,0,0,0,1,1,1,1,1,0,0,0,1,0,0,0,1],
+      "anim_hit":"bullet_hit","anim_cast":"bullet_fly"
     },
     "mage_shield": {
       "id":"mage_shield","name":"魔法盾","charId":"mage",
@@ -71,7 +95,8 @@
       "damageRatio":0,"range":0,"mpCost":15,"spCost":10,
       "direction":"forward","desc":"身前召唤2级护盾弹幕",
       "bulletPriority":2,"bulletSpeed":0,"bulletRange":1,
-      "color":"#4488ff","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,0,1,0,0,0,1,1,0,1,1,0]
+      "color":"#4488ff","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,0,1,0,0,0,1,1,0,1,1,0],
+      "anim_hit":"buff","anim_cast":"defend"
     },
     "assassin_backstab": {
       "id":"assassin_backstab","name":"背刺","charId":"assassin",
@@ -79,7 +104,8 @@
       "damageRatio":2.0,"range":1,"mpCost":10,"spCost":10,
       "direction":"forward","desc":"前方1格，若在背后则2.4倍率",
       "backstabBonus":1.2,"bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
-      "color":"#ff4444","icon":[0,1,1,0,0,0,0,1,0,0,1,1,1,1,1,1,0,0,0,1,0,0,0,1,0]
+      "color":"#ff4444","icon":[0,1,1,0,0,0,0,1,0,0,1,1,1,1,1,1,0,0,0,1,0,0,0,1,0],
+      "anim_hit":"melee_hit","anim_cast":"melee_hit"
     },
     "assassin_shadowstep": {
       "id":"assassin_shadowstep","name":"暗影步","charId":"assassin",
@@ -87,7 +113,8 @@
       "damageRatio":0,"range":0,"mpCost":15,"spCost":20,
       "direction":"forward","desc":"传送至敌人身后",
       "bulletPriority":0,"bulletSpeed":0,"bulletRange":0,
-      "color":"#ff00ff","icon":[0,1,1,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,0,0,0,1,1,0,0]
+      "color":"#ff00ff","icon":[0,1,1,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,0,0,0,1,1,0,0],
+      "anim_hit":"teleport","anim_cast":"teleport"
     },
     "assassin_poison": {
       "id":"assassin_poison","name":"淬毒","charId":"assassin",
@@ -95,7 +122,8 @@
       "damageRatio":0.5,"range":1,"mpCost":8,"spCost":5,
       "direction":"forward","desc":"前方1格+3tick毒(每tick5%atk真伤)",
       "dotDamage":0.05,"dotTicks":3,"bulletPriority":4,"bulletSpeed":0,"bulletRange":0,
-      "color":"#88ff00","icon":[0,1,1,0,0,0,0,1,1,0,0,0,1,0,0,0,1,1,0,0,0,1,0,0,0]
+      "color":"#88ff00","icon":[0,1,1,0,0,0,0,1,1,0,0,0,1,0,0,0,1,1,0,0,0,1,0,0,0],
+      "anim_hit":"dot_tick","anim_cast":"melee_hit"
     }
   },
   "genericSkills": [

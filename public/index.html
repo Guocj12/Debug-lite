@@ -14,8 +14,9 @@
     <p class="n2">霓虹像素格斗 v2</p>
     <div class="menu-btns">
       <button class="btn btn-b" onclick="nav('charSel'); initCharSel()">⚔️ 人机对战</button>
+      <button class="btn btn-g" onclick="nav('charSel'); G._gameType='train'; initCharSel()">🎯 训练场</button>
       <button class="btn btn-p" onclick="nav('lobby'); initLobby()">🌐 联机对战</button>
-      <button class="btn btn-g" onclick="nav('editor')">📝 技能编辑</button>
+      <button class="btn btn-y" onclick="nav('editor')">📝 技能编辑</button>
     </div>
     <div class="ver">16格纯横版 · 弹幕碰撞 · 自定义技能</div>
   </div>
@@ -29,7 +30,7 @@
       <div id="sg" class="sg"></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:8px;">
-      <button class="btn btn-b" onclick="startAIGame()">开始对战</button>
+      <button class="btn btn-b" id="startGameBtn" onclick="startAIGame()">开始对战</button>
       <button class="btn btn-d" onclick="nav('menu')">返回</button>
     </div>
   </div>
@@ -71,6 +72,7 @@
         <button class="btn btn-p" style="font-size:0.35rem;padding:5px 8px;" onclick="undoAction()">撤销</button>
         <button class="btn btn-g" style="font-size:0.35rem;padding:5px 8px;" onclick="randomFill()">随机</button>
         <button class="btn btn-y" style="font-size:0.35rem;padding:5px 8px;" id="rdyBtn" onclick="readyBattle()">✅ 完成</button>
+        <button class="btn btn-d" style="font-size:0.35rem;padding:5px 8px;" onclick="quitBattle()">🚪 退出</button>
       </div>
     </div>
     <!-- Log -->
