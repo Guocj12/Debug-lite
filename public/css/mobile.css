@@ -1,0 +1,155 @@
+/* ============================================
+   移动端响应式样式
+   ============================================ */
+
+@media (max-width: 768px) {
+    .panel {
+        padding: 15px;
+        border-radius: 8px;
+        border: none;
+        box-shadow: none;
+        background: transparent;
+        max-width: 100%;
+        height: 100%;
+        justify-content: flex-start;
+        padding-top: 10px;
+    }
+
+    .neon-title h1 {
+        font-size: 16px;
+        letter-spacing: 1px;
+    }
+
+    .subtitle {
+        font-size: 8px;
+        letter-spacing: 2px;
+    }
+
+    /* 大厅 */
+    .lobby-form {
+        max-width: 100%;
+    }
+
+    .neon-btn {
+        font-size: 10px;
+        padding: 10px 16px;
+    }
+
+    .join-section {
+        flex-direction: row;
+    }
+
+    /* 技能选择 */
+    .skill-list {
+        grid-template-columns: 1fr;
+        max-height: 50vh;
+    }
+
+    /* 准备阶段 */
+    .prepare-main {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .prepare-header {
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 10px;
+    }
+
+    .timer-value {
+        font-size: 18px;
+    }
+
+    .queue-section {
+        order: 1;
+    }
+
+    .action-buttons-panel {
+        order: 2;
+    }
+
+    .action-queue-display {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        min-height: 50px;
+        max-height: 80px;
+        flex-direction: row;
+    }
+
+    .action-queue-display .queue-item {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .move-buttons {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    .queue-controls {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .queue-controls .neon-btn {
+        font-size: 9px;
+        padding: 8px 6px;
+    }
+
+    /* 战斗 */
+    .battle-hud {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .round-display {
+        order: -1;
+    }
+
+    .battle-canvas-container {
+        border-radius: 4px;
+    }
+
+    .action-feed {
+        max-height: 50px;
+        font-size: 10px;
+    }
+
+    /* 游戏结束 */
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .game-over-buttons {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .game-over-buttons .neon-btn {
+        width: 100%;
+    }
+
+    /* 通用按钮触摸友好 */
+    .action-btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 11px;
+    }
+}
+
+/* 超小屏 */
+@media (max-width: 380px) {
+    .neon-title h1 {
+        font-size: 13px;
+    }
+
+    .timer-value {
+        font-size: 16px;
+    }
+
+    .neon-btn {
+        font-size: 9px;
+        padding: 8px 12px;
+    }
+}

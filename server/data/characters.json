@@ -1,0 +1,94 @@
+{
+  "characters": [
+    {
+      "id": "neon_warrior",
+      "name": "霓虹战士",
+      "description": "均衡型战士，适合新手",
+      "baseHp": 100,
+      "baseAttack": 12,
+      "baseDefense": 5,
+      "speed": 5,
+      "pixelScale": 12,
+      "neonColor": "#00ffff",
+      "glowColor": "#00ffff44",
+      "shape": "humanoid",
+      "shapeConfig": {
+        "bodyColor": "#00ffff",
+        "eyeColor": "#ffffff",
+        "outlineColor": "#008888"
+      }
+    },
+    {
+      "id": "geometric_slime",
+      "name": "几何史莱姆",
+      "description": "可爱的圆形生物，HP高但攻击低",
+      "baseHp": 130,
+      "baseAttack": 8,
+      "baseDefense": 3,
+      "speed": 4,
+      "pixelScale": 10,
+      "neonColor": "#ff00ff",
+      "glowColor": "#ff00ff33",
+      "shape": "circle",
+      "shapeConfig": {
+        "bodyColor": "#ff00ff",
+        "innerColor": "#ff88ff",
+        "bounceHeight": 3
+      }
+    },
+    {
+      "id": "shadow_blade",
+      "name": "暗影之刃",
+      "description": "刺客型，高攻低防高速度",
+      "baseHp": 75,
+      "baseAttack": 18,
+      "baseDefense": 2,
+      "speed": 8,
+      "pixelScale": 11,
+      "neonColor": "#8800ff",
+      "glowColor": "#8800ff55",
+      "shape": "humanoid",
+      "shapeConfig": {
+        "bodyColor": "#8800ff",
+        "eyeColor": "#ff0000",
+        "outlineColor": "#440088"
+      }
+    },
+    {
+      "id": "triangle_sentinel",
+      "name": "三角哨兵",
+      "description": "防御型三角形机体",
+      "baseHp": 110,
+      "baseAttack": 10,
+      "baseDefense": 10,
+      "speed": 3,
+      "pixelScale": 11,
+      "neonColor": "#ff8800",
+      "glowColor": "#ff880044",
+      "shape": "triangle",
+      "shapeConfig": {
+        "bodyColor": "#ff8800",
+        "innerColor": "#ffcc44",
+        "rotationSpeed": "slow"
+      }
+    },
+    {
+      "id": "void_cube",
+      "name": "虚空方块",
+      "description": "高血量高防御的方块，速度最慢",
+      "baseHp": 150,
+      "baseAttack": 14,
+      "baseDefense": 8,
+      "speed": 2,
+      "pixelScale": 12,
+      "neonColor": "#4444ff",
+      "glowColor": "#4444ff66",
+      "shape": "square",
+      "shapeConfig": {
+        "bodyColor": "#4444ff",
+        "faceColor": "#8888ff",
+        "pulseSpeed": "medium"
+      }
+    }
+  ]
+}

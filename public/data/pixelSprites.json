@@ -1,0 +1,552 @@
+{
+  "global": {
+    "defaultPixelSize": 12,
+    "backgroundColor": "#0a0a0a",
+    "gridColor": "#111133",
+    "scanlineOpacity": 0.05
+  },
+  "sprites": {
+    "neon_warrior": {
+      "idle": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          "..X..",
+          ".X.X.",
+          ".X.X.",
+          "X...X"
+        ],
+        "glowPixels": [
+          "..G..",
+          ".GGG.",
+          ".GGG.",
+          "GGGGG",
+          "..G..",
+          ".....",
+          ".....",
+          "....."
+        ]
+      },
+      "move_frame1": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          "..X..",
+          ".X.X.",
+          "X.X..",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", "..G..", ".....", ".....", "....."]
+      },
+      "move_frame2": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          "..X..",
+          "X.X..",
+          ".X.X.",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", "..G..", ".....", ".....", "....."]
+      },
+      "attack": {
+        "width": 7,
+        "height": 8,
+        "pixels": [
+          "..X....",
+          ".XXX.XX",
+          ".XWX.X.",
+          "XXXXX..",
+          "..X....",
+          ".X.X...",
+          ".X.X...",
+          "X...X.."
+        ],
+        "glowPixels": ["..G....", ".GGG.GG", ".GGG.G.", "GGGGG..", "..G....", ".....", ".....", "....."]
+      },
+      "defend": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".SSS.",
+          ".SWS.",
+          "SSSSS",
+          "..X..",
+          ".X.X.",
+          ".X.X.",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", "..G..", ".....", ".....", "....."]
+      },
+      "hurt": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..R..",
+          ".RRR.",
+          ".RWR.",
+          "RRRRR",
+          "..R..",
+          ".R.R.",
+          ".R.R.",
+          "R...R"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", "..G..", ".....", ".....", "....."]
+      }
+    },
+    "geometric_slime": {
+      "idle": {
+        "width": 6,
+        "height": 5,
+        "pixels": [
+          ".XXXX.",
+          "XIIIIX",
+          "XIIIIX",
+          "XIIIIX",
+          ".XXXX."
+        ],
+        "glowPixels": [
+          ".GGGG.",
+          "GGGGGG",
+          "GGGGGG",
+          "GGGGGG",
+          ".GGGG."
+        ]
+      },
+      "move_frame1": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          ".XXXX.",
+          "XIIIIX",
+          "XIIIIX",
+          "XIIIIX",
+          ".XXXX.",
+          "......"
+        ],
+        "glowPixels": [".GGGG.", "GGGGGG", "GGGGGG", "GGGGGG", ".GGGG.", "......"]
+      },
+      "move_frame2": {
+        "width": 6,
+        "height": 5,
+        "pixels": [
+          "......",
+          ".XXXX.",
+          "XIIIIX",
+          "XIIIIX",
+          ".XXXX."
+        ],
+        "glowPixels": ["......", ".GGGG.", "GGGGGG", "GGGGGG", ".GGGG."]
+      },
+      "attack": {
+        "width": 8,
+        "height": 5,
+        "pixels": [
+          ".XXXX...",
+          "XIIIIXXX",
+          "XIIIIX..",
+          "XIIIIXXX",
+          ".XXXX..."
+        ],
+        "glowPixels": [".GGGG...", "GGGGGGGG", "GGGGGG..", "GGGGGGGG", ".GGGG..."]
+      },
+      "defend": {
+        "width": 6,
+        "height": 5,
+        "pixels": [
+          ".SSSS.",
+          "SIIIIS",
+          "SIIIIS",
+          "SIIIIS",
+          ".SSSS."
+        ],
+        "glowPixels": [".GGGG.", "GGGGGG", "GGGGGG", "GGGGGG", ".GGGG."]
+      },
+      "hurt": {
+        "width": 6,
+        "height": 5,
+        "pixels": [
+          ".RRRR.",
+          "RIIIIR",
+          "RIIIIR",
+          "RIIIIR",
+          ".RRRR."
+        ],
+        "glowPixels": [".GGGG.", "GGGGGG", "GGGGGG", "GGGGGG", ".GGGG."]
+      }
+    },
+    "shadow_blade": {
+      "idle": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          ".X.X.",
+          ".X.X.",
+          "XX.XX",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", ".....", ".....", ".....", "....."]
+      },
+      "move_frame1": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          "X.X..",
+          ".X.X.",
+          "XX.XX",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", ".....", ".....", ".....", "....."]
+      },
+      "move_frame2": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..X..",
+          ".XXX.",
+          ".XWX.",
+          "XXXXX",
+          "..X.X",
+          ".X.X.",
+          "XX.XX",
+          "X...X"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", ".....", ".....", ".....", "....."]
+      },
+      "attack": {
+        "width": 9,
+        "height": 8,
+        "pixels": [
+          "..X......",
+          ".XXX.XXXX",
+          ".XWX.X...",
+          "XXXXX....",
+          ".X.X.....",
+          ".X.X.....",
+          "XX.XX....",
+          "X...X...."
+        ],
+        "glowPixels": ["..G......", ".GGG.GGGG", ".GGG.G...", "GGGGG....", ".....", ".....", ".....", "....."]
+      },
+      "defend": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..S..",
+          ".SSS.",
+          ".SWS.",
+          "SSSSS",
+          ".S.S.",
+          ".S.S.",
+          "SS.SS",
+          "S...S"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", ".....", ".....", ".....", "....."]
+      },
+      "hurt": {
+        "width": 5,
+        "height": 8,
+        "pixels": [
+          "..R..",
+          ".RRR.",
+          ".RWR.",
+          "RRRRR",
+          ".R.R.",
+          ".R.R.",
+          "RR.RR",
+          "R...R"
+        ],
+        "glowPixels": ["..G..", ".GGG.", ".GGG.", "GGGGG", ".....", ".....", ".....", "....."]
+      }
+    },
+    "triangle_sentinel": {
+      "idle": {
+        "width": 7,
+        "height": 7,
+        "pixels": [
+          "...T...",
+          "..TTT..",
+          ".TTTTT.",
+          "TTTIITT",
+          ".TTTTT.",
+          "..TTT..",
+          "...T..."
+        ],
+        "glowPixels": ["...G...", "..GGG..", ".GGGGG.", "GGGGGGG", ".GGGGG.", "..GGG..", "...G..."]
+      },
+      "move_frame1": {
+        "width": 7,
+        "height": 7,
+        "pixels": [
+          ".......",
+          "...T...",
+          "..TTT..",
+          ".TTTTT.",
+          "TTTIITT",
+          "..TTT..",
+          "...T..."
+        ],
+        "glowPixels": [".......", "...G...", "..GGG..", ".GGGGG.", "GGGGGGG", "..GGG..", "...G..."]
+      },
+      "move_frame2": {
+        "width": 7,
+        "height": 7,
+        "pixels": [
+          "...T...",
+          "..TTT..",
+          ".TTTTT.",
+          "TTTIITT",
+          ".TTTTT.",
+          ".......",
+          "......."
+        ],
+        "glowPixels": ["...G...", "..GGG..", ".GGGGG.", "GGGGGGG", ".GGGGG.", ".......", "......."]
+      },
+      "attack": {
+        "width": 9,
+        "height": 7,
+        "pixels": [
+          "...T.....",
+          "..TTTTTTT",
+          ".TTTTT...",
+          "TTTIITT..",
+          ".TTTTT...",
+          "..TTTTTTT",
+          "...T....."
+        ],
+        "glowPixels": ["...G.....", "..GGGGGGG", ".GGGGG...", "GGGGGGG..", ".GGGGG...", "..GGGGGGG", "...G....."]
+      },
+      "defend": {
+        "width": 7,
+        "height": 7,
+        "pixels": [
+          "...S...",
+          "..SSS..",
+          ".SSSSS.",
+          "SSSISSS",
+          ".SSSSS.",
+          "..SSS..",
+          "...S..."
+        ],
+        "glowPixels": ["...G...", "..GGG..", ".GGGGG.", "GGGGGGG", ".GGGGG.", "..GGG..", "...G..."]
+      },
+      "hurt": {
+        "width": 7,
+        "height": 7,
+        "pixels": [
+          "...R...",
+          "..RRR..",
+          ".RRRRR.",
+          "RRRIRRR",
+          ".RRRRR.",
+          "..RRR..",
+          "...R..."
+        ],
+        "glowPixels": ["...G...", "..GGG..", ".GGGGG.", "GGGGGGG", ".GGGGG.", "..GGG..", "...G..."]
+      }
+    },
+    "void_cube": {
+      "idle": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          "XXXXXX",
+          "XFFFFX",
+          "XFFFFX",
+          "XFFFFX",
+          "XFFFFX",
+          "XXXXXX"
+        ],
+        "glowPixels": [
+          "GGGGGG",
+          "GGGGGG",
+          "GGGGGG",
+          "GGGGGG",
+          "GGGGGG",
+          "GGGGGG"
+        ]
+      },
+      "move_frame1": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          "XXXXXX",
+          "XFFFFX",
+          "XFFFFX",
+          "XFFFFX",
+          "XFFFFX",
+          "......"
+        ],
+        "glowPixels": ["GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "......"]
+      },
+      "move_frame2": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          "......",
+          "XXXXXX",
+          "XFFFFX",
+          "XFFFFX",
+          "XFFFFX",
+          "XXXXXX"
+        ],
+        "glowPixels": ["......", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG"]
+      },
+      "attack": {
+        "width": 8,
+        "height": 6,
+        "pixels": [
+          "XXXXXX..",
+          "XFFFFXXX",
+          "XFFFFX..",
+          "XFFFFXXX",
+          "XFFFFX..",
+          "XXXXXX.."
+        ],
+        "glowPixels": ["GGGGGG..", "GGGGGGGG", "GGGGGG..", "GGGGGGGG", "GGGGGG..", "GGGGGG.."]
+      },
+      "defend": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          "SSSSSS",
+          "SFFFFS",
+          "SFFFFS",
+          "SFFFFS",
+          "SFFFFS",
+          "SSSSSS"
+        ],
+        "glowPixels": ["GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG"]
+      },
+      "hurt": {
+        "width": 6,
+        "height": 6,
+        "pixels": [
+          "RRRRRR",
+          "RFFFFR",
+          "RFFFFR",
+          "RFFFFR",
+          "RFFFFR",
+          "RRRRRR"
+        ],
+        "glowPixels": ["GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG", "GGGGGG"]
+      }
+    }
+  },
+  "effects": {
+    "projectile_fire": {
+      "width": 3,
+      "height": 3,
+      "frames": [
+        [".F.", "FFF", ".F."],
+        [".f.", "fFf", ".f."],
+        ["...", ".f.", "..."]
+      ],
+      "color": "#ff4422",
+      "trailColor": "#ff8844"
+    },
+    "shield_hit": {
+      "width": 5,
+      "height": 3,
+      "frames": [
+        ["..S..", ".SSS.", "..S.."],
+        [".S.S.", "S...S", ".S.S."],
+        [".....", "..S..", "....."]
+      ],
+      "color": "#ffaa00"
+    },
+    "lightning": {
+      "width": 3,
+      "height": 8,
+      "frames": [
+        [".L.", ".L.", "LL.", ".LL", "L..", ".L.", ".L.", ".L."],
+        ["..L", ".L.", "LL.", "L.L", "..L", ".L.", ".L.", "L.."],
+        [".L.", ".L.", ".LL", "L..", "LL.", ".L.", ".L.", "..L"]
+      ],
+      "color": "#ffff00"
+    },
+    "heal_glow": {
+      "width": 5,
+      "height": 5,
+      "frames": [
+        ["..+..", ".+++.", "+++++", ".+++.", "..+.."],
+        [".....", "..+..", ".+++.", "..+..", "....."]
+      ],
+      "color": "#ff88ff"
+    },
+    "dash_trail": {
+      "width": 5,
+      "height": 3,
+      "frames": [
+        [".***.", "*****", ".***."],
+        ["..*..", ".***.", "..*.."],
+        [".....", "..*..", "....."]
+      ],
+      "color": "#00ff88"
+    },
+    "explosion": {
+      "width": 7,
+      "height": 7,
+      "frames": [
+        ["...*...", "..***..", ".*****.", "*******", ".*****.", "..***..", "...*..."],
+        [".......", "..*.*..", ".*...*.", "*..*..*", ".*...*.", "..*.*..", "......."],
+        [".......", ".......", "...*...", "..*.*..", "...*...", ".......", "......."]
+      ],
+      "color": "#ff8800"
+    }
+  },
+  "battlefield": {
+    "grid": {
+      "width": 20,
+      "height": 12,
+      "decorations": [
+        { "x": 0, "y": 0, "char": "┌" },
+        { "x": 3, "y": 0, "char": "─" },
+        { "x": 9, "y": 0, "char": "─" },
+        { "x": 15, "y": 0, "char": "─" },
+        { "x": 19, "y": 0, "char": "┐" },
+        { "x": 0, "y": 11, "char": "└" },
+        { "x": 3, "y": 11, "char": "─" },
+        { "x": 9, "y": 11, "char": "─" },
+        { "x": 15, "y": 11, "char": "─" },
+        { "x": 19, "y": 11, "char": "┘" }
+      ]
+    }
+  },
+  "colorMap": {
+    "X": "{bodyColor}",
+    "W": "#ffffff",
+    "G": "{glowColor}",
+    "S": "#aaaaaa",
+    "R": "#ff4444",
+    "I": "{innerColor}",
+    "T": "{bodyColor}",
+    "F": "{faceColor}",
+    "L": "{color}",
+    "f": "{trailColor}",
+    "F1": "{color}",
+    "+": "{color}",
+    "*": "{color}"
+  }
+}
