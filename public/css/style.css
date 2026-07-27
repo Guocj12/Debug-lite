@@ -1,0 +1,708 @@
+/* ======== Debug-Lite 霓虹像素风样式 ======== */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+:root {
+  --neon-cyan: #00ffff;
+  --neon-pink: #ff00ff;
+  --neon-yellow: #ffff00;
+  --neon-green: #00ff44;
+  --neon-blue: #0044ff;
+  --neon-white: #ffffff;
+  --bg-dark: #0a0a0a;
+  --bg-panel: #111122;
+  --border-glow: #00ffff;
+  --pixel-size: 2px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+body {
+  background: var(--bg-dark);
+  color: var(--neon-cyan);
+  font-family: 'Press Start 2P', 'Courier New', monospace;
+  overflow-x: hidden;
+  min-height: 100vh;
+  image-rendering: pixelated;
+  background-image: 
+    linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+#app {
+  max-width: 800px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+
+.screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 10px;
+  min-height: 100vh;
+}
+
+.screen.active {
+  display: flex;
+}
+
+/* ======== 霓虹标题 ======== */
+.neon-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 2rem;
+  color: var(--neon-cyan);
+  text-align: center;
+  text-shadow: 
+    0 0 5px var(--neon-cyan),
+    0 0 10px var(--neon-cyan),
+    0 0 20px var(--neon-cyan),
+    0 0 40px var(--neon-cyan),
+    0 0 80px var(--neon-cyan);
+  animation: neonPulse 2s ease-in-out infinite alternate;
+  position: relative;
+  letter-spacing: 4px;
+}
+
+.neon-title.small {
+  font-size: 1.2rem;
+  margin: 10px 0;
+}
+
+.neon-title::before {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  color: var(--neon-pink);
+  text-shadow: 
+    0 0 5px var(--neon-pink),
+    0 0 10px var(--neon-pink),
+    0 0 20px var(--neon-pink);
+  clip-path: polygon(0 0, 100% 0, 100% 45%, 0 55%);
+  animation: glitchText 3s linear infinite;
+}
+
+.neon-subtitle {
+  font-size: 0.9rem;
+  color: var(--neon-pink);
+  text-shadow: 0 0 10px var(--neon-pink), 0 0 25px var(--neon-pink);
+  margin: 10px 0 30px;
+  text-align: center;
+  animation: fadeInOut 2s ease-in-out infinite;
+}
+
+@keyframes neonPulse {
+  from { text-shadow: 0 0 5px var(--neon-cyan), 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan); }
+  to { text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan), 0 0 80px var(--neon-cyan), 0 0 120px var(--neon-cyan); }
+}
+
+@keyframes glitchText {
+  0% { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 55%); }
+  20% { clip-path: polygon(0 20%, 100% 20%, 100% 65%, 0 75%); }
+  40% { clip-path: polygon(0 40%, 100% 40%, 100% 85%, 0 95%); }
+  60% { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 55%); }
+  80% { clip-path: polygon(0 10%, 100% 10%, 100% 55%, 0 65%); }
+  100% { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 55%); }
+}
+
+@keyframes fadeInOut {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* ======== 霓虹按钮 ======== */
+.neon-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.65rem;
+  padding: 14px 24px;
+  margin: 8px;
+  border: 2px solid;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.8);
+  color: inherit;
+  border-radius: 2px;
+  position: relative;
+  transition: all 0.2s;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  image-rendering: pixelated;
+}
+
+.neon-btn:active {
+  transform: scale(0.95);
+}
+
+.neon-btn.small {
+  font-size: 0.5rem;
+  padding: 10px 14px;
+}
+
+.btn-blue {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 5px var(--neon-cyan), inset 0 0 5px rgba(0, 255, 255, 0.2);
+}
+
+.btn-blue:hover { box-shadow: 0 0 15px var(--neon-cyan), 0 0 30px var(--neon-cyan), inset 0 0 10px rgba(0,255,255,0.3); }
+
+.btn-pink {
+  color: var(--neon-pink);
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 5px var(--neon-pink), inset 0 0 5px rgba(255, 0, 255, 0.2);
+}
+
+.btn-pink:hover { box-shadow: 0 0 15px var(--neon-pink), 0 0 30px var(--neon-pink), inset 0 0 10px rgba(255,0,255,0.3); }
+
+.btn-green {
+  color: var(--neon-green);
+  border-color: var(--neon-green);
+  box-shadow: 0 0 5px var(--neon-green), inset 0 0 5px rgba(0, 255, 68, 0.2);
+}
+
+.btn-green:hover { box-shadow: 0 0 15px var(--neon-green), 0 0 30px var(--neon-green), inset 0 0 10px rgba(0,255,68,0.3); }
+
+.btn-yellow {
+  color: var(--neon-yellow);
+  border-color: var(--neon-yellow);
+  box-shadow: 0 0 5px var(--neon-yellow), inset 0 0 5px rgba(255, 255, 0, 0.2);
+}
+
+.btn-gray {
+  color: #666;
+  border-color: #444;
+  box-shadow: 0 0 5px #444;
+}
+
+/* ======== 主菜单 ======== */
+.menu-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 20px;
+  z-index: 1;
+  width: 100%;
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0;
+  width: 100%;
+  max-width: 320px;
+}
+
+.menu-buttons .neon-btn {
+  width: 100%;
+  text-align: center;
+}
+
+#menuCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.3;
+}
+
+.version-tag {
+  font-size: 0.4rem;
+  color: #444;
+  margin-top: 20px;
+  letter-spacing: 2px;
+}
+
+/* ======== 角色选择 ======== */
+.char-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 450px;
+  margin: 15px 0;
+}
+
+.char-card {
+  background: var(--bg-panel);
+  border: 2px solid #222;
+  padding: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.char-card:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+}
+
+.char-card.selected {
+  border-color: var(--neon-yellow);
+  box-shadow: 0 0 15px rgba(255, 255, 0, 0.4), inset 0 0 10px rgba(255,255,0,0.1);
+}
+
+.char-card canvas {
+  image-rendering: pixelated;
+  width: 64px;
+  height: 64px;
+}
+
+.char-name {
+  font-size: 0.5rem;
+  color: var(--neon-cyan);
+  margin: 6px 0 4px;
+}
+
+.char-desc {
+  font-size: 0.35rem;
+  color: #888;
+}
+
+.char-stats {
+  font-size: 0.35rem;
+  color: var(--neon-yellow);
+  margin-top: 4px;
+}
+
+/* ======== 技能选择 ======== */
+.skill-selection {
+  width: 100%;
+  max-width: 450px;
+  margin: 10px 0;
+}
+
+.skill-selection.hidden { display: none; }
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.skill-card {
+  background: var(--bg-panel);
+  border: 2px solid #222;
+  padding: 8px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.skill-card:hover {
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 8px rgba(255, 0, 255, 0.3);
+}
+
+.skill-card.selected {
+  border-color: var(--neon-green);
+  box-shadow: 0 0 12px rgba(0, 255, 68, 0.4);
+}
+
+.skill-card canvas {
+  image-rendering: pixelated;
+  width: 32px;
+  height: 32px;
+}
+
+.skill-card .skill-name {
+  font-size: 0.35rem;
+  color: var(--neon-pink);
+  margin-top: 4px;
+}
+
+/* ======== 在线大厅 ======== */
+.lobby-inputs {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  max-width: 400px;
+  margin: 10px 0;
+}
+
+.neon-input {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid #333;
+  color: var(--neon-cyan);
+  padding: 12px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.5rem;
+  outline: none;
+  letter-spacing: 2px;
+}
+
+.neon-input:focus {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+}
+
+.online-status {
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  font-size: 0.5rem;
+  color: var(--neon-yellow);
+  min-height: 24px;
+  margin: 10px 0;
+}
+
+/* ======== 战斗界面 ======== */
+.battle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 8px;
+  gap: 8px;
+}
+
+.player-info {
+  flex: 1;
+  background: var(--bg-panel);
+  border: 1px solid #222;
+  padding: 6px;
+  border-radius: 2px;
+}
+
+.player-info.mirror {
+  text-align: right;
+}
+
+.player-name {
+  font-size: 0.4rem;
+  color: var(--neon-cyan);
+  margin-bottom: 4px;
+}
+
+.hp-bar-container, .mp-bar-container {
+  background: #111;
+  border: 1px solid #333;
+  height: 14px;
+  position: relative;
+  margin: 2px 0;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.hp-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ff0000, #ff4444);
+  box-shadow: 0 0 6px rgba(255, 0, 0, 0.5);
+  transition: width 0.3s;
+}
+
+.hp-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.3rem;
+  color: var(--neon-white);
+  text-shadow: 1px 1px 2px black;
+}
+
+.mp-bar-container { height: 8px; }
+.mp-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0044ff, #0088ff);
+  box-shadow: 0 0 4px rgba(0, 68, 255, 0.5);
+  transition: width 0.3s;
+}
+.mp-text {
+  font-size: 0.25rem;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  position: absolute;
+  color: white;
+  text-shadow: 1px 1px 2px black;
+}
+
+.timer-display {
+  text-align: center;
+  min-width: 70px;
+}
+
+.round-text {
+  font-size: 0.4rem;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 5px var(--neon-yellow);
+}
+
+.timer-text {
+  font-size: 1.2rem;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 10px var(--neon-cyan);
+}
+
+/* ======== 战斗场地 ======== */
+.battle-field {
+  width: 100%;
+  max-width: 500px;
+  aspect-ratio: 4/3;
+  background: linear-gradient(180deg, #0a0a1a 0%, #1a0a2a 100%);
+  border: 2px solid #222;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.1), inset 0 0 30px rgba(0,0,0,0.5);
+  margin: 10px 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.battle-field canvas {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.grid-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background-image: 
+    linear-gradient(rgba(0,255,255,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,255,0.05) 1px, transparent 1px);
+  background-size: calc(100% / 9) calc(100% / 3);
+  pointer-events: none;
+}
+
+/* ======== 行动队列 ======== */
+.action-queue {
+  width: 100%;
+  max-width: 500px;
+  background: var(--bg-panel);
+  border: 1px solid #222;
+  padding: 10px;
+  margin: 8px 0;
+}
+
+.action-queue h3 {
+  font-size: 0.5rem;
+  color: var(--neon-yellow);
+  margin-bottom: 8px;
+}
+
+.action-length {
+  color: var(--neon-cyan);
+}
+
+.action-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 40px;
+  margin-bottom: 8px;
+}
+
+.action-slot {
+  background: #1a1a2a;
+  border: 1px solid #333;
+  padding: 6px 10px;
+  font-size: 0.4rem;
+  color: var(--neon-cyan);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.action-slot:hover {
+  border-color: var(--neon-pink);
+  box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
+}
+
+.action-slot .slot-num {
+  position: absolute;
+  top: -8px;
+  left: 4px;
+  font-size: 0.3rem;
+  color: #666;
+  background: var(--bg-panel);
+  padding: 0 2px;
+}
+
+.action-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.action-btn {
+  background: #1a1a2a;
+  border: 1px solid #333;
+  color: var(--neon-cyan);
+  padding: 10px 4px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.35rem;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.15s;
+}
+
+.action-btn:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
+}
+
+.action-btn:active {
+  background: var(--neon-cyan);
+  color: black;
+}
+
+.queue-controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ======== 战斗日志 ======== */
+.battle-log {
+  width: 100%;
+  max-width: 500px;
+  max-height: 120px;
+  background: rgba(0,0,0,0.8);
+  border: 1px solid #222;
+  padding: 6px;
+  overflow-y: auto;
+  font-size: 0.35rem;
+}
+
+.log-content {
+  color: #aaa;
+  line-height: 1.6;
+}
+
+.log-content .log-line {
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.log-content .log-damage { color: #ff4444; }
+.log-content .log-defend { color: #4488ff; }
+.log-content .log-heal { color: #44ff44; }
+.log-content .log-skill { color: #ff88ff; }
+
+/* ======== 结算画面 ======== */
+.result-content {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.result-content .neon-title {
+  margin-bottom: 20px;
+}
+
+#resultDetail {
+  font-size: 0.5rem;
+  color: #aaa;
+  margin-bottom: 30px;
+  line-height: 1.8;
+}
+
+/* ======== 编辑器占位 ======== */
+.editor-placeholder {
+  background: var(--bg-panel);
+  border: 2px dashed #333;
+  padding: 40px;
+  margin: 20px 0;
+  text-align: center;
+  border-radius: 4px;
+}
+
+.editor-placeholder .pixel-icon {
+  font-size: 3rem;
+  margin-bottom: 15px;
+}
+
+.editor-placeholder p {
+  font-size: 0.5rem;
+  color: var(--neon-cyan);
+  margin: 6px 0;
+}
+
+.editor-placeholder .hint {
+  font-size: 0.35rem;
+  color: #555;
+}
+
+/* ======== 像素粒子 ======== */
+.pixel-particle {
+  position: absolute;
+  pointer-events: none;
+  width: 4px;
+  height: 4px;
+  image-rendering: pixelated;
+}
+
+/* ======== 响应式 - 移动端 ======== */
+@media (max-width: 600px) {
+  .neon-title {
+    font-size: 1.3rem;
+  }
+  
+  .neon-title.small {
+    font-size: 0.9rem;
+  }
+  
+  .neon-btn {
+    font-size: 0.55rem;
+    padding: 10px 16px;
+  }
+  
+  .char-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  
+  .action-buttons {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  
+  .battle-header {
+    flex-wrap: wrap;
+  }
+  
+  .player-info {
+    min-width: 100px;
+  }
+  
+  .skill-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 400px) {
+  .neon-title {
+    font-size: 1rem;
+  }
+  
+  .neon-btn {
+    font-size: 0.45rem;
+    padding: 8px 12px;
+  }
+  
+  .action-buttons {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .char-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

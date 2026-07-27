@@ -1,0 +1,92 @@
+{
+  "bgm": {
+    "menu": {
+      "name": "菜单主题",
+      "bpm": 120,
+      "notes": [
+        {"freq": 523, "dur": 0.2, "delay": 0},
+        {"freq": 659, "dur": 0.2, "delay": 0.3},
+        {"freq": 784, "dur": 0.2, "delay": 0.6},
+        {"freq": 659, "dur": 0.2, "delay": 0.9},
+        {"freq": 523, "dur": 0.4, "delay": 1.2},
+        {"freq": 0, "dur": 0.1, "delay": 1.7},
+        {"freq": 784, "dur": 0.2, "delay": 1.8},
+        {"freq": 880, "dur": 0.2, "delay": 2.1},
+        {"freq": 784, "dur": 0.2, "delay": 2.4},
+        {"freq": 659, "dur": 0.4, "delay": 2.7}
+      ]
+    },
+    "battle": {
+      "name": "战斗主题",
+      "bpm": 150,
+      "notes": [
+        {"freq": 440, "dur": 0.15, "delay": 0},
+        {"freq": 440, "dur": 0.15, "delay": 0.2},
+        {"freq": 554, "dur": 0.3, "delay": 0.4},
+        {"freq": 440, "dur": 0.15, "delay": 0.8},
+        {"freq": 587, "dur": 0.15, "delay": 1.0},
+        {"freq": 554, "dur": 0.3, "delay": 1.2},
+        {"freq": 440, "dur": 0.15, "delay": 1.6},
+        {"freq": 440, "dur": 0.15, "delay": 1.8},
+        {"freq": 659, "dur": 0.3, "delay": 2.0},
+        {"freq": 587, "dur": 0.15, "delay": 2.4},
+        {"freq": 554, "dur": 0.3, "delay": 2.6}
+      ]
+    },
+    "prepare": {
+      "name": "准备阶段",
+      "bpm": 90,
+      "notes": [
+        {"freq": 330, "dur": 0.3, "delay": 0},
+        {"freq": 392, "dur": 0.3, "delay": 0.5},
+        {"freq": 440, "dur": 0.3, "delay": 1.0},
+        {"freq": 392, "dur": 0.3, "delay": 1.5},
+        {"freq": 330, "dur": 0.6, "delay": 2.0},
+        {"freq": 0, "dur": 0.2, "delay": 2.7},
+        {"freq": 440, "dur": 0.3, "delay": 2.9},
+        {"freq": 523, "dur": 0.3, "delay": 3.3},
+        {"freq": 440, "dur": 0.3, "delay": 3.7},
+        {"freq": 392, "dur": 0.6, "delay": 4.1}
+      ]
+    },
+    "victory": {
+      "name": "胜利",
+      "bpm": 140,
+      "notes": [
+        {"freq": 523, "dur": 0.15, "delay": 0},
+        {"freq": 659, "dur": 0.15, "delay": 0.2},
+        {"freq": 784, "dur": 0.15, "delay": 0.4},
+        {"freq": 1047, "dur": 0.5, "delay": 0.6}
+      ]
+    }
+  },
+  "sfx": {
+    "hit": [
+      {"freq": 200, "dur": 0.05, "delay": 0, "type": "square"},
+      {"freq": 100, "dur": 0.08, "delay": 0.03, "type": "square"}
+    ],
+    "block": [
+      {"freq": 400, "dur": 0.06, "delay": 0, "type": "triangle"},
+      {"freq": 300, "dur": 0.06, "delay": 0.04, "type": "triangle"}
+    ],
+    "skill": [
+      {"freq": 600, "dur": 0.08, "delay": 0, "type": "sawtooth"},
+      {"freq": 800, "dur": 0.08, "delay": 0.06, "type": "sawtooth"},
+      {"freq": 1000, "dur": 0.15, "delay": 0.12, "type": "sawtooth"}
+    ],
+    "heal": [
+      {"freq": 400, "dur": 0.1, "delay": 0, "type": "sine"},
+      {"freq": 500, "dur": 0.1, "delay": 0.15, "type": "sine"},
+      {"freq": 600, "dur": 0.2, "delay": 0.3, "type": "sine"}
+    ],
+    "countdown": [
+      {"freq": 880, "dur": 0.1, "delay": 0, "type": "square"}
+    ],
+    "death": [
+      {"freq": 440, "dur": 0.2, "delay": 0, "type": "sawtooth"},
+      {"freq": 330, "dur": 0.2, "delay": 0.2, "type": "sawtooth"},
+      {"freq": 220, "dur": 0.3, "delay": 0.4, "type": "sawtooth"},
+      {"freq": 110, "dur": 0.5, "delay": 0.7, "type": "sawtooth"}
+    ]
+  }
+}
