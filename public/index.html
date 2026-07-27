@@ -1,158 +1,99 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Debug-Lite 霓虹像素对战</title>
-    <link rel="stylesheet" href="css/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Debug-Lite 霓虹像素格斗</title>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div id="app">
-        <!-- 主菜单 -->
-        <div id="mainMenu" class="screen active">
-            <canvas class="pixel-canvas" id="menuCanvas"></canvas>
-            <div class="menu-content">
-                <h1 class="neon-title" data-text="DEBUG-LITE">DEBUG-LITE</h1>
-                <p class="neon-subtitle">霓虹像素格斗</p>
-                <div class="menu-buttons">
-                    <button class="neon-btn btn-blue" onclick="showScreen('characterSelect'); initCharacterSelect();">
-                        ⚔️ 人机对战
-                    </button>
-                    <button class="neon-btn btn-pink" onclick="showScreen('onlineLobby'); initOnlineLobby();">
-                        🌐 联机对战
-                    </button>
-                    <button class="neon-btn btn-green" onclick="showScreen('skillEditor');">
-                        📝 技能编辑
-                    </button>
-                </div>
-                <div class="version-tag">v1.0 像素格斗</div>
-            </div>
-        </div>
-
-        <!-- 角色选择 -->
-        <div id="characterSelect" class="screen">
-            <h2 class="neon-title small">选择你的角色</h2>
-            <div id="charGrid" class="char-grid"></div>
-            <div id="skillSelection" class="skill-selection hidden">
-                <h3 class="neon-title small">选择技能 (最多3个)</h3>
-                <div id="skillGrid" class="skill-grid"></div>
-            </div>
-            <div class="controls-row">
-                <button class="neon-btn btn-blue" onclick="startAIGame()">开始对战</button>
-                <button class="neon-btn btn-gray" onclick="showScreen('mainMenu')">返回</button>
-            </div>
-        </div>
-
-        <!-- 在线大厅 -->
-        <div id="onlineLobby" class="screen">
-            <h2 class="neon-title small">联机对战</h2>
-            <div class="lobby-inputs">
-                <input type="text" id="playerName" class="neon-input" placeholder="输入你的名字" maxlength="12">
-                <button class="neon-btn btn-blue" onclick="createRoom()">创建房间</button>
-            </div>
-            <div class="lobby-inputs">
-                <input type="text" id="roomCode" class="neon-input" placeholder="输入房间号" maxlength="6" style="text-transform:uppercase">
-                <button class="neon-btn btn-pink" onclick="joinRoom()">加入房间</button>
-            </div>
-            <div id="onlineStatus" class="online-status"></div>
-            <button class="neon-btn btn-gray" onclick="showScreen('mainMenu')">返回</button>
-        </div>
-
-        <!-- 等待/准备阶段 -->
-        <div id="preparePhase" class="screen">
-            <div id="battleHeader" class="battle-header">
-                <div class="player-info" id="p1Info">
-                    <div class="player-name">PLAYER 1</div>
-                    <div class="hp-bar-container">
-                        <div class="hp-bar" id="p1HpBar"></div>
-                        <span class="hp-text" id="p1HpText">100/100</span>
-                    </div>
-                    <div class="mp-bar-container">
-                        <div class="mp-bar" id="p1MpBar"></div>
-                        <span class="mp-text" id="p1MpText">50/50</span>
-                    </div>
-                </div>
-                <div class="timer-display">
-                    <div class="round-text" id="roundText">ROUND 1</div>
-                    <div class="timer-text" id="timerDisplay">60</div>
-                </div>
-                <div class="player-info mirror" id="p2Info">
-                    <div class="player-name">PLAYER 2</div>
-                    <div class="hp-bar-container">
-                        <div class="hp-bar" id="p2HpBar"></div>
-                        <span class="hp-text" id="p2HpText">100/100</span>
-                    </div>
-                    <div class="mp-bar-container">
-                        <div class="mp-bar" id="p2MpBar"></div>
-                        <span class="mp-text" id="p2MpText">50/50</span>
-                    </div>
-                </div>
-            </div>
-            <div id="battleField" class="battle-field">
-                <canvas id="battleCanvas"></canvas>
-            </div>
-            <div id="actionQueue" class="action-queue">
-                <h3>行动队列 <span class="action-length" id="actionLength">0</span></h3>
-                <div id="actionSlots" class="action-slots"></div>
-                <div class="action-buttons">
-                    <button class="action-btn" onclick="addAction('左')">◀ 左</button>
-                    <button class="action-btn" onclick="addAction('攻')">⚔ 攻</button>
-                    <button class="action-btn" onclick="addAction('防')">🛡 防</button>
-                    <button class="action-btn" onclick="addAction('右')">▶ 右</button>
-                    <button class="action-btn" onclick="addAction('上')">▲ 上</button>
-                    <button class="action-btn" onclick="addAction('技1')">技1</button>
-                    <button class="action-btn" onclick="addAction('技2')">技2</button>
-                    <button class="action-btn" onclick="addAction('技3')">技3</button>
-                    <button class="action-btn" onclick="addAction('下')">▼ 下</button>
-                </div>
-                <div class="queue-controls">
-                    <button class="neon-btn btn-blue small" onclick="clearActions()">清空</button>
-                    <button class="neon-btn btn-pink small" onclick="undoAction()">撤销</button>
-                    <button class="neon-btn btn-green small" onclick="fillRandom()">随机</button>
-                    <button class="neon-btn btn-yellow small" id="readyBtn" onclick="readyForBattle()">✅ 完成</button>
-                </div>
-            </div>
-            <div id="battleLog" class="battle-log">
-                <div class="log-content" id="logContent"></div>
-            </div>
-        </div>
-
-        <!-- 战斗动画阶段 -->
-        <div id="battlePhase" class="screen">
-            <div id="battleHeader2" class="battle-header"></div>
-            <div id="battleField2" class="battle-field">
-                <canvas id="battleCanvas2"></canvas>
-            </div>
-            <div id="battleLog2" class="battle-log"></div>
-        </div>
-
-        <!-- 结算画面 -->
-        <div id="resultScreen" class="screen">
-            <div class="result-content">
-                <h2 class="neon-title" id="resultTitle"></h2>
-                <p id="resultDetail"></p>
-                <button class="neon-btn btn-blue" onclick="showScreen('characterSelect'); initCharacterSelect();">再来一局</button>
-                <button class="neon-btn btn-gray" onclick="showScreen('mainMenu')">返回菜单</button>
-            </div>
-        </div>
-
-        <!-- 技能编辑器（占位） -->
-        <div id="skillEditor" class="screen">
-            <h2 class="neon-title small">技能编辑器</h2>
-            <div class="editor-placeholder">
-                <div class="pixel-icon large">🔧</div>
-                <p>技能编辑器正在开发中...</p>
-                <p class="hint">即将支持自定义技能设计</p>
-                <p class="hint">包括：伤害、效果、动画、像素图标等</p>
-            </div>
-            <button class="neon-btn btn-gray" onclick="showScreen('mainMenu')">返回</button>
-        </div>
+<div id="app">
+  <!-- 主菜单 -->
+  <div id="menu" class="screen active">
+    <h1 class="n1">DEBUG-LITE</h1>
+    <p class="n2">霓虹像素格斗 v2</p>
+    <div class="menu-btns">
+      <button class="btn btn-b" onclick="nav('charSel'); initCharSel()">⚔️ 人机对战</button>
+      <button class="btn btn-p" onclick="nav('lobby'); initLobby()">🌐 联机对战</button>
+      <button class="btn btn-g" onclick="nav('editor')">📝 技能编辑</button>
     </div>
+    <div class="ver">16格纯横版 · 弹幕碰撞 · 自定义技能</div>
+  </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="js/audio.js"></script>
-    <script src="js/renderer.js"></script>
-    <script src="js/game.js"></script>
-    <script src="js/main.js"></script>
+  <!-- 角色选择 -->
+  <div id="charSel" class="screen">
+    <h2 class="n1 sm">选择角色</h2>
+    <div id="cg" class="cg"></div>
+    <div id="skillSel" class="sk hidden">
+      <h3>选择技能 (3个)</h3>
+      <div id="sg" class="sg"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-b" onclick="startAIGame()">开始对战</button>
+      <button class="btn btn-d" onclick="nav('menu')">返回</button>
+    </div>
+  </div>
+
+  <!-- 在线 -->
+  <div id="lobby" class="screen">
+    <h2 class="n1 sm">联机对战</h2>
+    <div class="lbi"><input id="pname" class="inp" placeholder="昵称" maxlength="10"><button class="btn btn-b" onclick="createRoom()">创建</button></div>
+    <div class="lbi"><input id="rcode" class="inp" placeholder="房间号" maxlength="6" style="text-transform:uppercase"><button class="btn btn-p" onclick="joinRoom()">加入</button></div>
+    <div id="ostatus" class="sts"></div>
+    <button class="btn btn-d" onclick="nav('menu')">返回</button>
+  </div>
+
+  <!-- 战斗 -->
+  <div id="battle" class="screen">
+    <!-- Header -->
+    <div class="bh">
+      <div class="pi" id="p1i"><div class="pn">P1</div>
+        <div class="bar-c"><div class="bar bar-hp" id="p1hp"></div><span class="bar-txt" id="p1hpt">0/0</span></div>
+        <div class="bar-c"><div class="bar bar-mp" id="p1mp"></div><span class="bar-txt" id="p1mpt">0/0</span></div>
+        <div class="bar-c"><div class="bar bar-sp" id="p1sp"></div><span class="bar-txt" id="p1spt">0/0</span></div>
+      </div>
+      <div class="tmr"><div class="rnd" id="rnd">ROUND 1</div><div class="t" id="tm">60</div></div>
+      <div class="pi mir" id="p2i"><div class="pn">P2</div>
+        <div class="bar-c"><div class="bar bar-hp" id="p2hp"></div><span class="bar-txt" id="p2hpt">0/0</span></div>
+        <div class="bar-c"><div class="bar bar-mp" id="p2mp"></div><span class="bar-txt" id="p2mpt">0/0</span></div>
+        <div class="bar-c"><div class="bar bar-sp" id="p2sp"></div><span class="bar-txt" id="p2spt">0/0</span></div>
+      </div>
+    </div>
+    <!-- Field -->
+    <div class="fld"><canvas id="fc"></canvas></div>
+    <!-- Queue -->
+    <div class="aq">
+      <h3>行动队列 <span id="acnt">(0/16)</span></h3>
+      <div id="aslots" class="aslots"></div>
+      <div class="abtns" id="abtns"></div>
+      <div class="qc">
+        <button class="btn btn-b" style="font-size:0.35rem;padding:5px 8px;" onclick="clearActions()">清空</button>
+        <button class="btn btn-p" style="font-size:0.35rem;padding:5px 8px;" onclick="undoAction()">撤销</button>
+        <button class="btn btn-g" style="font-size:0.35rem;padding:5px 8px;" onclick="randomFill()">随机</button>
+        <button class="btn btn-y" style="font-size:0.35rem;padding:5px 8px;" id="rdyBtn" onclick="readyBattle()">✅ 完成</button>
+      </div>
+    </div>
+    <!-- Log -->
+    <div class="log"><div id="logc"></div></div>
+  </div>
+
+  <!-- 结算 -->
+  <div id="result" class="screen">
+    <div class="res"><h2 class="n1" id="rtitle"></h2><p id="rdetail"></p>
+      <button class="btn btn-b" onclick="nav('charSel');initCharSel()">再来</button>
+      <button class="btn btn-d" onclick="nav('menu')">菜单</button>
+    </div>
+  </div>
+
+  <!-- 技能编辑器 -->
+  <div id="editor" class="screen">
+    <h2 class="n1 sm">技能编辑器</h2>
+    <div class="edp"><p>🔧 技能编辑器开发中...</p><p class="h">即将支持自定义技能：类型/伤害/弹幕/特效等</p></div>
+    <button class="btn btn-d" onclick="nav('menu')">返回</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="js/game.js"></script>
 </body>
 </html>

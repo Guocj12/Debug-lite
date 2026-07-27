@@ -1,147 +1,109 @@
 {
-  "skills": [
-    {
-      "id": "slash",
-      "name": "斩击",
-      "type": "attack",
-      "damage": 20,
-      "mpCost": 10,
-      "range": 1,
-      "description": "基础斩击，造成20点伤害",
-      "effect": "direct_damage",
-      "color": "#ff4444",
-      "icon": [
-        "  xx  ",
-        " xxxx ",
-        "xxxxxx",
-        " xxxx ",
-        "  xx  "
-      ]
+  "skills": {
+    "warrior_slash": {
+      "id":"warrior_slash","name":"横斩","charId":"warrior",
+      "type":"melee","effect":"normal_damage",
+      "damageRatio":1.5,"range":2,"mpCost":8,"spCost":5,
+      "direction":"forward","desc":"前方2格近战斩击",
+      "bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
+      "color":"#00ffff","icon":[0,1,1,1,0,0,1,0,1,0,1,0,1,0,1,1,1,0,0,1,1,1,0,0,1]
     },
-    {
-      "id": "shield",
-      "name": "能量护盾",
-      "type": "defense",
-      "defenseBonus": 15,
-      "mpCost": 8,
-      "duration": 2,
-      "description": "提升15点防御，持续2回合",
-      "effect": "defense_buff",
-      "color": "#4444ff",
-      "icon": [
-        " xxxx ",
-        "x    x",
-        "x    x",
-        "x    x",
-        " xxxx "
-      ]
+    "warrior_charge": {
+      "id":"warrior_charge","name":"冲锋","charId":"warrior",
+      "type":"dash","effect":"dash_attack",
+      "damageRatio":1.0,"range":4,"mpCost":12,"spCost":15,
+      "direction":"forward","desc":"向前冲刺4格，路径撞伤",
+      "bulletPriority":4,"bulletSpeed":0,"bulletRange":0,
+      "color":"#00ddff","icon":[0,1,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,1,0,1,0,0,1,0,0]
     },
-    {
-      "id": "fireball",
-      "name": "火球术",
-      "type": "attack",
-      "damage": 30,
-      "mpCost": 20,
-      "range": 3,
-      "description": "远程火球，造成30点伤害",
-      "effect": "direct_damage",
-      "color": "#ff8800",
-      "icon": [
-        "  x   ",
-        " xox  ",
-        "xooox ",
-        " xox  ",
-        "  x   "
-      ]
+    "warrior_whirlwind": {
+      "id":"warrior_whirlwind","name":"旋风斩","charId":"warrior",
+      "type":"melee","effect":"normal_damage",
+      "damageRatio":0.8,"range":1,"mpCost":15,"spCost":10,
+      "direction":"around","desc":"周身1格AOE",
+      "bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
+      "color":"#00ccff","icon":[0,1,1,0,1,0,0,1,1,1,0,1,0,1,1,0,0,0,1,0,0,0,1,0,0]
     },
-    {
-      "id": "heal",
-      "name": "修复协议",
-      "type": "support",
-      "healAmount": 25,
-      "mpCost": 15,
-      "description": "恢复25点生命值",
-      "effect": "heal",
-      "color": "#00ff44",
-      "icon": [
-        "  xx  ",
-        " x  x ",
-        "x xx x",
-        " x  x ",
-        "  xx  "
-      ]
+    "archer_arrow": {
+      "id":"archer_arrow","name":"穿刺箭","charId":"archer",
+      "type":"projectile","effect":"normal_damage",
+      "damageRatio":1.2,"range":0,"mpCost":5,"spCost":3,
+      "direction":"forward","desc":"直射弹幕，射程无限",
+      "bulletPriority":4,"bulletSpeed":1,"bulletRange":99,
+      "color":"#00ff44","icon":[0,1,1,0,0,0,1,1,1,1,1,1,0,1,0,1,0,0,1,1,0,0,0,1,1]
     },
-    {
-      "id": "dash",
-      "name": "突进",
-      "type": "movement",
-      "moveAmount": 2,
-      "mpCost": 5,
-      "description": "额外移动2格",
-      "effect": "extra_move",
-      "color": "#ffff00",
-      "icon": [
-        "  x   ",
-        "   x  ",
-        "xxxxx ",
-        "   x  ",
-        "  x   "
-      ]
+    "archer_rain": {
+      "id":"archer_rain","name":"箭雨","charId":"archer",
+      "type":"targeted","effect":"normal_damage",
+      "damageRatio":0.6,"range":0,"mpCost":20,"spCost":10,
+      "direction":"target","desc":"指定3格范围天降箭雨",
+      "bulletPriority":0,"bulletSpeed":0,"bulletRange":0,
+      "aoeRadius":1,"targetRange":8,"color":"#44ff44",
+      "icon":[0,1,1,0,0,1,0,1,0,0,0,0,1,1,0,1,0,0,1,0,0,1,0,0,1]
     },
-    {
-      "id": "counter",
-      "name": "反击姿态",
-      "type": "defense",
-      "counterDamage": 15,
-      "mpCost": 12,
-      "duration": 1,
-      "description": "进入反击姿态，受到攻击时反击15点伤害",
-      "effect": "counter_stance",
-      "color": "#ff44ff",
-      "icon": [
-        "x   x",
-        " x x ",
-        "  x  ",
-        " x x ",
-        "x   x"
-      ]
+    "archer_snipe": {
+      "id":"archer_snipe","name":"狙击","charId":"archer",
+      "type":"projectile","effect":"true_damage",
+      "damageRatio":2.5,"range":0,"mpCost":30,"spCost":20,
+      "direction":"forward","desc":"高伤贯穿弹幕(1级优先)",
+      "bulletPriority":1,"bulletSpeed":1,"bulletRange":99,
+      "color":"#ffff00","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,1,1,1,0,0,1,1,0,1,0,1,0]
     },
-    {
-      "id": "combo",
-      "name": "连击",
-      "type": "attack",
-      "damage": 10,
-      "hits": 3,
-      "mpCost": 25,
-      "description": "快速三连击，每击10点伤害",
-      "effect": "multi_hit",
-      "color": "#ff00ff",
-      "icon": [
-        "x   x",
-        " x x ",
-        "x x x",
-        " x x ",
-        "x   x"
-      ]
+    "mage_fireball": {
+      "id":"mage_fireball","name":"火球术","charId":"mage",
+      "type":"projectile","effect":"normal_damage",
+      "damageRatio":1.8,"range":0,"mpCost":12,"spCost":5,
+      "direction":"forward","desc":"中速弹幕，射程6格",
+      "bulletPriority":3,"bulletSpeed":1,"bulletRange":6,
+      "color":"#ff8800","icon":[0,1,0,0,1,0,0,1,0,0,1,1,0,1,1,1,0,0,0,1,1,0,0,0,1]
     },
-    {
-      "id": "stun",
-      "name": "电磁脉冲",
-      "type": "attack",
-      "damage": 8,
-      "mpCost": 18,
-      "stunDuration": 1,
-      "description": "造成8点伤害并使对手下回合无法行动",
-      "effect": "stun",
-      "color": "#00ffff",
-      "icon": [
-        " x x ",
-        "x x x",
-        " x x ",
-        "x x x",
-        " x x "
-      ]
+    "mage_lightning": {
+      "id":"mage_lightning","name":"闪电链","charId":"mage",
+      "type":"projectile","effect":"true_damage",
+      "damageRatio":1.2,"range":0,"mpCost":25,"spCost":15,
+      "direction":"forward","desc":"1级优先激光贯穿",
+      "bulletPriority":1,"bulletSpeed":1,"bulletRange":99,
+      "color":"#ffff44","icon":[0,1,1,0,0,0,0,0,1,0,0,0,1,1,1,1,1,0,0,0,1,0,0,0,1]
+    },
+    "mage_shield": {
+      "id":"mage_shield","name":"魔法盾","charId":"mage",
+      "type":"projectile","effect":"shield_bullet",
+      "damageRatio":0,"range":0,"mpCost":15,"spCost":10,
+      "direction":"forward","desc":"身前召唤2级护盾弹幕",
+      "bulletPriority":2,"bulletSpeed":0,"bulletRange":1,
+      "color":"#4488ff","icon":[0,1,1,0,0,1,0,1,0,0,1,1,0,1,0,1,0,0,0,1,1,0,1,1,0]
+    },
+    "assassin_backstab": {
+      "id":"assassin_backstab","name":"背刺","charId":"assassin",
+      "type":"melee","effect":"normal_damage",
+      "damageRatio":2.0,"range":1,"mpCost":10,"spCost":10,
+      "direction":"forward","desc":"前方1格，若在背后则2.4倍率",
+      "backstabBonus":1.2,"bulletPriority":3,"bulletSpeed":0,"bulletRange":0,
+      "color":"#ff4444","icon":[0,1,1,0,0,0,0,1,0,0,1,1,1,1,1,1,0,0,0,1,0,0,0,1,0]
+    },
+    "assassin_shadowstep": {
+      "id":"assassin_shadowstep","name":"暗影步","charId":"assassin",
+      "type":"teleport","effect":"teleport_back",
+      "damageRatio":0,"range":0,"mpCost":15,"spCost":20,
+      "direction":"forward","desc":"传送至敌人身后",
+      "bulletPriority":0,"bulletSpeed":0,"bulletRange":0,
+      "color":"#ff00ff","icon":[0,1,1,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,0,0,0,1,1,0,0]
+    },
+    "assassin_poison": {
+      "id":"assassin_poison","name":"淬毒","charId":"assassin",
+      "type":"melee","effect":"dot_debuff",
+      "damageRatio":0.5,"range":1,"mpCost":8,"spCost":5,
+      "direction":"forward","desc":"前方1格+3tick毒(每tick5%atk真伤)",
+      "dotDamage":0.05,"dotTicks":3,"bulletPriority":4,"bulletSpeed":0,"bulletRange":0,
+      "color":"#88ff00","icon":[0,1,1,0,0,0,0,1,1,0,0,0,1,0,0,0,1,1,0,0,0,1,0,0,0]
     }
-  ],
-  "skillSlots": 3
+  },
+  "genericSkills": [
+    {"id":"move_left","name":"左移","type":"move","direction":"left","spCost":3,"desc":"向左移动1格"},
+    {"id":"move_right","name":"右移","type":"move","direction":"right","spCost":3,"desc":"向右移动1格"},
+    {"id":"dodge_left","name":"左闪","type":"dodge","direction":"left","spCost":10,"desc":"左闪2格，本tick无敌"},
+    {"id":"dodge_right","name":"右闪","type":"dodge","direction":"right","spCost":10,"desc":"右闪2格，本tick无敌"},
+    {"id":"defend","name":"防御","type":"defend","spCost":5,"desc":"本tick防御+50%"},
+    {"id":"turn","name":"转向","type":"turn","spCost":0,"desc":"转变面向方向"}
+  ]
 }

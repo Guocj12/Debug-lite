@@ -1,0 +1,10 @@
+{
+  "field": { "width": 16, "groundY": 0.7 },
+  "battle": { "ticksPerRound": 16, "tickIntervalMs": 1000 },
+  "prepare": { "maxActions": 16, "timeSeconds": 60 },
+  "damage": {
+    "normal": "atk * ratio - def",
+    "true": "atk * ratio",
+    "backstabMultiplier": 1.2
+  }
+}

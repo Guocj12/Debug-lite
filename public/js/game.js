@@ -1,672 +1,540 @@
-// Debug-Lite 游戏核心逻辑
+// Debug-Lite v2 前端
 
-class GameState {
-  constructor() {
-    this.socket = null;
-    this.roomId = null;
-    this.playerNum = 0;
-    this.gameMode = null; // 'ai' | 'online'
-    this.selectedChar = null;
-    this.selectedSkills = [];
-    this.actions = [];
-    this.maxActions = 6;
-    this.battleState = null;
-    this.isReady = false;
-    this.prepareTime = 60;
-    this.currentRound = 1;
-  }
-
-  reset() {
-    this.actions = [];
-    this.isReady = false;
-    this.battleState = null;
-  }
-}
-
-const game = new GameState();
-
-// ======== Socket连接 ========
-function connectSocket() {
-  game.socket = io();
-  
-  game.socket.on('connect', () => {
-    console.log('已连接服务器');
-  });
-
-  game.socket.on('roomCreated', (data) => {
-    game.roomId = data.roomId;
-    game.playerNum = data.playerNum;
-    document.getElementById('onlineStatus').textContent = 
-      `房间号: ${data.roomId} | 等待对手加入...`;
-  });
-
-  game.socket.on('roomJoined', (data) => {
-    game.roomId = data.roomId;
-    game.playerNum = data.playerNum;
-    document.getElementById('onlineStatus').textContent = 
-      `已加入房间: ${data.roomId}`;
-  });
-
-  game.socket.on('playerJoined', (data) => {
-    document.getElementById('onlineStatus').textContent = 
-      `对手已加入! 房间: ${game.roomId}`;
-    // 进入角色选择
-    setTimeout(() => {
-      showScreen('characterSelect');
-      initCharacterSelect();
-    }, 1000);
-  });
-
-  game.socket.on('aiGameStart', (data) => {
-    game.roomId = data.roomId;
-    game.playerNum = data.playerNum;
-    game.gameMode = 'ai';
-    showScreen('preparePhase');
-    initPreparePhase();
-    audio.playBGM('battle');
-  });
-
-  game.socket.on('characterSelected', (data) => {
-    // 双方角色选择确认
-  });
-
-  game.socket.on('preparePhase', (data) => {
-    game.currentRound = data.round;
-    game.prepareTime = data.timeLeft;
-    game.reset();
-    showScreen('preparePhase');
-    initPreparePhase();
-    audio.playBGM('prepare');
-  });
-
-  game.socket.on('roundReset', (data) => {
-    // 新一轮开始
-    game.currentRound = data.round;
-    game.reset();
-    
-    // 重置ready按钮
-    const readyBtn = document.getElementById('readyBtn');
-    if (readyBtn) {
-      readyBtn.disabled = false;
-      readyBtn.textContent = '✅ 完成';
-    }
-    
-    // 使用服务端传来的HP
-    game.battleState = {
-      p1Hp: data.p1Hp,
-      p2Hp: data.p2Hp,
-      p1Mp: data.p1Mp || 50,
-      p2Mp: data.p2Mp || 50,
-      p1Pos: { x: 1, y: 1 },
-      p2Pos: { x: 7, y: 1 },
-      p1Char: game.selectedChar || 'warrior',
-      p2Char: 'warrior'
+// ============ Audio Engine ============
+const AE = {
+  ctx: null, on: true, vol: 0.15,
+  init() {
+    try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  },
+  tone(f, d, t, type) {
+    if (!this.ctx || !this.on || f <= 0) return;
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    const now = this.ctx.currentTime + (t || 0);
+    o.type = type || 'square'; o.frequency.setValueAtTime(f, now);
+    g.gain.setValueAtTime(this.vol, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + d);
+    o.connect(g); g.connect(this.ctx.destination);
+    o.start(now); o.stop(now + d + 0.02);
+  },
+  sfx(name) {
+    const m = { hit: [[200,0.05,0,'square'],[100,0.06,0.03,'square']],
+      block: [[400,0.05,0,'triangle'],[300,0.05,0.03,'triangle']],
+      skill: [[500,0.06,0,'sawtooth'],[700,0.06,0.05,'sawtooth'],[900,0.1,0.1,'sawtooth']],
+      tick: [[800,0.04,0,'square']], death: [[300,0.15,0,'sawtooth'],[150,0.3,0.2,'sawtooth']],
+      win: [[500,0.1,0,'square'],[700,0.1,0.12,'square'],[1000,0.2,0.25,'square']],
+      dodge: [[600,0.03,0,'sine'],[800,0.04,0.02,'sine']],
+      projectile: [[300,0.04,0,'square'],[500,0.05,0.03,'square']],
     };
-    
-    updateHPMPDisplay();
-    renderActionSlots();
-    renderBattleState();
-    
-    document.getElementById('roundText').textContent = `ROUND ${data.round}`;
-    
-    // 清除旧日志
-    const logContent = document.getElementById('logContent');
-    if (logContent) logContent.innerHTML = '';
-  });
+    (m[name]||[]).forEach(n => this.tone(n[0],n[1],n[2],n[3]));
+  },
+};
 
-  game.socket.on('prepareTick', (data) => {
-    game.prepareTime = data.timeLeft;
-    updateTimer(data.timeLeft);
-  });
+// ============ Renderer ============
+const R = {
+  shapes: {
+    square: (ctx, x, y, s, c) => { ctx.fillStyle = c; ctx.fillRect(x-s/2, y-s/2, s, s); },
+    triangle: (ctx, x, y, s, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(x, y-s/2); ctx.lineTo(x+s/2, y+s/2); ctx.lineTo(x-s/2, y+s/2); ctx.closePath(); ctx.fill(); },
+    triangle2: (ctx, x, y, s, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(x, y+s/2); ctx.lineTo(x+s/2, y-s/2); ctx.lineTo(x-s/2, y-s/2); ctx.closePath(); ctx.fill(); },
+    diamond: (ctx, x, y, s, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(x, y-s/2); ctx.lineTo(x+s/2, y); ctx.lineTo(x, y+s/2); ctx.lineTo(x-s/2, y); ctx.closePath(); ctx.fill(); },
+  },
 
-  game.socket.on('playerReady', (data) => {
-    const statusEl = document.getElementById('onlineStatus');
-    if (statusEl) {
-      statusEl.textContent = `对手已准备`;
+  renderField(canvas, state, previewMode, actions, actionIdx) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width = canvas.parentElement.clientWidth;
+    const H = canvas.height = canvas.parentElement.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+
+    // 纯黑背景
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    const cellW = W / 16;
+    const groundY = H * 0.7;
+    const charY = groundY - cellW * 0.4;
+
+    // 蓝线
+    ctx.strokeStyle = '#0066cc';
+    ctx.shadowColor = '#0066ff';
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(W, groundY); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 网格竖线
+    ctx.strokeStyle = 'rgba(0,100,200,0.08)';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 16; i++) {
+      ctx.beginPath(); ctx.moveTo(i * cellW, 0); ctx.lineTo(i * cellW, H); ctx.stroke();
     }
-  });
 
-  game.socket.on('battleStep', (data) => {
-    game.battleState = data.results;
-    animateBattleStep(data);
-  });
+    // 角色
+    const chars = G.charData?.characters || [];
+    if (!state) return;
 
-  game.socket.on('playerLeft', (data) => {
-    alert('对手已离开');
-    showScreen('mainMenu');
-  });
+    [state.p1, state.p2].forEach((p, idx) => {
+      const cd = chars.find(c => c.id === p.charId) || chars[0];
+      const cx = (p.x + 0.5) * cellW;
+      const cy = charY;
 
-  game.socket.on('error', (data) => {
-    alert(data.message);
-  });
+      // 角色朝向（第二个角色镜像）
+      ctx.save();
+      if (idx === 1) {
+        // P2 facing
+      }
 
-  game.socket.on('disconnect', () => {
-    console.log('连接断开');
-  });
+      // 发光
+      ctx.shadowColor = cd.color;
+      ctx.shadowBlur = 15;
+      this.shapes[cd.shape || 'square'](ctx, cx, cy, cd.size, cd.color + '44');
+      ctx.shadowBlur = 8;
+      this.shapes[cd.shape || 'square'](ctx, cx, cy, cd.size * 0.8, cd.color);
+      ctx.shadowBlur = 0;
 
-  game.socket.on('gameOver', (data) => {
-    audio.stopBGM();
-    if (data.winner === 'P1' && game.playerNum === 1 || 
-        data.winner === 'P2' && game.playerNum === 2 ||
-        (game.gameMode === 'ai' && data.winner === 'P1')) {
-      showResult('胜利!', data);
-    } else if (data.winner === 'draw') {
-      showResult('平局!', data);
-    } else {
-      showResult('失败...', data);
-    }
-    audio.playSFX(data.winner === 'P1' && game.playerNum === 1 ? 'skill' : 'death');
-  });
-}
+      // 朝向箭头
+      ctx.fillStyle = '#fff';
+      const ax = cx + p.facing * cd.size * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(ax, cy - 4);
+      ctx.lineTo(ax + p.facing * 6, cy);
+      ctx.lineTo(ax, cy + 4);
+      ctx.fill();
 
-// ======== 界面切换 ========
-function showScreen(screenId) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const screen = document.getElementById(screenId);
-  if (screen) {
-    screen.classList.add('active');
-  }
-}
-
-// ======== 主菜单背景动画 ========
-function startMenuAnimation() {
-  const canvas = document.getElementById('menuCanvas');
-  if (!canvas) return;
-  
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  const ctx = canvas.getContext('2d');
-  
-  function animate(time) {
-    if (!document.getElementById('mainMenu').classList.contains('active')) {
-      requestAnimationFrame(animate);
-      return;
-    }
-    renderer.renderMenuBg(ctx, time);
-    requestAnimationFrame(animate);
-  }
-  
-  requestAnimationFrame(animate);
-}
-
-// ======== 角色选择 ========
-let selectedCharId = null;
-let selectedSkillIds = [];
-
-function initCharacterSelect() {
-  selectedCharId = null;
-  selectedSkillIds = [];
-  
-  const grid = document.getElementById('charGrid');
-  const skillSection = document.getElementById('skillSelection');
-  const skillGrid = document.getElementById('skillGrid');
-  
-  grid.innerHTML = '';
-  skillGrid.innerHTML = '';
-  
-  // 加载角色
-  if (!renderer.charData) {
-    renderer.init().then(() => renderCharacters());
-  } else {
-    renderCharacters();
-  }
-  
-  // 加载技能
-  if (!renderer.skillData) {
-    renderer.init().then(() => renderSkills());
-  } else {
-    renderSkills();
-  }
-  
-  skillSection.classList.add('hidden');
-}
-
-function renderCharacters() {
-  const grid = document.getElementById('charGrid');
-  if (!renderer.charData) return;
-  
-  renderer.charData.characters.forEach(char => {
-    const card = document.createElement('div');
-    card.className = 'char-card';
-    card.onclick = () => selectCharacter(char.id, card);
-    
-    const canvas = document.createElement('canvas');
-    renderer.drawCharAvatar(canvas, char.id, 64);
-    
-    card.innerHTML = `
-      ${canvas.outerHTML}
-      <div class="char-name">${char.name}</div>
-      <div class="char-stats">HP:${char.maxHp} ATK:${char.atk} DEF:${char.def}</div>
-      <div class="char-desc">${char.description}</div>
-    `;
-    
-    grid.appendChild(card);
-  });
-}
-
-function renderSkills() {
-  const skillGrid = document.getElementById('skillGrid');
-  if (!renderer.skillData) return;
-  
-  renderer.skillData.skills.forEach(skill => {
-    const card = document.createElement('div');
-    card.className = 'skill-card';
-    card.onclick = () => toggleSkill(skill.id, card);
-    
-    const canvas = document.createElement('canvas');
-    renderer.drawSkillIcon(canvas, skill.id, 32);
-    
-    card.innerHTML = `
-      ${canvas.outerHTML}
-      <div class="skill-name">${skill.name}</div>
-    `;
-    
-    skillGrid.appendChild(card);
-  });
-}
-
-function selectCharacter(charId, cardEl) {
-  selectedCharId = charId;
-  game.selectedChar = charId;
-  
-  document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));
-  cardEl.classList.add('selected');
-  
-  // 显示技能选择
-  document.getElementById('skillSelection').classList.remove('hidden');
-  
-  audio.playSFX('countdown');
-}
-
-function toggleSkill(skillId, cardEl) {
-  const idx = selectedSkillIds.indexOf(skillId);
-  if (idx >= 0) {
-    selectedSkillIds.splice(idx, 1);
-    cardEl.classList.remove('selected');
-  } else {
-    if (selectedSkillIds.length >= 3) {
-      // 移除第一个
-      const oldId = selectedSkillIds.shift();
-      document.querySelectorAll('.skill-card').forEach(c => {
-        if (c.querySelector('.skill-name')?.textContent === 
-            renderer.skillData.skills.find(s => s.id === oldId)?.name) {
-          c.classList.remove('selected');
+      // dodge特效(拖尾)
+      if (p.dodging) {
+        ctx.globalAlpha = 0.4;
+        for (let i = 1; i <= 3; i++) {
+          const tx = cx - p.facing * i * 8;
+          ctx.fillStyle = cd.color;
+          ctx.fillRect(tx - 3, cy - 3, 6, 6);
         }
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.restore();
+    });
+
+    // 弹幕
+    if (state.bullets) {
+      state.bullets.forEach(b => {
+        const bx = (b.x + 0.5) * cellW;
+        const by = groundY - 25;
+        ctx.fillStyle = b.color || '#fff';
+        ctx.shadowColor = b.color;
+        ctx.shadowBlur = 10;
+        if (b.isShield) {
+          ctx.strokeStyle = b.color;
+          ctx.lineWidth = 3;
+          ctx.strokeRect(bx - cellW * 0.3, by - cellW * 0.3, cellW * 0.6, cellW * 0.6);
+        } else {
+          const sz = 5 + (4 - (b.priority || 4)) * 3;
+          ctx.fillRect(bx - sz/2, by - sz/2, sz, sz);
+        }
+        ctx.shadowBlur = 0;
       });
     }
-    selectedSkillIds.push(skillId);
-    cardEl.classList.add('selected');
-  }
-  
-  audio.playSFX('countdown');
+
+    // 碰撞粒子
+    (state._particles || []).forEach(pt => {
+      ctx.fillStyle = pt.c;
+      ctx.globalAlpha = pt.a || 1;
+      ctx.fillRect(pt.x, pt.y, pt.s || 3, pt.s || 3);
+    });
+    ctx.globalAlpha = 1;
+
+    // Grid labels
+    ctx.fillStyle = 'rgba(0,150,255,0.3)';
+    ctx.font = '8px monospace';
+    for (let i = 0; i < 16; i++) {
+      ctx.fillText(i, i * cellW + 2, H - 3);
+    }
+  },
+};
+
+// ============ GAME STATE ============
+const G = {
+  socket: null, roomId: null, n: 0, mode: null,
+  selChar: null, selSkills: [], actions: [], maxAct: 16,
+  round: 1, ready: false,
+  state: null, // current battle state
+  charData: null, skillData: null,
+  _timer: null,
+};
+
+async function loadData() {
+  try {
+    G.charData = await (await fetch('/data/characters.json')).json();
+    G.skillData = await (await fetch('/data/skills.json')).json();
+  } catch(e) { console.error(e); }
 }
 
-// ======== AI对战启动 ========
+// ============ NAV ============
+function nav(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// ============ SOCKET ============
+function connect() {
+  if (G.socket) return;
+  G.socket = io();
+
+  G.socket.on('roomCreated', d => { G.roomId = d.roomId; G.n = d.n; el('ostatus').textContent = `房间: ${d.roomId} | 等待对手...`; });
+  G.socket.on('roomJoined', d => { G.roomId = d.roomId; G.n = d.n; el('ostatus').textContent = `已加入: ${d.roomId}`; });
+  G.socket.on('playerJoined', d => { el('ostatus').textContent = '对手已加入!'; setTimeout(() => { nav('charSel'); initCharSel(); }, 800); });
+  G.socket.on('charSelected', d => {});
+
+  G.socket.on('prepareStart', d => {
+    G.round = d.round; G.ready = false; G.actions = [];
+    G.state = { p1: d.p1, p2: d.p2, bullets: [], _particles: [] };
+    nav('battle'); initBattleUI(d);
+  });
+  G.socket.on('prepareTick', d => { el('tm').textContent = d.t; if (d.t <= 5) AE.sfx('tick'); });
+  G.socket.on('playerReady', d => {});
+
+  G.socket.on('battleFrames', d => {
+    G.state = d.final;
+    playBattleFrames(d.frames, d.final);
+  });
+
+  G.socket.on('gameOver', d => {
+    if (G._timer) clearInterval(G._timer);
+    nav('result');
+    const won = (d.winner === 'P1' && G.n === 1) || (d.winner === 'P2' && G.n === 2) || (G.mode === 'ai' && d.winner === 'P1');
+    el('rtitle').textContent = won ? '胜利!' : (d.winner === 'draw' ? '平局' : '失败...');
+    el('rtitle').style.color = won ? 'var(--c3)' : 'var(--c2)';
+    el('rdetail').innerHTML = `P1 HP: ${d.p1Hp} / P2 HP: ${d.p2Hp}<br>${d.reason === 'maxRounds' ? '(回合上限)' : ''}`;
+    AE.sfx(won ? 'win' : 'death');
+  });
+
+  G.socket.on('playerLeft', () => { alert('对手离开'); nav('menu'); });
+  G.socket.on('err', d => alert(d.msg));
+
+  G.socket.on('aiStart', d => { G.roomId = d.roomId; G.n = d.n; G.mode = 'ai'; });
+}
+
+// ============ CHAR SELECT ============
+function initCharSel() {
+  G.selChar = null; G.selSkills = [];
+  const cg = el('cg'); cg.innerHTML = '';
+  (G.charData?.characters || []).forEach(c => {
+    const div = doc('div'); div.className = 'cc';
+    div.innerHTML = `<canvas id="cav_${c.id}" width="48" height="48"></canvas><div class="cn">${c.name}</div><div class="cs">HP:${c.maxHp} ATK:${c.atk} DEF:${c.def}<br>${c.desc}</div>`;
+    div.onclick = () => selectChar(c, div);
+    cg.appendChild(div);
+    // draw shape
+    setTimeout(() => {
+      const cv = el('cav_' + c.id); if (!cv) return;
+      const ctx = cv.getContext('2d');
+      R.shapes[c.shape](ctx, 24, 24, c.size * 1.5, c.color);
+    }, 50);
+  });
+  el('skillSel').classList.add('hidden');
+}
+
+function selectChar(c, div) {
+  G.selChar = c.id; G.selSkills = [...c.defaultSkills];
+  document.querySelectorAll('.cc').forEach(x => x.classList.remove('sel'));
+  div.classList.add('sel');
+  el('skillSel').classList.remove('hidden');
+  renderSkillSelect(c);
+  AE.sfx('tick');
+}
+
+function renderSkillSelect(char) {
+  const sg = el('sg'); sg.innerHTML = '';
+  const allSkills = G.skillData?.skills || {};
+  // default skills first
+  char.defaultSkills.forEach(sid => {
+    const s = allSkills[sid]; if (!s) return;
+    addSkillCard(sg, s, true);
+  });
+  // other skills for this char
+  Object.values(allSkills).forEach(s => {
+    if (s.charId === char.id && !char.defaultSkills.includes(s.id)) {
+      addSkillCard(sg, s, false);
+    }
+  });
+  // custom skills (placeholder)
+}
+
+function addSkillCard(sg, s, isDefault) {
+  const div = doc('div'); div.className = 'sc' + (G.selSkills.includes(s.id) ? ' sel' : '');
+  div.innerHTML = `<div class="sn">${s.name}</div><div class="st">${s.type} ${isDefault ? '(默认)' : ''}</div>`;
+  div.onclick = () => {
+    const idx = G.selSkills.indexOf(s.id);
+    if (idx >= 0) { G.selSkills.splice(idx, 1); div.classList.remove('sel'); }
+    else {
+      if (G.selSkills.length >= 3) { const old = G.selSkills.shift(); sg.querySelectorAll('.sc').forEach(c => { if (c.querySelector('.sn')?.textContent === G.skillData.skills[old]?.name) c.classList.remove('sel'); }); }
+      G.selSkills.push(s.id); div.classList.add('sel');
+    }
+    AE.sfx('tick');
+  };
+  sg.appendChild(div);
+}
+
+// ============ LOBBY ============
+function initLobby() { connect(); el('ostatus').textContent = ''; }
+function createRoom() {
+  const n = el('pname').value || 'Player';
+  G.socket.emit('createRoom', { name: n });
+  AE.sfx('tick');
+}
+function joinRoom() {
+  const c = el('rcode').value.toUpperCase();
+  const n = el('pname').value || 'Player';
+  if (!c) return alert('输入房间号');
+  G.socket.emit('joinRoom', { roomId: c, name: n });
+  AE.sfx('tick');
+}
+
+// ============ AI GAME ============
 function startAIGame() {
-  if (!selectedCharId) {
-    alert('请先选择角色!');
-    return;
-  }
-  if (selectedSkillIds.length === 0) {
-    selectedSkillIds = ['slash', 'shield', 'heal']; // 默认技能
-  }
-  
-  game.selectedSkills = selectedSkillIds;
-  game.selectedChar = selectedCharId;
-  
-  // 随机AI角色
-  const aiChars = renderer.charData.characters.filter(c => c.id !== selectedCharId);
+  if (!G.selChar) return alert('请选角色');
+  if (G.selSkills.length === 0) G.selSkills = (G.charData.characters.find(c => c.id === G.selChar)?.defaultSkills || []);
+  const aiChars = G.charData.characters.filter(c => c.id !== G.selChar);
   const aiChar = aiChars[Math.floor(Math.random() * aiChars.length)];
-  const aiSkills = ['slash', 'fireball', 'shield'];
-  
-  game.socket.emit('startAI', {
-    name: '玩家',
-    charId: selectedCharId,
-    skillIds: selectedSkillIds,
-    aiCharId: aiChar.id,
-    aiSkillIds: aiSkills,
-    difficulty: 'normal'
+  G.socket.emit('startAI', {
+    name: 'Player', charId: G.selChar, skillIds: G.selSkills,
+    aiCharId: aiChar.id, aiSkillIds: [...aiChar.defaultSkills]
   });
 }
 
-// ======== 在线对战 ========
-function initOnlineLobby() {
-  if (!game.socket) connectSocket();
-  document.getElementById('onlineStatus').textContent = '';
-}
+// ============ BATTLE UI ============
+function initBattleUI(d) {
+  el('rnd').textContent = `ROUND ${d.round}`;
+  el('tm').textContent = d.time || 60;
+  el('rdyBtn').disabled = false; el('rdyBtn').textContent = '✅ 完成';
+  el('logc').innerHTML = '';
 
-function createRoom() {
-  const name = document.getElementById('playerName').value || 'Player';
-  game.socket.emit('createRoom', { name });
-  audio.playSFX('countdown');
-}
-
-function joinRoom() {
-  const code = document.getElementById('roomCode').value.toUpperCase();
-  const name = document.getElementById('playerName').value || 'Player';
-  if (!code) {
-    alert('请输入房间号');
-    return;
-  }
-  game.socket.emit('joinRoom', { roomId: code, name });
-  audio.playSFX('countdown');
-}
-
-// ======== 准备阶段 ========
-function initPreparePhase() {
-  game.reset();
-  
-  document.getElementById('roundText').textContent = `ROUND ${game.currentRound}`;
-  document.getElementById('timerDisplay').textContent = game.prepareTime;
-  
-  // 更新HP/MP显示
-  updateHPMPDisplay();
-  
-  // 清空行动队列
+  updateHUD(d);
   renderActionSlots();
-  
-  // 初始化战斗场地渲染
-  initBattleCanvas();
-  renderBattleState();
-  
-  // 准备计时器(本地显示用)
-  const timerDisplay = document.getElementById('timerDisplay');
-  let timeLeft = game.prepareTime;
-  
-  if (game._localTimer) clearInterval(game._localTimer);
-  game._localTimer = setInterval(() => {
-    timeLeft--;
-    if (timerDisplay) timerDisplay.textContent = timeLeft;
-    if (timeLeft <= 5) {
-      audio.playSFX('countdown');
+  renderActionButtons();
+  drawField();
+}
+
+function updateHUD(d) {
+  const p1 = d?.p1 || G.state?.p1 || {};
+  const p2 = d?.p2 || G.state?.p2 || {};
+
+  [ ['p1', p1], ['p2', p2] ].forEach(([pre, p]) => {
+    el(pre + 'hp').style.width = Math.max(0, (p.hp||0) / (p.maxHp||1) * 100) + '%';
+    el(pre + 'hpt').textContent = `${p.hp||0}/${p.maxHp||0}`;
+    el(pre + 'mp').style.width = Math.max(0, (p.mp||0) / (p.maxMp||1) * 100) + '%';
+    el(pre + 'mpt').textContent = `${p.mp||0}/${p.maxMp||0}`;
+    el(pre + 'sp').style.width = Math.max(0, (p.sp||0) / (p.maxSp||1) * 100) + '%';
+    el(pre + 'spt').textContent = `${p.sp||0}/${p.maxSp||0}`;
+  });
+}
+
+// ============ ACTION QUEUE ============
+function renderActionButtons() {
+  const btns = [
+    ['◀左','move_left'],['▶右','move_right'],['◀◀闪','dodge_left'],['▶▶闪','dodge_right'],
+    ['🛡防','defend'],['🔄转','turn'],
+    ['技1','skill1'],['技2','skill2'],['技3','skill3'],
+  ];
+  const ab = el('abtns'); ab.innerHTML = '';
+  btns.forEach(([label, val]) => {
+    const btn = doc('button'); btn.className = 'ab'; btn.textContent = label;
+    btn.onclick = () => addAction(val);
+    ab.appendChild(btn);
+  });
+}
+
+function addAction(a) {
+  if (G.actions.length >= G.maxAct) return;
+  G.actions.push(a);
+  renderActionSlots();
+  if (G.socket) G.socket.emit('updateActions', { actions: G.actions });
+  // 预览——本地预览移动
+  previewAction(a);
+  AE.sfx('tick');
+}
+
+function previewAction(a) {
+  if (!G.state) return;
+  const p1 = G.state.p1;
+  // 简单本地预览（不影响服务端状态）
+  const intent = { dx: 0, isDodge: false };
+  if (a === 'move_left') intent.dx = -1;
+  if (a === 'move_right') intent.dx = 1;
+  if (a === 'dodge_left') { intent.dx = -2; intent.isDodge = true; }
+  if (a === 'dodge_right') { intent.dx = 2; intent.isDodge = true; }
+  if (a === 'turn') p1.facing *= -1;
+
+  if (intent.dx !== 0) {
+    let dest = p1.x + intent.dx;
+    dest = Math.max(0, Math.min(15, dest));
+    if (intent.isDodge) {
+      p1._previewDodge = true;
+    } else {
+      if (dest === G.state.p2.x) dest = p1.x;
     }
-  }, 1000);
-}
-
-function updateTimer(time) {
-  document.getElementById('timerDisplay').textContent = time;
-}
-
-function updateHPMPDisplay() {
-  const defaultMaxHp = 100;
-  const defaultMaxMp = 50;
-  
-  if (!game.battleState) {
-    document.getElementById('p1HpBar').style.width = '100%';
-    document.getElementById('p1HpText').textContent = `${defaultMaxHp}/${defaultMaxHp}`;
-    document.getElementById('p1MpBar').style.width = '100%';
-    document.getElementById('p1MpText').textContent = `${defaultMaxMp}/${defaultMaxMp}`;
-    document.getElementById('p2HpBar').style.width = '100%';
-    document.getElementById('p2HpText').textContent = `${defaultMaxHp}/${defaultMaxHp}`;
-    document.getElementById('p2MpBar').style.width = '100%';
-    document.getElementById('p2MpText').textContent = `${defaultMaxMp}/${defaultMaxMp}`;
-    return;
+    G.state.p2._previewDodge = false;
+    // save old for undo
+    if (!G._previewStack) G._previewStack = [];
+    G._previewStack.push({ x: p1.x, facing: p1.facing });
+    p1.x = dest;
   }
-  
-  const p1MaxHp = game.battleState.p1MaxHp || defaultMaxHp;
-  const p2MaxHp = game.battleState.p2MaxHp || defaultMaxHp;
-  const p1MaxMp = game.battleState.p1MaxMp || defaultMaxMp;
-  const p2MaxMp = game.battleState.p2MaxMp || defaultMaxMp;
-  
-  const p1HpVal = Math.max(0, game.battleState.p1Hp || 0);
-  const p2HpVal = Math.max(0, game.battleState.p2Hp || 0);
-  const p1MpVal = Math.max(0, game.battleState.p1Mp || 0);
-  const p2MpVal = Math.max(0, game.battleState.p2Mp || 0);
-  
-  document.getElementById('p1HpBar').style.width = Math.max(0, (p1HpVal / p1MaxHp) * 100) + '%';
-  document.getElementById('p1HpText').textContent = `${p1HpVal}/${p1MaxHp}`;
-  document.getElementById('p1MpBar').style.width = Math.max(0, (p1MpVal / p1MaxMp) * 100) + '%';
-  document.getElementById('p1MpText').textContent = `${p1MpVal}/${p1MaxMp}`;
-  document.getElementById('p2HpBar').style.width = Math.max(0, (p2HpVal / p2MaxHp) * 100) + '%';
-  document.getElementById('p2HpText').textContent = `${p2HpVal}/${p2MaxHp}`;
-  document.getElementById('p2MpBar').style.width = Math.max(0, (p2MpVal / p2MaxMp) * 100) + '%';
-  document.getElementById('p2MpText').textContent = `${p2MpVal}/${p2MaxMp}`;
-}
 
-// ======== 行动队列操作 ========
-function addAction(action) {
-  if (game.actions.length >= game.maxActions) {
-    return;
-  }
-  game.actions.push(action);
-  renderActionSlots();
-  
-  // 同步到服务器
-  if (game.socket) {
-    game.socket.emit('updateActions', { actions: game.actions });
-  }
-  
-  audio.playSFX('countdown');
-}
+  drawField();
 
-function clearActions() {
-  game.actions = [];
-  renderActionSlots();
-  if (game.socket) {
-    game.socket.emit('updateActions', { actions: [] });
+  // 清除over 1s后的dodge预览效果
+  if (intent.isDodge) {
+    setTimeout(() => { if (G.state?.p1) G.state.p1._previewDodge = false; drawField(); }, 600);
   }
 }
 
 function undoAction() {
-  game.actions.pop();
+  G.actions.pop();
   renderActionSlots();
-  if (game.socket) {
-    game.socket.emit('updateActions', { actions: game.actions });
+  if (G.socket) G.socket.emit('updateActions', { actions: G.actions });
+  // undo preview
+  if (G._previewStack && G._previewStack.length > 0) {
+    const prev = G._previewStack.pop();
+    if (G.state?.p1) {
+      G.state.p1.x = prev.x;
+      G.state.p1.facing = prev.facing;
+    }
   }
+  drawField();
 }
 
-function fillRandom() {
-  const actionList = ['左', '右', '上', '下', '攻', '防', '技1', '技2', '技3', '攻', '攻', '防'];
-  game.actions = [];
-  for (let i = 0; i < game.maxActions; i++) {
-    game.actions.push(actionList[Math.floor(Math.random() * actionList.length)]);
-  }
+function clearActions() {
+  G.actions = []; G._previewStack = [];
   renderActionSlots();
-  if (game.socket) {
-    game.socket.emit('updateActions', { actions: game.actions });
+  if (G.socket) G.socket.emit('updateActions', { actions: [] });
+  // 重置预览位置
+  if (G.state?.p1) {
+    // reset to original pos from server
   }
-  audio.playSFX('countdown');
+  drawField();
+}
+
+function randomFill() {
+  const pool = ['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];
+  G.actions = [];
+  for (let i = 0; i < 16; i++) G.actions.push(pool[Math.floor(Math.random() * pool.length)]);
+  renderActionSlots();
+  if (G.socket) G.socket.emit('updateActions', { actions: G.actions });
+  AE.sfx('tick');
 }
 
 function renderActionSlots() {
-  const slots = document.getElementById('actionSlots');
-  const lenDisplay = document.getElementById('actionLength');
-  
-  lenDisplay.textContent = `(${game.actions.length}/${game.maxActions})`;
+  const slots = el('aslots');
+  el('acnt').textContent = `(${G.actions.length}/16)`;
   slots.innerHTML = '';
-  
-  game.actions.forEach((action, i) => {
-    const slot = document.createElement('div');
-    slot.className = 'action-slot';
-    slot.innerHTML = `<span class="slot-num">${i + 1}</span>${action}`;
-    slot.onclick = () => {
-      game.actions.splice(i, 1);
-      renderActionSlots();
-      if (game.socket) {
-        game.socket.emit('updateActions', { actions: game.actions });
-      }
+  G.actions.forEach((a, i) => {
+    const div = doc('div'); div.className = 'as';
+    const labels = { move_left: '◀', move_right: '▶', dodge_left: '◀◀', dodge_right: '▶▶', defend: '🛡', turn: '🔄', skill1: '技1', skill2: '技2', skill3: '技3' };
+    div.innerHTML = `<span class="sn">${i+1}</span>${labels[a] || a}`;
+    div.onclick = () => {
+      G.actions.splice(i, 1); renderActionSlots();
+      if (G.socket) G.socket.emit('updateActions', { actions: G.actions });
     };
-    slots.appendChild(slot);
+    slots.appendChild(div);
   });
-  
-  // 空槽位
-  for (let i = game.actions.length; i < game.maxActions; i++) {
-    const slot = document.createElement('div');
-    slot.className = 'action-slot';
-    slot.style.opacity = '0.3';
-    slot.innerHTML = `<span class="slot-num">${i + 1}</span>⋯`;
-    slots.appendChild(slot);
+  for (let i = G.actions.length; i < 16; i++) {
+    const div = doc('div'); div.className = 'as'; div.style.opacity = '0.3';
+    div.innerHTML = `<span class="sn">${i+1}</span>⋯`;
+    slots.appendChild(div);
   }
 }
 
-function readyForBattle() {
-  game.isReady = true;
-  document.getElementById('readyBtn').disabled = true;
-  document.getElementById('readyBtn').textContent = '⏳ 已准备';
-  
-  if (game.socket) {
-    game.socket.emit('ready');
-    
-    if (game.gameMode === 'ai') {
-      game.socket.emit('aiReady', { roomId: game.roomId, difficulty: 'normal' });
+function readyBattle() {
+  G.ready = true;
+  el('rdyBtn').disabled = true; el('rdyBtn').textContent = '⏳ 已准备';
+  G.socket.emit('ready');
+  if (G.mode === 'ai') G.socket.emit('aiReady', { roomId: G.roomId });
+  AE.sfx('skill');
+}
+
+// ============ BATTLE ANIMATION ============
+function playBattleFrames(frames, final) {
+  let idx = 0;
+  function next() {
+    if (idx >= frames.length) {
+      G.state = final;
+      updateHUD({ p1: final.p1, p2: final.p2 });
+      drawField();
+      return;
     }
-  }
-  
-  audio.playSFX('skill');
-}
+    const f = frames[idx];
+    G.state = { p1: f.p1, p2: f.p2, bullets: f.bullets || [], _particles: [] };
 
-// ======== 战斗场地渲染 ========
-function initBattleCanvas() {
-  const canvas = document.getElementById('battleCanvas');
-  if (!canvas) return;
-  
-  canvas.width = canvas.parentElement.clientWidth;
-  canvas.height = canvas.parentElement.clientHeight;
-  
-  const ctx = canvas.getContext('2d');
-  renderBattleState();
-}
-
-function renderBattleState() {
-  const canvas = document.getElementById('battleCanvas');
-  if (!canvas) return;
-  
-  const ctx = canvas.getContext('2d');
-  const state = game.battleState || {
-    p1Pos: { x: 1, y: 1 },
-    p2Pos: { x: 7, y: 1 },
-    p1Char: game.selectedChar || 'warrior',
-    p2Char: 'warrior',
-    p1Hp: 100,
-    p2Hp: 100
-  };
-  
-  renderer.renderBattle(ctx, state);
-}
-
-// ======== 战斗动画 ========
-function animateBattleStep(data) {
-  const canvas = document.getElementById('battleCanvas');
-  if (!canvas) return;
-  
-  const ctx = canvas.getContext('2d');
-  const state = data.results;
-  game.battleState = state;
-  
-  updateHPMPDisplay();
-  
-  // 更新日志
-  if (state.log && state.log.length > 0) {
-    const logContent = document.getElementById('logContent');
-    if (logContent) {
-      const latest = state.log.slice(-5);
-      logContent.innerHTML = latest.map(l => {
-        let cls = 'log-line';
-        if (l.includes('伤害')) cls += ' log-damage';
-        else if (l.includes('防御')) cls += ' log-defend';
-        else if (l.includes('恢复')) cls += ' log-heal';
-        else if (l.includes('技能')) cls += ' log-skill';
-        return `<div class="${cls}">${l}</div>`;
-      }).join('');
-      logContent.scrollTop = logContent.scrollHeight;
-    }
-  }
-  
-  // 播放动画步骤
-  if (state.animSteps && state.animSteps.length > 0) {
-    let stepIdx = 0;
-    
-    function playNextStep() {
-      if (stepIdx >= state.animSteps.length) return;
-      
-      const step = state.animSteps[stepIdx];
-      renderer.renderAnimStep(ctx, step, state, canvas.width, canvas.height);
-      
-      // 播放音效
-      switch (step.action) {
-        case 'attack': audio.hit(); break;
-        case 'defend': audio.block(); break;
-        case 'skill': audio.skill(); break;
-        case 'counter': audio.block(); break;
+    // events → particles
+    (f.events || []).forEach(ev => {
+      if (ev.type === 'collision') {
+        const px = (ev.pos + 0.5) * (el('fc').width / 16);
+        for (let i = 0; i < 12; i++) {
+          G.state._particles.push({ x: px + (Math.random()-0.5)*30, y: el('fc').height*0.65 + (Math.random()-0.5)*30, c: '#ffff00', s: 2+Math.random()*4, a: 1 });
+        }
+        AE.sfx('block');
       }
-      
-      stepIdx++;
-      setTimeout(playNextStep, 400);
+      if (ev.type === 'melee_hit') { AE.sfx('hit'); }
+      if (ev.type === 'projectile_fired') { AE.sfx('projectile'); }
+      if (ev.type === 'dodged') { AE.sfx('dodge'); }
+    });
+
+    updateHUD({ p1: f.p1, p2: f.p2 });
+    drawField();
+
+    // log
+    const logs = (f.events || []).map(ev => {
+      if (ev.type === 'collision') return `<span class="l ld">碰撞! P1:-${ev.dmg1} P2:-${ev.dmg2}</span>`;
+      if (ev.type === 'melee_hit') return `<span class="l ld">${ev.actor} 近战命中 ${ev.target} -${ev.dmg}</span>`;
+      if (ev.type === 'melee_miss') return `<span class="l">${ev.actor} 攻击落空</span>`;
+      if (ev.type === 'projectile_fired') return `<span class="l ls">${ev.actor} 发射弹幕</span>`;
+      if (ev.type === 'dodged') return `<span class="l lb">${ev.target} 闪避!</span>`;
+      if (ev.type === 'dash') return `<span class="l ls">${ev.actor} 冲刺!</span>`;
+      if (ev.type === 'dash_hit') return `<span class="l ld">${ev.actor} 冲撞击中 -${ev.dmg}</span>`;
+      if (ev.type === 'aoe_hit') return `<span class="l ld">${ev.actor} AOE命中 -${ev.dmg}</span>`;
+      if (ev.type === 'teleport') return `<span class="l ls">${ev.actor} 传送!</span>`;
+      if (ev.type === 'noMp') return `<span class="l">${ev.actor} MP不足</span>`;
+      return '';
+    }).filter(Boolean);
+    if (logs.length > 0) {
+      el('logc').innerHTML = logs.slice(-4).join('');
     }
-    
-    playNextStep();
+
+    idx++;
+    setTimeout(next, 800); // ~1 tick per second but slightly faster for animation
   }
-  
-  // 渲染最终状态
-  renderBattleState();
+  next();
 }
 
-// ======== 结果 ========
-function showResult(title, data) {
-  showScreen('resultScreen');
-  document.getElementById('resultTitle').textContent = title;
-  document.getElementById('resultTitle').style.color = 
-    title === '胜利!' ? 'var(--neon-yellow)' : 'var(--neon-pink)';
-  document.getElementById('resultDetail').innerHTML = `
-    P1 HP: ${data.p1Hp} / 100<br>
-    P2 HP: ${data.p2Hp} / 100<br>
-    ${data.reason === 'maxRounds' ? '(回合上限)' : ''}
-  `;
+// ============ CANVAS ============
+function drawField() {
+  const canvas = el('fc');
+  if (!canvas) return;
+  R.renderField(canvas, G.state, false, G.actions, G.actions.length);
 }
 
-// ======== 窗口调整 ========
 window.addEventListener('resize', () => {
-  const canvas = document.getElementById('battleCanvas');
-  if (canvas && document.getElementById('preparePhase').classList.contains('active')) {
-    canvas.width = canvas.parentElement.clientWidth;
-    canvas.height = canvas.parentElement.clientHeight;
-    renderBattleState();
-  }
-  
-  const menuCanvas = document.getElementById('menuCanvas');
-  if (menuCanvas) {
-    menuCanvas.width = window.innerWidth;
-    menuCanvas.height = window.innerHeight;
-  }
+  const canvas = el('fc');
+  if (canvas) { canvas.width = canvas.parentElement.clientWidth; canvas.height = canvas.parentElement.clientHeight; drawField(); }
 });
 
-// ======== 初始化 ========
-window.addEventListener('load', () => {
-  audio.init();
-  renderer.init();
-  connectSocket();
-  startMenuAnimation();
-  
-  // 主菜单BGM
+// ============ INIT ============
+function el(id) { return document.getElementById(id); }
+function doc(tag) { return document.createElement(tag); }
+
+window.addEventListener('load', async () => {
+  AE.init();
+  await loadData();
+  connect();
   setTimeout(() => {
-    audio.playBGM('menu');
-  }, 1000);
+    document.addEventListener('click', () => { if (AE.ctx?.state === 'suspended') AE.ctx.resume(); }, { once: true });
+  }, 500);
 });
 
-// ======== 键盘快捷键(PC端补充) ========
-document.addEventListener('keydown', (e) => {
-  if (!document.getElementById('preparePhase').classList.contains('active')) return;
-  
-  switch(e.key.toLowerCase()) {
-    case 'a': addAction('左'); break;
-    case 'd': addAction('右'); break;
-    case 'w': addAction('上'); break;
-    case 's': addAction('下'); break;
-    case 'j': addAction('攻'); break;
-    case 'k': addAction('防'); break;
-    case '1': addAction('技1'); break;
-    case '2': addAction('技2'); break;
-    case '3': addAction('技3'); break;
-    case 'backspace': undoAction(); break;
-    case 'escape': clearActions(); break;
-    case 'enter': readyForBattle(); break;
-    case 'r': fillRandom(); break;
-  }
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (!el('battle')?.classList.contains('active')) return;
+  const map = { a: 'move_left', d: 'move_right', q: 'dodge_left', e: 'dodge_right', w: 'defend', s: 'turn', '1': 'skill1', '2': 'skill2', '3': 'skill3' };
+  if (map[e.key]) { addAction(map[e.key]); return; }
+  if (e.key === 'Backspace') undoAction();
+  if (e.key === 'Escape') clearActions();
+  if (e.key === 'Enter') readyBattle();
+  if (e.key === 'r') randomFill();
 });
-
-// 确保音频上下文在用户交互后启动
-document.addEventListener('click', () => {
-  if (audio.ctx && audio.ctx.state === 'suspended') {
-    audio.ctx.resume();
-  }
-}, { once: true });
