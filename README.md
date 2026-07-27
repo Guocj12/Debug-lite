@@ -25,8 +25,8 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/你的用户名/你的仓库名.git
-cd 你的仓库名
+git clone https://github.com/Guocj12/Debug-lite.git
+cd Debug-lite
 
 # 2. 安装依赖
 cd server
