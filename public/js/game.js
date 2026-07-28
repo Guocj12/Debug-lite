@@ -770,6 +770,13 @@ const Tween = {
   clear() { this._tweens = []; }
 };
 
+// ==================== 调试 ====================
+const DBG = {
+  _on: true,
+  log(...args) { if (this._on) console.log('[DBG]', ...args); },
+  warn(...args) { if (this._on) console.warn('[DBG]', ...args); }
+};
+
 // ==================== 全局游戏状态 G ====================
 const G = {
   socket: null,
@@ -789,12 +796,49 @@ const G = {
   tick: 0,
   p1Actions: [],     // P1 的16 tick 行动
   p2Actions: [],     // P2 的16 tick 行动
+  _cooldowns: {},    // 冷却追踪
+  _snapshots: [],    // 编辑阶段快照栈，用于撤回
+  _renderLoop: null, // raf id
+  _lastFrameTime: 0,
 
   reset() {
     this.p1 = null; this.p2 = null; this.actions = [];
     this.round = 0; this.timeLeft = 60; this.tick = 0;
     this.p1Actions = []; this.p2Actions = [];
+    this._cooldowns = {}; this._snapshots = [];
+    if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
     FX.clear(); Tween.clear();
+  },
+
+  /** 保存当前状态快照 */
+  saveSnapshot() {
+    this._snapshots.push({
+      p1: JSON.parse(JSON.stringify(this.p1)),
+      p2: JSON.parse(JSON.stringify(this.p2)),
+      cooldowns: JSON.parse(JSON.stringify(this._cooldowns || {})),
+      tick: this.tick,
+    });
+  },
+
+  /** 恢复到上一个快照 */
+  restoreSnapshot() {
+    if (this._snapshots.length === 0) return false;
+    const snap = this._snapshots.pop();
+    this.p1 = snap.p1; this.p2 = snap.p2;
+    this._cooldowns = snap.cooldowns;
+    this.tick = snap.tick;
+    DBG.log(`[STATE] 快照恢复 tick=${snap.tick} p1(x=${snap.p1.x},mp=${snap.p1.mp},sp=${snap.p1.sp})`);
+    return true;
+  },
+
+  /** tick 资源恢复 */
+  tickResources() {
+    if (!this.p1) return;
+    this.p1.sp = Math.min(this.p1.maxSp, (this.p1.sp || 0) + 2);
+    this.p1.mp = Math.min(this.p1.maxMp, (this.p1.mp || 0) + 1);
+    DBG.log(`[RESOURCE] tick=${this.tick} P1 MP+1 SP+2 => mp=${this.p1.mp} sp=${this.p1.sp}`);
+    // tick cooldowns
+    for (const k in this._cooldowns) { if (this._cooldowns[k] > 0) this._cooldowns[k]--; }
   }
 };
 
@@ -885,46 +929,25 @@ const UI = {
     if (!container) return;
     container.innerHTML = '';
 
-    // 计算当前可用资源
-    let curMp = G.p1?.mp || 0, curSp = G.p1?.sp || 0;
-    // 减去已排入队列的技能消耗
-    for (const a of G.actions) {
-      const sk = getSkillById(a);
-      if (sk) { curMp -= (sk.mpCost || 0); curSp -= (sk.spCost || 0); }
-      else { const gs = (_skillsData?.genericSkills || []).find(g => g.id === a);
-        if (gs) curSp -= (gs.spCost || 0); }
-    }
-
-    // tick cooldowns
+    const p1 = G.p1;
+    if (!p1) return;
+    let curMp = p1.mp || 0, curSp = p1.sp || 0;
     const cd = G._cooldowns || {};
-    for (const k in cd) { if (cd[k] > 0) cd[k]--; }
-    G._cooldowns = cd;
 
     // 技能按钮
-    const skills = G.mySkillIds || [];
-    skills.forEach((sid, idx) => {
+    const mySids = G.mySkillIds || [];
+    mySids.forEach((sid, idx) => {
       const sk = getSkillById(sid);
       if (!sk) return;
-      const btn = document.createElement('button');
-      btn.className = 'btn btn-b s';
+      const actionId = 'skill' + (idx + 1);
       const onCD = (cd[sid] || 0) > 0;
       const enoughRes = curMp >= (sk.mpCost || 0) && curSp >= (sk.spCost || 0);
-      btn.textContent = `${sk.name} [MP${sk.mpCost||0} SP${sk.spCost||0}]${onCD ? ` CD${cd[sid]}` : ''}`;
-      btn.disabled = G.actions.length >= G.maxActions || onCD || !enoughRes;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-b s';
+      btn.textContent = `${sk.name} [MP${sk.mpCost||0} SP${sk.spCost||0}]${onCD ? ' CD'+cd[sid] : ''}`;
+      btn.disabled = onCD || !enoughRes || G.actions.length >= G.maxActions;
       if (!enoughRes) btn.style.opacity = '0.5';
-      btn.onclick = () => {
-        const actionId = `skill${idx + 1}`;
-        const skill = getSkillById(G.mySkillIds[idx]);
-        if (G.actions.length >= G.maxActions) return;
-        if ((cd[G.mySkillIds[idx]] || 0) > 0) return;
-        if (curMp < (skill?.mpCost || 0) || curSp < (skill?.spCost || 0)) return;
-        G.actions.push(actionId);
-        curMp -= (skill?.mpCost || 0); curSp -= (skill?.spCost || 0);
-        if (skill?.cooldown) cd[G.mySkillIds[idx]] = skill.cooldown;
-        if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
-        UI.renderActionSlots();
-        UI.renderActionButtons();
-      };
+      btn.onclick = () => addActionToQueue(actionId, sid);
       container.appendChild(btn);
     });
 
@@ -934,16 +957,8 @@ const UI = {
       const btn = document.createElement('button');
       btn.className = 'btn btn-g s';
       btn.textContent = `${gs.name} [SP${gs.spCost||0}]`;
-      btn.disabled = G.actions.length >= G.maxActions || curSp < (gs.spCost || 0);
-      btn.onclick = () => {
-        if (G.actions.length >= G.maxActions) return;
-        if (curSp < (gs.spCost || 0)) return;
-        G.actions.push(gs.id);
-        curSp -= (gs.spCost || 0);
-        if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
-        UI.renderActionSlots();
-        UI.renderActionButtons();
-      };
+      btn.disabled = curSp < (gs.spCost || 0) || G.actions.length >= G.maxActions;
+      btn.onclick = () => addActionToQueue(gs.id, gs.id);
       container.appendChild(btn);
     });
   },
@@ -983,8 +998,11 @@ function setupSocket() {
   G.socket.on('prepareStart', (d) => {
     G._mode = 'prepare'; G.round = d.round; G.timeLeft = d.time;
     G.p1 = d.p1; G.p2 = d.p2;
-    G.actions = []; G._cooldowns = {};
-    G.p1Actions = []; G.p2Actions = [];
+    // 保存原始状态（用于清空恢复）
+    G._originP1 = JSON.parse(JSON.stringify(d.p1));
+    G._originP2 = JSON.parse(JSON.stringify(d.p2));
+    G.actions = []; G._cooldowns = {}; G._snapshots = []; G._shieldBullets = [];
+    G.p1Actions = []; G.p2Actions = []; G.tick = 0;
     FX.clear();
     updatePrepareUI();
     UI.showScreen('battle');
@@ -994,6 +1012,8 @@ function setupSocket() {
     document.getElementById('battleQueuePanel').classList.add('hidden');
     document.getElementById('rdyBtn').disabled = false;
 
+    DBG.log('[PHASE] 进入编辑阶段 round=' + d.round + ' p1(x='+d.p1.x+',mp='+d.p1.mp+',sp='+d.p1.sp+')');
+
     if (G.mode === 'ai') {
       G.socket.emit('aiReady', { roomId: G.roomId });
       document.getElementById('actionQueuePanel').classList.add('hidden');
@@ -1002,6 +1022,7 @@ function setupSocket() {
       G.socket.emit('trainReady', { roomId: G.roomId });
     }
     UI.log(`Round ${d.round} — 准备阶段 (${d.time}s)`);
+    startRenderLoop();
   });
 
   G.socket.on('prepareTick', (d) => {
@@ -1014,6 +1035,7 @@ function setupSocket() {
     document.getElementById('actionQueuePanel').classList.add('hidden');
     document.getElementById('battleQueuePanel').classList.remove('hidden');
     document.getElementById('rdyBtn').disabled = true;
+    DBG.log('[PHASE] 进入战斗阶段, frames=' + d.frames.length);
     playBattleAnim(d.frames, d.final);
   });
 
@@ -1034,146 +1056,330 @@ function setupSocket() {
   G.socket.on('aiStart', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`人机对战 (AI: ${d.aiChar})`); });
 }
 
-// ==================== 战斗动画播放 ====================
-const FRAME_DURATION = 600; // ms per tick
+// ==================== 本地步进引擎 ====================
+// 使用简化的战斗逻辑在编辑阶段本地模拟单个 tick
+const LocalStep = {
+  /** 模拟一个 tick 的战斗步进，返回 events */
+  executeOneTick(actionId, p1, p2) {
+    const events = [];
+    const mySids = G.mySkillIds || [];
+    let sk = null, idx = -1;
+    const idxMap = { skill1: 0, skill2: 1, skill3: 2 };
+    if (idxMap[actionId] !== undefined) {
+      idx = idxMap[actionId];
+      sk = getSkillById(mySids[idx]);
+    }
+    // 通用技能直接处理
+    if (!sk) {
+      return this._handleGeneric(actionId, p1, p2);
+    }
 
-function playBattleAnim(frames, final) {
-  FX.clear();
-  let tickIdx = 0;
-  let lastTime = performance.now();
-  let frameAccum = 0;
+    const sid = mySids[idx];
+    if (!sk || !sid) return events;
+    const cd = G._cooldowns || {};
 
-  // 设置初始状态
-  if (frames.length > 0) {
-    const f0 = frames[0];
-    G.p1 = f0.p1; G.p2 = f0.p2;
-    G.p1Actions = f0.p1Actions || []; G.p2Actions = f0.p2Actions || [];
+    // 消耗资源
+    const hasMp = (p1.mp || 0) >= (sk.mpCost || 0);
+    const hasSp = (p1.sp || 0) >= (sk.spCost || 0);
+    if (!hasMp || !hasSp) {
+      events.push({ type: 'exhausted', actor: 'p1', skillId: sid });
+      return events;
+    }
+    p1.mp -= (sk.mpCost || 0);
+    p1.sp -= (sk.spCost || 0);
+    if (sk.cooldown) G._cooldowns[sid] = sk.cooldown;
+
+    const dir = p1.facing;
+    const target = p2;
+
+    DBG.log(`[STEP] action=${actionId} skill=${sk.name} type=${sk.type} range=${sk.range} p1(x=${p1.x},facing=${dir}) p2(x=${p2.x})`);
+
+    switch (sk.type) {
+      case 'melee': {
+        const rg = sk.range || 1;
+        const dist = Math.abs(p1.x - target.x);
+        let inRange = dist <= rg && ((dir === 1 && target.x >= p1.x) || (dir === -1 && target.x <= p1.x));
+        if (sk.direction === 'forward_and_back') inRange = dist <= rg;
+        if (inRange) {
+          const ratio = sk.damageRatio || 1;
+          const dmg = Math.max(1, Math.floor((p1.atk || 10) * ratio - (target.def || 0)));
+          target.hp = Math.max(0, target.hp - dmg);
+          const evT = sk.effect === 'stun_damage' ? 'stun_hit' : 'melee_hit';
+          events.push({ type: evT, actor: 'p1', target: 'p2', dmg, x: target.x, skillId: sid,
+            bullet_anim: sk.anim_bullet || 'meleeSwing', hit_anim: sk.anim_hit || 'hitSlash',
+            bullet_color: sk.color, bullet_x: target.x });
+          DBG.log(`[HIT] melee dmg=${dmg} at target.x=${target.x} bullet_anim=${sk.anim_bullet} hit_anim=${sk.anim_hit}`);
+          if (sk.effect === 'stun_damage') { target._effects = target._effects || []; target._effects.push({ type: 'stun', ticks: sk.stunDuration || 1 }); }
+        } else { events.push({ type: 'melee_miss', actor: 'p1' }); DBG.log('[MISS] melee out of range'); }
+        break;
+      }
+      case 'projectile': {
+        const range = sk.bulletRange || 99;
+        const dir = p1.facing;
+        let hitDone = false;
+        for (let scan = 1; scan <= range; scan++) {
+          const sx = p1.x + dir * scan;
+          if (sx < 0 || sx > 15) break;
+          if (sx === target.x) {
+            const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
+            target.hp = Math.max(0, target.hp - dmg);
+            const evT = sk.effect === 'freeze_damage' ? 'freeze_hit' : (sk.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
+            events.push({ type: evT, actor: 'p1', target: 'p2', dmg, x: sx, skillId: sid,
+              bullet_anim: sk.anim_bullet || 'arrowFly', hit_anim: sk.anim_hit || 'hitExplosion',
+              bullet_color: sk.color, bullet_from: p1.x, bullet_to: sx });
+            DBG.log(`[HIT] projectile dmg=${dmg} from=${p1.x} to=${sx} bullet_anim=${sk.anim_bullet} hit_anim=${sk.anim_hit}`);
+            hitDone = true; break;
+          }
+        }
+        if (!hitDone) {
+          const maxX = Math.max(0, Math.min(15, p1.x + dir * range));
+          events.push({ type: 'bullet_trail', actor: 'p1', skillId: sid,
+            bullet_anim: sk.anim_bullet || 'arrowFly', bullet_color: sk.color,
+            bullet_from: p1.x, bullet_to: maxX, bullet_faded: true });
+          DBG.log(`[TRAIL] bullet flew to max range ${maxX} bullet_anim=${sk.anim_bullet}`);
+        }
+        break;
+      }
+      case 'targeted_aoe': {
+        const aoeR = sk.aoeRadius || 1;
+        const tX = target.x;
+        for (let ox = -aoeR; ox <= aoeR; ox++) {
+          const ax = tX + ox;
+          if (ax < 0 || ax > 15) continue;
+          if (ax === target.x) {
+            const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
+            target.hp = Math.max(0, target.hp - dmg);
+            events.push({ type: 'aoe_hit', actor: 'p1', target: 'p2', dmg, x: ax, skillId: sid,
+              bullet_anim: sk.anim_bullet || 'arrowRainDrop', hit_anim: sk.anim_hit || 'hitAOE', bullet_color: sk.color });
+            DBG.log(`[HIT] aoe dmg=${dmg} at x=${ax} bullet_anim=${sk.anim_bullet}`);
+          } else {
+            events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: ax,
+              bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
+            DBG.log(`[CAST] aoe drop at x=${ax} (no hit)`);
+          }
+        }
+        events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: tX,
+          bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
+        break;
+      }
+      case 'dash': {
+        const dDist = sk.range || 3;
+        let dest = p1.x + dir * dDist;
+        dest = Math.max(0, Math.min(15, dest));
+        const oldX = p1.x;
+        // check if target in dash path
+        const startX = Math.min(oldX, dest), endX = Math.max(oldX, dest);
+        if (target.x >= startX && target.x <= endX) {
+          const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
+          target.hp = Math.max(0, target.hp - dmg);
+          events.push({ type: 'dash_hit', actor: 'p1', target: 'p2', dmg, skillId: sid,
+            bullet_anim: sk.anim_bullet || 'dashTrail', hit_anim: sk.anim_hit || 'hitSlash',
+            bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
+          DBG.log(`[HIT] dash dmg=${dmg} from=${oldX} to=${dest}`);
+          if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
+        }
+        p1.x = dest;
+        events.push({ type: 'dash', actor: 'p1', to: dest, skillId: sid,
+          bullet_anim: sk.anim_bullet || 'dashTrail', bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
+        DBG.log(`[MOVE] dash from=${oldX} to=${dest}`);
+        break;
+      }
+      case 'teleport_backstab': {
+        const oldX = p1.x;
+        let tpX = target.x - dir;
+        tpX = Math.max(0, Math.min(15, tpX));
+        if (tpX === target.x) tpX = Math.max(0, Math.min(15, tpX - dir));
+        p1.x = tpX;
+        if (p1.x > target.x) p1.facing = -1; else if (p1.x < target.x) p1.facing = 1;
+        events.push({ type: 'teleport', actor: 'p1', to: tpX, skillId: sid,
+          bullet_anim: sk.anim_bullet || 'teleportFlash', hit_anim: sk.anim_hit || 'teleportFlash', bullet_color: sk.color });
+        DBG.log(`[MOVE] teleport from=${oldX} to=${tpX}`);
+        break;
+      }
+      case 'shield_wall': {
+        const sX = p1.x + dir;
+        events.push({ type: 'shield_wall', actor: 'p1', x: sX, skillId: sid, color: sk.color });
+        DBG.log(`[FX] shield at x=${sX}`);
+        // 盾牌存到 G._shield 中 (简化)
+        G._shieldBullets = G._shieldBullets || [];
+        G._shieldBullets.push({ x: sX, dir, isShield: true, color: sk.color });
+        break;
+      }
+    }
+    return events;
+  },
+
+  _handleGeneric(actionId, p1, p2) {
+    const events = [];
+    const oldX = p1.x;
+    const gs = (_skillsData?.genericSkills || []).find(g => g.id === actionId);
+    if (!gs) return events;
+    const spCost = gs.spCost || 0;
+    if ((p1.sp || 0) < spCost) return events;
+    p1.sp -= spCost;
+
+    DBG.log(`[STEP] generic=${actionId} name=${gs.name} p1(x=${p1.x},facing=${p1.facing})`);
+    switch (actionId) {
+      case 'move_left': p1.x = Math.max(0, p1.x - 1); events.push({ type:'move', actor:'p1', from:oldX, to:p1.x }); DBG.log('[MOVE] left '+oldX+'->'+p1.x); break;
+      case 'move_right': p1.x = Math.min(15, p1.x + 1); events.push({ type:'move', actor:'p1', from:oldX, to:p1.x }); DBG.log('[MOVE] right '+oldX+'->'+p1.x); break;
+      case 'dodge_left': p1.x = Math.max(0, p1.x - 2); events.push({ type:'dodged', actor:'p1', x:p1.x }); DBG.log('[MOVE] dodge left '+oldX+'->'+p1.x); break;
+      case 'dodge_right': p1.x = Math.min(15, p1.x + 2); events.push({ type:'dodged', actor:'p1', x:p1.x }); DBG.log('[MOVE] dodge right '+oldX+'->'+p1.x); break;
+      case 'defend': events.push({ type:'defend', actor:'p1' }); DBG.log('[ACT] defend'); break;
+      case 'turn': p1.facing *= -1; events.push({ type:'turn', actor:'p1' }); DBG.log('[ACT] turn facing='+p1.facing); break;
+    }
+    return events;
   }
+};
 
-  function animate(now) {
-    if (G._mode !== 'battle') return; // 可能已切换阶段
+// ==================== 持续渲染循环 ====================
+// 编辑和战斗阶段共用同一个渲染循环
+function startRenderLoop() {
+  if (G._renderLoop) cancelAnimationFrame(G._renderLoop);
+  G._lastFrameTime = performance.now();
 
-    let dt = now - lastTime;
-    lastTime = now;
-    if (dt > 200) dt = 16; // 防止跳帧过大
+  function frame(now) {
+    if (G._mode === 'result') { G._renderLoop = null; return; }
+    G._renderLoop = requestAnimationFrame(frame);
+
+    let dt = now - G._lastFrameTime;
+    G._lastFrameTime = now;
+    if (dt > 200) dt = 16;
 
     FX.update(dt);
     Tween.update();
 
-    // 处理帧步进
-    frameAccum += dt;
-    while (frameAccum >= FRAME_DURATION && tickIdx < frames.length) {
-      const frame = frames[tickIdx];
-      G.p1 = frame.p1; G.p2 = frame.p2;
-      G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
-      G.tick = tickIdx;
-
-      // 从事件生成特效
-      const events = frame.events || [];
-      for (const ev of events) {
-        FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
-      }
-
-      // Buff 粒子
-      FX.ensureBuffEmitter(frame.p1, 'p1');
-      FX.ensureBuffEmitter(frame.p2, 'p2');
-
-      // 更新战斗阶段队列面板
-      UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
-
-      // tick 音效
-      if (events.length > 0) AE.play('tick');
-
-      AE.play('tick');
-      frameAccum -= FRAME_DURATION;
-      tickIdx++;
-    }
-
-    // 渲染
     Renderer.resize();
     Renderer.drawGrid();
-    Renderer.drawShields(frames[Math.min(tickIdx, frames.length - 1)]?.bullets || []);
-    Renderer.drawPlayers(G.p1, G.p2);
+
+    // 护盾
+    const shields = G._shieldBullets || [];
+    if (G._mode === 'battle' && G._battleFrames) {
+      const cf = G._battleFrames[Math.min(G.tick, G._battleFrames.length - 1)];
+      if (cf) Renderer.drawShields(cf.bullets || []);
+    } else {
+      Renderer.drawShields(shields);
+    }
+
+    // 画玩家
+    if (G.p1 && G.p2 && G._mode !== 'prepare') {
+      Renderer.drawPlayers(G.p1, G.p2);
+    } else if (G.p1 && G.p2) {
+      // 编辑阶段：显示p1，隐藏p2
+      const p2Hidden = JSON.parse(JSON.stringify(G.p2));
+      p2Hidden._alpha = 0;
+      Renderer.drawPlayers(G.p1, p2Hidden);
+    }
+
     FX.render(Renderer.ctx);
 
     // 更新 HUD
-    UI.updateHUD(G.p1, 'p1');
-    UI.updateHUD(G.p2, 'p2');
-    document.getElementById('tm').textContent = G.tick;
-    document.getElementById('rnd').textContent = `ROUND ${G.round}`;
-
-    if (tickIdx < frames.length || FX.active.length > 0) {
-      requestAnimationFrame(animate);
-    } else {
-      // 动画播放完毕
-      G.p1 = final.p1; G.p2 = final.p2;
-      UI.updateHUD(G.p1, 'p1');
-      UI.updateHUD(G.p2, 'p2');
-      UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}`);
-      G.tick = frames.length;
-      UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
+    if (G.p1) UI.updateHUD(G.p1, 'p1');
+    if (G.p2) UI.updateHUD(G.p2, 'p2');
+    if (G._mode === 'battle' || G._mode === 'prepare') {
+      document.getElementById('tm').textContent = G._mode === 'battle' ? G.tick : G.timeLeft;
+      document.getElementById('rnd').textContent = `ROUND ${G.round}`;
     }
-  }
 
-  requestAnimationFrame(animate);
+    // 战斗阶段专用步进
+    if (G._mode === 'battle' && G._battleStep) G._battleStep();
+  }
+  G._renderLoop = requestAnimationFrame(frame);
+  DBG.log('[RENDER] 持续渲染循环已启动 mode=' + G._mode);
 }
 
-// ==================== DOM 事件绑定 ====================
-function nav(screen) {
-  if (screen === 'menu') {
-    G.reset();
-    if (G.socket) G.socket.emit('leaveRoom');
-  }
-  UI.showScreen(screen);
-  if (screen === 'battle') {
-    const canvas = document.getElementById('fc');
-    if (canvas) Renderer.init(canvas);
-  }
-}
+// ==================== 编辑阶段：添加行动到队列并步进 ====================
+function addActionToQueue(actionId, skillSid) {
+  if (G.actions.length >= G.maxActions) return;
+  if (G._mode !== 'prepare') return;
 
-function updatePrepareUI() {
-  UI.updatePrepareUI(G.p1);
-  // P2 side: always visible during prepare
-  UI.updateHUD(G.p2, 'p2');
-  document.getElementById('tm').textContent = G.timeLeft;
-  document.getElementById('rnd').textContent = `ROUND ${G.round}`;
-  // hide queue panel in prepare
-  document.getElementById('battleQueuePanel').classList.add('hidden');
-}
+  const sk = getSkillById(skillSid);
+  const gs = (_skillsData?.genericSkills || []).find(g => g.id === actionId);
+  const mpCost = sk?.mpCost || 0;
+  const spCost = sk?.spCost || gs?.spCost || 0;
+  const cd = G._cooldowns || {};
 
-function clearActions() {
-  G.actions = [];
+  // 检查冷却
+  if (sk && (cd[skillSid] || 0) > 0) return;
+  // 检查资源
+  if ((G.p1?.mp || 0) < mpCost || (G.p1?.sp || 0) < spCost) return;
+
+  // 保存快照（步进前状态）
+  G.saveSnapshot();
+  DBG.log('========================================');
+  DBG.log('[QUEUE] 添加行动 #' + G.actions.length + ' = ' + actionId + (sk ? ' ('+sk.name+')' : ''));
+
+  // 执行本地步进
+  const events = LocalStep.executeOneTick(actionId, G.p1, G.p2);
+
+  // 步进后 tick 资源回复
+  G.tickResources();
+  G.tick++;
+
+  // 从事件生成动画特效
+  for (const ev of events) {
+    FX.spawnFromEvent(ev, 600, G.p1, G.p2);
+  }
+
+  // 记录 action
+  G.actions.push(actionId);
+
+  // 通知后端
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+
+  // 更新 UI
   UI.renderActionSlots();
   UI.renderActionButtons();
+
+  DBG.log('[QUEUE] 步进完成 tick=' + G.tick + ' p1(x='+G.p1.x+',mp='+G.p1.mp+',sp='+G.p1.sp+',hp='+G.p1.hp+') p2(hp='+G.p2.hp+')');
+  DBG.log('========================================');
+}
+
+// ==================== 编辑阶段：清空/撤销/填充 ====================
+function clearActions() {
+  DBG.log('[CLEAR] 清空所有' + G.actions.length + '个行动');
+  // 恢复到最初状态（第一个快照）
+  while (G._snapshots.length > 0) G.restoreSnapshot();
+  // 还需要恢复到 round 开始时的状态：从 prepareStart 存一份原始状态
+  if (G._originP1) { G.p1 = JSON.parse(JSON.stringify(G._originP1)); }
+  if (G._originP2) { G.p2 = JSON.parse(JSON.stringify(G._originP2)); }
+  G._cooldowns = {};
+  G.tick = 0;
+  G.actions = [];
+  G._snapshots = [];
+  G._shieldBullets = [];
+  FX.clear();
+  if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: [] });
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+  DBG.log('[CLEAR] 状态已重置 p1(x='+G.p1.x+',mp='+G.p1.mp+',sp='+G.p1.sp+')');
 }
 
 function undoAction() {
   if (G.actions.length === 0) return;
+  DBG.log('[UNDO] 撤销最后一个行动 #' + (G.actions.length-1) + ' = ' + G.actions[G.actions.length-1]);
   G.actions.pop();
+  G.restoreSnapshot();
+  G._shieldBullets = [];
+  FX.clear();
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
   UI.renderActionSlots();
   UI.renderActionButtons();
+  DBG.log('[UNDO] 已恢复 tick=' + G.tick + ' p1(x='+G.p1.x+',mp='+G.p1.mp+',sp='+G.p1.sp+')');
 }
 
 function randomFill() {
+  // 保留但不在 UI 中显示按钮，仅供 AI 使用
   const pool = [];
-  const generic = _skillsData?.genericSkills || [];
-  generic.forEach(g => pool.push(g.id));
-  (G.mySkillIds || []).forEach((sid, i) => {
-    const sk = getSkillById(sid);
-    if (sk) pool.push('skill' + (i + 1), 'skill' + (i + 1));
-  });
+  (_skillsData?.genericSkills || []).forEach(g => pool.push(g.id));
+  (G.mySkillIds || []).forEach((sid, i) => pool.push('skill' + (i + 1)));
   G.actions = [];
   for (let i = 0; i < G.maxActions; i++) {
     G.actions.push(pool[Math.floor(Math.random() * pool.length)]);
   }
-  if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
-  UI.renderActionSlots();
-  UI.renderActionButtons();
 }
 
 function readyBattle() {
+  DBG.log('[READY] 完成，发送队列 ' + G.actions.length + '个行动');
   if (G.socket && G.roomId) {
     G.socket.emit('updateActions', { actions: G.actions });
     G.socket.emit('ready');
@@ -1186,6 +1392,90 @@ function quitBattle() {
   if (G.socket) G.socket.emit('leaveRoom');
   G.reset();
   nav('menu');
+}
+
+// ==================== 战斗动画播放（服务端发来的帧序列） ====================
+const FRAME_DURATION = 600;
+
+function playBattleAnim(frames, final) {
+  G._battleFrames = frames;
+  G._battleFinal = final;
+  FX.clear();
+  G.tick = 0;
+  G._shieldBullets = [];
+  let tickIdx = 0;
+  let frameAccum = 0;
+  G._lastFrameTime = performance.now();
+
+  DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, 每帧' + FRAME_DURATION + 'ms');
+  if (frames.length > 0) {
+    const f0 = frames[0];
+    G.p1 = f0.p1; G.p2 = f0.p2;
+    G.p1Actions = f0.p1Actions || []; G.p2Actions = f0.p2Actions || [];
+  }
+
+  // 把 battle 步进逻辑挂到持续的渲染循环中
+  G._battleStep = () => {
+    if (G._mode !== 'battle') return;
+    if (tickIdx >= frames.length) {
+      if (FX.active.length === 0) {
+        G.p1 = final.p1; G.p2 = final.p2;
+        UI.updateHUD(G.p1, 'p1'); UI.updateHUD(G.p2, 'p2');
+        UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}`);
+        G.tick = frames.length;
+        UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
+        DBG.log('[BATTLE] 播放完毕');
+      }
+      return;
+    }
+    const now = performance.now();
+    const dt = now - G._lastFrameTime;
+    G._lastFrameTime = now;
+    frameAccum += dt;
+    if (frameAccum >= FRAME_DURATION) {
+      const frame = frames[tickIdx];
+      G.p1 = frame.p1; G.p2 = frame.p2;
+      G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
+      G.tick = tickIdx;
+      const events = frame.events || [];
+      DBG.log('[BATTLE] tick=' + tickIdx + ' events=' + events.length + ' types=' + events.map(e=>e.type).join(','));
+      for (const ev of events) {
+        DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' hit_anim='+ev.hit_anim+' x='+(ev.x??ev.bullet_x)+' from='+ev.bullet_from+' to='+ev.bullet_to);
+        FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
+      }
+      FX.ensureBuffEmitter(frame.p1, 'p1');
+      FX.ensureBuffEmitter(frame.p2, 'p2');
+      UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
+      if (events.length > 0) AE.play('tick');
+      frameAccum -= FRAME_DURATION;
+      tickIdx++;
+    }
+    // 持续更新 FX
+    const dt2 = Math.min(100, performance.now() - G._lastFrameTime);
+    FX.update(dt2);
+  };
+}
+
+// ==================== DOM 导航 ====================
+function nav(screen) {
+  if (screen === 'menu') {
+    G.reset();
+    if (G.socket) G.socket.emit('leaveRoom');
+  }
+  UI.showScreen(screen);
+  if (screen === 'battle') {
+    const canvas = document.getElementById('fc');
+    if (canvas) Renderer.init(canvas);
+    startRenderLoop();
+  }
+}
+
+function updatePrepareUI() {
+  UI.updatePrepareUI(G.p1);
+  UI.updateHUD(G.p2, 'p2');
+  document.getElementById('tm').textContent = G.timeLeft;
+  document.getElementById('rnd').textContent = `ROUND ${G.round}`;
+  document.getElementById('battleQueuePanel').classList.add('hidden');
 }
 
 // ==================== 角色选择 ====================

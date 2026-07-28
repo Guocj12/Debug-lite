@@ -72,11 +72,13 @@ class GameRoom {
       p1Char: s.p1.charId, p2Char: s.p2.charId,
     });
     this.clearTimer();
+    // 仅发送 tick 信息，不再自动倒计时到0触发战斗
+    // 战斗仅在双方都 ready 后触发
     let t = this.prepTime;
     this.timer = setInterval(() => {
       t--;
       io.to(this.id).emit('prepareTick', { t });
-      if (t <= 0) { this.clearTimer(); this.runBattle(); }
+      // 不再自动触发：if (t <= 0) { this.clearTimer(); this.runBattle(); }
       if (this.bothReady()) { this.clearTimer(); this.runBattle(); }
     }, 1000);
   }
