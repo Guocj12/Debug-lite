@@ -77,6 +77,25 @@ const AE = {
 
 // ==================== 像素角色精灵 Sprites ====================
 const Sprites = {
+  /** 角色头顶朝向三角 */
+  drawFacingArrow(ctx, x, baseY, size, facing, color) {
+    const arrowY = baseY - size - 4;
+    const arrowW = 3; // 窄三角
+    const tipX = x + facing * size * 0.33; // 在角色格中心1/3处
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.moveTo(tipX, arrowY);
+    ctx.lineTo(x + (facing > 0 ? -arrowW : arrowW), arrowY - 3);
+    ctx.lineTo(x + (facing > 0 ? -arrowW : arrowW), arrowY + 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  },
+
   drawCharacter(ctx, charDef, x, y, size, facing, alpha = 1) {
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -110,16 +129,20 @@ const Sprites = {
         ctx.closePath(); ctx.fill();
         break;
       case 'triangle2': {
-        const tip = facing > 0 ? x + s/2 : x - s/2;
+        // 刺客：双刀造型（两个小三角上下排列）
+        const s2 = s * 0.9;
+        // 上方三角（正对方向）
+        const tip1 = facing > 0 ? x + s2/2 : x - s2/2;
         ctx.beginPath();
-        ctx.moveTo(tip, y - s/2);
-        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y);
+        ctx.moveTo(tip1, y - s2);
+        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2/2);
+        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2);
         ctx.closePath(); ctx.fill();
-
-        const tip2 = facing > 0 ? x - s/2 : x + s/2;
+        // 下方三角（反方向，刃朝后）
         ctx.beginPath();
-        ctx.moveTo(tip2, y - s);
-        ctx.lineTo(x + (facing > 0 ? s/2 : -s/2), y - s/2);
+        ctx.moveTo(x + (facing > 0 ? -s2/2 : s2/2), y);
+        ctx.lineTo(x + (facing > 0 ? s2/2 : -s2/2), y - s2/2);
+        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2);
         ctx.closePath(); ctx.fill();
         break;
       }
@@ -239,6 +262,10 @@ const Renderer = {
 
     Sprites.drawCharacter(this.ctx, p1c, p1px, this.baseY, p1c.size, p1.facing, p1._alpha ?? 1);
     Sprites.drawCharacter(this.ctx, p2c, p2px, this.baseY, p2c.size, p2.facing, p2._alpha ?? 1);
+
+    // 朝向指示三角（头顶）
+    if ((p1._alpha ?? 1) > 0) Sprites.drawFacingArrow(this.ctx, p1px, this.baseY, p1c.size, p1.facing, p1c.color);
+    if ((p2._alpha ?? 1) > 0) Sprites.drawFacingArrow(this.ctx, p2px, this.baseY, p2c.size, p2.facing, p2c.color);
 
     // 标签位置也用像素坐标
     const px1 = p1px;
@@ -1021,7 +1048,7 @@ function setupSocket() {
 
     if (G.mode === 'ai') {
       G.socket.emit('aiReady', { roomId: G.roomId });
-      document.getElementById('actionQueuePanel').classList.add('hidden');
+      // AI 模式也显示编辑UI，用户可以操作
     }
     if (G.mode === 'train') {
       G.socket.emit('trainReady', { roomId: G.roomId });
