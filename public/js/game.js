@@ -1,197 +1,1314 @@
-// Debug-Lite v2.2 - Complete rewrite with pixel animation system
-const $=id=>document.getElementById(id);
-const AE={ctx:null,on:true,vol:0.15,init(){try{this.ctx=new(window.AudioContext||window.webkitAudioContext)}catch(e){}},tone(f,d,t,ty){if(!this.ctx||!this.on||f<=0)return;const o=this.ctx.createOscillator(),g=this.ctx.createGain(),n=this.ctx.currentTime+(t||0);o.type=ty||'square';o.frequency.setValueAtTime(f,n);g.gain.setValueAtTime(this.vol,n);g.gain.exponentialRampToValueAtTime(.001,n+d);o.connect(g);g.connect(this.ctx.destination);o.start(n);o.stop(n+d+.02)},sfx(n){const m={hit:[[200,.05],['square']],block:[[400,.05,'triangle']],skill:[[500,.06,'sawtooth'],[700,.06,'sawtooth']],tick:[[800,.04]],death:[[300,.15],[150,.3]],win:[[500,.1],[700,.1],[1000,.2]],dodge:[[600,.03],[800,.04]],bullet:[[300,.04],[500,.05]]};(m[n]||[]).forEach(x=>this.tone(x[0],x[1],0,x[2]||'square'))}};
+// ============================================================
+// Debug-Lite v2.3 — 霓虹像素格斗 前端引擎
+// ============================================================
+// 架构：
+//   G   - 全局游戏状态（socket, 阶段机, 玩家数据）
+//   AE  - 音效引擎 (Web Audio API)
+//   Sprites - 像素角色精灵渲染
+//   Renderer - 核心渲染器（网格、HUD、弹幕像素画）
+//   FX   - 动画特效系统（近战弹幕、平射弹幕、垂直弹幕、命中环、拖尾、Buff粒子）
+//   UI   - DOM UI 更新
+//   Tween - 补间动画引擎
+// ============================================================
 
-// Pixel sprite animation system
-const Sprites={_defs:{},_cache:{},load(d){this._defs=d||{}},get(name){if(this._cache[name])return this._cache[name];const d=this._defs[name];if(!d)return null;const frames=d.frames||[d.pixels||[]];this._cache[name]={frames,w:d.w||5,h:d.h||5,color:d.color||'#fff',dur:d.frameDur||100};return this._cache[name]},draw(ctx,spr,frame,x,y,scale,alpha){if(!spr)return;const f=spr.frames[Math.min(frame,spr.frames.length-1)];const s=scale||1;ctx.globalAlpha=alpha||1;for(let r=0;r<spr.h;r++)for(let c=0;c<spr.w;c++){const ch=f[r]?.[c];if(!ch||ch===' ')continue;ctx.fillStyle=ch==='#'?spr.color:ch;ctx.fillRect(x+c*s,y+r*s,s,s)}ctx.globalAlpha=1}};
+// ==================== 全局数据缓存 ====================
+let _skillsData = null;
+let _charsData = null;
 
-// Particle system
-const FX={list:[],spawn(x,y,cfg){const{dur=500,color='#fff',count=8,spread=4}=cfg||{};for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2;const spd=(Math.random()*.5+.5)*spread;this.list.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-1.5,life:dur,mlife:dur,color,size:2+Math.random()*4})}},spawnTrail(x,y,cfg){const{color='#fff',len=5}=cfg||{};for(let i=0;i<len;i++)this.list.push({x:x-(Math.random()-.5)*10,y:y-(Math.random()-.5)*6,vx:Math.random()-.5,vy:-Math.random()*2,life:300+Math.random()*200,mlife:500,color,size:2+Math.random()*2,type:'trail'})},spawnRing(x,y,cfg){const{color='#fff',count=10}=cfg||{};for(let i=0;i<count;i++){const a=i/count*Math.PI*2;this.list.push({x,y,vx:Math.cos(a)*2.5,vy:Math.sin(a)*2.5,life:400,mlife:400,color,size:2.5,type:'ring'})}},update(dt){for(let i=this.list.length-1;i>=0;i--){const p=this.list[i];p.x+=p.vx*(dt/16);p.y+=p.vy*(dt/16);p.life-=dt;if(p.type==='ring'){p.vx*=.97;p.vy*=.97}if(p.life<=0)this.list.splice(i,1)}},draw(ctx){for(const p of this.list){const a=Math.max(0,p.life/p.mlife);ctx.globalAlpha=a;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size)}ctx.globalAlpha=1},clear(){this.list=[]}};
-
-// Tween engine
-const Tween={_list:[],to(target,props,dur,cb){const t={target,start:{},to:{...props},dur,elapsed:0,cb};for(const k in props)t.start[k]=target[k]??0;this._list.push(t)},update(dt){for(let i=this._list.length-1;i>=0;i--){const t=this._list[i];t.elapsed+=dt;const p=Math.min(1,t.elapsed/t.dur),ep=1-Math.pow(1-p,3);for(const k in t.to)t.target[k]=t.start[k]+(t.to[k]-t.start[k])*ep;if(p>=1){for(const k in t.to)t.target[k]=t.to[k];t.cb&&t.cb();this._list.splice(i,1)}}},clear(){this._list=[]}};
-
-// Renderer
-const R={chars:null,animData:null,async load(){try{this.chars=(await(await fetch('/data/characters.json')).json()).characters;this.animData=(await(await fetch('/data/skills.json')).json()).animations}catch(e){}},
-getChar(id){return this.chars?.find(c=>c.id===id)||this.chars?.[0]},
-drawShape(ctx,shape,x,y,s,c){ctx.fillStyle=c;switch(shape){case'square':ctx.fillRect(x-s/2,y-s/2,s,s);break;case'triangle':ctx.beginPath();ctx.moveTo(x,y-s/2);ctx.lineTo(x+s/2,y+s/2);ctx.lineTo(x-s/2,y+s/2);ctx.closePath();ctx.fill();break;case'triangle2':ctx.beginPath();ctx.moveTo(x,y+s/2);ctx.lineTo(x+s/2,y-s/2);ctx.lineTo(x-s/2,y-s/2);ctx.closePath();ctx.fill();break;case'diamond':ctx.beginPath();ctx.moveTo(x,y-s/2);ctx.lineTo(x+s/2,y);ctx.lineTo(x,y+s/2);ctx.lineTo(x-s/2,y);ctx.closePath();ctx.fill();break}},
-
-render(cv,state,mode){const ctx=cv.getContext('2d'),W=cv.width=cv.parentElement.clientWidth,H=cv.height=cv.parentElement.clientHeight;ctx.clearRect(0,0,W,H);ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);const cw=W/16,gy=H*.7,cy=gy-cw*.35;
-// ground line
-ctx.strokeStyle='#0066cc';ctx.shadowColor='#0066ff';ctx.shadowBlur=8;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();ctx.shadowBlur=0;
-// grid
-ctx.strokeStyle='rgba(0,100,200,0.06)';ctx.lineWidth=.5;for(let i=0;i<=16;i++){ctx.beginPath();ctx.moveTo(i*cw,0);ctx.lineTo(i*cw,H);ctx.stroke()}
-if(!state)return;
-const showP2=(mode==='battle');
-[state.p1,state.p2].forEach((p,idx)=>{
-if(idx===1&&!showP2)return;
-const cd=this.getChar(p.charId);if(!cd)return;
-const cx=(p.x+.5)*cw;
-// glow
-ctx.shadowColor=cd.color;ctx.shadowBlur=12;
-this.drawShape(ctx,cd.shape,cx,cy,cd.size*1.2,cd.color+'33');
-ctx.shadowBlur=6;
-this.drawShape(ctx,cd.shape,cx,cy,cd.size*.85,cd.color);ctx.shadowBlur=0;
-// effects overlay
-if(p._dotStacks>0){ctx.shadowColor='#44ff44';ctx.shadowBlur=8;ctx.fillStyle='#44ff4488';ctx.fillRect(cx-cd.size/2-2,cy-cd.size/2-2,cd.size+4,cd.size+4);ctx.shadowBlur=0}
-if(p._stunned){ctx.shadowColor='#ffff00';ctx.shadowBlur=10;ctx.strokeStyle='#ffff00';ctx.lineWidth=2;ctx.strokeRect(cx-cd.size/2-3,cy-cd.size/2-3,cd.size+6,cd.size+6);ctx.shadowBlur=0}
-// facing arrow
-if(!showP2||idx===0||mode==='battle'){ctx.fillStyle='#fff';const ax=cx+p.facing*cd.size*.7;ctx.beginPath();ctx.moveTo(ax,cy-3);ctx.lineTo(ax+p.facing*5,cy);ctx.lineTo(ax,cy+3);ctx.fill()}
-// dodge trail
-if(p._isDodging){ctx.globalAlpha=.35;for(let j=1;j<=4;j++){ctx.fillStyle=cd.color;ctx.fillRect(cx-p.facing*j*6-2,cy-2,4,4)}ctx.globalAlpha=1}
-// move trail (dash)
-if(p._isDashing){ctx.globalAlpha=.4;for(let j=1;j<=5;j++){ctx.fillStyle=cd.color+'88';ctx.fillRect(cx-p.facing*j*5-3,cy-3,6,6)}ctx.globalAlpha=1}
-});
-// shield bullets
-if(state.bullets)state.bullets.forEach(b=>{const bx=(b.x+.5)*cw;if(b.isShield){ctx.strokeStyle=b.color||'#4488ff';ctx.shadowColor=b.color;ctx.shadowBlur=8;ctx.lineWidth=2;ctx.strokeRect(bx-cw*.25,cy-cw*.25,cw*.5,cw*.5);ctx.shadowBlur=0}});
-// particle FX
-FX.draw(ctx);
-// grid numbers
-ctx.fillStyle='rgba(0,150,255,0.25)';ctx.font='7px monospace';for(let i=0;i<16;i++)ctx.fillText(i,i*cw+2,H-2);
-}};
-
-// ============ GAME STATE ============
-const G={socket:null,roomId:null,n:0,mode:null,selChar:null,selSkills:[],actions:[],maxAct:16,round:1,ready:false,state:null,_mode:'idle',_animId:null,_previewStack:[],_origStateP1:null,_localTimer:null,_gameType:null};
-function el(id){return $(id)}
-
-async function init(){AE.init();await R.load();await loadCharData();}
-
-async function loadCharData(){try{const r=await fetch('/data/characters.json');G.charData=await r.json()}catch(e){}}
-
-function nav(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$(id).classList.add('active')}
-
-function enterCharSelect(type){G._gameType=type;nav('charSel');initCharSel(type)}
-
-// ============ SOCKET ============
-function connect(){if(G.socket)return;G.socket=io();
-G.socket.on('roomCreated',d=>{G.roomId=d.roomId;G.n=d.n;$('ostatus').textContent='房间: '+d.roomId});
-G.socket.on('roomJoined',d=>{G.roomId=d.roomId;G.n=d.n;$('ostatus').textContent='已加入: '+d.roomId});
-G.socket.on('playerJoined',d=>{$('ostatus').textContent='对手已加入!';setTimeout(()=>{enterCharSelect('online')},800)});
-G.socket.on('prepareStart',d=>enterPreparePhase(d));
-G.socket.on('prepareTick',d=>{$('tm').textContent=d.t;if(d.t<=5)AE.sfx('tick')});
-G.socket.on('battleFrames',d=>enterBattlePhase(d));
-G.socket.on('gameOver',d=>showResult(d));
-G.socket.on('playerLeft',()=>{stopAll();alert('对手离开');nav('menu')});
-G.socket.on('err',d=>alert(d.msg));
-G.socket.on('aiStart',d=>{G.roomId=d.roomId;G.n=d.n;G.mode='ai'});
-G.socket.on('trainStart',d=>{G.roomId=d.roomId;G.n=d.n;G.mode='train'});
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Failed to load ${url}`);
+  return r.json();
 }
 
-// ============ PHASE MACHINE ============
-function enterPreparePhase(d){
-stopAll();
-G._mode='prepare';G.round=d.round;G.ready=false;G.actions=[];G._previewStack=[];
-// Reset local cooldown tracking
-[0,1,2].forEach(i=>{const sid=G.selSkills[i];if(sid)G['_cd_'+sid]=0});
-G.state={p1:clonePlayer(d.p1),p2:clonePlayer(d.p2),bullets:d.bullets||[]};
-G._origStateP1={x:d.p1.x,facing:d.p1.facing,mp:d.p1.mp,sp:d.p1.sp};
-$('rnd').textContent='ROUND '+d.round;$('tm').textContent=d.time||60;
-$('tmrArea').style.display='';$('actionQueuePanel').classList.remove('hidden');$('battleQueuePanel').classList.add('hidden');
-$('rdyBtn').disabled=false;$('rdyBtn').textContent='✅ 完成';
-$('logc').innerHTML='';
-updateHUD(d.p1,d.p2);renderActionSlots();renderActionButtons();drawField();
-nav('battle');startAnimLoop();
+async function loadData() {
+  [_skillsData, _charsData] = await Promise.all([
+    fetchJSON('/data/skills.json'),
+    fetchJSON('/data/characters.json')
+  ]);
 }
 
-function enterBattlePhase(d){
-stopAll();
-G._mode='battle';
-$('tmrArea').style.display='none';
-$('actionQueuePanel').classList.add('hidden');
-$('battleQueuePanel').classList.remove('hidden');
-$('logc').innerHTML='';
-playBattleAnim(d.frames,d.final,d);
-nav('battle');
+function getSkillById(id) {
+  if (!_skillsData) return null;
+  return _skillsData.skills?.[id] || null;
 }
 
-function clonePlayer(p){return{...p,_dotStacks:p._dotStacks||0,_stunned:p._stunned||false,_isDodging:false,_isDashing:false}}
+function getAnim(name) {
+  if (!_skillsData) return null;
+  return _skillsData.animations?.[name] || null;
+}
 
-// ============ HUD ============
-function updateHUD(p1,p2){[['p1',p1],['p2',p2]].forEach(([pre,p])=>{const mh=p.maxHp||1,mm=p.maxMp||1,ms=p.maxSp||1;$(pre+'hp').style.width=Math.max(0,(p.hp||0)/mh*100)+'%';$(pre+'hpt').textContent=(p.hp||0)+'/'+mh;$(pre+'mp').style.width=Math.max(0,(p.mp||0)/mm*100)+'%';$(pre+'mpt').textContent=(p.mp||0)+'/'+mm;$(pre+'sp').style.width=Math.max(0,(p.sp||0)/ms*100)+'%';$(pre+'spt').textContent=(p.sp||0)+'/'+ms})}
+function getBulletSprite(name) {
+  if (!_skillsData) return null;
+  return _skillsData.bulletSprites?.[name] || _skillsData.bulletSprites?.default || null;
+}
 
-// ============ ACTION QUEUE ============
-function tickCooldowns(){G.selSkills.forEach(sid=>{if(!sid)return;const k='_cd_'+sid;if((G[k]||0)>0)G[k]--})}
-function renderActionButtons(){tickCooldowns();const btns=[['◀左','move_left'],['▶右','move_right'],['◀◀闪','dodge_left'],['▶▶闪','dodge_right'],['🛡防','defend'],['🔄转','turn']];G.selSkills.forEach((sid,i)=>{const sk=G._skillDataCache?.[sid];const cdRem=G['_cd_'+sid]||0;const cdStr=cdRem>0?' CD'+cdRem:'';const mpCost=sk?.mpCost||0;const spCost=sk?.spCost||0;const label='技'+(i+1)+cdStr+' MP'+mpCost+' SP'+spCost;btns.push([label,'skill'+(i+1)])});const ab=$('abtns');ab.innerHTML='';btns.forEach(([l,v])=>{const b=document.createElement('button');b.className='ab';b.onclick=()=>addAction(v);b.textContent=l;ab.appendChild(b)})}
-function addAction(a){if(G.actions.length>=G.maxAct)return;const p1=G.state?.p1;if(!p1)return;
-if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)return;const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)return;const sk=G._skillDataCache?.[sid];if(sk){if((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0))return;G[cdKey]=sk.cooldown||0;p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}
-G.actions.push(a);renderActionSlots();renderActionButtons();updateHUD(G.state.p1,G.state.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});previewAction(a);AE.sfx('tick')}
-function previewAction(a){if(!G.state)return;const p1=G.state.p1;G._previewStack.push({x:p1.x,facing:p1.facing,mp:p1.mp,sp:p1.sp,act:a});if(a==='move_left')p1.x=Math.max(0,p1.x-1);if(a==='move_right')p1.x=Math.min(15,p1.x+1);if(a==='dodge_left'){p1.x=Math.max(0,p1.x-2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='dodge_right'){p1.x=Math.min(15,p1.x+2);p1._isDodging=!0;setTimeout(()=>{if(p1)p1._isDodging=!1},400)}if(a==='turn')p1.facing*=-1;drawField()}
-function undoAction(){const removed=G.actions.pop();if(removed==='skill1'||removed==='skill2'||removed==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[removed];const sid=G.selSkills[idx];if(sid){const cdKey='_cd_'+sid;if((G[cdKey]||0)>0)G[cdKey]--;const sk=G._skillDataCache?.[sid];if(sk&&G.state?.p1){G.state.p1.mp+=sk.mpCost||0;G.state.p1.sp+=sk.spCost||0}}}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});if(G._previewStack.length){const prev=G._previewStack.pop();if(G.state?.p1){G.state.p1.x=prev.x;G.state.p1.facing=prev.facing}}drawField()}
-function clearActions(){G.actions.forEach(a=>{if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(sid)G['_cd_'+sid]=0}});G.actions=[];G._previewStack=[];renderActionSlots();renderActionButtons();if(G.socket)G.socket.emit('updateActions',{actions:[]});if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp;G.state.p1.sp=G._origStateP1.sp}updateHUD(G.state?.p1,G.state?.p2);drawField()}
-function randomFill(){G.actions=[];G._previewStack=[];if(G.state?.p1&&G._origStateP1){G.state.p1.x=G._origStateP1.x;G.state.p1.facing=G._origStateP1.facing;G.state.p1.mp=G._origStateP1.mp;G.state.p1.sp=G._origStateP1.sp}const pool=['move_left','move_right','move_right','defend','skill1','skill2','skill3','dodge_left','dodge_right','turn'];for(let i=0;i<16;i++){const a=pool[Math.floor(Math.random()*pool.length)];if(a==='skill1'||a==='skill2'||a==='skill3'){const idx={skill1:0,skill2:1,skill3:2}[a];const sid=G.selSkills[idx];if(!sid)continue;if((G['_cd_'+sid]||0)>0)continue;const sk=G._skillDataCache?.[sid];const p1=G.state?.p1;if(sk&&p1&&((p1.mp||0)<(sk.mpCost||0)||(p1.sp||0)<(sk.spCost||0)))continue;G['_cd_'+sid]=sk?.cooldown||0;if(sk&&p1){p1.mp-=sk.mpCost||0;p1.sp-=sk.spCost||0}}G.actions.push(a);if(G.actions.length>=16)break}renderActionSlots();renderActionButtons();updateHUD(G.state?.p1,G.state?.p2);if(G.socket)G.socket.emit('updateActions',{actions:G.actions});AE.sfx('tick')}
-function renderActionSlots(){const slots=$('aslots');$('acnt').textContent='('+G.actions.length+'/16)';slots.innerHTML='';const lb={move_left:'◀',move_right:'▶',dodge_left:'◀◀',dodge_right:'▶▶',defend:'🛡',turn:'🔄',skill1:'技1',skill2:'技2',skill3:'技3'};G.actions.forEach((a,i)=>{const d=document.createElement('div');d.className='as';d.innerHTML='<span class="sn">'+(i+1)+'</span>'+(lb[a]||a);d.onclick=()=>{G.actions.splice(i,1);renderActionSlots();if(G.socket)G.socket.emit('updateActions',{actions:G.actions})};slots.appendChild(d)});for(let i=G.actions.length;i<16;i++){const d=document.createElement('div');d.className='as';d.style.opacity='0.3';d.innerHTML='<span class="sn">'+(i+1)+'</span>⋯';slots.appendChild(d)}}
-function readyBattle(){G.ready=true;$('rdyBtn').disabled=true;$('rdyBtn').textContent='⏳ 已准备';G.socket.emit('ready');if(G.mode==='ai')G.socket.emit('aiReady',{roomId:G.roomId});if(G.mode==='train')G.socket.emit('trainReady',{roomId:G.roomId});AE.sfx('skill')}
-function quitBattle(){stopAll();if(G.socket){G.socket.emit('leaveRoom');}nav('menu')}
+function getCharDef(id) {
+  if (!_charsData) return null;
+  return _charsData.characters?.find(c => c.id === id) || null;
+}
 
-// ============ BATTLE ANIMATION ============
-function playBattleAnim(frames,final,d){
-FX.clear();Tween.clear();
-const TD=600;
-const lb={move_left:'◀',move_right:'▶',dodge_left:'◀◀',dodge_right:'▶▶',defend:'🛡',turn:'🔄',skill1:'技1',skill2:'技2',skill3:'技3',wait:'·',stunned:'💫'};
-function renderBQ(tick){const f=frames[tick];if(!f)return;const a1=f.p1Actions||[],a2=f.p2Actions||[];let h1='',h2='';for(let i=0;i<16;i++){const c=i===tick?'bq-slot active':'bq-slot';h1+='<span class="'+c+'">'+(lb[a1[i]]||'·')+'</span>';h2+='<span class="'+c+'">'+(lb[a2[i]]||'·')+'</span>'}$('bqP1').innerHTML=h1;$('bqP2').innerHTML=h2;$('bqTick').textContent='Tick '+(tick+1)+'/16';}
-function next(idx){
-if(idx>=frames.length){
-G.state={p1:clonePlayer(final.p1),p2:clonePlayer(final.p2),bullets:final.bullets||[]};
-updateHUD(final.p1,final.p2);drawField();$('battleQueuePanel').classList.add('hidden');
-return;}
-const f=frames[idx];
-const ist={p1:{...f.p1,_isDodging:f.p1Act==='dodge_left'||f.p1Act==='dodge_right',_isDashing:f.p1Act==='dash',_dotStacks:(f.p1.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p1Stunned},p2:{...f.p2,_isDodging:f.p2Act==='dodge_left'||f.p2Act==='dodge_right',_isDashing:f.p2Act==='dash',_dotStacks:(f.p2.effects||[]).filter(e=>e.type==='dot'||e.type==='burn'||e.type==='poison').length,_stunned:f.p2Stunned},bullets:f.bullets||[]};
-G.state=ist;
-const cw=$('fc').width/16,gy=$('fc').height*.7;
-(f.events||[]).forEach(ev=>{
-switch(ev.type){
-case'collision':FX.spawnRing((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:16});FX.spawn((ev.pos+.5)*cw,gy-12,{color:'#ffff00',count:14,spread:6});AE.sfx('block');break;
-case'melee_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:14});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff4444',count:16,spread:6});AE.sfx('hit');break;
-case'stun_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:16});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ffff00',count:12,spread:5});AE.sfx('hit');break;
-case'backstab_hit':FX.spawnRing((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:20});FX.spawn((f.p2.x+.5)*cw,gy-8,{color:'#ff0000',count:18,spread:7});AE.sfx('skill');break;
-case'bullet_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:ev.color||'#ff8800',count:16});FX.spawn(bx,gy-18,{color:ev.color||'#ff8800',count:14,spread:6});AE.sfx('bullet');break;}
-case'freeze_hit':{const bx=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(bx,gy-18,{color:'#88ccff',count:16});FX.spawn(bx,gy-18,{color:'#88ccff',count:12,spread:5});AE.sfx('block');break;}
-case'burn_hit':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:'#ff6600',count:18});FX.spawn(px,gy-12,{color:'#ff6600',count:14,spread:5});AE.sfx('hit');break;}
-case'poison_hit':{const px=ev.x!==undefined?(ev.x+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-18,{color:'#88ff00',count:12});FX.spawn(px,gy-18,{color:'#88ff00',count:10,spread:4});AE.sfx('bullet');break;}
-case'bullet_clash':FX.spawnRing((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:12});FX.spawn((ev.x+.5)*cw,gy-18,{color:'#ffffff',count:8,spread:4});break;
-case'bullet_trail':FX.spawnTrail((ev.traj?.[0]+.5)*cw,gy-18,{color:ev.color||'#fff',len:6});break;
-case'dash':case'dash_hit':ist.p1._isDashing=true;FX.spawnTrail((ist.p1.x+.5)*cw,gy-8,{color:'#00ddff',len:7});AE.sfx('dodge');break;
-case'dodged':FX.spawnTrail((f.p2.x+.5)*cw,gy-8,{color:'#8888ff',len:6});AE.sfx('dodge');break;
-case'aoe_hit':case'aoe_cast':{const px=ev.pos!==undefined?(ev.pos+.5)*cw:(f.p2.x+.5)*cw;FX.spawnRing(px,gy-12,{color:ev.color||'#ff4444',count:24});FX.spawn(px,gy-12,{color:ev.color||'#ff4444',count:20,spread:8});break;}
-case'knockback':FX.spawnRing((ev.to!==undefined?(ev.to+.5)*cw:(f.p2.x+.5)*cw),gy-12,{color:'#ffaa00',count:14});FX.spawn((f.p2.x+.5)*cw,gy-12,{color:'#ffaa00',count:10,spread:6});AE.sfx('block');break;
-case'teleport':FX.spawnRing((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:16});FX.spawn((ev.to+.5)*cw,gy-8,{color:'#ff00ff',count:12,spread:5});AE.sfx('dodge');break;
-case'shield_wall':FX.spawnRing((ev.x+.5)*cw,gy-12,{color:'#4488ff',count:10});break;
-}});
-const logs=(f.events||[]).map(ev=>{const m={collision:'💥碰撞!',melee_hit:'⚔'+ev.actor+' 命中 -'+ev.dmg,melee_miss:ev.actor+' 落空',bullet_hit:'🎯弹幕 -'+ev.dmg,bullet_clash:'💫弹幕相消',dodged:'💨闪避!',dash:'🏃冲刺',dash_hit:'冲撞 -'+ev.dmg,aoe_hit:'💣AOE -'+ev.dmg,stun_hit:'⚡眩晕 -'+ev.dmg,freeze_hit:'❄冰冻 -'+ev.dmg,burn_hit:'🔥燃烧 -'+ev.dmg,poison_hit:'☠中毒 -'+ev.dmg,teleport:'✨传送',knockback:'💢击退'};return m[ev.type]?'<span class="l ld">'+m[ev.type]+'</span>':''}).filter(Boolean);
-if(logs.length)$('logc').innerHTML=logs.slice(-3).join('');
-renderBQ(idx);
-const t0=performance.now();
-function anim(ts){const dt=ts-t0;FX.update(16);
-if(dt<300&&Math.floor(dt/40)%2===0&&ist.p1._dotStacks>0)FX.spawn((ist.p1.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#44ff44',count:2,spread:2});
-if(dt<300&&Math.floor(dt/40)%2===0&&ist.p2._dotStacks>0)FX.spawn((ist.p2.x+.5)*$('fc').width/16,$('fc').height*.6,{color:'#ff6600',count:2,spread:2});
-drawField();
-if(dt<TD)requestAnimationFrame(anim);
-else{G.state={p1:clonePlayer(f.p1),p2:clonePlayer(f.p2),bullets:f.bullets||[]};updateHUD(f.p1,f.p2);drawField();setTimeout(()=>next(idx+1),20)}}
-requestAnimationFrame(anim)}
-next(0)}
+// ==================== 音效引擎 AE ====================
+const AE = {
+  ctx: null,
+  init() {
+    try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { this.ctx = null; }
+  },
+  play(type) {
+    if (!this.ctx) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.connect(g); g.connect(this.ctx.destination);
+      const now = this.ctx.currentTime;
+      switch (type) {
+        case 'hit': o.type = 'square'; o.frequency.setValueAtTime(200, now); o.frequency.linearRampToValueAtTime(80, now+0.12); g.gain.setValueAtTime(0.2, now); g.gain.linearRampToValueAtTime(0, now+0.12); o.start(now); o.stop(now+0.12); break;
+        case 'block': o.type = 'triangle'; o.frequency.setValueAtTime(150, now); g.gain.setValueAtTime(0.15, now); g.gain.linearRampToValueAtTime(0, now+0.08); o.start(now); o.stop(now+0.08); break;
+        case 'bullet': o.type = 'sawtooth'; o.frequency.setValueAtTime(600, now); o.frequency.linearRampToValueAtTime(200, now+0.06); g.gain.setValueAtTime(0.08, now); g.gain.linearRampToValueAtTime(0, now+0.06); o.start(now); o.stop(now+0.06); break;
+        case 'dodge': o.type = 'sine'; o.frequency.setValueAtTime(300, now); o.frequency.linearRampToValueAtTime(600, now+0.1); g.gain.setValueAtTime(0.1, now); g.gain.linearRampToValueAtTime(0, now+0.1); o.start(now); o.stop(now+0.1); break;
+        case 'skill': o.type = 'sawtooth'; o.frequency.setValueAtTime(400, now); o.frequency.linearRampToValueAtTime(100, now+0.2); g.gain.setValueAtTime(0.12, now); g.gain.linearRampToValueAtTime(0, now+0.2); o.start(now); o.stop(now+0.2); break;
+        case 'tick': o.type = 'sine'; o.frequency.setValueAtTime(800, now); g.gain.setValueAtTime(0.04, now); g.gain.linearRampToValueAtTime(0, now+0.03); o.start(now); o.stop(now+0.03); break;
+        default: o.type = 'sine'; o.frequency.setValueAtTime(440, now); g.gain.setValueAtTime(0.05, now); g.gain.linearRampToValueAtTime(0, now+0.05); o.start(now); o.stop(now+0.05);
+      }
+    } catch (e) {}
+  }
+};
 
-// ============ ANIMATION LOOP ============
-function startAnimLoop(){stopAnimLoop();function loop(ts){if(G._mode!=='prepare'){G._animId=null;return}FX.update(16);drawField();G._animId=requestAnimationFrame(loop)}G._animId=requestAnimationFrame(loop)}
-function stopAnimLoop(){if(G._animId){cancelAnimationFrame(G._animId);G._animId=null}}
-function stopAll(){stopAnimLoop();FX.clear();Tween.clear();if(G._localTimer){clearInterval(G._localTimer);G._localTimer=null}}
+// ==================== 像素角色精灵 Sprites ====================
+const Sprites = {
+  drawCharacter(ctx, charDef, x, y, size, facing, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const color = charDef.color || '#ffffff';
+    const s = size || charDef.size || 18;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
 
-function drawField(){const cv=$('fc');if(!cv)return;R.render(cv,G.state,G._mode)}
-window.addEventListener('resize',()=>{const cv=$('fc');if(cv){cv.width=cv.parentElement.clientWidth;cv.height=cv.parentElement.clientHeight;drawField()}});
+    switch (charDef.shape) {
+      case 'square':
+        ctx.fillRect(x - s/2, y - s, s, s);
+        break;
+      case 'triangle': {
+        const tip = facing > 0 ? x + s/2 : x - s/2;
+        ctx.beginPath();
+        ctx.moveTo(tip, y - s/2);
+        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y - s);
+        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y);
+        ctx.closePath(); ctx.fill();
+        break;
+      }
+      case 'diamond':
+        ctx.beginPath();
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x + s/2, y - s/2);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x - s/2, y - s/2);
+        ctx.closePath(); ctx.fill();
+        break;
+      case 'triangle2': {
+        const tip = facing > 0 ? x + s/2 : x - s/2;
+        ctx.beginPath();
+        ctx.moveTo(tip, y - s/2);
+        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y);
+        ctx.closePath(); ctx.fill();
 
-// ============ CHAR SELECT ============
-function initCharSel(type){G._gameType=type;G.selChar=null;G.selSkills=[];const cg=$('cg');cg.innerHTML='';const isTrain=type==='train';$('startBtn').textContent=isTrain?'🎯进入训练场':'⚔️开始对战';$('startBtn').onclick=isTrain?startTrainGame:startAIGame;$('skillSel').classList.add('hidden');(R.chars||[]).forEach(c=>{const d=document.createElement('div');d.className='cc';d.innerHTML='<canvas id="cav_'+c.id+'" width="48" height="48"></canvas><div class="cn">'+c.name+'</div><div class="cs">HP:'+c.maxHp+' ATK:'+c.atk+' DEF:'+c.def+'<br>'+c.desc+'</div>';d.onclick=()=>selectChar(c,d);cg.appendChild(d);setTimeout(()=>{const cv=$('cav_'+c.id);if(!cv)return;const ctx=cv.getContext('2d');R.drawShape(ctx,c.shape,24,24,c.size*1.5,c.color)},50)})}
-function selectChar(c,div){G.selChar=c.id;G.selSkills=[...c.defaultSkills];document.querySelectorAll('.cc').forEach(x=>x.classList.remove('sel'));div.classList.add('sel');$('skillSel').classList.remove('hidden');renderSkillSel(c);AE.sfx('tick')}
-function renderSkillSel(ch){const sg=$('sg');sg.innerHTML='';fetch('/data/skills.json').then(r=>r.json()).then(d=>{const all=d.skills||{};G._skillDataCache=all;ch.defaultSkills.forEach(sid=>{const s=all[sid];if(s)addSkillCard(sg,s,true)});Object.values(all).forEach(s=>{if(s.charId===ch.id&&!ch.defaultSkills.includes(s.id))addSkillCard(sg,s,false)})})}
-function addSkillCard(sg,s,isDef){const d=document.createElement('div');d.className='sc'+(G.selSkills.includes(s.id)?' sel':'');d.innerHTML='<div class="sn">'+s.name+'</div><div class="st">'+s.type+(isDef?'(默认)':'')+'</div>';d.onclick=()=>{const i=G.selSkills.indexOf(s.id);if(i>=0){G.selSkills.splice(i,1);d.classList.remove('sel')}else{if(G.selSkills.length>=3)G.selSkills.shift();G.selSkills.push(s.id);d.classList.add('sel');sg.querySelectorAll('.sc').forEach(x=>x.classList.toggle('sel',G.selSkills.some(sid=>x.querySelector('.sn')?.textContent===s.name)))}AE.sfx('tick')};sg.appendChild(d)}
+        const tip2 = facing > 0 ? x - s/2 : x + s/2;
+        ctx.beginPath();
+        ctx.moveTo(tip2, y - s);
+        ctx.lineTo(x + (facing > 0 ? s/2 : -s/2), y - s/2);
+        ctx.closePath(); ctx.fill();
+        break;
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+};
 
-// ============ LOBBY & GAME START ============
-function initLobby(){connect();$('ostatus').textContent=''}
-function createRoom(){G.socket.emit('createRoom',{name:$('pname').value||'Player'});AE.sfx('tick')}
-function joinRoom(){const c=$('rcode').value.toUpperCase();if(!c)return alert('输入房间号');G.socket.emit('joinRoom',{roomId:c,name:$('pname').value||'Player'});AE.sfx('tick')}
-function startAIGame(){if(!G.selChar)return alert('请选角色');if(G.selSkills.length===0)G.selSkills=(R.chars.find(c=>c.id===G.selChar)?.defaultSkills||[]);const aiC=R.chars.filter(c=>c.id!==G.selChar),ac=aiC[Math.floor(Math.random()*aiC.length)];G.socket.emit('startAI',{name:'Player',charId:G.selChar,skillIds:G.selSkills,aiCharId:ac.id,aiSkillIds:[...ac.defaultSkills]})}
-function startTrainGame(){if(!G.selChar)return alert('请选角色');if(G.selSkills.length===0)G.selSkills=(R.chars.find(c=>c.id===G.selChar)?.defaultSkills||[]);G.socket.emit('startTrain',{name:'Player',charId:G.selChar,skillIds:G.selSkills})}
-function showResult(d){stopAll();G._mode='over';nav('result');const won=(d.winner==='P1'&&G.n===1)||(d.winner==='P2'&&G.n===2)||((G.mode==='ai'||G.mode==='train')&&d.winner==='P1');$('rtitle').textContent=won?'胜利!':(d.winner==='draw'?'平局':'失败...');$('rtitle').style.color=won?'var(--c3)':'var(--c2)';$('rdetail').innerHTML='P1 HP:'+d.p1Hp+' / P2 HP:'+d.p2Hp;AE.sfx(won?'win':'death')}
+// ==================== 像素画渲染器 Renderer ====================
+const Renderer = {
+  canvas: null,
+  ctx: null,
+  gridW: 16,
+  cellW: 0,
+  baseY: 0,
+  gridH: 0,
 
-// ============ INIT ============
-window.addEventListener('load',async()=>{await init();connect();setTimeout(()=>{document.addEventListener('click',()=>{if(AE.ctx?.state==='suspended')AE.ctx.resume()},{once:true})},500)});
-document.addEventListener('keydown',e=>{if(!$('battle')?.classList.contains('active')||G._mode!=='prepare')return;const m={a:'move_left',d:'move_right',q:'dodge_left',e:'dodge_right',w:'defend',s:'turn','1':'skill1','2':'skill2','3':'skill3'};if(m[e.key]){addAction(m[e.key]);return}if(e.key==='Backspace')undoAction();if(e.key==='Escape')clearActions();if(e.key==='Enter')readyBattle();if(e.key==='r')randomFill()});
+  init(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.resize();
+  },
+
+  resize() {
+    if (!this.canvas) return;
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    this.canvas.width = rect.width;
+    this.canvas.height = rect.height;
+    this.cellW = this.canvas.width / this.gridW;
+    this.baseY = this.canvas.height * 0.7;
+    this.gridH = this.canvas.height * 0.3;
+  },
+
+  gridToPixelX(gx) {
+    return gx * this.cellW + this.cellW / 2;
+  },
+
+  gridToPixelY(gy) {
+    return this.canvas.height * 0.25;
+  },
+
+  /** 绘制弹幕像素画字符画 */
+  drawBulletSprite(spriteName, bx, by, scale = 1, alpha = 1, colorOverride = null) {
+    const spr = getBulletSprite(spriteName);
+    if (!spr || !this.ctx) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    const color = colorOverride || spr.color || '#ffffff';
+    const pw = this.cellW * 0.15 * scale;
+    const ph = pw;
+    const rows = spr.pixels;
+    const gridW = spr.w, gridH = rows.length;
+    const startX = bx - (gridW * pw) / 2;
+    const startY = by - (gridH * ph) / 2;
+
+    for (let py = 0; py < rows.length; py++) {
+      const row = rows[py];
+      for (let px = 0; px < row.length; px++) {
+        if (row[px] === '#') {
+          ctx.fillStyle = color;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 4;
+          ctx.fillRect(startX + px * pw, startY + py * ph, pw, ph);
+        }
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  },
+
+  /** 绘制网格与地面线 */
+  drawGrid() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // 背景
+    ctx.fillStyle = '#0a0a12';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // 网格竖线
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= this.gridW; i++) {
+      const x = i * this.cellW;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, this.canvas.height); ctx.stroke();
+    }
+
+    // 地面线
+    ctx.strokeStyle = '#334';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#4488ff';
+    ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.moveTo(0, this.baseY); ctx.lineTo(this.canvas.width, this.baseY); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 网格数字
+    ctx.fillStyle = '#333';
+    ctx.font = `${Math.max(8, this.cellW*0.25)}px monospace`;
+    ctx.textAlign = 'center';
+    for (let i = 0; i < this.gridW; i++) {
+      ctx.fillText(i, this.gridToPixelX(i), this.baseY + this.cellW * 0.4);
+    }
+  },
+
+  /** 绘制玩家 */
+  drawPlayers(p1, p2) {
+    if (!p1 || !p2) return;
+    const p1c = getCharDef(p1.charId) || { shape: 'square', size: 18, color: '#00ffff' };
+    const p2c = getCharDef(p2.charId) || { shape: 'square', size: 18, color: '#ff4444' };
+
+    Sprites.drawCharacter(this.ctx, p1c,
+      this.gridToPixelX(p1.x), this.baseY, p1c.size, p1.facing, p1._alpha ?? 1);
+
+    Sprites.drawCharacter(this.ctx, p2c,
+      this.gridToPixelX(p2.x), this.baseY, p2c.size, p2.facing, p2._alpha ?? 1);
+
+    // 玩家名称标签
+    const px1 = this.gridToPixelX(p1.x);
+    const px2 = this.gridToPixelX(p2.x);
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.font = `${this.cellW*0.28}px monospace`;
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText('P1', px1, this.baseY - 40);
+    this.ctx.fillText('P2', px2, this.baseY - 40);
+
+    // Debuff 状态指示
+    if (p1._effects && p1._effects.length > 0) {
+      this.ctx.fillStyle = '#ff0';
+      this.ctx.font = `${this.cellW*0.22}px monospace`;
+      p1._effects.forEach((e, i) => {
+        this.ctx.fillText(e.type, px1 - 10 + i*18, this.baseY - 50);
+      });
+    }
+    if (p2._effects && p2._effects.length > 0) {
+      this.ctx.fillStyle = '#ff0';
+      this.ctx.font = `${this.cellW*0.22}px monospace`;
+      p2._effects.forEach((e, i) => {
+        this.ctx.fillText(e.type, px2 - 10 + i*18, this.baseY - 50);
+      });
+    }
+  },
+
+  /** 绘制护盾弹幕 */
+  drawShields(bullets) {
+    for (const b of (bullets || [])) {
+      if (b.isShield) {
+        this.drawBulletSprite('shield', this.gridToPixelX(b.x), this.baseY - 10, 1.2, 0.7, b.color || '#4488ff');
+      }
+    }
+  }
+};
+
+// ==================== FX 动画特效系统 ====================
+// FX 管理所有动态特效的创建、更新与渲染
+const FX = {
+  active: [],   // 当前活跃的特效列表
+
+  /** 从事件数据创建特效 */
+  spawnFromEvent(ev, frameDuration, p1, p2) {
+    const animName = ev.bullet_anim || ev.hit_anim;
+    const anim = getAnim(animName);
+    const color = ev.bullet_color || '#ffffff';
+
+    switch (ev.type) {
+      // === 近战命中 ===
+      case 'melee_hit':
+      case 'stun_hit':
+      case 'backstab_hit':
+      case 'dash_hit': {
+        // 近战弹幕：在目标格瞬间出现然后淡出
+        const hitAnim = getAnim(ev.hit_anim);
+        const x = Renderer.gridToPixelX(ev.bullet_x ?? ev.x ?? 0);
+        const y = Renderer.baseY - 10;
+        if (ev.bullet_anim) {
+          this.active.push(new MeleeBulletFX(ev.bullet_anim, x, y, color, anim?.fadeTime || 300));
+        }
+        // 命中环
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, x, y, color));
+        }
+        AE.play('hit');
+        break;
+      }
+
+      // === 平射弹幕 ===
+      case 'bullet_hit':
+      case 'freeze_hit':
+      case 'poison_hit':
+      case 'burn_hit':
+      case 'aoe_hit': {
+        // 弹幕飞行 + 命中
+        const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
+        const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
+        const y = Renderer.baseY - 10;
+        if (ev.bullet_anim) {
+          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, true));
+        }
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, toX, y, color));
+        }
+        AE.play('hit');
+        break;
+      }
+
+      // === 弹幕飞到尽头消失（不触发命中环） ===
+      case 'bullet_trail': {
+        const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
+        const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
+        const y = Renderer.baseY - 10;
+        if (ev.bullet_anim) {
+          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false));
+        }
+        break;
+      }
+
+      // === 弹幕相撞 ===
+      case 'bullet_clash': {
+        const cx = Renderer.gridToPixelX(ev.x ?? 0);
+        const cy = Renderer.baseY - 10;
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, cx, cy, ev.bullet_color || '#ffff00'));
+        }
+        AE.play('block');
+        break;
+      }
+
+      // === 垂直弹幕 AOE ===
+      case 'aoe_cast': {
+        const ax = Renderer.gridToPixelX(ev.x ?? 0);
+        const ay = 0; // 从屏幕顶部下落
+        if (ev.bullet_anim) {
+          this.active.push(new VerticalBulletFX(ev.bullet_anim, ax, ay, Renderer.baseY, color, frameDuration));
+        }
+        break;
+      }
+
+      // === 冲刺 ===
+      case 'dash': {
+        const dashFrom = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
+        const dashTo = Renderer.gridToPixelX(ev.bullet_to ?? ev.to ?? 0);
+        const dy = Renderer.baseY - 5;
+        if (ev.bullet_anim) {
+          this.active.push(new TrailFX(ev.bullet_anim, dashFrom, dashTo, dy, color));
+        }
+        AE.play('dodge');
+        break;
+      }
+
+      // === 闪避 ===
+      case 'dodged': {
+        const dx = Renderer.gridToPixelX(ev.x ?? 0);
+        this.active.push(new TrailFX('dodgeTrail', dx - Renderer.cellW, dx + Renderer.cellW, Renderer.baseY - 5, '#8888ff'));
+        AE.play('dodge');
+        break;
+      }
+
+      // === 瞬移 ===
+      case 'teleport': {
+        const tx = Renderer.gridToPixelX(ev.to ?? 0);
+        if (ev.bullet_anim) {
+          this.active.push(new HitRingFX(ev.bullet_anim, tx, Renderer.baseY - 10, color));
+        }
+        AE.play('dodge');
+        break;
+      }
+
+      // === 击退 ===
+      case 'knockback': {
+        const kx = Renderer.gridToPixelX(ev.x ?? ev.to ?? 0);
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, kx, Renderer.baseY - 10, ev.bullet_color || '#ffaa00'));
+        }
+        break;
+      }
+
+      // === 护盾 ===
+      case 'shield_wall': {
+        const sx = Renderer.gridToPixelX(ev.x ?? 0);
+        this.active.push(new HitRingFX('shieldWall', sx, Renderer.baseY - 10, ev.color || '#4488ff'));
+        AE.play('block');
+        break;
+      }
+
+      // === 碰撞 ===
+      case 'collision': {
+        const cx = Renderer.gridToPixelX(ev.x ?? 0);
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, cx, Renderer.baseY - 10, ev.bullet_color || '#ffff00'));
+        }
+        AE.play('block');
+        break;
+      }
+    }
+  },
+
+  /** 为 buff/debuff 生成持续粒子 */
+  ensureBuffEmitter(player, playerKey, p1, p2) {
+    const key = '_buffFx_' + playerKey;
+    if (!player._effects || player._effects.length === 0) {
+      // 清除 buff FX
+      if (FX[key]) { FX[key] = null; }
+      return;
+    }
+    const x = Renderer.gridToPixelX(player.x);
+    const y = Renderer.baseY - 25;
+    // 检查是否有活跃的 buff emitter
+    if (!FX[key]) {
+      const eff = player._effects[0];
+      let animName = 'buffParticle';
+      if (eff.type === 'burn') animName = 'dotBleed';
+      else if (eff.type === 'poison') animName = 'dotBleed';
+      else if (eff.type === 'stun') animName = 'stunSpark';
+      FX[key] = new BuffEmitterFX(animName, x, y);
+    }
+    if (FX[key]) {
+      FX[key].x = x;
+      FX[key].y = y;
+    }
+  },
+
+  update(dt) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const fx = this.active[i];
+      fx.update(dt);
+      if (fx.done) this.active.splice(i, 1);
+    }
+    // 更新 buff emitters
+    for (const k in this) {
+      if (k.startsWith('_buffFx_') && this[k]) {
+        this[k].update(dt);
+        if (this[k].done) this[k] = null;
+      }
+    }
+  },
+
+  render(ctx) {
+    for (const fx of this.active) fx.render(ctx, Renderer);
+    // 渲染 buff emitters
+    for (const k in this) {
+      if (k.startsWith('_buffFx_') && this[k]) {
+        this[k].render(ctx, Renderer);
+      }
+    }
+  },
+
+  clear() {
+    this.active = [];
+    for (const k in this) {
+      if (k.startsWith('_buffFx_')) this[k] = null;
+    }
+  }
+};
+
+// ==================== 近战弹幕 FX ====================
+// 瞬间出现在目标位置，闪亮后淡出
+class MeleeBulletFX {
+  constructor(spriteName, x, y, color, fadeTime = 300) {
+    this.spriteName = spriteName;
+    this.x = x;
+    this.y = y;
+    this.color = color;
+    this.fadeTime = fadeTime;
+    this.elapsed = 0;
+    this.done = false;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed >= this.fadeTime) this.done = true;
+  }
+
+  render(ctx, R) {
+    const progress = this.elapsed / this.fadeTime;
+    // 前 20% 时间保持全亮，之后淡出
+    const alpha = progress < 0.2 ? 1 : Math.max(0, 1 - (progress - 0.2) / 0.8);
+    const scale = 1 + progress * 0.3; // 微微放大
+    R.drawBulletSprite(this.spriteName, this.x, this.y, scale, alpha, this.color);
+  }
+}
+
+// ==================== 平射弹幕 FX ====================
+// 从发射者平移至目标/最远点，速度递减
+class ProjectileBulletFX {
+  constructor(spriteName, fromX, toX, y, color, frameDuration, hasHit = true) {
+    this.spriteName = spriteName;
+    this.fromX = fromX;
+    this.toX = toX;
+    this.x = fromX;
+    this.y = y;
+    this.color = color;
+    this.totalDuration = frameDuration * 0.8;
+    this.elapsed = 0;
+    this.done = false;
+    this.hasHit = hasHit;
+    // 从动画配置读取速度参数
+    const anim = getAnim(spriteName);
+    this.speedStart = anim?.speedStart || 4;
+    this.speedEnd = anim?.speedEnd || 2;
+    this.instant = anim?.instant || false;
+    if (this.instant) this.totalDuration = frameDuration * 0.15;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    const t = Math.min(1, this.elapsed / this.totalDuration);
+    // ease-out: 速度递减
+    const ease = 1 - Math.pow(1 - t, 1.5);
+    this.x = this.fromX + (this.toX - this.fromX) * ease;
+    if (t >= 1) this.done = true;
+  }
+
+  render(ctx, R) {
+    const t = Math.min(1, this.elapsed / this.totalDuration);
+    // 到达末端后淡出（仅无命中时）
+    let alpha = 1;
+    if (t > 0.85 && !this.hasHit) alpha = Math.max(0, 1 - (t - 0.85) / 0.15);
+    else if (t > 0.9 && this.hasHit) alpha = Math.max(0, 1 - (t - 0.9) / 0.1);
+    R.drawBulletSprite(this.spriteName, this.x, this.y, 1, alpha, this.color);
+  }
+}
+
+// ==================== 垂直弹幕 FX ====================
+// 从目标格上方屏幕边界生成，加速下落
+class VerticalBulletFX {
+  constructor(spriteName, x, startY, targetY, color, frameDuration) {
+    this.spriteName = spriteName;
+    this.x = x;
+    this.startY = startY;
+    this.targetY = targetY;
+    this.y = startY;
+    this.color = color;
+    this.totalDuration = frameDuration * 0.7;
+    this.elapsed = 0;
+    this.done = false;
+    const anim = getAnim(spriteName);
+    this.speedStart = anim?.speedStart || 3;
+    this.speedEnd = anim?.speedEnd || 15;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    const t = Math.min(1, this.elapsed / this.totalDuration);
+    // ease-in: 速度递增（加速下落）
+    const ease = t * t;
+    this.y = this.startY + (this.targetY - this.startY) * ease;
+    if (t >= 1) this.done = true;
+  }
+
+  render(ctx, R) {
+    const alpha = this.elapsed < 50 ? this.elapsed / 50 : 1;
+    R.drawBulletSprite(this.spriteName, this.x, this.y, 1, alpha, this.color);
+  }
+}
+
+// ==================== 命中圆环 FX ====================
+// 扩散圆环淡出 + 粒子
+class HitRingFX {
+  constructor(animName, x, y, color) {
+    const anim = getAnim(animName);
+    this.x = x;
+    this.y = y;
+    this.color = anim?.color || color;
+    this.particleColor = anim?.particleColor || this.color;
+    this.ringStart = anim?.ringStartSize || 0.1;
+    this.ringEnd = anim?.ringEndSize || 0.6;
+    this.fadeTime = anim?.fadeTime || 300;
+    this.particleCount = anim?.particles || 8;
+    this.particleSpread = anim?.particleSpread || 4;
+    this.elapsed = 0;
+    this.done = false;
+    // 初始化粒子
+    this.particles = [];
+    for (let i = 0; i < this.particleCount; i++) {
+      const angle = (Math.PI * 2 * i) / this.particleCount + (Math.random() - 0.5) * 0.5;
+      const speed = 2 + Math.random() * this.particleSpread;
+      this.particles.push({ angle, speed, life: 0.6 + Math.random() * 0.4 });
+    }
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed >= this.fadeTime) this.done = true;
+  }
+
+  render(ctx, R) {
+    const t = Math.min(1, this.elapsed / this.fadeTime);
+    const alpha = 1 - t;
+
+    // 扩散圆环
+    const ringRadius = (this.ringStart + (this.ringEnd - this.ringStart) * t) * R.cellW;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 粒子
+    for (const p of this.particles) {
+      const pLife = Math.min(1, this.elapsed / (this.fadeTime * p.life));
+      const pAlpha = 1 - pLife;
+      const dist = pLife * R.cellW * this.particleSpread;
+      const px = this.x + Math.cos(p.angle) * dist;
+      const py = this.y + Math.sin(p.angle) * dist;
+      ctx.fillStyle = this.particleColor;
+      ctx.globalAlpha = pAlpha * 0.8;
+      ctx.fillRect(px - 2, py - 2, 4, 4);
+    }
+    ctx.restore();
+  }
+}
+
+// ==================== 拖尾 FX ====================
+// 带状拖尾，用于 dash/闪避
+class TrailFX {
+  constructor(animName, fromX, toX, y, color) {
+    const anim = getAnim(animName);
+    this.fromX = fromX;
+    this.toX = toX;
+    this.y = y;
+    this.color = anim?.color || color;
+    this.segments = anim?.segments || 8;
+    this.fadeTime = anim?.fadeTime || 400;
+    this.elapsed = 0;
+    this.done = false;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed >= this.fadeTime) this.done = true;
+  }
+
+  render(ctx, R) {
+    const t = Math.min(1, this.elapsed / this.fadeTime);
+    const alpha = 1 - t;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < this.segments; i++) {
+      const segT = i / (this.segments - 1);
+      const segX = this.fromX + (this.toX - this.fromX) * segT;
+      const segAlpha = alpha * (1 - segT * 0.5);
+      ctx.globalAlpha = segAlpha;
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 6;
+      ctx.fillRect(segX - R.cellW * 0.3, this.y - 4, R.cellW * 0.6, 8);
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+// ==================== Buff 粒子发射器 FX ====================
+// 角色身上源源不断的粒子效果
+class BuffEmitterFX {
+  constructor(animName, x, y) {
+    const anim = getAnim(animName);
+    this.x = x;
+    this.y = y;
+    this.color = anim?.color || '#4488ff';
+    this.emissionRate = anim?.emissionRate || 4;  // 每秒钟发射粒子数
+    this.particleLife = anim?.particleLife || 600; // ms
+    this.spread = anim?.spread || 3;
+    this.elapsed = 0;
+    this.done = false;
+    this.particles = [];
+    this.emissionAccum = 0;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    // 发射新粒子
+    this.emissionAccum += dt * (this.emissionRate / 1000);
+    while (this.emissionAccum >= 1) {
+      this.emissionAccum -= 1;
+      this.particles.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 1 + Math.random() * this.spread,
+        life: this.particleLife * (0.5 + Math.random() * 0.5),
+        elapsed: 0
+      });
+    }
+
+    // 更新现有粒子
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.elapsed += dt;
+      if (p.elapsed >= p.life) this.particles.splice(i, 1);
+    }
+  }
+
+  render(ctx, R) {
+    for (const p of this.particles) {
+      const pT = p.elapsed / p.life;
+      const alpha = 1 - pT;
+      const dist = pT * R.cellW * this.spread;
+      const px = this.x + Math.cos(p.angle) * dist;
+      const py = this.y + Math.sin(p.angle) * dist - pT * 20; // 向上飘
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 4;
+      ctx.fillRect(px - 2, py - 2, 4, 4);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+  }
+}
+
+// ==================== Tween 补间动画引擎 ====================
+const Tween = {
+  _tweens: [],
+  add(obj, props, duration, easing = 'easeOutQuad') {
+    const start = {}, startTime = performance.now();
+    for (const k in props) start[k] = (obj[k] !== undefined ? obj[k] : 0);
+    this._tweens.push({ obj, start, end: props, duration, startTime, easing });
+  },
+  update() {
+    const now = performance.now();
+    for (let i = this._tweens.length - 1; i >= 0; i--) {
+      const tw = this._tweens[i];
+      const t = Math.min(1, (now - tw.startTime) / tw.duration);
+      const e = this._ease(t, tw.easing);
+      for (const k in tw.end) {
+        tw.obj[k] = tw.start[k] + (tw.end[k] - tw.start[k]) * e;
+      }
+      if (t >= 1) this._tweens.splice(i, 1);
+    }
+  },
+  _ease(t, type) {
+    switch (type) {
+      case 'linear': return t;
+      case 'easeInQuad': return t * t;
+      case 'easeOutQuad': return t * (2 - t);
+      case 'easeInOutQuad': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      default: return t * (2 - t);
+    }
+  },
+  clear() { this._tweens = []; }
+};
+
+// ==================== 全局游戏状态 G ====================
+const G = {
+  socket: null,
+  mode: null,        // 'ai' | 'train' | 'online'
+  _mode: 'prepare',  // 'prepare' | 'battle' | 'result'
+  roomId: null,
+  playerN: 1,
+  myCharId: null,
+  mySkillIds: [],
+  myCustomSkills: {},
+  p1: null,          // 当前帧 p1 数据
+  p2: null,          // 当前帧 p2 数据
+  actions: [],       // 我的行动队列
+  maxActions: 16,
+  round: 0,
+  timeLeft: 60,
+  tick: 0,
+  p1Actions: [],     // P1 的16 tick 行动
+  p2Actions: [],     // P2 的16 tick 行动
+
+  reset() {
+    this.p1 = null; this.p2 = null; this.actions = [];
+    this.round = 0; this.timeLeft = 60; this.tick = 0;
+    this.p1Actions = []; this.p2Actions = [];
+    FX.clear(); Tween.clear();
+  }
+};
+
+// ==================== UI 工具 ====================
+const UI = {
+  updateHUD(p, prefix) {
+    if (!p) return;
+    const hpPct = Math.max(0, (p.hp || 0) / (p.maxHp || 1) * 100);
+    const mpPct = Math.max(0, (p.mp || 0) / (p.maxMp || 1) * 100);
+    const spPct = Math.max(0, (p.sp || 0) / (p.maxSp || 1) * 100);
+    const hpEl = document.getElementById(prefix + 'hp');
+    const mpEl = document.getElementById(prefix + 'mp');
+    const spEl = document.getElementById(prefix + 'sp');
+    if (hpEl) hpEl.style.width = hpPct + '%';
+    if (mpEl) mpEl.style.width = mpPct + '%';
+    if (spEl) spEl.style.width = spPct + '%';
+    const hptEl = document.getElementById(prefix + 'hpt');
+    const mptEl = document.getElementById(prefix + 'mpt');
+    const sptEl = document.getElementById(prefix + 'spt');
+    if (hptEl) hptEl.textContent = `${p.hp||0}/${p.maxHp||0}`;
+    if (mptEl) mptEl.textContent = `${p.mp||0}/${p.maxMp||0}`;
+    if (sptEl) sptEl.textContent = `${p.sp||0}/${p.maxSp||0}`;
+  },
+
+  updatePrepareUI(p) {
+    if (!p) return;
+    const hpEl = document.getElementById('p1hp');
+    const mpEl = document.getElementById('p1mp');
+    const spEl = document.getElementById('p1sp');
+    const hptEl = document.getElementById('p1hpt');
+    const mptEl = document.getElementById('p1mpt');
+    const sptEl = document.getElementById('p1spt');
+    if (hpEl) hpEl.style.width = Math.max(0, (p.hp || 0) / (p.maxHp || 1) * 100) + '%';
+    if (mpEl) mpEl.style.width = 0 + '%';
+    if (spEl) spEl.style.width = Math.max(0, (p.sp || 0) / (p.maxSp || 1) * 100) + '%';
+    if (hptEl) hptEl.textContent = `${p.hp||0}/${p.maxHp||0}`;
+    if (mptEl) mptEl.textContent = `${p.mp||0}/${p.maxMp||0}`;
+    if (sptEl) sptEl.textContent = `${p.sp||0}/${p.maxSp||0}`;
+  },
+
+  log(msg) {
+    const el = document.getElementById('logc');
+    if (!el) return;
+    const d = document.createElement('div');
+    d.textContent = msg;
+    el.appendChild(d);
+    if (el.children.length > 20) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+  },
+
+  showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id)?.classList.add('active');
+  },
+
+  renderActionSlots() {
+    const slotsEl = document.getElementById('aslots');
+    const cntEl = document.getElementById('acnt');
+    if (!slotsEl) return;
+    slotsEl.innerHTML = '';
+    for (let i = 0; i < G.maxActions; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'bq-slot';
+      if (i < G.actions.length) {
+        slot.classList.add('active');
+        const a = G.actions[i];
+        const sk = getSkillById(a);
+        const gs = _skillsData?.genericSkills?.find(g => g.id === a);
+        slot.textContent = (sk?.name || gs?.name || a) + ' ';
+        // cost hint
+        const mpC = sk?.mpCost || 0, spC = sk?.spCost || gs?.spCost || 0;
+        if (mpC || spC) {
+          const costSpan = document.createElement('span');
+          costSpan.style.cssText = 'font-size:0.6em;color:#888';
+          costSpan.textContent = (mpC ? `MP${mpC}` : '') + (spC ? ` SP${spC}` : '');
+          slot.appendChild(costSpan);
+        }
+      } else {
+        slot.textContent = i + 1;
+      }
+      slotsEl.appendChild(slot);
+    }
+    if (cntEl) cntEl.textContent = `(${G.actions.length}/${G.maxActions})`;
+  },
+
+  renderActionButtons() {
+    const container = document.getElementById('abtns');
+    if (!container) return;
+    container.innerHTML = '';
+
+    // 计算当前可用资源
+    let curMp = G.p1?.mp || 0, curSp = G.p1?.sp || 0;
+    // 减去已排入队列的技能消耗
+    for (const a of G.actions) {
+      const sk = getSkillById(a);
+      if (sk) { curMp -= (sk.mpCost || 0); curSp -= (sk.spCost || 0); }
+      else { const gs = (_skillsData?.genericSkills || []).find(g => g.id === a);
+        if (gs) curSp -= (gs.spCost || 0); }
+    }
+
+    // tick cooldowns
+    const cd = G._cooldowns || {};
+    for (const k in cd) { if (cd[k] > 0) cd[k]--; }
+    G._cooldowns = cd;
+
+    // 技能按钮
+    const skills = G.mySkillIds || [];
+    skills.forEach((sid, idx) => {
+      const sk = getSkillById(sid);
+      if (!sk) return;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-b s';
+      const onCD = (cd[sid] || 0) > 0;
+      const enoughRes = curMp >= (sk.mpCost || 0) && curSp >= (sk.spCost || 0);
+      btn.textContent = `${sk.name} [MP${sk.mpCost||0} SP${sk.spCost||0}]${onCD ? ` CD${cd[sid]}` : ''}`;
+      btn.disabled = G.actions.length >= G.maxActions || onCD || !enoughRes;
+      if (!enoughRes) btn.style.opacity = '0.5';
+      btn.onclick = () => {
+        const actionId = `skill${idx + 1}`;
+        const skill = getSkillById(G.mySkillIds[idx]);
+        if (G.actions.length >= G.maxActions) return;
+        if ((cd[G.mySkillIds[idx]] || 0) > 0) return;
+        if (curMp < (skill?.mpCost || 0) || curSp < (skill?.spCost || 0)) return;
+        G.actions.push(actionId);
+        curMp -= (skill?.mpCost || 0); curSp -= (skill?.spCost || 0);
+        if (skill?.cooldown) cd[G.mySkillIds[idx]] = skill.cooldown;
+        if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+        UI.renderActionSlots();
+        UI.renderActionButtons();
+      };
+      container.appendChild(btn);
+    });
+
+    // 通用技能按钮
+    const generic = _skillsData?.genericSkills || [];
+    generic.forEach(gs => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-g s';
+      btn.textContent = `${gs.name} [SP${gs.spCost||0}]`;
+      btn.disabled = G.actions.length >= G.maxActions || curSp < (gs.spCost || 0);
+      btn.onclick = () => {
+        if (G.actions.length >= G.maxActions) return;
+        if (curSp < (gs.spCost || 0)) return;
+        G.actions.push(gs.id);
+        curSp -= (gs.spCost || 0);
+        if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+        UI.renderActionSlots();
+        UI.renderActionButtons();
+      };
+      container.appendChild(btn);
+    });
+  },
+
+  /** 战斗阶段双方行动队列面板 */
+  renderBattleQueue(tick, p1Acts, p2Acts) {
+    document.getElementById('bqTick').textContent = `Tick ${tick}/16`;
+    const p1El = document.getElementById('bqP1');
+    const p2El = document.getElementById('bqP2');
+    if (!p1El || !p2El) return;
+
+    const renderRow = (el, actions, currentIdx) => {
+      el.innerHTML = '';
+      for (let i = 0; i < 16; i++) {
+        const slot = document.createElement('span');
+        slot.className = 'bq-slot' + (i === currentIdx ? ' active' : '');
+        const a = actions[i] || 'wait';
+        if (a === 'wait') slot.textContent = '·';
+        else {
+          const sk = getSkillById(a);
+          const gs = (_skillsData?.genericSkills || []).find(g => g.id === a);
+          slot.textContent = sk?.name || gs?.name || a;
+        }
+        el.appendChild(slot);
+      }
+    };
+    renderRow(p1El, p1Acts, tick);
+    renderRow(p2El, p2Acts, tick);
+  }
+};
+
+// ==================== Socket 事件处理 ====================
+function setupSocket() {
+  if (G.socket) { G.socket.removeAllListeners(); G.socket.disconnect(); }
+  G.socket = io();
+
+  G.socket.on('prepareStart', (d) => {
+    G._mode = 'prepare'; G.round = d.round; G.timeLeft = d.time;
+    G.p1 = d.p1; G.p2 = d.p2;
+    G.actions = []; G._cooldowns = {};
+    G.p1Actions = []; G.p2Actions = [];
+    FX.clear();
+    updatePrepareUI();
+    UI.showScreen('battle');
+    UI.renderActionSlots();
+    UI.renderActionButtons();
+    document.getElementById('actionQueuePanel').classList.remove('hidden');
+    document.getElementById('battleQueuePanel').classList.add('hidden');
+    document.getElementById('rdyBtn').disabled = false;
+
+    if (G.mode === 'ai') {
+      G.socket.emit('aiReady', { roomId: G.roomId });
+      document.getElementById('actionQueuePanel').classList.add('hidden');
+    }
+    if (G.mode === 'train') {
+      G.socket.emit('trainReady', { roomId: G.roomId });
+    }
+    UI.log(`Round ${d.round} — 准备阶段 (${d.time}s)`);
+  });
+
+  G.socket.on('prepareTick', (d) => {
+    G.timeLeft = d.t;
+    document.getElementById('tm').textContent = d.t;
+  });
+
+  G.socket.on('battleFrames', (d) => {
+    G._mode = 'battle';
+    document.getElementById('actionQueuePanel').classList.add('hidden');
+    document.getElementById('battleQueuePanel').classList.remove('hidden');
+    document.getElementById('rdyBtn').disabled = true;
+    playBattleAnim(d.frames, d.final);
+  });
+
+  G.socket.on('gameOver', (d) => {
+    G._mode = 'result';
+    FX.clear();
+    UI.showScreen('result');
+    document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : `${d.winner} 获胜!`;
+    document.getElementById('rdetail').textContent = `P1 HP: ${d.p1Hp} | P2 HP: ${d.p2Hp} | ${d.reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜'}`;
+  });
+
+  G.socket.on('err', (d) => { UI.log('❌ ' + d.msg); });
+  G.socket.on('roomCreated', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`房间已创建: ${d.roomId}`); });
+  G.socket.on('roomJoined', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`已加入房间: ${d.roomId}`); });
+  G.socket.on('playerJoined', (d) => { UI.log(`玩家已加入: ${d.players.map(p=>p.name).join(', ')}`); });
+  G.socket.on('playerReady', (d) => { UI.log(`P${d.n} 已准备`); });
+  G.socket.on('trainStart', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log('训练场已就绪'); });
+  G.socket.on('aiStart', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`人机对战 (AI: ${d.aiChar})`); });
+}
+
+// ==================== 战斗动画播放 ====================
+const FRAME_DURATION = 600; // ms per tick
+
+function playBattleAnim(frames, final) {
+  FX.clear();
+  let tickIdx = 0;
+  let lastTime = performance.now();
+  let frameAccum = 0;
+
+  // 设置初始状态
+  if (frames.length > 0) {
+    const f0 = frames[0];
+    G.p1 = f0.p1; G.p2 = f0.p2;
+    G.p1Actions = f0.p1Actions || []; G.p2Actions = f0.p2Actions || [];
+  }
+
+  function animate(now) {
+    if (G._mode !== 'battle') return; // 可能已切换阶段
+
+    let dt = now - lastTime;
+    lastTime = now;
+    if (dt > 200) dt = 16; // 防止跳帧过大
+
+    FX.update(dt);
+    Tween.update();
+
+    // 处理帧步进
+    frameAccum += dt;
+    while (frameAccum >= FRAME_DURATION && tickIdx < frames.length) {
+      const frame = frames[tickIdx];
+      G.p1 = frame.p1; G.p2 = frame.p2;
+      G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
+      G.tick = tickIdx;
+
+      // 从事件生成特效
+      const events = frame.events || [];
+      for (const ev of events) {
+        FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
+      }
+
+      // Buff 粒子
+      FX.ensureBuffEmitter(frame.p1, 'p1');
+      FX.ensureBuffEmitter(frame.p2, 'p2');
+
+      // 更新战斗阶段队列面板
+      UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
+
+      // tick 音效
+      if (events.length > 0) AE.play('tick');
+
+      AE.play('tick');
+      frameAccum -= FRAME_DURATION;
+      tickIdx++;
+    }
+
+    // 渲染
+    Renderer.resize();
+    Renderer.drawGrid();
+    Renderer.drawShields(frames[Math.min(tickIdx, frames.length - 1)]?.bullets || []);
+    Renderer.drawPlayers(G.p1, G.p2);
+    FX.render(Renderer.ctx);
+
+    // 更新 HUD
+    UI.updateHUD(G.p1, 'p1');
+    UI.updateHUD(G.p2, 'p2');
+    document.getElementById('tm').textContent = G.tick;
+    document.getElementById('rnd').textContent = `ROUND ${G.round}`;
+
+    if (tickIdx < frames.length || FX.active.length > 0) {
+      requestAnimationFrame(animate);
+    } else {
+      // 动画播放完毕
+      G.p1 = final.p1; G.p2 = final.p2;
+      UI.updateHUD(G.p1, 'p1');
+      UI.updateHUD(G.p2, 'p2');
+      UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}`);
+      G.tick = frames.length;
+      UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
+    }
+  }
+
+  requestAnimationFrame(animate);
+}
+
+// ==================== DOM 事件绑定 ====================
+function nav(screen) {
+  if (screen === 'menu') {
+    G.reset();
+    if (G.socket) G.socket.emit('leaveRoom');
+  }
+  UI.showScreen(screen);
+  if (screen === 'battle') {
+    const canvas = document.getElementById('fc');
+    if (canvas) Renderer.init(canvas);
+  }
+}
+
+function updatePrepareUI() {
+  UI.updatePrepareUI(G.p1);
+  // P2 side: always visible during prepare
+  UI.updateHUD(G.p2, 'p2');
+  document.getElementById('tm').textContent = G.timeLeft;
+  document.getElementById('rnd').textContent = `ROUND ${G.round}`;
+  // hide queue panel in prepare
+  document.getElementById('battleQueuePanel').classList.add('hidden');
+}
+
+function clearActions() {
+  G.actions = [];
+  if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+}
+
+function undoAction() {
+  if (G.actions.length === 0) return;
+  G.actions.pop();
+  if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+}
+
+function randomFill() {
+  const pool = [];
+  const generic = _skillsData?.genericSkills || [];
+  generic.forEach(g => pool.push(g.id));
+  (G.mySkillIds || []).forEach((sid, i) => {
+    const sk = getSkillById(sid);
+    if (sk) pool.push('skill' + (i + 1), 'skill' + (i + 1));
+  });
+  G.actions = [];
+  for (let i = 0; i < G.maxActions; i++) {
+    G.actions.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+}
+
+function readyBattle() {
+  if (G.socket && G.roomId) {
+    G.socket.emit('updateActions', { actions: G.actions });
+    G.socket.emit('ready');
+  }
+  document.getElementById('rdyBtn').disabled = true;
+  UI.log('已准备，等待对手...');
+}
+
+function quitBattle() {
+  if (G.socket) G.socket.emit('leaveRoom');
+  G.reset();
+  nav('menu');
+}
+
+// ==================== 角色选择 ====================
+let _selChar = null;
+let _selSkills = [];
+let _selMode = 'ai';
+
+async function enterCharSelect(mode) {
+  _selMode = mode;
+  if (!_skillsData) await loadData();
+  _selChar = null; _selSkills = [];
+  UI.showScreen('charSel');
+  renderCharGrid();
+  document.getElementById('skillSel').classList.add('hidden');
+}
+
+function renderCharGrid() {
+  const cg = document.getElementById('cg');
+  if (!cg || !_charsData) return;
+  cg.innerHTML = '';
+  _charsData.characters.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'cc';
+    if (_selChar === c.id) card.classList.add('selected');
+    card.innerHTML = `<div class="ccn">${c.name}</div><div class="ccs" style="color:${c.color}">${c.shape}</div><div class="ccd">${c.desc}<br>HP:${c.maxHp} MP:${c.maxMp} SP:${c.maxSp} ATK:${c.atk} DEF:${c.def}</div>`;
+    card.onclick = () => {
+      _selChar = c.id;
+      _selSkills = [...c.defaultSkills];
+      renderCharGrid();
+      renderSkillGrid(c);
+      document.getElementById('skillSel').classList.remove('hidden');
+    };
+    cg.appendChild(card);
+  });
+}
+
+function renderSkillGrid(char) {
+  const sg = document.getElementById('sg');
+  if (!sg || !_skillsData) return;
+  sg.innerHTML = '';
+  const allSkills = Object.values(_skillsData.skills || {}).filter(s => s.charId === char.id);
+  allSkills.forEach(sk => {
+    const card = document.createElement('div');
+    card.className = 'cc';
+    if (_selSkills.includes(sk.id)) card.classList.add('selected');
+    card.innerHTML = `<div class="ccn">${sk.name}</div><div class="ccd">${sk.type} | ${sk.effect || 'none'}<br>${sk.desc||''}<br>MP:${sk.mpCost||0} SP:${sk.spCost||0} CD:${sk.cooldown||0}</div>`;
+    card.onclick = () => {
+      if (_selSkills.includes(sk.id)) {
+        if (_selSkills.length <= 3) return;
+        _selSkills = _selSkills.filter(s => s !== sk.id);
+      } else {
+        if (_selSkills.length >= 3) _selSkills.shift();
+        _selSkills.push(sk.id);
+      }
+      renderSkillGrid(char);
+    };
+    sg.appendChild(card);
+  });
+  document.getElementById('startBtn').onclick = () => startGame();
+}
+
+function startGame() {
+  if (!_selChar || _selSkills.length < 3) return;
+  G.myCharId = _selChar;
+  G.mySkillIds = [..._selSkills];
+  setupSocket();
+
+  if (_selMode === 'ai') {
+    const aiChar = _charsData.characters.find(c => c.id !== _selChar) || _charsData.characters[0];
+    G.socket.emit('startAI', {
+      name: 'Player',
+      charId: _selChar,
+      skillIds: _selSkills,
+      aiCharId: aiChar.id,
+      aiSkillIds: [...aiChar.defaultSkills],
+    });
+    G.mode = 'ai';
+  } else if (_selMode === 'train') {
+    G.socket.emit('startTrain', {
+      name: 'Player',
+      charId: _selChar,
+      skillIds: _selSkills,
+    });
+    G.mode = 'train';
+  } else if (_selMode === 'online') {
+    G.mode = 'online';
+    UI.showScreen('lobby');
+  }
+}
+
+function createRoom() {
+  const name = document.getElementById('pname').value || 'Player';
+  if (!G.socket) setupSocket();
+  G.socket.emit('createRoom', { name });
+  document.getElementById('ostatus').textContent = '创建中...';
+}
+
+function joinRoom() {
+  const name = document.getElementById('pname').value || 'Player';
+  const rid = document.getElementById('rcode').value.trim().toUpperCase();
+  if (!rid) return;
+  if (!G.socket) setupSocket();
+  G.socket.emit('joinRoom', { roomId: rid, name });
+  document.getElementById('ostatus').textContent = '加入中...';
+  // 加入后角色选择
+  const chars = _charsData?.characters || [];
+  G.myCharId = chars[0]?.id || 'warrior';
+  G.mySkillIds = [...(chars[0]?.defaultSkills || [])];
+  if (G.socket && rid) {
+    G.socket.emit('selectChar', { charId: G.myCharId, skillIds: G.mySkillIds, customSkills: {} });
+  }
+}
+
+// ==================== 初始化 ====================
+async function init() {
+  await loadData();
+  AE.init();
+  const canvas = document.getElementById('fc');
+  if (canvas) Renderer.init(canvas);
+  window.addEventListener('resize', () => Renderer.resize());
+
+  // 默认显示菜单
+  UI.showScreen('menu');
+}
+
+document.addEventListener('DOMContentLoaded', init);

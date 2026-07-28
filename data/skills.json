@@ -1,37 +1,237 @@
 {
+  "bulletSprites": {
+    "slash": { "w":5,"h":5,"color":"#00ffff","pixels":["  #  "," ### ","#####"," ### ","  #  "]},
+    "arrow": { "w":5,"h":2,"color":"#00ff44","pixels":["#####","  #  "]},
+    "fireball": { "w":5,"h":5,"color":"#ff8800","pixels":[" ### ","# # #","# # #","# # #"," ### "]},
+    "lightning": { "w":3,"h":7,"color":"#ffff44","pixels":[" # ","###"," # "," # "," # "," # "," # "]},
+    "shield": { "w":7,"h":7,"color":"#4488ff","pixels":["  ###  "," #   # ","#     #","#     #","#     #"," #   # ","  ###  "]},
+    "poison": { "w":5,"h":5,"color":"#88ff00","pixels":[" # # ","# # #"," ### ","# # #"," # # "]},
+    "ice": { "w":5,"h":6,"color":"#88ccff","pixels":["  #  "," ### ","#####"," ### ","  #  ","  #  "]},
+    "arrowRain": { "w":3,"h":5,"color":"#44ff44","pixels":[" # ","###"," # "," # ","###"]},
+    "dash": { "w":7,"h":3,"color":"#00ddff","pixels":["#######","  ###  ","    #   "]},
+    "default": { "w":3,"h":3,"color":"#ffffff","pixels":["###","###","###"]}
+  },
   "animations": {
-    "melee_hit":{"type":"flash","duration":200,"color":"#ffffff","particles":8,"spread":4},
-    "bullet_fly":{"type":"trail","duration":300,"trailLen":3},
-    "bullet_hit":{"type":"explosion","duration":300,"color":"#ff8800","particles":10,"spread":5},
-    "bullet_clash":{"type":"spark","duration":200,"color":"#ffffff","particles":6,"spread":3},
-    "dash":{"type":"blur","duration":200,"trailLen":4},
-    "dodge":{"type":"blur","duration":200,"trailLen":3},
-    "collision":{"type":"shockwave","duration":300,"color":"#ffff00","particles":12,"spread":6},
-    "defend":{"type":"shield_ring","duration":250,"color":"#4488ff"},
-    "teleport":{"type":"flash","duration":200,"color":"#ff00ff","particles":8},
-    "aoe":{"type":"explosion","duration":400,"color":"#ff4444","particles":16,"spread":8},
-    "dot_tick":{"type":"drip","duration":300,"color":"#44ff44","particles":2},
-    "stun":{"type":"spark_ring","duration":300,"color":"#ffff00","particles":4,"spread":3},
-    "freeze":{"type":"ice_shard","duration":400,"color":"#88ccff","particles":8,"spread":4},
-    "burn":{"type":"fire_ring","duration":500,"color":"#ff6600","particles":6,"spread":3},
-    "poison":{"type":"drip_green","duration":300,"color":"#88ff00","particles":4},
-    "shield_wall":{"type":"shield_wall","duration":300,"color":"#4488ff","particles":4},
-    "knockback":{"type":"shockwave","duration":300,"color":"#ffaa00","particles":8,"spread":4},
-    "backstab":{"type":"flash","duration":250,"color":"#ff0000","particles":12,"spread":6}
+    "meleeSwing": {
+      "type":"melee_bullet",
+      "sprite":"slash",
+      "fadeTime":300,
+      "arcSize":0.8
+    },
+    "arrowFly": {
+      "type":"projectile_bullet",
+      "sprite":"arrow",
+      "speedStart":14,
+      "speedEnd":4
+    },
+    "fireballFly": {
+      "type":"projectile_bullet",
+      "sprite":"fireball",
+      "speedStart":10,
+      "speedEnd":3
+    },
+    "lightningFly": {
+      "type":"projectile_bullet",
+      "sprite":"lightning",
+      "speedStart":20,
+      "speedEnd":20,
+      "instant":true
+    },
+    "iceFly": {
+      "type":"projectile_bullet",
+      "sprite":"ice",
+      "speedStart":8,
+      "speedEnd":3
+    },
+    "poisonFly": {
+      "type":"projectile_bullet",
+      "sprite":"poison",
+      "speedStart":9,
+      "speedEnd":3
+    },
+    "arrowRainDrop": {
+      "type":"vertical_bullet",
+      "sprite":"arrowRain",
+      "speedStart":3,
+      "speedEnd":15,
+      "perTarget":true,
+      "aoeRadius":2
+    },
+    "fireballDrop": {
+      "type":"vertical_bullet",
+      "sprite":"fireball",
+      "speedStart":4,
+      "speedEnd":12,
+      "perTarget":false,
+      "aoeRadius":1
+    },
+    "hitExplosion": {
+      "type":"hit_ring",
+      "color":"#ff8800",
+      "ringStartSize":0.1,
+      "ringEndSize":0.6,
+      "fadeTime":400,
+      "particles":12,
+      "particleSpread":5,
+      "particleColor":"#ff8800"
+    },
+    "hitSlash": {
+      "type":"hit_ring",
+      "color":"#ffffff",
+      "ringStartSize":0.1,
+      "ringEndSize":0.5,
+      "fadeTime":250,
+      "particles":8,
+      "particleSpread":4,
+      "particleColor":"#ffffff"
+    },
+    "hitFreeze": {
+      "type":"hit_ring",
+      "color":"#88ccff",
+      "ringStartSize":0.2,
+      "ringEndSize":0.7,
+      "fadeTime":350,
+      "particles":10,
+      "particleSpread":4,
+      "particleColor":"#88ccff"
+    },
+    "hitBurn": {
+      "type":"hit_ring",
+      "color":"#ff6600",
+      "ringStartSize":0.1,
+      "ringEndSize":0.8,
+      "fadeTime":500,
+      "particles":16,
+      "particleSpread":6,
+      "particleColor":"#ff6600"
+    },
+    "hitPoison": {
+      "type":"hit_ring",
+      "color":"#88ff00",
+      "ringStartSize":0.1,
+      "ringEndSize":0.5,
+      "fadeTime":300,
+      "particles":8,
+      "particleSpread":3,
+      "particleColor":"#88ff00"
+    },
+    "hitStun": {
+      "type":"hit_ring",
+      "color":"#ffff00",
+      "ringStartSize":0.1,
+      "ringEndSize":0.6,
+      "fadeTime":300,
+      "particles":6,
+      "particleSpread":3,
+      "particleColor":"#ffff00"
+    },
+    "hitBackstab": {
+      "type":"hit_ring",
+      "color":"#ff0000",
+      "ringStartSize":0.15,
+      "ringEndSize":0.7,
+      "fadeTime":300,
+      "particles":16,
+      "particleSpread":7,
+      "particleColor":"#ff0000"
+    },
+    "hitAOE": {
+      "type":"hit_ring",
+      "color":"#ff4444",
+      "ringStartSize":0.2,
+      "ringEndSize":1.0,
+      "fadeTime":500,
+      "particles":20,
+      "particleSpread":8,
+      "particleColor":"#ff4444"
+    },
+    "collisionFX": {
+      "type":"hit_ring",
+      "color":"#ffff00",
+      "ringStartSize":0.1,
+      "ringEndSize":0.6,
+      "fadeTime":300,
+      "particles":14,
+      "particleSpread":6,
+      "particleColor":"#ffff00"
+    },
+    "dashTrail": {
+      "type":"trail",
+      "color":"#00ddff",
+      "segments":8,
+      "fadeTime":400
+    },
+    "dodgeTrail": {
+      "type":"trail",
+      "color":"#8888ff",
+      "segments":5,
+      "fadeTime":250
+    },
+    "teleportFlash": {
+      "type":"hit_ring",
+      "color":"#ff00ff",
+      "ringStartSize":0.1,
+      "ringEndSize":0.6,
+      "fadeTime":250,
+      "particles":10,
+      "particleSpread":5,
+      "particleColor":"#ff00ff"
+    },
+    "shieldWall": {
+      "type":"hit_ring",
+      "color":"#4488ff",
+      "ringStartSize":0.05,
+      "ringEndSize":0.4,
+      "fadeTime":250,
+      "particles":4,
+      "particleSpread":2,
+      "particleColor":"#4488ff"
+    },
+    "knockbackFX": {
+      "type":"hit_ring",
+      "color":"#ffaa00",
+      "ringStartSize":0.1,
+      "ringEndSize":0.5,
+      "fadeTime":300,
+      "particles":10,
+      "particleSpread":5,
+      "particleColor":"#ffaa00"
+    },
+    "buffParticle": {
+      "type":"buff_emitter",
+      "color":"#4488ff",
+      "emissionRate":4,
+      "particleLife":600,
+      "spread":3
+    },
+    "dotBleed": {
+      "type":"buff_emitter",
+      "color":"#44ff44",
+      "emissionRate":2,
+      "particleLife":400,
+      "spread":2
+    },
+    "stunSpark": {
+      "type":"buff_emitter",
+      "color":"#ffff00",
+      "emissionRate":3,
+      "particleLife":300,
+      "spread":2
+    }
   },
   "skills": {
-    "warrior_whirlwind":{"id":"warrior_whirlwind","name":"旋风斩","charId":"warrior","type":"melee","effect":"normal_damage","damageRatio":1.2,"range":2,"direction":"forward_and_back","mpCost":0,"spCost":18,"cooldown":2,"bulletPriority":3,"desc":"前后2格AOE,近战Lv3","color":"#00ccff","anim_hit":"melee_hit","anim_cast":"aoe","sfx_cast":"skill","sfx_hit":"hit"},
-    "warrior_heavy":{"id":"warrior_heavy","name":"重击","charId":"warrior","type":"melee","effect":"stun_damage","damageRatio":1.8,"range":2,"direction":"forward","mpCost":15,"spCost":20,"cooldown":3,"stunDuration":1,"bulletPriority":3,"desc":"前方2格+眩晕1tick","color":"#ffcc00","anim_hit":"stun","anim_cast":"melee_hit","sfx_cast":"skill","sfx_hit":"hit"},
-    "warrior_shieldbash":{"id":"warrior_shieldbash","name":"突击盾","charId":"warrior","type":"dash","effect":"dash_knockback","damageRatio":1.0,"range":3,"direction":"forward","mpCost":10,"spCost":25,"cooldown":3,"defBuff":0.5,"knockback":1,"bulletPriority":3,"desc":"冲刺3格+击退+防御↑","color":"#4488ff","anim_hit":"dash","anim_cast":"defend","sfx_cast":"dodge","sfx_hit":"block"},
-    "archer_precise":{"id":"archer_precise","name":"精准射击","charId":"archer","type":"projectile","effect":"normal_damage","damageRatio":2.0,"range":8,"direction":"forward","mpCost":12,"spCost":15,"cooldown":2,"bulletPriority":3,"bulletRange":8,"desc":"平射8格,弹幕Lv3","color":"#00ff44","anim_hit":"bullet_hit","anim_cast":"bullet_fly","sfx_cast":"bullet","sfx_hit":"bullet"},
-    "archer_rapid":{"id":"archer_rapid","name":"连续射击","charId":"archer","type":"projectile","effect":"normal_damage","damageRatio":0.5,"range":5,"direction":"forward","mpCost":15,"spCost":20,"cooldown":3,"bulletPriority":4,"bulletRange":5,"multiShot":5,"desc":"5连平射,弹幕Lv4","color":"#44ff88","anim_hit":"bullet_hit","anim_cast":"bullet_fly","sfx_cast":"bullet","sfx_hit":"bullet"},
-    "archer_rain":{"id":"archer_rain","name":"箭雨","charId":"archer","type":"targeted_aoe","effect":"normal_damage","damageRatio":1.0,"range":0,"direction":"target","mpCost":20,"spCost":25,"cooldown":3,"aoeRadius":2,"targetRange":99,"desc":"垂直AOE,目标±2格","color":"#44ff44","anim_hit":"aoe","anim_cast":"aoe","sfx_cast":"skill","sfx_hit":"hit"},
-    "mage_ice":{"id":"mage_ice","name":"冰锥","charId":"mage","type":"projectile","effect":"freeze_damage","damageRatio":1.4,"range":3,"direction":"forward","mpCost":18,"spCost":15,"cooldown":3,"freezeDuration":1,"bulletPriority":4,"bulletRange":3,"desc":"平射3格+冰冻1tick","color":"#88ccff","anim_hit":"freeze","anim_cast":"bullet_fly","sfx_cast":"bullet","sfx_hit":"block"},
-    "mage_fireball":{"id":"mage_fireball","name":"火球术","charId":"mage","type":"targeted_aoe","effect":"burn_debuff","damageRatio":1.2,"burnRatio":0.1,"direction":"target","mpCost":25,"spCost":20,"cooldown":5,"aoeRadius":1,"targetRange":99,"burnTicks":3,"desc":"垂直AOE±1格+燃烧3tick","color":"#ff6600","anim_hit":"burn","anim_cast":"aoe","sfx_cast":"skill","sfx_hit":"hit"},
-    "mage_shield":{"id":"mage_shield","name":"魔法盾","charId":"mage","type":"shield_wall","effect":"shield_bullet","damageRatio":0,"direction":"forward","mpCost":15,"spCost":10,"cooldown":3,"bulletPriority":2,"bulletRange":1,"desc":"身前护盾,弹幕Lv2","color":"#4488ff","anim_hit":"shield_wall","anim_cast":"buff","sfx_cast":"block","sfx_hit":"block"},
-    "assassin_shadowstep":{"id":"assassin_shadowstep","name":"背刺","charId":"assassin","type":"teleport_backstab","effect":"none","damageRatio":0,"direction":"forward","mpCost":0,"spCost":20,"cooldown":3,"desc":"瞬移到敌后并转身","color":"#ff00ff","anim_hit":"teleport","anim_cast":"teleport","sfx_cast":"dodge","sfx_hit":"dodge"},
-    "assassin_dagger":{"id":"assassin_dagger","name":"匕首攻击","charId":"assassin","type":"melee","effect":"true_damage","damageRatio":1.5,"backstabRatio":3.0,"range":1,"direction":"forward","mpCost":0,"spCost":18,"cooldown":3,"bulletPriority":4,"desc":"前方1格真伤,背身双倍","color":"#ff4444","anim_hit":"backstab","anim_cast":"melee_hit","sfx_cast":"skill","sfx_hit":"hit"},
-    "assassin_poison":{"id":"assassin_poison","name":"毒瓶","charId":"assassin","type":"projectile","effect":"poison_debuff","damageRatio":0.4,"poisonRatio":0.08,"direction":"forward","mpCost":12,"spCost":15,"cooldown":4,"bulletPriority":4,"bulletRange":4,"poisonTicks":5,"desc":"平射4格+中毒5tick","color":"#88ff00","anim_hit":"poison","anim_cast":"bullet_fly","sfx_cast":"bullet","sfx_hit":"hit"}
+    "warrior_whirlwind":{"id":"warrior_whirlwind","name":"旋风斩","charId":"warrior","type":"melee","effect":"normal_damage","damageRatio":1.2,"range":2,"direction":"forward_and_back","mpCost":0,"spCost":18,"cooldown":2,"bulletPriority":3,"desc":"前后2格AOE,近战Lv3","color":"#00ccff","anim_bullet":"meleeSwing","anim_hit":"hitSlash","sfx_cast":"skill","sfx_hit":"hit"},
+    "warrior_heavy":{"id":"warrior_heavy","name":"重击","charId":"warrior","type":"melee","effect":"stun_damage","damageRatio":1.8,"range":2,"direction":"forward","mpCost":15,"spCost":20,"cooldown":3,"stunDuration":1,"bulletPriority":3,"desc":"前方2格+眩晕1tick","color":"#ffcc00","anim_bullet":"meleeSwing","anim_hit":"hitStun","sfx_cast":"skill","sfx_hit":"hit"},
+    "warrior_shieldbash":{"id":"warrior_shieldbash","name":"突击盾","charId":"warrior","type":"dash","effect":"dash_knockback","damageRatio":1.0,"range":3,"direction":"forward","mpCost":10,"spCost":25,"cooldown":3,"defBuff":0.5,"knockback":1,"bulletPriority":3,"desc":"冲刺3格+击退+防御↑","color":"#4488ff","anim_bullet":"dashTrail","anim_hit":"hitSlash","sfx_cast":"dodge","sfx_hit":"block"},
+    "archer_precise":{"id":"archer_precise","name":"精准射击","charId":"archer","type":"projectile","effect":"normal_damage","damageRatio":2.0,"range":8,"direction":"forward","mpCost":12,"spCost":15,"cooldown":2,"bulletPriority":3,"bulletRange":8,"desc":"平射8格,弹幕Lv3","color":"#00ff44","anim_bullet":"arrowFly","anim_hit":"hitExplosion","sfx_cast":"bullet","sfx_hit":"bullet"},
+    "archer_rapid":{"id":"archer_rapid","name":"连续射击","charId":"archer","type":"projectile","effect":"normal_damage","damageRatio":0.5,"range":5,"direction":"forward","mpCost":15,"spCost":20,"cooldown":3,"bulletPriority":4,"bulletRange":5,"multiShot":5,"desc":"5连平射,弹幕Lv4","color":"#44ff88","anim_bullet":"arrowFly","anim_hit":"hitExplosion","sfx_cast":"bullet","sfx_hit":"bullet"},
+    "archer_rain":{"id":"archer_rain","name":"箭雨","charId":"archer","type":"targeted_aoe","effect":"normal_damage","damageRatio":1.0,"range":0,"direction":"target","mpCost":20,"spCost":25,"cooldown":3,"aoeRadius":2,"targetRange":99,"desc":"垂直AOE,目标±2格","color":"#44ff44","anim_bullet":"arrowRainDrop","anim_hit":"hitAOE","sfx_cast":"skill","sfx_hit":"hit"},
+    "mage_ice":{"id":"mage_ice","name":"冰锥","charId":"mage","type":"projectile","effect":"freeze_damage","damageRatio":1.4,"range":3,"direction":"forward","mpCost":18,"spCost":15,"cooldown":3,"freezeDuration":1,"bulletPriority":4,"bulletRange":3,"desc":"平射3格+冰冻1tick","color":"#88ccff","anim_bullet":"iceFly","anim_hit":"hitFreeze","sfx_cast":"bullet","sfx_hit":"block"},
+    "mage_fireball":{"id":"mage_fireball","name":"火球术","charId":"mage","type":"targeted_aoe","effect":"burn_debuff","damageRatio":1.2,"burnRatio":0.1,"direction":"target","mpCost":25,"spCost":20,"cooldown":5,"aoeRadius":1,"targetRange":99,"burnTicks":3,"desc":"垂直AOE±1格+燃烧3tick","color":"#ff6600","anim_bullet":"fireballDrop","anim_hit":"hitBurn","sfx_cast":"skill","sfx_hit":"hit"},
+    "mage_shield":{"id":"mage_shield","name":"魔法盾","charId":"mage","type":"shield_wall","effect":"shield_bullet","damageRatio":0,"direction":"forward","mpCost":15,"spCost":10,"cooldown":3,"bulletPriority":2,"bulletRange":1,"desc":"身前护盾,弹幕Lv2","color":"#4488ff","anim_bullet":"shieldWall","anim_hit":"shieldWall","sfx_cast":"block","sfx_hit":"block"},
+    "assassin_shadowstep":{"id":"assassin_shadowstep","name":"背刺","charId":"assassin","type":"teleport_backstab","effect":"none","damageRatio":0,"direction":"forward","mpCost":0,"spCost":20,"cooldown":3,"desc":"瞬移到敌后并转身","color":"#ff00ff","anim_bullet":"teleportFlash","anim_hit":"teleportFlash","sfx_cast":"dodge","sfx_hit":"dodge"},
+    "assassin_dagger":{"id":"assassin_dagger","name":"匕首攻击","charId":"assassin","type":"melee","effect":"true_damage","damageRatio":1.5,"backstabRatio":3.0,"range":1,"direction":"forward","mpCost":0,"spCost":18,"cooldown":3,"bulletPriority":4,"desc":"前方1格真伤,背身双倍","color":"#ff4444","anim_bullet":"meleeSwing","anim_hit":"hitBackstab","sfx_cast":"skill","sfx_hit":"hit"},
+    "assassin_poison":{"id":"assassin_poison","name":"毒瓶","charId":"assassin","type":"projectile","effect":"poison_debuff","damageRatio":0.4,"poisonRatio":0.08,"direction":"forward","mpCost":12,"spCost":15,"cooldown":4,"bulletPriority":4,"bulletRange":4,"poisonTicks":5,"desc":"平射4格+中毒5tick","color":"#88ff00","anim_bullet":"poisonFly","anim_hit":"hitPoison","sfx_cast":"bullet","sfx_hit":"hit"}
   },
   "genericSkills":[
     {"id":"move_left","name":"左移","type":"move","spCost":0},

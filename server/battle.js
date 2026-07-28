@@ -89,20 +89,20 @@ class BattleEngine {
       if (p1D === p2D) {
         const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
         p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-        events.push({ type: 'collision', pos: p1D, dmg1: d1, dmg2: d2 });
+        events.push({ type: 'collision', x: p1D, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
         return { type: 'both', events };
       }
     }
     if (i1.dx !== 0 && p1D === p2.x && i2.dx === 0 && !i1.isDodge) {
       const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
       p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-      events.push({ type: 'collision', pos: p2.x, dmg1: d1, dmg2: d2 });
+      events.push({ type: 'collision', x: p2.x, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
       return { type: 'p1Blocked', events };
     }
     if (i2.dx !== 0 && p2D === p1.x && i1.dx === 0 && !i2.isDodge) {
       const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
       p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-      events.push({ type: 'collision', pos: p1.x, dmg1: d1, dmg2: d2 });
+      events.push({ type: 'collision', x: p1.x, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
       return { type: 'p2Blocked', events };
     }
     return null;
@@ -181,7 +181,11 @@ class BattleEngine {
           if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
           else events.push({ type: 'dodged', actor: tKey });
           const evType = sk.effect === 'stun_damage' ? 'stun_hit' : (sk.effect === 'true_damage' && isBehind ? 'backstab_hit' : 'melee_hit');
-          events.push({ type: evType, actor: cKey, target: tKey, dmg, skillId: sid });
+          // melee bullet appears at target position instantly
+          events.push({ type: evType, actor: cKey, target: tKey, dmg, skillId: sid,
+            bullet_anim: sk.anim_bullet || 'meleeSwing',
+            hit_anim: sk.anim_hit || 'hitSlash',
+            bullet_color: sk.color, bullet_x: target.x });
           if (sk.effect === 'stun_damage' && sk.stunDuration) {
             target._effects = target._effects || [];
             target._effects.push({ type: 'stun', ticks: sk.stunDuration });
@@ -199,14 +203,13 @@ class BattleEngine {
           for (let scan = 1; scan <= range; scan++) {
             const sx = caster.x + dir * scan;
             if (sx < 0 || sx > 15) break;
-            // Check enemy bullets at this position
             const enemyB = bState.bullets.filter(b => b.owner !== cKey && !b.isShield);
             let blocked = false;
             for (const eb of enemyB) {
               if (eb.x === sx) {
                 if (pri < eb.priority) bState.bullets = bState.bullets.filter(b => b !== eb);
-                else if (pri > eb.priority) { blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: eb.owner }); }
-                else { bState.bullets = bState.bullets.filter(b => b !== eb); blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: 'both' }); }
+                else if (pri > eb.priority) { blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: eb.owner, hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color }); }
+                else { bState.bullets = bState.bullets.filter(b => b !== eb); blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: 'both', hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color }); }
                 break;
               }
             }
@@ -216,21 +219,28 @@ class BattleEngine {
                 const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
                 target.hp = Math.max(0, target.hp - dmg);
                 const evT = sk.effect === 'freeze_damage' ? 'freeze_hit' : (sk.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
-                events.push({ type: evT, actor: cKey, target: tKey, dmg, x: sx, skillId: sid, color: sk.color });
+                events.push({ type: evT, actor: cKey, target: tKey, dmg, x: sx, skillId: sid,
+                  bullet_anim: sk.anim_bullet||'arrowFly', hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color,
+                  bullet_from: caster.x, bullet_to: sx });
                 if (sk.effect === 'freeze_damage') { target._frozen = true; target._effects = target._effects || []; target._effects.push({ type: 'freeze', ticks: sk.freezeDuration || 1 }); }
                 if (sk.effect === 'poison_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'poison', ticks: sk.poisonTicks || 5, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.poisonRatio || 0.08))) }); }
               } else { events.push({ type: 'dodged', actor: tKey, x: sx }); }
               hitDone = true; break;
             }
           }
+          // If not hit, the bullet flies to max range
+          if (!hitDone) {
+            const maxX = Math.max(0, Math.min(15, caster.x + dir * range));
+            events.push({ type: 'bullet_trail', actor: cKey, skillId: sid,
+              bullet_anim: sk.anim_bullet||'arrowFly', bullet_color: sk.color,
+              bullet_from: caster.x, bullet_to: maxX, bullet_faded: true });
+          }
         }
-        events.push({ type: 'bullet_trail', actor: cKey, skillId: sid, color: sk.color });
         break;
       }
       case 'targeted_aoe': {
         const aoeR = sk.aoeRadius || 1;
         const tX = target.x;
-        let hitCount = 0;
         for (let ox = -aoeR; ox <= aoeR; ox++) {
           const ax = tX + ox;
           if (ax < 0 || ax > 15) continue;
@@ -239,13 +249,23 @@ class BattleEngine {
               const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
               target.hp = Math.max(0, target.hp - dmg);
               const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
-              events.push({ type: evT, actor: cKey, target: tKey, dmg, pos: ax, skillId: sid });
+              events.push({ type: evT, actor: cKey, target: tKey, dmg, x: ax, skillId: sid,
+                bullet_anim: sk.anim_bullet||'arrowRainDrop', hit_anim: sk.anim_hit||'hitAOE', bullet_color: sk.color });
               if (sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.burnRatio || 0.1))) }); }
-              hitCount++;
-            }
+            } else { events.push({ type: 'dodged', actor: tKey, x: ax }); }
           }
         }
-        events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, pos: tX, color: sk.color });
+        // Also spawn visual drops on empty aoe positions
+        for (let ox = -aoeR; ox <= aoeR; ox++) {
+          const ax = tX + ox;
+          if (ax < 0 || ax > 15) continue;
+          if (ax !== target.x) {
+            events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: ax,
+              bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
+          }
+        }
+        events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: tX,
+          bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
         break;
       }
       case 'dash': {
@@ -256,26 +276,23 @@ class BattleEngine {
         if (target.x >= startX && target.x <= endX && !target._dodging) {
           const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
           target.hp = Math.max(0, target.hp - dmg);
-          events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid });
-          // Knockback
+          events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest });
           if (sk.knockback) {
             const kbDir = dir;
             let tNewX = target.x + kbDir * sk.knockback;
             tNewX = Math.max(0, Math.min(15, tNewX));
-            if (tNewX === caster.x) tNewX += kbDir; // avoid overlap
+            if (tNewX === caster.x) tNewX += kbDir;
             if (tNewX === dest) tNewX += kbDir;
             tNewX = Math.max(0, Math.min(15, tNewX));
             target.x = tNewX;
-            events.push({ type: 'knockback', actor: tKey, from: target.x, to: tNewX });
+            events.push({ type: 'knockback', actor: tKey, from: target.x, to: tNewX, hit_anim: 'knockbackFX', bullet_color: '#ffaa00' });
           }
-          // Avoid overlap after dash
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
           dest = Math.max(0, Math.min(15, dest));
         }
-        // Defense buff during dash
         if (sk.defBuff) caster._defDash = Math.floor(caster.def * sk.defBuff);
         caster.x = dest;
-        events.push({ type: 'dash', actor: cKey, to: dest, skillId: sid });
+        events.push({ type: 'dash', actor: cKey, to: dest, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest });
         break;
       }
       case 'teleport_backstab': {
