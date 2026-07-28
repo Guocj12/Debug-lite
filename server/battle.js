@@ -52,6 +52,12 @@ class BattleEngine {
     const p1SR = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2', tick, p2FromX, p2FromFacing);
     const p2SR = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1', tick, p1FromX, p1FromFacing);
 
+    // debug: log stun/effects
+    if (s.p1._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p1 effects: ${JSON.stringify(s.p1._effects)}`);
+    if (s.p2._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p2 effects: ${JSON.stringify(s.p2._effects)}`);
+    if (p1Stunned) console.log(`[STUN] tick=${tick} p1 stunned, action=${p1Act}`);
+    if (p2Stunned) console.log(`[STUN] tick=${tick} p2 stunned, action=${p2Act}`);
+
     this.updateBullets(s);
 
     s.p1.sp = Math.min(s.p1.maxSp, s.p1.sp + 2);
@@ -173,9 +179,11 @@ class BattleEngine {
     switch (sk.type) {
       case 'melee': {
         const rg = sk.range || 1;
-        const dist = Math.abs(caster.x - target.x);
+        // 使用敌人初始位置（移位前），不受本tick移动影响
+        const targetX = enemyFromX !== undefined ? enemyFromX : target.x;
+        const dist = Math.abs(caster.x - targetX);
         let inRange = false;
-        if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && target.x >= caster.x) || (dir === -1 && target.x <= caster.x));
+        if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && targetX >= caster.x) || (dir === -1 && targetX <= caster.x));
         else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
         else if (sk.direction === 'around') inRange = dist <= rg;
         // ★ 近战弹幕：根据技能范围在覆盖的格子上各播一次
@@ -222,6 +230,7 @@ class BattleEngine {
         const range = sk.bulletRange || 99;
         const pri = sk.bulletPriority || 4;
         const shots = sk.multiShot || 1;
+        const targetX = enemyFromX !== undefined ? enemyFromX : target.x;
         for (let s = 0; s < shots; s++) {
           let hitDone = false;
           for (let scan = 1; scan <= range; scan++) {
@@ -238,7 +247,7 @@ class BattleEngine {
               }
             }
             if (blocked) break;
-            if (sx === target.x) {
+            if (sx === targetX) {
               if (!target._dodging) {
                 const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
                 target.hp = Math.max(0, target.hp - dmg);
