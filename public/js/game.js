@@ -288,21 +288,26 @@ const FX = {
     const color = ev.bullet_color || '#ffffff';
 
     switch (ev.type) {
-      // === 近战命中 ===
-      case 'melee_hit':
-      case 'stun_hit':
-      case 'backstab_hit':
-      case 'dash_hit': {
-        // 近战弹幕：在目标格瞬间出现然后淡出
-        const hitAnim = getAnim(ev.hit_anim);
+      // === 近战弹幕（纯视觉，每个覆盖格子播一个） ===
+      case 'melee_slash': {
         const x = Renderer.gridToPixelX(ev.bullet_x ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
         if (ev.bullet_anim) {
           this.active.push(new MeleeBulletFX(ev.bullet_anim, x, y, color, anim?.fadeTime || 300));
         }
-        // 命中环
+        AE.play('skill');
+        break;
+      }
+
+      // === 近战命中（命中环 + 伤害） ===
+      case 'melee_hit':
+      case 'stun_hit':
+      case 'backstab_hit':
+      case 'dash_hit': {
+        const hitX = Renderer.gridToPixelX(ev.x ?? 0);
+        const y = Renderer.baseY - 10;
         if (ev.hit_anim) {
-          this.active.push(new HitRingFX(ev.hit_anim, x, y, color));
+          this.active.push(new HitRingFX(ev.hit_anim, hitX, y, color));
         }
         AE.play('hit');
         break;
@@ -480,14 +485,16 @@ const FX = {
 // ==================== 近战弹幕 FX ====================
 // 瞬间出现在目标位置，闪亮后淡出
 class MeleeBulletFX {
-  constructor(spriteName, x, y, color, fadeTime = 300) {
-    this.spriteName = spriteName;
+  constructor(animName, x, y, color, fadeTime = 300) {
+    const anim = getAnim(animName);
+    this.spriteName = anim?.sprite || animName;  // 从 anim 配置读 sprite
     this.x = x;
     this.y = y;
     this.color = color;
-    this.fadeTime = fadeTime;
+    this.fadeTime = anim?.fadeTime || fadeTime;
     this.elapsed = 0;
     this.done = false;
+    DBG.log('[FX] MeleeBullet created sprite='+this.spriteName+' at pixel('+x.toFixed(0)+','+y.toFixed(0)+') fade='+this.fadeTime);
   }
 
   update(dt) {
@@ -497,18 +504,17 @@ class MeleeBulletFX {
 
   render(ctx, R) {
     const progress = this.elapsed / this.fadeTime;
-    // 前 20% 时间保持全亮，之后淡出
     const alpha = progress < 0.2 ? 1 : Math.max(0, 1 - (progress - 0.2) / 0.8);
-    const scale = 1 + progress * 0.3; // 微微放大
+    const scale = 1 + progress * 0.3;
     R.drawBulletSprite(this.spriteName, this.x, this.y, scale, alpha, this.color);
   }
 }
 
 // ==================== 平射弹幕 FX ====================
-// 从发射者平移至目标/最远点，速度递减
 class ProjectileBulletFX {
-  constructor(spriteName, fromX, toX, y, color, frameDuration, hasHit = true) {
-    this.spriteName = spriteName;
+  constructor(animName, fromX, toX, y, color, frameDuration, hasHit = true) {
+    const anim = getAnim(animName);
+    this.spriteName = anim?.sprite || animName;
     this.fromX = fromX;
     this.toX = toX;
     this.x = fromX;
@@ -518,12 +524,11 @@ class ProjectileBulletFX {
     this.elapsed = 0;
     this.done = false;
     this.hasHit = hasHit;
-    // 从动画配置读取速度参数
-    const anim = getAnim(spriteName);
     this.speedStart = anim?.speedStart || 4;
     this.speedEnd = anim?.speedEnd || 2;
     this.instant = anim?.instant || false;
     if (this.instant) this.totalDuration = frameDuration * 0.15;
+    DBG.log('[FX] ProjectileBullet created sprite='+this.spriteName+' from('+fromX.toFixed(0)+')->to('+toX.toFixed(0)+') dur='+this.totalDuration);
   }
 
   update(dt) {
@@ -546,10 +551,10 @@ class ProjectileBulletFX {
 }
 
 // ==================== 垂直弹幕 FX ====================
-// 从目标格上方屏幕边界生成，加速下落
 class VerticalBulletFX {
-  constructor(spriteName, x, startY, targetY, color, frameDuration) {
-    this.spriteName = spriteName;
+  constructor(animName, x, startY, targetY, color, frameDuration) {
+    const anim = getAnim(animName);
+    this.spriteName = anim?.sprite || animName;
     this.x = x;
     this.startY = startY;
     this.targetY = targetY;
@@ -558,9 +563,9 @@ class VerticalBulletFX {
     this.totalDuration = frameDuration * 0.7;
     this.elapsed = 0;
     this.done = false;
-    const anim = getAnim(spriteName);
     this.speedStart = anim?.speedStart || 3;
     this.speedEnd = anim?.speedEnd || 15;
+    DBG.log('[FX] VerticalBullet created sprite='+this.spriteName+' y='+startY+'->'+targetY);
   }
 
   update(dt) {
@@ -1098,19 +1103,46 @@ const LocalStep = {
       case 'melee': {
         const rg = sk.range || 1;
         const dist = Math.abs(p1.x - target.x);
-        let inRange = dist <= rg && ((dir === 1 && target.x >= p1.x) || (dir === -1 && target.x <= p1.x));
-        if (sk.direction === 'forward_and_back') inRange = dist <= rg;
+        let inRange = true;
+        if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && target.x >= p1.x) || (dir === -1 && target.x <= p1.x));
+        else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
+
+        // ★ 近战弹幕：根据技能范围在覆盖的格子上各播一次
+        const bulletGrids = [];
+        if (sk.direction === 'forward') {
+          for (let offset = 1; offset <= rg; offset++) {
+            const gx = p1.x + dir * offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        } else if (sk.direction === 'forward_and_back') {
+          for (let offset = -rg; offset <= rg; offset++) {
+            const gx = p1.x + offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        } else {
+          for (let offset = -rg; offset <= rg; offset++) {
+            const gx = p1.x + offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        }
+        // 每一个覆盖的格子生成一个 bulletFX 事件
+        for (const gx of bulletGrids) {
+          events.push({ type: 'melee_slash', actor: 'p1', skillId: sid,
+            bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: gx });
+          DBG.log(`[FX] melee bullet at grid=${gx} anim=${sk.anim_bullet}`);
+        }
+
+        // 伤害判定
         if (inRange) {
           const ratio = sk.damageRatio || 1;
           const dmg = Math.max(1, Math.floor((p1.atk || 10) * ratio - (target.def || 0)));
           target.hp = Math.max(0, target.hp - dmg);
           const evT = sk.effect === 'stun_damage' ? 'stun_hit' : 'melee_hit';
           events.push({ type: evT, actor: 'p1', target: 'p2', dmg, x: target.x, skillId: sid,
-            bullet_anim: sk.anim_bullet || 'meleeSwing', hit_anim: sk.anim_hit || 'hitSlash',
-            bullet_color: sk.color, bullet_x: target.x });
-          DBG.log(`[HIT] melee dmg=${dmg} at target.x=${target.x} bullet_anim=${sk.anim_bullet} hit_anim=${sk.anim_hit}`);
+            hit_anim: sk.anim_hit || 'hitSlash', bullet_color: sk.color });
+          DBG.log(`[HIT] melee dmg=${dmg} at target.x=${target.x} hit_anim=${sk.anim_hit}`);
           if (sk.effect === 'stun_damage') { target._effects = target._effects || []; target._effects.push({ type: 'stun', ticks: sk.stunDuration || 1 }); }
-        } else { events.push({ type: 'melee_miss', actor: 'p1' }); DBG.log('[MISS] melee out of range'); }
+        } else { DBG.log('[MISS] melee out of range'); }
         break;
       }
       case 'projectile': {
@@ -1308,11 +1340,21 @@ function addActionToQueue(actionId, skillSid) {
 
   // 保存快照（步进前状态）
   G.saveSnapshot();
+  const oldP1X = G.p1.x;
   DBG.log('========================================');
   DBG.log('[QUEUE] 添加行动 #' + G.actions.length + ' = ' + actionId + (sk ? ' ('+sk.name+')' : ''));
 
   // 执行本地步进
   const events = LocalStep.executeOneTick(actionId, G.p1, G.p2);
+
+  // ★ 编辑阶段位移缓动
+  if (G.p1.x !== oldP1X) {
+    const fromPX = Renderer.gridToPixelX(oldP1X);
+    const toPX = Renderer.gridToPixelX(G.p1.x);
+    G._renderP1 = { x: fromPX, facing: G.p1.facing };
+    Tween.add(G._renderP1, { x: toPX }, 400, 'easeOutQuad');
+    DBG.log('[TWEEN] 编辑阶段P1位移缓动 grid='+oldP1X+'->'+G.p1.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+  }
 
   // 步进后 tick 资源回复
   G.tickResources();

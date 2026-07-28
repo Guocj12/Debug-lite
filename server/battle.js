@@ -174,6 +174,29 @@ class BattleEngine {
         if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && target.x >= caster.x) || (dir === -1 && target.x <= caster.x));
         else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
         else if (sk.direction === 'around') inRange = dist <= rg;
+        // ★ 近战弹幕：根据技能范围在覆盖的格子上各播一次
+        const bulletGrids = [];
+        if (sk.direction === 'forward') {
+          for (let offset = 1; offset <= (sk.range || 1); offset++) {
+            const gx = caster.x + dir * offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        } else if (sk.direction === 'forward_and_back') {
+          for (let offset = -(sk.range || 1); offset <= (sk.range || 1); offset++) {
+            const gx = caster.x + offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        } else {
+          for (let offset = -(sk.range || 1); offset <= (sk.range || 1); offset++) {
+            const gx = caster.x + offset;
+            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
+          }
+        }
+        for (const gx of bulletGrids) {
+          events.push({ type: 'melee_slash', actor: cKey, skillId: sid,
+            bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: gx });
+        }
+
         if (inRange) {
           let ratio = sk.damageRatio || 1;
           if (sk.backstabRatio && isBehind) ratio = sk.backstabRatio;
@@ -181,16 +204,13 @@ class BattleEngine {
           if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
           else events.push({ type: 'dodged', actor: tKey });
           const evType = sk.effect === 'stun_damage' ? 'stun_hit' : (sk.effect === 'true_damage' && isBehind ? 'backstab_hit' : 'melee_hit');
-          // melee bullet appears at target position instantly
           events.push({ type: evType, actor: cKey, target: tKey, dmg, skillId: sid,
-            bullet_anim: sk.anim_bullet || 'meleeSwing',
-            hit_anim: sk.anim_hit || 'hitSlash',
-            bullet_color: sk.color, bullet_x: target.x });
+            hit_anim: sk.anim_hit || 'hitSlash', bullet_color: sk.color, x: target.x });
           if (sk.effect === 'stun_damage' && sk.stunDuration) {
             target._effects = target._effects || [];
             target._effects.push({ type: 'stun', ticks: sk.stunDuration });
           }
-        } else { events.push({ type: 'melee_miss', actor: cKey }); }
+        }
         break;
       }
       case 'projectile': {
