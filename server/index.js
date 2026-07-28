@@ -186,6 +186,13 @@ io.on('connection', (socket) => {
     if (!r) return;
     const aiSid = r.players.find(p => p.name === 'AI')?.sid;
     if (!aiSid) return;
+    // 如果客户端提供了预定义 actions，直接使用
+    if (d.actions && d.actions.length > 0) {
+      r.pActions[aiSid] = d.actions.slice(0, 16);
+      r.pReady[aiSid] = true;
+      if (r.state === 'prepare' && r.bothReady()) { r.clearTimer(); r.runBattle(); }
+      return;
+    }
     const player = r.getP(socket.id);
     const ai = r.getP(aiSid);
     const hpPct = ai ? (r.engine?.state?.p2?.hp || 100) / (r.engine?.state?.p2?.maxHp || 100) : 1;

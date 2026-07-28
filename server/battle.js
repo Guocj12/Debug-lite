@@ -45,8 +45,12 @@ class BattleEngine {
     const collision = this.checkCollision(s.p1, s.p2, p1Intent, p2Intent);
     this.applyMovement(s.p1, s.p2, p1Intent, p2Intent, collision, p1Act, p2Act);
 
-    const p1SR = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2', tick);
-    const p2SR = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1', tick);
+    // 保存敌人移动前位置，供 teleport_backstab 使用
+    s.p1._enemyFromX = p2FromX; s.p2._enemyFromX = p1FromX;
+    s.p1._enemyFromFacing = p2FromFacing; s.p2._enemyFromFacing = p1FromFacing;
+
+    const p1SR = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2', tick, p2FromX, p2FromFacing);
+    const p2SR = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1', tick, p1FromX, p1FromFacing);
 
     this.updateBullets(s);
 
@@ -129,7 +133,7 @@ class BattleEngine {
     p1._dodging = i1.isDodge; p2._dodging = i2.isDodge;
   }
 
-  executeAction(caster, target, action, cKey, tKey, tick) {
+  executeAction(caster, target, action, cKey, tKey, tick, enemyFromX, enemyFromFacing) {
     const events = [];
     if (['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'stunned', 'wait'].includes(action)) return { events };
 
@@ -316,14 +320,18 @@ class BattleEngine {
         break;
       }
       case 'teleport_backstab': {
-        const behindX = target.x - dir;
-        let tpX = Math.max(0, Math.min(15, behindX));
-        if (tpX === target.x) tpX = Math.max(0, Math.min(15, behindX - dir));
+        const enemyX = enemyFromX !== undefined ? enemyFromX : target.x;
+        const enemyFacing = enemyFromFacing !== undefined ? enemyFromFacing : target.facing;
+        let tpX = enemyX - enemyFacing;
+        tpX = Math.max(0, Math.min(15, tpX));
+        if (tpX === enemyX) tpX = Math.max(0, Math.min(15, enemyX + enemyFacing));
+        const oldX = caster.x;
         caster.x = tpX;
-        // Face the enemy
-        if (caster.x > target.x) caster.facing = -1;
-        else if (caster.x < target.x) caster.facing = 1;
-        events.push({ type: 'teleport', actor: cKey, to: tpX, skillId: sid });
+        if (caster.x > enemyX) caster.facing = -1;
+        else if (caster.x < enemyX) caster.facing = 1;
+        console.log(`[BACKSTAB] ${cKey} teleport: ${oldX}->${tpX}, enemyFromX=${enemyX} (now at ${target.x}), facing=${caster.facing}, enemyFromFacing=${enemyFacing} (now ${target.facing})`);
+        events.push({ type: 'teleport', actor: cKey, to: tpX, skillId: sid,
+          bullet_anim: sk.anim_bullet || 'teleportFlash', hit_anim: sk.anim_hit || 'teleportFlash', bullet_color: sk.color });
         break;
       }
       case 'shield_wall': {

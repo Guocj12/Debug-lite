@@ -1245,14 +1245,19 @@ const LocalStep = {
       }
       case 'teleport_backstab': {
         const oldX = p1.x;
-        let tpX = target.x - dir;
+        // 目标敌人当前位置（编辑阶段敌人不移动，直接用p2.x。服务端会用位移前位置）
+        const enemyX = p2.x;
+        const enemyFacing = p2.facing;
+        // 始终瞬移到敌人背后 = 敌人朝向的反方向一格
+        let tpX = enemyX - enemyFacing;
         tpX = Math.max(0, Math.min(15, tpX));
-        if (tpX === target.x) tpX = Math.max(0, Math.min(15, tpX - dir));
+        if (tpX === enemyX) tpX = Math.max(0, Math.min(15, enemyX + enemyFacing));
         p1.x = tpX;
-        if (p1.x > target.x) p1.facing = -1; else if (p1.x < target.x) p1.facing = 1;
+        // 自动面向敌人
+        if (p1.x > enemyX) p1.facing = -1; else if (p1.x < enemyX) p1.facing = 1;
         events.push({ type: 'teleport', actor: 'p1', to: tpX, skillId: sid,
           bullet_anim: sk.anim_bullet || 'teleportFlash', hit_anim: sk.anim_hit || 'teleportFlash', bullet_color: sk.color });
-        DBG.log(`[MOVE] teleport from=${oldX} to=${tpX}`);
+        DBG.log(`[BACKSTAB] teleport from=${oldX} to=${tpX}, enemy at ${enemyX} (facing=${enemyFacing}), myFacing=${p1.facing}`);
         break;
       }
       case 'shield_wall': {
