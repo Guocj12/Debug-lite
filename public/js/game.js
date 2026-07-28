@@ -1226,7 +1226,6 @@ const LocalStep = {
         let dest = p1.x + dir * dDist;
         dest = Math.max(0, Math.min(15, dest));
         const oldX = p1.x;
-        // check if target in dash path
         const startX = Math.min(oldX, dest), endX = Math.max(oldX, dest);
         if (target.x >= startX && target.x <= endX) {
           const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
@@ -1235,6 +1234,19 @@ const LocalStep = {
             bullet_anim: sk.anim_bullet || 'dashTrail', hit_anim: sk.anim_hit || 'hitSlash',
             bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
           DBG.log(`[HIT] dash dmg=${dmg} from=${oldX} to=${dest}`);
+          // 击退
+          if (sk.knockback) {
+            const kbDir = dir;
+            const oldTargetX = target.x;
+            let tNewX = oldTargetX + kbDir * sk.knockback;
+            tNewX = Math.max(0, Math.min(15, tNewX));
+            if (tNewX === p1.x) tNewX += kbDir;
+            if (tNewX === dest) tNewX += kbDir;
+            tNewX = Math.max(0, Math.min(15, tNewX));
+            target.x = tNewX;
+            events.push({ type: 'knockback', actor: 'p2', from: oldTargetX, to: tNewX, hit_anim: 'knockbackFX', bullet_color: '#ffaa00' });
+            DBG.log(`[KNOCKBACK] P2 knocked ${oldTargetX}->${tNewX} dir=${kbDir}`);
+          }
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
         }
         p1.x = dest;

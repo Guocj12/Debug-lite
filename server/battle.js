@@ -311,14 +311,16 @@ class BattleEngine {
           target.hp = Math.max(0, target.hp - dmg);
           events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest });
           if (sk.knockback) {
-            const kbDir = dir;
-            let tNewX = target.x + kbDir * sk.knockback;
+            const kbDir = dir; // 始终向技能释放方向击退
+            const oldTargetX = target.x;
+            let tNewX = oldTargetX + kbDir * sk.knockback;
             tNewX = Math.max(0, Math.min(15, tNewX));
             if (tNewX === caster.x) tNewX += kbDir;
             if (tNewX === dest) tNewX += kbDir;
             tNewX = Math.max(0, Math.min(15, tNewX));
             target.x = tNewX;
-            events.push({ type: 'knockback', actor: tKey, from: target.x, to: tNewX, hit_anim: 'knockbackFX', bullet_color: '#ffaa00' });
+            events.push({ type: 'knockback', actor: tKey, from: oldTargetX, to: tNewX, hit_anim: 'knockbackFX', bullet_color: '#ffaa00' });
+            console.log(`[KNOCKBACK] ${tKey} knocked from ${oldTargetX} to ${tNewX}, dir=${kbDir}`);
           }
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
           dest = Math.max(0, Math.min(15, dest));
