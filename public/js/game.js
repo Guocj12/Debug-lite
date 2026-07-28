@@ -228,21 +228,21 @@ const Renderer = {
     }
   },
 
-  /** 绘制玩家 */
+  /** 绘制玩家。p1/p2 如有 _isPixelX 则 x 已经是像素坐标 */
   drawPlayers(p1, p2) {
     if (!p1 || !p2) return;
     const p1c = getCharDef(p1.charId) || { shape: 'square', size: 18, color: '#00ffff' };
     const p2c = getCharDef(p2.charId) || { shape: 'square', size: 18, color: '#ff4444' };
 
-    Sprites.drawCharacter(this.ctx, p1c,
-      this.gridToPixelX(p1.x), this.baseY, p1c.size, p1.facing, p1._alpha ?? 1);
+    const p1px = p1._isPixelX ? p1.x : this.gridToPixelX(p1.x);
+    const p2px = p2._isPixelX ? p2.x : this.gridToPixelX(p2.x);
 
-    Sprites.drawCharacter(this.ctx, p2c,
-      this.gridToPixelX(p2.x), this.baseY, p2c.size, p2.facing, p2._alpha ?? 1);
+    Sprites.drawCharacter(this.ctx, p1c, p1px, this.baseY, p1c.size, p1.facing, p1._alpha ?? 1);
+    Sprites.drawCharacter(this.ctx, p2c, p2px, this.baseY, p2c.size, p2.facing, p2._alpha ?? 1);
 
-    // 玩家名称标签
-    const px1 = this.gridToPixelX(p1.x);
-    const px2 = this.gridToPixelX(p2.x);
+    // 标签位置也用像素坐标
+    const px1 = p1px;
+    const px2 = p2px;
     this.ctx.fillStyle = '#ffffff';
     this.ctx.font = `${this.cellW*0.28}px monospace`;
     this.ctx.textAlign = 'center';
@@ -1232,18 +1232,22 @@ const LocalStep = {
 };
 
 // ==================== 持续渲染循环 ====================
-// 编辑和战斗阶段共用同一个渲染循环
 function startRenderLoop() {
   if (G._renderLoop) cancelAnimationFrame(G._renderLoop);
   G._lastFrameTime = performance.now();
+  // 渲染循环专用时间戳，不和 battleStep 共享
+  G._renderLastTime = performance.now();
 
   function frame(now) {
     if (G._mode === 'result') { G._renderLoop = null; return; }
     G._renderLoop = requestAnimationFrame(frame);
 
-    let dt = now - G._lastFrameTime;
-    G._lastFrameTime = now;
+    let dt = now - G._renderLastTime;
+    G._renderLastTime = now;
     if (dt > 200) dt = 16;
+
+    // 战斗阶段专用步进（必须在 FX.update 之前调用，以便新产生的 FX 在当帧就能渲染）
+    if (G._mode === 'battle' && G._battleStep) G._battleStep();
 
     FX.update(dt);
     Tween.update();
@@ -1260,14 +1264,16 @@ function startRenderLoop() {
       Renderer.drawShields(shields);
     }
 
-    // 画玩家
-    if (G.p1 && G.p2 && G._mode !== 'prepare') {
-      Renderer.drawPlayers(G.p1, G.p2);
-    } else if (G.p1 && G.p2) {
-      // 编辑阶段：显示p1，隐藏p2
-      const p2Hidden = JSON.parse(JSON.stringify(G.p2));
-      p2Hidden._alpha = 0;
-      Renderer.drawPlayers(G.p1, p2Hidden);
+    // 画玩家——使用渲染位置（如果有缓动动画就用缓动位置）
+    if (G.p1 && G.p2) {
+      const rp1 = Object.assign({}, G.p1, G._renderP1 ? { x: G._renderP1.x, _isPixelX: true } : {});
+      const rp2 = Object.assign({}, G.p2, G._renderP2 ? { x: G._renderP2.x, _isPixelX: true } : {});
+      if (G._mode !== 'prepare') {
+        Renderer.drawPlayers(rp1, rp2);
+      } else {
+        const p2Hidden = Object.assign({}, rp2, { _alpha: 0 });
+        Renderer.drawPlayers(rp1, p2Hidden);
+      }
     }
 
     FX.render(Renderer.ctx);
@@ -1279,12 +1285,9 @@ function startRenderLoop() {
       document.getElementById('tm').textContent = G._mode === 'battle' ? G.tick : G.timeLeft;
       document.getElementById('rnd').textContent = `ROUND ${G.round}`;
     }
-
-    // 战斗阶段专用步进
-    if (G._mode === 'battle' && G._battleStep) G._battleStep();
   }
   G._renderLoop = requestAnimationFrame(frame);
-  DBG.log('[RENDER] 持续渲染循环已启动 mode=' + G._mode);
+  DBG.log('[RENDER] 渲染循环启动 mode=' + G._mode);
 }
 
 // ==================== 编辑阶段：添加行动到队列并步进 ====================
@@ -1403,40 +1406,87 @@ function playBattleAnim(frames, final) {
   FX.clear();
   G.tick = 0;
   G._shieldBullets = [];
-  let tickIdx = 0;
-  let frameAccum = 0;
-  G._lastFrameTime = performance.now();
+  G._renderP1 = null; G._renderP2 = null; // 清除缓动渲染位置
 
-  DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, 每帧' + FRAME_DURATION + 'ms');
+  // ★ 恢复双方为本回合初始状态
+  if (G._originP1) G.p1 = JSON.parse(JSON.stringify(G._originP1));
+  if (G._originP2) G.p2 = JSON.parse(JSON.stringify(G._originP2));
+  G._cooldowns = {};
+
+  DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, p1(x='+G.p1.x+',hp='+G.p1.hp+') p2(x='+G.p2.x+',hp='+G.p2.hp+')');
+
+  let tickIdx = 0;
+  let battleAccum = 0;
+  // 战斗步进专用时间戳，不和渲染循环共享
+  let battleLastTime = performance.now();
+
+  // 初始化第一帧 UI
   if (frames.length > 0) {
-    const f0 = frames[0];
-    G.p1 = f0.p1; G.p2 = f0.p2;
-    G.p1Actions = f0.p1Actions || []; G.p2Actions = f0.p2Actions || [];
+    G.p1Actions = frames[0].p1Actions || [];
+    G.p2Actions = frames[0].p2Actions || [];
+    UI.renderBattleQueue(0, G.p1Actions, G.p2Actions);
   }
 
-  // 把 battle 步进逻辑挂到持续的渲染循环中
   G._battleStep = () => {
     if (G._mode !== 'battle') return;
+
+    const now = performance.now();
+    let dt = now - battleLastTime;
+    battleLastTime = now;
+    if (dt > 500) dt = 16; // 防止大跳帧
+
+    battleAccum += dt;
+
     if (tickIdx >= frames.length) {
+      // 所有帧播完，等 FX 也播完
       if (FX.active.length === 0) {
         G.p1 = final.p1; G.p2 = final.p2;
+        G._renderP1 = null; G._renderP2 = null;
         UI.updateHUD(G.p1, 'p1'); UI.updateHUD(G.p2, 'p2');
         UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}`);
         G.tick = frames.length;
         UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
         DBG.log('[BATTLE] 播放完毕');
+        G._battleStep = null;
       }
       return;
     }
-    const now = performance.now();
-    const dt = now - G._lastFrameTime;
-    G._lastFrameTime = now;
-    frameAccum += dt;
-    if (frameAccum >= FRAME_DURATION) {
+
+    if (battleAccum >= FRAME_DURATION) {
+      battleAccum -= FRAME_DURATION;
+
+      const prevP1 = G.p1 ? { x: G.p1.x, facing: G.p1.facing } : null;
+      const prevP2 = G.p2 ? { x: G.p2.x, facing: G.p2.facing } : null;
+
       const frame = frames[tickIdx];
       G.p1 = frame.p1; G.p2 = frame.p2;
       G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
       G.tick = tickIdx;
+
+      // ★ 位移缓动动画
+      if (prevP1 && G.p1) {
+        if (prevP1.x !== G.p1.x) {
+          const fromPX = Renderer.gridToPixelX(prevP1.x);
+          const toPX = Renderer.gridToPixelX(G.p1.x);
+          G._renderP1 = { x: fromPX, facing: G.p1.facing };
+          Tween.add(G._renderP1, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
+          DBG.log('[TWEEN] P1 位移缓动 grid='+prevP1.x+'->'+G.p1.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+        } else {
+          G._renderP1 = null;
+        }
+      }
+      if (prevP2 && G.p2) {
+        if (prevP2.x !== G.p2.x) {
+          const fromPX = Renderer.gridToPixelX(prevP2.x);
+          const toPX = Renderer.gridToPixelX(G.p2.x);
+          G._renderP2 = { x: fromPX, facing: G.p2.facing };
+          Tween.add(G._renderP2, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
+          DBG.log('[TWEEN] P2 位移缓动 grid='+prevP2.x+'->'+G.p2.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+        } else {
+          G._renderP2 = null;
+        }
+      }
+
       const events = frame.events || [];
       DBG.log('[BATTLE] tick=' + tickIdx + ' events=' + events.length + ' types=' + events.map(e=>e.type).join(','));
       for (const ev of events) {
@@ -1447,13 +1497,16 @@ function playBattleAnim(frames, final) {
       FX.ensureBuffEmitter(frame.p2, 'p2');
       UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
       if (events.length > 0) AE.play('tick');
-      frameAccum -= FRAME_DURATION;
+
       tickIdx++;
     }
-    // 持续更新 FX
-    const dt2 = Math.min(100, performance.now() - G._lastFrameTime);
-    FX.update(dt2);
+
+    // 战斗阶段也需要持续更新 FX（每帧）
+    FX.update(Math.min(100, dt));
+    Tween.update();
   };
+
+  DBG.log('[BATTLE] step函数已挂载');
 }
 
 // ==================== DOM 导航 ====================
