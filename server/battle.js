@@ -326,11 +326,21 @@ class BattleEngine {
         tpX = Math.max(0, Math.min(15, tpX));
         if (tpX === enemyX) tpX = Math.max(0, Math.min(15, enemyX + enemyFacing));
         const oldX = caster.x;
-        caster.x = tpX;
+        // 碰撞检测：如果目标格已被占据（敌人移动到了那里），则留在原地并碰撞
+        if (tpX === target.x) {
+          const dmg1 = Math.max(1, Math.floor(caster.atk * 0.3));
+          const dmg2 = Math.max(1, Math.floor(target.atk * 0.3));
+          caster.hp = Math.max(0, caster.hp - dmg2);
+          target.hp = Math.max(0, target.hp - dmg1);
+          events.push({ type: 'collision', x: tpX, dmg1, dmg2, hit_anim: 'collisionFX', bullet_color: '#ffff00' });
+          console.log(`[BACKSTAB] ${cKey} collision at ${tpX}! enemy already there. staying at ${oldX}`);
+        } else {
+          caster.x = tpX;
+          console.log(`[BACKSTAB] ${cKey} teleport: ${oldX}->${tpX}, enemyFromX=${enemyX} (now at ${target.x}), facing=${caster.facing}, enemyFromFacing=${enemyFacing} (now ${target.facing})`);
+        }
         if (caster.x > enemyX) caster.facing = -1;
         else if (caster.x < enemyX) caster.facing = 1;
-        console.log(`[BACKSTAB] ${cKey} teleport: ${oldX}->${tpX}, enemyFromX=${enemyX} (now at ${target.x}), facing=${caster.facing}, enemyFromFacing=${enemyFacing} (now ${target.facing})`);
-        events.push({ type: 'teleport', actor: cKey, to: tpX, skillId: sid,
+        events.push({ type: 'teleport', actor: cKey, to: caster.x, skillId: sid,
           bullet_anim: sk.anim_bullet || 'teleportFlash', hit_anim: sk.anim_hit || 'teleportFlash', bullet_color: sk.color });
         break;
       }
