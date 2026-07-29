@@ -402,7 +402,18 @@ const FX = {
         const dashTo = Renderer.gridToPixelX(ev.bullet_to ?? ev.to ?? 0);
         const dy = Renderer.baseY - 5;
         if (ev.bullet_anim) {
-          this.active.push(new TrailFX(ev.bullet_anim, dashFrom, dashTo, dy, color));
+          // 获取冲刺方角色位置供拖尾跟随
+          const actorKey = ev.actor; // 'p1' or 'p2'
+          const getPos = {
+            getX: () => {
+              const rp = actorKey === 'p1' ? G._renderP1 : G._renderP2;
+              const p = actorKey === 'p1' ? G.p1 : G.p2;
+              if (rp) return rp.x;
+              if (p) return Renderer.gridToPixelX(p.x);
+              return dashTo;
+            }
+          };
+          this.active.push(new TrailFX(ev.bullet_anim, dashFrom, dashTo, dy, color, getPos));
         }
         AE.play('dodge');
         break;
@@ -411,7 +422,18 @@ const FX = {
       // === 闪避 ===
       case 'dodged': {
         const dx = Renderer.gridToPixelX(ev.x ?? 0);
-        this.active.push(new TrailFX('dodgeTrail', dx - Renderer.cellW, dx + Renderer.cellW, Renderer.baseY - 5, '#8888ff'));
+        // 闪避拖尾跟随闪避方角色
+        const dodgeKey = ev.actor; // 'p1' or 'p2'
+        const getPos = {
+          getX: () => {
+            const rp = dodgeKey === 'p1' ? G._renderP1 : G._renderP2;
+            const p = dodgeKey === 'p1' ? G.p1 : G.p2;
+            if (rp) return rp.x;
+            if (p) return Renderer.gridToPixelX(p.x);
+            return dx;
+          }
+        };
+        this.active.push(new TrailFX('dodgeTrail', dx - Renderer.cellW, dx + Renderer.cellW, Renderer.baseY - 5, '#8888ff', getPos));
         AE.play('dodge');
         break;
       }
@@ -426,11 +448,23 @@ const FX = {
         break;
       }
 
-      // === 击退 ===
+      // === 击退（加上拖尾） ===
       case 'knockback': {
-        const kx = Renderer.gridToPixelX(ev.x ?? ev.to ?? 0);
+        const kFrom = Renderer.gridToPixelX(ev.from ?? ev.x ?? 0);
+        const kTo = Renderer.gridToPixelX(ev.to ?? ev.x ?? 0);
+        const kbKey = ev.actor; // 'p1' or 'p2'
+        const getPos = {
+          getX: () => {
+            const rp = kbKey === 'p1' ? G._renderP1 : G._renderP2;
+            const p = kbKey === 'p1' ? G.p1 : G.p2;
+            if (rp) return rp.x;
+            if (p) return Renderer.gridToPixelX(p.x);
+            return kTo;
+          }
+        };
+        this.active.push(new TrailFX('dodgeTrail', kFrom, kTo, Renderer.baseY - 5, ev.bullet_color || '#ffaa00', getPos));
         if (ev.hit_anim) {
-          this.active.push(new HitRingFX(ev.hit_anim, kx, Renderer.baseY - 10, ev.bullet_color || '#ffaa00'));
+          this.active.push(new HitRingFX(ev.hit_anim, kTo, Renderer.baseY - 10, ev.bullet_color || '#ffaa00'));
         }
         break;
       }
@@ -752,40 +786,86 @@ class ExplosionRingFX {
   }
 }
 
-// ==================== 拖尾 FX ====================
-// 带状拖尾，用于 dash/闪避
+// ==================== 拖尾 FX (动态跟随角色身后) ====================
+// TrailFX 通过 getter 每帧读取角色的实时渲染位置
+// 内部维护位置历史，渲染时从近到远衰减
 class TrailFX {
-  constructor(animName, fromX, toX, y, color) {
+  /**
+   * @param {string} animName - 动画配置名
+   * @param {number} fromX   - 像素起点
+   * @param {number} toX     - 像素终点
+   * @param {number} y       - 像素 Y
+   * @param {string} color   - 颜色
+   * @param {object} getActorPos - { getX: () => pixelX } 实时读取角色位置
+   */
+  constructor(animName, fromX, toX, y, color, getActorPos = null) {
     const anim = getAnim(animName);
-    this.fromX = fromX;
-    this.toX = toX;
+    this.animName = animName;
     this.y = y;
     this.color = anim?.color || color;
-    this.segments = anim?.segments || 8;
+    this.segmentCount = anim?.segments || 8;
     this.fadeTime = anim?.fadeTime || 400;
     this.elapsed = 0;
     this.done = false;
+    this.getActorPos = getActorPos; // 角色位置获取器
+    // 位置历史: [{x, time}] 最近的在前面
+    this._history = [];
+    // 记录上次位置用于速度估算
+    this._lastX = fromX;
   }
 
   update(dt) {
     this.elapsed += dt;
-    if (this.elapsed >= this.fadeTime) this.done = true;
+    // 获取角色当前位置
+    const currentX = this.getActorPos ? this.getActorPos.getX() : null;
+    if (currentX !== null) {
+      // 记录当前位置到历史
+      this._history.unshift({ x: currentX, time: this.elapsed });
+      this._lastX = currentX;
+      // 只保留 segmentCount*2 个采样点
+      while (this._history.length > this.segmentCount * 3) this._history.pop();
+    } else {
+      // 没有实时引用时退化为静态拖尾（冲刺/闪避事件已过去）
+      // 使用简单的插值模拟
+      if (this._history.length === 0) {
+        this._history.push({ x: this._lastX, time: 0 });
+      }
+    }
+    // 清理过期历史（超过 fadeTime 的旧位置）
+    this._history = this._history.filter(h => this.elapsed - h.time < this.fadeTime);
+    if (this.elapsed >= this.fadeTime && this._history.length === 0) this.done = true;
   }
 
   render(ctx, R) {
     const t = Math.min(1, this.elapsed / this.fadeTime);
     const alpha = 1 - t;
+    if (alpha <= 0) return;
+
+    // 使用位置历史绘制拖尾：最新的位置在历史开头，最旧的末尾
+    const history = this._history;
+    if (history.length < 2) return;
+
     ctx.save();
-    ctx.globalAlpha = alpha;
-    for (let i = 0; i < this.segments; i++) {
-      const segT = i / (this.segments - 1);
-      const segX = this.fromX + (this.toX - this.fromX) * segT;
-      const segAlpha = alpha * (1 - segT * 0.5);
+    for (let i = 1; i < history.length; i++) {
+      const prev = history[i - 1];
+      const curr = history[i];
+      // 进度：i=0 是最新（最靠近角色），i 越大越远
+      const segFrac = Math.min(1, i / this.segmentCount);
+      // 越远越透明、越短
+      const segAlpha = alpha * Math.max(0, 1 - segFrac) * 0.8;
+      if (segAlpha <= 0.01) continue;
+      // 取两点中点绘制
+      const segX = (prev.x + curr.x) / 2;
+      // 拖尾宽度：越远越窄
+      const widthScale = 1 - segFrac * 0.6;
+      const w = R.cellW * 0.6 * widthScale;
+      const h = 8 * widthScale;
+
       ctx.globalAlpha = segAlpha;
       ctx.fillStyle = this.color;
       ctx.shadowColor = this.color;
-      ctx.shadowBlur = 6;
-      ctx.fillRect(segX - R.cellW * 0.3, this.y - 4, R.cellW * 0.6, 8);
+      ctx.shadowBlur = 4 * widthScale;
+      ctx.fillRect(segX - w / 2, this.y - h / 2, w, h);
     }
     ctx.shadowBlur = 0;
     ctx.restore();
