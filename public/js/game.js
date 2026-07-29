@@ -1091,8 +1091,8 @@ function setupSocket() {
 // ==================== 本地步进引擎 ====================
 // 使用简化的战斗逻辑在编辑阶段本地模拟单个 tick
 const LocalStep = {
-  /** 模拟一个 tick 的战斗步进，返回 events */
-  executeOneTick(actionId, p1, p2) {
+  /** 模拟一个 tick 的战斗步进，返回 events。当 isEditStep=true 时只计算效果不扣血 */
+  executeOneTick(actionId, p1, p2, isEditStep = false) {
     const events = [];
     const mySids = G.mySkillIds || [];
     let sk = null, idx = -1;
@@ -1163,12 +1163,12 @@ const LocalStep = {
         if (inRange) {
           const ratio = sk.damageRatio || 1;
           const dmg = Math.max(1, Math.floor((p1.atk || 10) * ratio - (target.def || 0)));
-          target.hp = Math.max(0, target.hp - dmg);
+          if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
           const evT = sk.effect === 'stun_damage' ? 'stun_hit' : 'melee_hit';
           events.push({ type: evT, actor: 'p1', target: 'p2', dmg, x: target.x, skillId: sid,
             hit_anim: sk.anim_hit || 'hitSlash', bullet_color: sk.color });
-          DBG.log(`[HIT] melee dmg=${dmg} at target.x=${target.x} hit_anim=${sk.anim_hit}`);
-          if (sk.effect === 'stun_damage') { target._effects = target._effects || []; target._effects.push({ type: 'stun', ticks: sk.stunDuration || 1 }); }
+          DBG.log(`[HIT] melee dmg=${dmg} at target.x=${target.x} hit_anim=${sk.anim_hit}${isEditStep?' (edit: no dmg)':''}`);
+          if (!isEditStep && sk.effect === 'stun_damage') { target._effects = target._effects || []; target._effects.push({ type: 'stun', ticks: sk.stunDuration || 1 }); }
         } else { DBG.log('[MISS] melee out of range'); }
         break;
       }
@@ -1207,10 +1207,11 @@ const LocalStep = {
           if (ax < 0 || ax > 15) continue;
           if (ax === target.x) {
             const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
-            target.hp = Math.max(0, target.hp - dmg);
+            if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
             events.push({ type: 'aoe_hit', actor: 'p1', target: 'p2', dmg, x: ax, skillId: sid,
               bullet_anim: sk.anim_bullet || 'arrowRainDrop', hit_anim: sk.anim_hit || 'hitAOE', bullet_color: sk.color });
-            DBG.log(`[HIT] aoe dmg=${dmg} at x=${ax} bullet_anim=${sk.anim_bullet}`);
+            DBG.log(`[HIT] aoe dmg=${dmg} at x=${ax} bullet_anim=${sk.anim_bullet}${isEditStep?' (edit: no dmg)':''}`);
+            if (!isEditStep && sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(p1.atk * (sk.burnRatio || 0.1))) }); }
           } else {
             events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: ax,
               bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
@@ -1229,13 +1230,13 @@ const LocalStep = {
         const startX = Math.min(oldX, dest), endX = Math.max(oldX, dest);
         if (target.x >= startX && target.x <= endX) {
           const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
-          target.hp = Math.max(0, target.hp - dmg);
+          if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
           events.push({ type: 'dash_hit', actor: 'p1', target: 'p2', dmg, skillId: sid,
             bullet_anim: sk.anim_bullet || 'dashTrail', hit_anim: sk.anim_hit || 'hitSlash',
             bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
           DBG.log(`[HIT] dash dmg=${dmg} from=${oldX} to=${dest}`);
           // 击退
-          if (sk.knockback) {
+          if (sk.knockback && !isEditStep) {
             const kbDir = dir;
             const oldTargetX = target.x;
             let tNewX = oldTargetX + kbDir * sk.knockback;
@@ -1389,7 +1390,7 @@ function addActionToQueue(actionId, skillSid) {
   DBG.log('[QUEUE] 添加行动 #' + G.actions.length + ' = ' + actionId + (sk ? ' ('+sk.name+')' : ''));
 
   // 执行本地步进
-  const events = LocalStep.executeOneTick(actionId, G.p1, G.p2);
+  const events = LocalStep.executeOneTick(actionId, G.p1, G.p2, true);
 
   // ★ 编辑阶段位移缓动
   if (G.p1.x !== oldP1X) {
