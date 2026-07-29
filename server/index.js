@@ -65,20 +65,24 @@ class GameRoom {
     this.pActions[this.players[0].sid] = [];
     this.pActions[this.players[1].sid] = [];
     
-    // 保存上一轮最终 HP（如果 engine 存在）
-    let prevP1Hp = null, prevP2Hp = null;
+    // 保存上一轮最终状态（如果 engine 存在）
+    let prevState = null;
     if (this.engine) {
-      const prevS = this.engine.getState();
-      prevP1Hp = prevS.p1.hp;
-      prevP2Hp = prevS.p2.hp;
+      prevState = this.engine.getState();
+      console.log(`[STATE_INHERIT] saving prev p1(hp=${prevState.p1.hp},mp=${prevState.p1.mp},sp=${prevState.p1.sp},x=${prevState.p1.x},facing=${prevState.p1.facing}) p2(hp=${prevState.p2.hp},mp=${prevState.p2.mp},sp=${prevState.p2.sp},x=${prevState.p2.x},facing=${prevState.p2.facing})`);
     }
     
     // 重新初始化 engine，清除残留 effects/bullets/cooldowns
     this.initEngine();
     
-    // 继承上一轮 HP
-    if (prevP1Hp !== null) this.engine.state.p1.hp = prevP1Hp;
-    if (prevP2Hp !== null) this.engine.state.p2.hp = prevP2Hp;
+    // 继承上一轮完整状态（HP/MP/SP/位置/朝向）
+    if (prevState) {
+      for (const key of ['hp','mp','sp','x','facing']) {
+        this.engine.state.p1[key] = prevState.p1[key];
+        this.engine.state.p2[key] = prevState.p2[key];
+      }
+      console.log(`[STATE_INHERIT] after init+inherit p1(hp=${this.engine.state.p1.hp},mp=${this.engine.state.p1.mp},sp=${this.engine.state.p1.sp},x=${this.engine.state.p1.x},facing=${this.engine.state.p1.facing}) p2(hp=${this.engine.state.p2.hp},mp=${this.engine.state.p2.mp},sp=${this.engine.state.p2.sp},x=${this.engine.state.p2.x},facing=${this.engine.state.p2.facing})`);
+    }
 
 
     const s = this.engine.getState();
@@ -118,15 +122,14 @@ class GameRoom {
 
     console.log(`[BATTLE] post-state p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) frames=${frames.length}`);
 
-    io.to(this.id).emit('battleFrames', { frames, final: s, round: this.round });
+    const gameOver = s.p1.hp <= 0 || s.p2.hp <= 0 || this.round >= this.maxRounds;
+    
+    io.to(this.id).emit('battleFrames', { frames, final: s, round: this.round, gameOver });
 
-    if (s.p1.hp <= 0 || s.p2.hp <= 0 || this.round >= this.maxRounds) {
+    if (gameOver) {
       this.state = 'finished';
-      const w = s.p1.hp <= 0 ? 'P2' : (s.p2.hp <= 0 ? 'P1' : (s.p1.hp > s.p2.hp ? 'P1' : 'draw'));
-      io.to(this.id).emit('gameOver', { winner: w, p1Hp: s.p1.hp, p2Hp: s.p2.hp, reason: this.round >= this.maxRounds ? 'maxRounds' : 'death' });
       this.clearTimer();
     } else {
-      // Wait for client animation (16 ticks * 600ms + buffer)
       setTimeout(() => this.startPrepare(), 11000);
     }
   }

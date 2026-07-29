@@ -1067,13 +1067,15 @@ function setupSocket() {
 
   G.socket.on('battleFrames', (d) => {
     G._mode = 'battle';
+    G._battleGameOver = d.gameOver; // 服务端告诉客户端这轮是否终结
     document.getElementById('actionQueuePanel').classList.add('hidden');
     document.getElementById('battleQueuePanel').classList.remove('hidden');
     document.getElementById('rdyBtn').disabled = true;
-    DBG.log('[PHASE] 进入战斗阶段, frames=' + d.frames.length);
+    DBG.log('[PHASE] 进入战斗阶段, frames=' + d.frames.length + ' gameOver=' + d.gameOver);
     playBattleAnim(d.frames, d.final);
   });
 
+  // gameOver 仅作为备用（不再由服务端主动发出，只清理状态）
   G.socket.on('gameOver', (d) => {
     G._mode = 'result';
     FX.clear();
@@ -1538,6 +1540,18 @@ function playBattleAnim(frames, final) {
         UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
         DBG.log('[BATTLE] 播放完毕');
         G._battleStep = null;
+
+        // 所有帧+特效播完后才判断胜负
+        if (G._battleGameOver) {
+          const w = final.p1.hp <= 0 ? 'P2' : (final.p2.hp <= 0 ? 'P1' : (final.p1.hp > final.p2.hp ? 'P1' : 'draw'));
+          const reason = G.round >= 30 ? 'maxRounds' : 'death';
+          G._mode = 'result';
+          FX.clear();
+          UI.showScreen('result');
+          document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : `${w} 获胜!`;
+          document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜'}`;
+          DBG.log('[BATTLE] 游戏结束, winner=' + w);
+        }
       }
       return;
     }
