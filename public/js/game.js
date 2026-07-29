@@ -1799,6 +1799,195 @@ function nav(screen) {
     if (!_wikiActiveTab) initWiki();
     else { renderWikiChars(); renderWikiSkills(); }
   }
+  if (screen === 'tutorial') {
+    initTutorial();
+  }
+}
+
+// ==================== 教程系统 ====================
+let _tutChapter = 1;
+
+function initTutorial() {
+  _tutChapter = 1;
+  document.querySelectorAll('#tutorial .tut-chapter').forEach((btn, i) => {
+    btn.classList.toggle('active', i === 0);
+    btn.onclick = () => {
+      _tutChapter = parseInt(btn.dataset.ch);
+      document.querySelectorAll('#tutorial .tut-chapter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderTutContent();
+    };
+  });
+  renderTutContent();
+}
+
+function renderTutContent() {
+  const el = document.getElementById('tutContent');
+  if (!el) return;
+
+  const sections = {
+    1: // 基础 — 战斗流程
+    '<div class="wiki-section">'+
+      '<h3>[FLOW] 游戏总览</h3>'+
+      '<p>Debug-Lite 是一款<strong>同步回合制策略格斗</strong>游戏。16 格横版场地，双方同时编排行动，逐 tick 执行。</p>'+
+      '<div class="tut-flow"><span class="tut-step">主菜单</span><span class="tut-arrow">></span><span class="tut-step">选角色+技能</span><span class="tut-arrow">></span><span class="tut-step">编辑阶段</span><span class="tut-arrow">></span><span class="tut-step">战斗阶段</span><span class="tut-arrow">></span><span class="tut-step">下一回合</span></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[EDIT] 编辑阶段 (60秒)</h3>'+
+      '<div class="wiki-card"><p>编排<strong>16 个行动格</strong>的行动队列。每格选择：技能攻击 / 移动 / 闪避 / 防御 / 转向。</p><p>点击「完成」提交队列。双方都提交后，<strong>立即进入战斗阶段</strong>。</p></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[FIGHT] 战斗阶段 (16 tick)</h3>'+
+      '<div class="wiki-card"><p>双方行动队列<strong>同时逐 tick 执行</strong>。每 tick 的执行顺序：</p>'+
+      '<p><strong>1.</strong> 冷却递减 <strong>2.</strong> 效果处理(眩晕/冰冻/燃烧/中毒) <strong>3.</strong> 移动+碰撞检测 <strong>4.</strong> 技能执行+弹幕碰撞 <strong>5.</strong> 资源恢复</p>'+
+      '<p>一 tick 内双方行动<strong>完全同步</strong>——先同时移动，再同时释放技能。16 tick 结束或一方 HP 归零即回合终止。</p></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[ACTIONS] 行动队列</h3>'+
+      '<table class="wiki-table"><tr><th>行动</th><th>效果</th><th>SP</th></tr>'+
+      '<tr><td>左移 / 右移</td><td>向该方向走 1 格</td><td>0</td></tr>'+
+      '<tr><td>左闪 / 右闪</td><td>冲刺 2 格，可穿越敌人，闪避本 tick 伤害</td><td>10</td></tr>'+
+      '<tr><td>防御</td><td>本 tick 获得 DEF*0.8 额外护甲</td><td>0</td></tr>'+
+      '<tr><td>转向</td><td>转身 180 度</td><td>0</td></tr>'+
+      '<tr><td>技能1/2/3</td><td>使用角色携带的技能(消耗 MP+SP)</td><td>各异</td></tr>'+
+      '</table></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[WIN] 胜利条件</h3>'+
+      '<p>一方 HP 归零则<strong>立即判负</strong>。30 回合打满以 HP 多者胜。HP 相同平局。</p>'+
+    '</div>',
+
+    2: // 角色
+    '<div class="wiki-section">'+
+      '<h3>[STATS] 角色属性</h3>'+
+      '<table class="wiki-table"><tr><th>属性</th><th>含义</th></tr>'+
+      '<tr><td>HP</td><td>生命值。归零落败，跨回合继承</td></tr>'+
+      '<tr><td>MP</td><td>法力值。技能消耗，每 tick 自动回复(各角色不同)</td></tr>'+
+      '<tr><td>SP</td><td>体力值。移动/闪避/技能消耗，每 tick 自动回复</td></tr>'+
+      '<tr><td>ATK</td><td>攻击力。影响所有非真伤技能的伤害基数</td></tr>'+
+      '<tr><td>DEF</td><td>防御力。决定减伤率 = DEF/(DEF+40)</td></tr>'+
+      '</table></div>'+
+    '<div class="wiki-section">'+
+      '<h3>[HEROES] 四角色一览</h3>'+
+      (()=>{var ch=(_charsData?.characters||[]);var r='';
+        ch.forEach(c=>{
+          var d=c.def/(c.def+40)*100;
+          r+='<div class="wiki-card"><h4 style="color:'+c.color+'">'+c.name+' — '+c.desc+'</h4>'+
+          '<p>HP:'+c.maxHp+' | MP:'+c.maxMp+' | SP:'+c.maxSp+' | ATK:'+c.atk+' | DEF:'+c.def+' ('+d.toFixed(0)+'%减伤)</p>'+
+          '<p>回复/tick: MP+'+c.mpRegen+' SP+'+c.spRegen+'</p></div>';
+        });
+        return r;
+      })()+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[COUNTER] 克制关系</h3>'+
+      '<p><strong>战士</strong>(高防) 克制 射手多段 → <strong>刺客</strong>(真伤无视防御) 克制 战士 → <strong>法师</strong>(高爆发) 克制 刺客脆皮 → <strong>射手</strong>(远程全屏) 克制 法师短手</p>'+
+    '</div>',
+
+    3: // 技能
+    '<div class="wiki-section">'+
+      '<h3>[SKILLS] 技能属性</h3>'+
+      '<table class="wiki-table"><tr><th>属性</th><th>含义</th></tr>'+
+      '<tr><td>damageRatio</td><td>伤害倍率。公式: ATK * ratio * (1-减伤率)</td></tr>'+
+      '<tr><td>mpCost / spCost</td><td>MP/SP 消耗。资源不足时技能<strong>空过(exhausted)</strong></td></tr>'+
+      '<tr><td>cooldown (CD)</td><td>冷却 tick 数。CD 期间再次使用会空过。跨回合继承</td></tr>'+
+      '<tr><td>bulletPriority</td><td>弹幕等级(Lv)。数字越小等级越高</td></tr>'+
+      '<tr><td>range / bulletRange</td><td>射程(格)。超过射程打不到</td></tr>'+
+      '<tr><td>multiShot</td><td>连射数。一 tick 内连续发射多次</td></tr>'+
+      '<tr><td>aoeRadius</td><td>AOE 半径。从目标格向两侧展开</td></tr>'+
+      '<tr><td>stunDuration / freezeDuration</td><td>眩晕/冰冻持续 tick 数。目标无法行动</td></tr>'+
+      '<tr><td>burnTicks / poisonTicks</td><td>燃烧/中毒持续 tick 数。每 tick 扣血</td></tr>'+
+      '<tr><td>backstabRatio</td><td>背刺倍率。从背后攻击时使用此倍率代替 damageRatio</td></tr>'+
+      '<tr><td>defBuff</td><td>防御 buff 倍率。释放后获得 def*defBuff 额外护甲</td></tr>'+
+      '<tr><td>knockback</td><td>击退格数。命中后将目标向后推</td></tr>'+
+      '</table></div>'+
+    '<div class="wiki-section">'+
+      '<h3>[TYPES] 技能类型</h3>'+
+      '<table class="wiki-table"><tr><th>类型</th><th>说明</th></tr>'+
+      '<tr><td>melee</td><td>近战。方向限定(foward/forward_and_back)，有范围</td></tr>'+
+      '<tr><td>projectile</td><td>弹幕。沿方向扫描飞行，受弹幕等级碰撞影响</td></tr>'+
+      '<tr><td>targeted_aoe</td><td>垂直 AOE。无视距离锁定目标格，aoeRadius 范围伤害</td></tr>'+
+      '<tr><td>dash</td><td>冲刺。角色高速位移，路径上碰撞造成伤害+效果</td></tr>'+
+      '<tr><td>teleport_backstab</td><td>瞬移背刺。直接传送到目标身后并转身</td></tr>'+
+      '</table></div>'+
+    '<div class="wiki-section">'+
+      '<h3>[EFFECTS] 效果类型</h3>'+
+      '<table class="wiki-table"><tr><th>效果</th><th>说明</th></tr>'+
+      '<tr><td>normal_damage</td><td>普通伤害(受减伤影响)</td></tr>'+
+      '<tr><td>true_damage</td><td>真实伤害(完全无视防御和减伤)</td></tr>'+
+      '<tr><td>stun_damage</td><td>伤害+眩晕；freeze_damage=伤害+冰冻</td></tr>'+
+      '<tr><td>burn_debuff</td><td>伤害+燃烧 DOT(每 tick 扣 ATK*burnRatio)</td></tr>'+
+      '<tr><td>poison_debuff</td><td>伤害+中毒 DOT(每 tick 扣 ATK*poisonRatio)</td></tr>'+
+      '<tr><td>dash_knockback</td><td>冲刺伤害+击退+防御 buff</td></tr>'+
+      '</table></div>',
+
+    4: // 弹幕
+    '<div class="wiki-section">'+
+      '<h3>[BULLET] 弹幕等级与碰撞</h3>'+
+      '<p>每个投射物技能都有 <strong>bulletPriority</strong> 属性（数值越小等级越高）：</p>'+
+      '<table class="wiki-table"><tr><th>Lv</th><th>归属</th><th>碰撞行为</th></tr>'+
+      '<tr><td>Lv2</td><td>魔法盾</td><td>挡 Lv3+Lv4；遇 Lv2 抵消</td></tr>'+
+      '<tr><td>Lv3</td><td>精准射击、旋风斩、重击、突击盾</td><td>穿透 Lv4；遇 Lv2 消失；同级抵消</td></tr>'+
+      '<tr><td>Lv4</td><td>连续射击、冰锥、匕首、毒瓶</td><td>遇 Lv2/Lv3 消失；同级抵消</td></tr>'+
+      '</table>'+
+      '<div class="wiki-card"><h4>碰撞规则</h4>'+
+      '<p><strong>高 Lv(数字小) > 低 Lv(数字大)</strong>：低等级弹幕直接消失，高等级继续飞行。</p>'+
+      '<p><strong>同级相遇</strong>：双方弹幕都消失。</p>'+
+      '<p><strong>连射多弹幕</strong>：每发独立判碰撞。第一发遇到同级弹幕后，该敌方弹幕被移除，后续连射弹无需再判。</p>'+
+      '<p><strong>近战/冲刺/AOE</strong>：不受弹幕碰撞影响，直接判定命中。</p></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[DMG] 伤害公式</h3>'+
+      '<div class="wiki-card">'+
+      '<h4>普通伤害</h4>'+
+      '<p class="wiki-formula">DMG = ATK * ratio * (1 - DEF/(DEF+40))</p>'+
+      '<p>最低伤害 <strong>1</strong>。防御 buff(来自防御指令/突击盾) 临时提高 DEF。</p>'+
+      '</div>'+
+      '<div class="wiki-card">'+
+      '<h4>真实伤害</h4>'+
+      '<p class="wiki-formula">DMG = ATK * ratio</p>'+
+      '<p>完全无视防御和防御 buff。刺客匕首攻击(正面 ratio=1.2, 背刺 ratio=2.4)即为真伤。</p>'+
+      '</div>'+
+      '<div class="wiki-card">'+
+      '<h4>碰撞伤害</h4>'+
+      '<p class="wiki-formula">DMG = 对方ATK * 0.25 * (1 - 我方DEF/(DEF+40))</p>'+
+      '<p>同时移动到同一格，或走入对方占据的格子时触发。</p>'+
+      '</div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
+      '<h3>[STATUS] 异常状态</h3>'+
+      '<table class="wiki-table"><tr><th>状态</th><th>效果</th><th>来源技能</th></tr>'+
+      '<tr><td>STUN 眩晕</td><td>本 tick 无法行动(动作变为 stunned)</td><td>重击(1tick)</td></tr>'+
+      '<tr><td>FREEZE 冰冻</td><td>本 tick 无法行动。在眩晕之后判定</td><td>冰锥(1tick)</td></tr>'+
+      '<tr><td>BURN 燃烧</td><td>每 tick 扣 ATK*0.10 HP(3tick)</td><td>火球术</td></tr>'+
+      '<tr><td>POISON 中毒</td><td>每 tick 扣 ATK*0.07 HP(4tick)</td><td>毒瓶</td></tr>'+
+      '</table>'+
+      '<p>DOT(持续伤害)每 tick 在效果处理阶段扣除，<strong>无视闪避</strong>。</p>'+
+    '</div>',
+
+    5: // 进阶
+    '<div class="wiki-section">'+
+      '<h3>[TIPS] 进阶策略</h3>'+
+      '<div class="wiki-card"><h4>行动编排</h4>'+
+      '<p>预判对手位置再放技能。打不中=浪费一 tick。</p>'+
+      '<p>闪避可穿越敌人且躲伤害，但消耗 SP 较多。</p>'+
+      '<p>防御只持续 <strong>1 tick</strong>——精准预判对手攻击时刻。</p>'+
+      '<p>技能 CD 跨回合继承。合理安排释放节奏。</p></div>'+
+      '<div class="wiki-card"><h4>资源管理</h4>'+
+      '<p>每 tick MP 和 SP 自动恢复。但没有"省着用"的必要——</p>'+
+      '<p>16 tick 中 <strong>总恢复量 > 大部分技能消耗</strong>。关键是在对的 tick 有足够资源。</p>'+
+      '<p>战士依赖 SP(无 MP 技能)；法师依赖 MP(高回蓝)；刺客 SP 回最快。</p></div>'+
+      '<div class="wiki-card"><h4>弹幕博弈</h4>'+
+      '<p>魔法盾(Lv2)可挡大部分弹幕——但会被同级抵消，且射程仅 1 格。</p>'+
+      '<p>连射弹幕遇到同级只抵消第一发，后续会<strong>继续飞行并命中</strong>。</p>'+
+      '<p>近战和 AOE 不受弹幕碰撞影响——无法被盾挡。</p></div>'+
+      '<div class="wiki-card"><h4>背刺判定</h4>'+
+      '<p>攻击方面朝方向与目标位置相反即为背刺。暗影步传送到敌后可触发背刺倍率。</p>'+
+      '<p>背刺倍率<strong>替换</strong>普通倍率(不是相乘)。匕首正面 1.2，背刺 2.4。</p></div>'+
+    '</div>'
+  };
+
+  el.innerHTML = sections[_tutChapter] || '';
 }
 
 function updatePrepareUI() {

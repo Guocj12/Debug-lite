@@ -281,6 +281,25 @@ body{background:var(--bg-deep);color:var(--tx-primary);font-family:var(--font-bo
 .pix-label{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-display);font-size:.5rem}
 .pix-label .px-dot{width:6px;height:6px;display:inline-block;box-shadow:0 0 4px currentColor}
 
+/* ============================================
+   教程 Tutorial
+   ============================================ */
+#tutorial{padding:var(--space-sm);overflow-y:auto;max-height:100dvh;gap:0;align-items:stretch}
+.tut-nav{display:flex;gap:0;width:100%;max-width:500px;margin:0 auto 10px;border:2px solid var(--bd-dim);border-radius:var(--radius-sm);overflow:hidden}
+.tut-chapter{flex:1;font-family:var(--font-display);font-size:clamp(.32rem,1.6vw,.4rem);padding:10px 4px;background:var(--bg-card);color:var(--tx-muted);border:none;cursor:pointer;transition:all .15s;border-right:1px solid var(--bd-dim)}
+.tut-chapter:last-child{border-right:none}
+.tut-chapter.active{color:var(--magenta);background:rgba(255,64,255,.06);box-shadow:inset 0 -2px 0 var(--magenta)}
+.tut-chapter:hover{color:var(--magenta)}
+.tut-content{width:100%;max-width:500px;margin:0 auto;padding-bottom:var(--space-xl)}
+.tut-content .wiki-section{margin-bottom:14px}
+.tut-content .wiki-section h3{font-size:clamp(.38rem,2vw,.44rem);color:var(--cyan)}
+.tut-content .wiki-card{padding:10px;margin-bottom:6px}
+.tut-content p{font-family:var(--font-body);font-size:.72rem;color:var(--tx-secondary);line-height:1.7;margin-bottom:3px}
+.tut-content strong{color:var(--tx-primary)}
+.tut-content .tut-flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0;font-family:var(--font-display);font-size:.35rem}
+.tut-flow .tut-step{background:var(--bg-panel);border:1px solid var(--bd-lit);padding:6px 10px;color:var(--cyan);border-radius:var(--radius-sm)}
+.tut-flow .tut-arrow{color:var(--yellow)}
+
 /* 用于菜单按钮的前缀标记 */
 .btn-prefix{font-family:var(--font-display);font-size:.55rem;opacity:.7}
 

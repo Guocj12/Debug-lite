@@ -17,6 +17,7 @@
       <button class="btn btn-p" onclick="enterCharSelect('online')"><span class="btn-prefix">[NET]</span> 联机对战</button>
       <button class="btn btn-y" onclick="nav('editor')"><span class="btn-prefix">[ED]</span> 技能编辑</button>
       <button class="btn btn-g" onclick="nav('wiki')"><span class="btn-prefix">[DB]</span> 图鉴</button>
+      <button class="btn btn-p" onclick="nav('tutorial')"><span class="btn-prefix">[?]</span> 教程</button>
     </div>
     <div class="ver">16格横版 · 弹幕碰撞 · 像素动画</div>
   </div>
@@ -191,6 +192,19 @@
     </div>
 
     <button class="btn btn-d" onclick="nav('menu')" style="margin-top:16px;">返回菜单</button>
+  </div>
+
+  <!-- 教程页面 -->
+  <div id="tutorial" class="screen">
+    <div class="tut-nav">
+      <button class="tut-chapter active" data-ch="1">基础</button>
+      <button class="tut-chapter" data-ch="2">角色</button>
+      <button class="tut-chapter" data-ch="3">技能</button>
+      <button class="tut-chapter" data-ch="4">弹幕</button>
+      <button class="tut-chapter" data-ch="5">进阶</button>
+    </div>
+    <div class="tut-content" id="tutContent"></div>
+    <button class="btn btn-d" onclick="nav('menu')" style="margin-top:12px;">返回菜单</button>
   </div>
 </div>
 <script src="/socket.io/socket.io.js"></script>
