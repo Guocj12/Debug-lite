@@ -1647,7 +1647,8 @@ function renderCharGrid() {
     const card = document.createElement('div');
     card.className = 'cc';
     if (_selChar === c.id) card.classList.add('selected');
-    card.innerHTML = `<div class="ccn">${c.name}</div><div class="ccs" style="color:${c.color}">${c.shape}</div><div class="ccd">${c.desc}<br>HP:${c.maxHp} MP:${c.maxMp} SP:${c.maxSp} ATK:${c.atk} DEF:${c.def}</div>`;
+    const defPct = (c.def / (c.def + 40) * 100).toFixed(0);
+    card.innerHTML = '<div class="ccn">' + c.name + '</div><div class="ccs" style="color:' + c.color + '">' + (c.shape === 'square' ? '■' : c.shape === 'triangle' ? '▶' : c.shape === 'diamond' ? '◆' : '▼') + '</div><div class="ccd">' + c.desc + '<br><span class="pix-label" style="color:var(--red)">[HP]</span>' + c.maxHp + ' <span class="pix-label" style="color:var(--blue)">[MP]</span>' + c.maxMp + ' <span class="pix-label" style="color:var(--green)">[SP]</span>' + c.maxSp + '<br><span class="pix-label" style="color:var(--cyan)">[ATK]</span>' + c.atk + ' <span class="pix-label" style="color:var(--blue)">[DEF]</span>' + c.def + ' (' + defPct + '%)<br><span class="pix-label" style="color:var(--green)">[REG]</span>MP+' + (c.mpRegen||1) + ' SP+' + (c.spRegen||2) + '</div>';
     card.onclick = () => {
       _selChar = c.id;
       _selSkills = [...c.defaultSkills];
@@ -1666,9 +1667,10 @@ function renderSkillGrid(char) {
   const allSkills = Object.values(_skillsData.skills || {}).filter(s => s.charId === char.id);
   allSkills.forEach(sk => {
     const card = document.createElement('div');
-    card.className = 'cc';
+    card.className = 'sc';
     if (_selSkills.includes(sk.id)) card.classList.add('selected');
-    card.innerHTML = `<div class="ccn">${sk.name}</div><div class="ccd">${sk.type} | ${sk.effect || 'none'}<br>${sk.desc||''}<br>MP:${sk.mpCost||0} SP:${sk.spCost||0} CD:${sk.cooldown||0}</div>`;
+    var typeName = {melee:'[MELEE]',projectile:'[RANGE]',targeted_aoe:'[AOE]',dash:'[DASH]',teleport_backstab:'[WARP]',shield_wall:'[SHIELD]'}[sk.type]||sk.type;
+    card.innerHTML = '<div class="sn">' + sk.name + '</div><div class="st">' + typeName + ' | ' + (sk.desc||'') + '<br><span class="pix-label" style="color:var(--blue)">MP</span>' + (sk.mpCost||0) + ' <span class="pix-label" style="color:var(--green)">SP</span>' + (sk.spCost||0) + ' CD:' + (sk.cooldown||0) + ' x' + (sk.damageRatio||'-') + '</div>';
     card.onclick = () => {
       if (_selSkills.includes(sk.id)) {
         if (_selSkills.length <= 3) return;
@@ -1777,12 +1779,12 @@ function renderWikiChars() {
         </div>
       </div>
       <div class="wiki-stat-grid">
-        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxHp}</div><div class="wiki-stat-label">❤️ HP</div></div>
-        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxMp}</div><div class="wiki-stat-label">💎 MP</div></div>
-        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxSp}</div><div class="wiki-stat-label">⚡ SP</div></div>
-        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.atk}</div><div class="wiki-stat-label">⚔️ ATK</div></div>
-        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.def} <span style="font-size:.22rem;color:#888">(${reduction}%)</span></div><div class="wiki-stat-label">🛡️ DEF</div></div>
-        <div class="wiki-stat-item"><div class="wiki-stat-val" style="color:var(--c4)">MP+${c.mpRegen||1} SP+${c.spRegen||2}</div><div class="wiki-stat-label regen">🔄 回复/tick</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxHp}</div><div class="wiki-stat-label c-red">[ HP ]</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxMp}</div><div class="wiki-stat-label c-blue">[ MP ]</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxSp}</div><div class="wiki-stat-label c-green">[ SP ]</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.atk}</div><div class="wiki-stat-label c-cyan">[ ATK ]</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.def} <span style="font-size:.22rem;color:#888">(${reduction}%)</span></div><div class="wiki-stat-label c-blue">[ DEF ]</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val" style="color:var(--green)">MP+${c.mpRegen||1} SP+${c.spRegen||2}</div><div class="wiki-stat-label regen">[ REGEN ]</div></div>
       </div>
       <div class="wiki-char-skills">
         <h4>📜 技能 (${charSkills.length})</h4>
@@ -1790,7 +1792,7 @@ function renderWikiChars() {
         <div class="wiki-skill-item">
           <span class="ws-name" style="color:${s.color||'var(--c2)'}">${s.name}</span>
           <span class="ws-info">${s.desc||''}</span>
-          <span class="ws-cost">${s.mpCost>0?'💎'+s.mpCost:''} ${s.spCost>0?'⚡'+s.spCost:''} CD:${s.cooldown||0}</span>
+          <span class="ws-cost">${s.mpCost>0?'MP'+s.mpCost:''} ${s.spCost>0?'SP'+s.spCost:''} CD:${s.cooldown||0}</span>
         </div>`).join('')}
       </div>
     </div>`;
@@ -1807,10 +1809,10 @@ function renderWikiSkills() {
 
   el.innerHTML = Object.values(skills).map(s => {
     const ch = charMap[s.charId];
-    const typeLabel = { melee: '🔪 近战', projectile: '🏹 弹幕', targeted_aoe: '💥 AOE', dash: '💨 冲刺', teleport_backstab: '🌀 瞬移', shield_wall: '🛡️ 护盾' }[s.type] || s.type;
-    const effectLabel = { normal_damage: '普通伤害', stun_damage: '眩晕', freeze_damage: '冰冻', burn_debuff: '燃烧', poison_debuff: '中毒', true_damage: '真伤', dash_knockback: '击退', shield_bullet: '护盾', none: '位移' }[s.effect] || s.effect;
-    const backstabInfo = s.backstabRatio ? `<br>🔪 背刺倍率：<span style="color:#f44">×${s.backstabRatio}</span>` : '';
-    const dotInfo = s.burnTicks ? `<br>🔥 燃烧 ${s.burnTicks}tick · 每tick ATK×${s.burnRatio||0}` : (s.poisonTicks ? `<br>☠️ 中毒 ${s.poisonTicks}tick · 每tick ATK×${s.poisonRatio||0}` : '');
+    const typeLabel = { melee: '[MELEE]', projectile: '[RANGE]', targeted_aoe: '[AOE]', dash: '[DASH]', teleport_backstab: '[WARP]', shield_wall: '[SHIELD]' }[s.type] || s.type;
+    const effectLabel = { normal_damage: 'DMG', stun_damage: 'STUN', freeze_damage: 'FREEZE', burn_debuff: 'BURN', poison_debuff: 'POISON', true_damage: 'TRUE', dash_knockback: 'KNOCK', shield_bullet: 'SHIELD', none: 'MOVE' }[s.effect] || s.effect;
+    const backstabInfo = s.backstabRatio ? '<br>[BACKSTAB] x' + s.backstabRatio : '';
+    const dotInfo = s.burnTicks ? '<br>[BURN] ' + s.burnTicks + 'tick ATKx' + (s.burnRatio||0) : (s.poisonTicks ? '<br>[POISON] ' + s.poisonTicks + 'tick ATKx' + (s.poisonRatio||0) : '');
     return `
     <div class="wiki-skill-card">
       <div class="wiki-skill-title">
@@ -1825,7 +1827,7 @@ function renderWikiSkills() {
         <div class="wiki-skill-stat"><div class="wss-val">${s.bulletPriority||'-'}</div><div class="wss-lbl">弹幕Lv</div></div>
       </div>
       <div style="font-size:.24rem;color:#555;margin-top:4px;">
-        💎${s.mpCost||0} ⚡${s.spCost||0} ${s.multiShot ? '· '+s.multiShot+'连发' : ''} ${s.aoeRadius ? '· AOE±'+s.aoeRadius : ''} ${s.stunDuration ? '· 眩晕'+s.stunDuration+'tick' : ''} ${s.freezeDuration ? '· 冰冻'+s.freezeDuration+'tick' : ''} ${s.knockback ? '· 击退'+s.knockback+'格' : ''} ${s.defBuff ? '· 防御↑'+(s.defBuff*100)+'%' : ''}
+        MP${s.mpCost||0} SP${s.spCost||0} ${s.multiShot ? 'x'+s.multiShot : ''} ${s.aoeRadius ? 'AOE±'+s.aoeRadius : ''} ${s.stunDuration ? 'STUN'+s.stunDuration+'t' : ''} ${s.freezeDuration ? 'FREEZE'+s.freezeDuration+'t' : ''} ${s.knockback ? 'KNOCK'+s.knockback : ''} ${s.defBuff ? 'DEF+'+(s.defBuff*100)+'%' : ''}
       </div>
     </div>`;
   }).join('');

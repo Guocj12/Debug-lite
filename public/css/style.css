@@ -1,146 +1,294 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-:root{--c1:#00ffff;--c2:#ff00ff;--c3:#ffff00;--c4:#00ff44;--bg:#050510;--panel:#0a0a1a;--border:#1a1a3a;--txt:#ccddff}
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
-body{background:var(--bg);color:var(--txt);font-family:'Press Start 2P',monospace;font-size:10px;min-height:100vh;overflow-x:hidden;background-image:linear-gradient(rgba(0,255,255,.02)1px,transparent 1px),linear-gradient(90deg,rgba(0,255,255,.02)1px,transparent 1px);background-size:24px 24px}
-#app{max-width:700px;margin:0 auto;min-height:100vh}
-.screen{display:none;flex-direction:column;align-items:center;padding:10px;min-height:100vh}
-.screen.active{display:flex}
-.n1{font-family:'Press Start 2P';font-size:1.6rem;color:var(--c1);text-shadow:0 0 8px var(--c1),0 0 25px var(--c1),0 0 50px var(--c1);animation:pulse 2s ease-in-out infinite alternate;text-align:center;letter-spacing:3px}
-.n1.sm{font-size:.9rem}
-.n2{font-size:.7rem;color:var(--c2);text-shadow:0 0 8px var(--c2);text-align:center;margin:8px 0 20px}
-@keyframes pulse{from{text-shadow:0 0 5px var(--c1),0 0 15px var(--c1)}to{text-shadow:0 0 15px var(--c1),0 0 45px var(--c1),0 0 80px var(--c1)}}
-.btn{font-family:'Press Start 2P';font-size:.55rem;padding:10px 18px;margin:5px;border:2px solid;cursor:pointer;background:rgba(0,0,0,.85);color:inherit;letter-spacing:1px;transition:.15s}
-.btn:active{transform:scale(.94)}
-.btn.s{font-size:.35rem;padding:5px 8px}
-.btn-b{color:var(--c1);border-color:var(--c1);box-shadow:0 0 6px var(--c1),inset 0 0 4px rgba(0,255,255,.15)}
-.btn-b:hover{box-shadow:0 0 18px var(--c1),0 0 35px var(--c1)}
-.btn-p{color:var(--c2);border-color:var(--c2);box-shadow:0 0 6px var(--c2)}
-.btn-g{color:var(--c4);border-color:var(--c4);box-shadow:0 0 6px var(--c4)}
-.btn-y{color:var(--c3);border-color:var(--c3);box-shadow:0 0 6px var(--c3)}
-.btn-d{color:#555;border-color:#333}
-.menu-btns{display:flex;flex-direction:column;gap:8px;margin:20px 0;width:100%;max-width:300px}
-.menu-btns .btn{width:100%;text-align:center}
-.ver{font-size:.35rem;color:#333;margin-top:20px}
-.cg{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:400px;margin:12px 0}
-.cc{background:var(--panel);border:2px solid #1a1a2e;padding:10px;cursor:pointer;text-align:center;transition:.15s}
-.cc:hover{border-color:var(--c1);box-shadow:0 0 10px rgba(0,255,255,.2)}
-.cc.sel{border-color:var(--c3);box-shadow:0 0 12px rgba(255,255,0,.4)}
-.cc .cn{font-size:.45rem;color:var(--c1);margin-top:6px}
-.cc .cs{font-size:.3rem;color:#888;margin-top:3px}
-.sk{margin-top:8px;width:100%;max-width:400px}
-.sk h3{font-size:.45rem;color:var(--c2);margin-bottom:6px}
-.sk.hidden{display:none}
-.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.sc{background:var(--panel);border:1px solid #1a1a2e;padding:6px;cursor:pointer;text-align:center;font-size:.3rem;transition:.15s}
-.sc:hover{border-color:var(--c2)}
-.sc.sel{border-color:var(--c4);box-shadow:0 0 8px rgba(0,255,68,.3)}
-.sc .sn{color:var(--c2)}
-.sc .st{color:#666;font-size:.25rem;margin-top:2px}
-.lbi{display:flex;gap:8px;width:100%;max-width:380px;margin:8px 0}
-.inp{flex:1;background:rgba(0,0,0,.8);border:2px solid #2a2a3a;color:var(--c1);padding:10px;font-family:'Press Start 2P';font-size:.45rem;outline:none}
-.inp:focus{border-color:var(--c1);box-shadow:0 0 8px rgba(0,255,255,.2)}
-.sts{font-size:.4rem;color:var(--c3);min-height:20px;margin:8px 0;text-align:center}
-.bh{display:flex;justify-content:space-between;width:100%;padding:6px;gap:6px}
-.pi{flex:1;background:var(--panel);border:1px solid var(--border);padding:5px}
-.pi.mir{text-align:right}
-.pn{font-size:.35rem;color:var(--c1);margin-bottom:3px}
-.bar-c{background:#0a0a14;border:1px solid #222;height:12px;position:relative;margin:3px 0}
-.bar{height:100%;transition:width .3s}
-.bar-hp{background:linear-gradient(90deg,#c00,#f33);box-shadow:0 0 4px rgba(255,0,0,.5)}
-.bar-mp{background:linear-gradient(90deg,#04c,#38f);height:7px;box-shadow:0 0 3px rgba(0,68,255,.5)}
-.bar-sp{background:linear-gradient(90deg,#0a0,#4f4);height:7px;box-shadow:0 0 3px rgba(0,255,68,.4)}
-.bar-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:.3rem;color:#fff;text-shadow:1px 1px 2px #000}
-.tmr{text-align:center;min-width:60px}
-.tmr .rnd{font-size:.35rem;color:var(--c3);text-shadow:0 0 5px var(--c3)}
-.tmr .t{font-size:1.1rem;color:var(--c1);text-shadow:0 0 10px var(--c1)}
-.fld{width:100%;max-width:640px;aspect-ratio:3/1;background:#000;border:2px solid #1a1a2e;margin:8px 0;position:relative}
-.fld canvas{width:100%;height:100%;image-rendering:pixelated}
-.aq{width:100%;max-width:640px;background:var(--panel);border:1px solid var(--border);padding:8px;margin:6px 0}
-.aq.hidden{display:none}
-.aq h3{font-size:.4rem;color:var(--c3);margin-bottom:6px}
-.aslots{display:flex;flex-wrap:wrap;gap:3px;min-height:28px;margin-bottom:6px}
-.as{background:#12122a;border:1px solid #2a2a3a;padding:4px 7px;font-size:.3rem;color:var(--c1);cursor:pointer;position:relative}
-.as .sn{position:absolute;top:-7px;left:3px;font-size:.22rem;color:#555;background:var(--panel);padding:0 2px}
-.abtns{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:6px}
-.ab{background:#11112a;border:1px solid #2a2a3a;color:var(--c1);padding:7px 3px;font-family:'Press Start 2P';font-size:.3rem;cursor:pointer;transition:.1s}
-.ab:hover{border-color:var(--c1);box-shadow:0 0 6px rgba(0,255,255,.2)}
-.ab:active{background:var(--c1);color:#000}
-.qc{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
-.log{width:100%;max-width:640px;max-height:80px;background:rgba(0,0,0,.8);border:1px solid #1a1a2e;padding:5px;overflow-y:auto;font-size:.28rem}
-.log .l{padding:1px 0;border-bottom:1px solid rgba(255,255,255,.03)}
-.log .ld{color:#f44}.log .lb{color:#48f}.log .ls{color:#f8f}.log .lg{color:#4f4}
-.res{text-align:center;padding:30px 15px}
-.res .n1{margin-bottom:15px}
-.res p{font-size:.45rem;color:#888;margin-bottom:20px;line-height:2}
-.edp{background:var(--panel);border:2px dashed #2a2a3a;padding:30px;margin:15px 0;text-align:center;border-radius:4px}
-.edp p{font-size:.45rem;color:var(--c1);margin:5px 0}
-.edp .h{font-size:.3rem;color:#555}
-@media(max-width:500px){.n1{font-size:1rem}.n1.sm{font-size:.65rem}.btn{font-size:.4rem;padding:7px 10px}.cg{gap:6px}.abtns{grid-template-columns:repeat(4,1fr)}.sg{grid-template-columns:repeat(3,1fr)}}
-/* Battle queue display */
-.bq-row{display:flex;align-items:center;gap:4px;margin:2px 0}
-.bq-label{font-size:.28rem;color:var(--c1);min-width:22px}
-.bq-slots{display:flex;flex-wrap:wrap;gap:1px}
-.bq-slot{font-size:.22rem;padding:2px 3px;background:#12122a;border:1px solid #1a1a2e;color:#666}
-.bq-slot.active{color:var(--c3);border-color:var(--c3);background:#1a1a0a;box-shadow:0 0 4px var(--c3)}
+/* ============================================================
+   Debug-Lite v3 -- UI Redesign
+   ============================================================ */
 
-/* ==================== 图鉴 Wiki ==================== */
-#wiki{padding:10px;overflow-y:auto;max-height:100vh}
-.wiki-tabs{display:flex;gap:0;width:100%;max-width:500px;margin-bottom:12px;border:2px solid var(--border);border-radius:4px;overflow:hidden}
-.wiki-tab{flex:1;font-family:'Press Start 2P';font-size:.4rem;padding:10px 6px;background:rgba(0,0,0,.85);color:#555;border:none;cursor:pointer;transition:.15s;border-right:1px solid var(--border)}
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Share+Tech+Mono&display=swap');
+
+:root{--cyan:#00e5ff;--magenta:#ff40ff;--yellow:#ffe540;--green:#40ff80;--red:#ff4060;--blue:#4080ff;--bg-deep:#050510;--bg-card:#0c0c20;--bg-panel:#101028;--bg-input:#080818;--bg-hover:#181835;--bd-dim:#1a1a38;--bd-lit:#2a2a50;--tx-primary:#e8e8ff;--tx-secondary:#8899bb;--tx-muted:#445566;--tx-dim:#2a3344;--space-xs:4px;--space-sm:8px;--space-md:14px;--space-lg:22px;--space-xl:32px;--radius-sm:2px;--radius-md:4px;--font-display:'Press Start 2P',monospace;--font-body:'Share Tech Mono','Courier New',monospace}
+/* === 全局重置 === */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+body{background:var(--bg-deep);color:var(--tx-primary);font-family:var(--font-body);font-size:15px;line-height:1.55;min-height:100dvh;overflow-x:hidden;background-image:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.06) 2px,rgba(0,0,0,.06) 4px)}
+::selection{background:var(--cyan);color:var(--bg-deep)}
+#app{max-width:520px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
+.screen{display:none;flex-direction:column;align-items:center;padding:var(--space-md);min-height:100dvh;width:100%}
+.screen.active{display:flex}
+
+/* === 标题系统 === */
+.n1{font-family:var(--font-display);font-size:clamp(1rem,5vw,1.8rem);color:var(--cyan);text-shadow:0 0 6px var(--cyan),0 0 20px rgba(0,229,255,.5),0 0 50px rgba(0,229,255,.25);text-align:center;letter-spacing:3px;animation:neonPulse 2.5s ease-in-out infinite alternate;line-height:1.4;word-break:break-word}
+.n1.sm{font-size:clamp(.65rem,3.5vw,1.1rem);letter-spacing:2px}
+@keyframes neonPulse{from{text-shadow:0 0 4px var(--cyan),0 0 12px rgba(0,229,255,.4)}to{text-shadow:0 0 10px var(--cyan),0 0 30px rgba(0,229,255,.6),0 0 60px rgba(0,229,255,.2)}}
+.n2{font-family:var(--font-display);font-size:clamp(.45rem,2vw,.75rem);color:var(--magenta);text-shadow:0 0 6px var(--magenta);text-align:center;margin:var(--space-xs) 0 var(--space-lg)}
+
+/* === 按钮系统 === */
+.btn{font-family:var(--font-display);font-size:clamp(.45rem,2vw,.6rem);padding:12px 20px;margin:4px;border:2px solid;cursor:pointer;background:rgba(5,5,16,.9);color:var(--tx-primary);letter-spacing:1px;transition:all .15s ease;position:relative;text-align:center;-webkit-tap-highlight-color:transparent}
+.btn:active{transform:scale(.95)}
+.btn.s{font-size:clamp(.35rem,1.6vw,.45rem);padding:8px 12px}
+.btn-b{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 8px rgba(0,229,255,.3),inset 0 0 4px rgba(0,229,255,.1)}
+.btn-b:hover,.btn-b:focus-visible{box-shadow:0 0 20px rgba(0,229,255,.5),inset 0 0 8px rgba(0,229,255,.15);background:rgba(0,229,255,.06)}
+.btn-p{color:var(--magenta);border-color:var(--magenta);box-shadow:0 0 8px rgba(255,64,255,.3)}
+.btn-p:hover,.btn-p:focus-visible{box-shadow:0 0 18px rgba(255,64,255,.5);background:rgba(255,64,255,.06)}
+.btn-g{color:var(--green);border-color:var(--green);box-shadow:0 0 8px rgba(64,255,128,.3)}
+.btn-g:hover,.btn-g:focus-visible{box-shadow:0 0 18px rgba(64,255,128,.5);background:rgba(64,255,128,.06)}
+.btn-y{color:var(--yellow);border-color:var(--yellow);box-shadow:0 0 8px rgba(255,229,64,.3)}
+.btn-y:hover,.btn-y:focus-visible{box-shadow:0 0 18px rgba(255,229,64,.5);background:rgba(255,229,64,.06)}
+.btn-d{color:var(--tx-muted);border-color:var(--bd-lit)}
+.btn-d:hover,.btn-d:focus-visible{border-color:var(--tx-secondary);color:var(--tx-secondary)}
+
+/* === 主菜单 === */
+#menu{justify-content:center;gap:var(--space-xs)}
+.menu-btns{display:flex;flex-direction:column;gap:10px;margin:var(--space-lg) 0;width:100%;max-width:340px}
+.menu-btns .btn{width:100%;padding:14px;font-size:clamp(.5rem,2.5vw,.65rem)}
+.ver{font-family:var(--font-body);font-size:.75rem;color:var(--tx-dim);margin-top:var(--space-lg);letter-spacing:2px}
+
+/* === 角色选择 === */
+#charSel{gap:var(--space-sm)}
+.cg{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:440px;margin:var(--space-sm) 0}
+.cc{background:var(--bg-card);border:2px solid var(--bd-dim);padding:14px 12px;cursor:pointer;text-align:center;transition:all .2s ease;border-radius:var(--radius-sm)}
+.cc:hover,.cc:focus-visible{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,229,255,.15);background:var(--bg-hover)}
+.cc.selected{border-color:var(--yellow);box-shadow:0 0 16px rgba(255,229,64,.35),inset 0 0 8px rgba(255,229,64,.06);background:rgba(255,229,64,.04)}
+.cc .ccn{font-family:var(--font-display);font-size:clamp(.45rem,2.5vw,.55rem);color:var(--cyan);margin:4px 0}
+.cc .ccs{font-family:var(--font-body);font-size:.85rem;margin:2px 0}
+.cc .ccd{font-family:var(--font-body);font-size:.7rem;color:var(--tx-secondary);margin-top:6px;line-height:1.6}
+.sk{margin-top:var(--space-sm);width:100%;max-width:440px}
+.sk h3{font-family:var(--font-display);font-size:clamp(.4rem,2vw,.5rem);color:var(--magenta);margin-bottom:var(--space-sm);text-shadow:0 0 4px var(--magenta)}
+.sk.hidden{display:none}
+.sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
+.sc{background:var(--bg-card);border:1px solid var(--bd-dim);padding:10px 8px;cursor:pointer;text-align:center;transition:all .15s;border-radius:var(--radius-sm)}
+.sc:hover{border-color:var(--magenta)}
+.sc.selected{border-color:var(--green);box-shadow:0 0 10px rgba(64,255,128,.3);background:rgba(64,255,128,.04)}
+.sc .sn{font-family:var(--font-display);font-size:.38rem;color:var(--magenta)}
+.sc .st{font-family:var(--font-body);font-size:.65rem;color:var(--tx-muted);margin-top:3px}
+
+/* === 联机大厅 === */
+#lobby{gap:var(--space-md)}
+.lbi{display:flex;gap:var(--space-sm);width:100%;max-width:400px;margin:4px 0}
+.inp{flex:1;background:var(--bg-input);border:2px solid var(--bd-lit);color:var(--cyan);padding:12px 14px;font-family:var(--font-display);font-size:clamp(.4rem,2vw,.5rem);outline:none;border-radius:var(--radius-sm);transition:border-color .15s}
+.inp:focus{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.2)}
+.inp::placeholder{color:var(--tx-dim)}
+.sts{font-family:var(--font-body);font-size:.8rem;color:var(--yellow);min-height:24px;margin:var(--space-sm) 0;text-align:center}
+
+/* === 战斗 HUD === */
+.bh{display:flex;justify-content:space-between;width:100%;padding:4px;gap:8px}
+.pi{flex:1;background:var(--bg-panel);border:1px solid var(--bd-dim);padding:8px;border-radius:var(--radius-sm)}
+.pi.mir{text-align:right}
+.pn{font-family:var(--font-display);font-size:clamp(.35rem,1.8vw,.4rem);color:var(--cyan);margin-bottom:6px;text-shadow:0 0 3px var(--cyan)}
+.bar-c{background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.08);height:14px;position:relative;margin:4px 0;border-radius:1px;overflow:hidden}
+.bar{height:100%;transition:width .35s cubic-bezier(.4,0,.2,1)}
+.bar-hp{background:linear-gradient(90deg,#cc1133,#ff3355);box-shadow:0 0 6px rgba(255,50,80,.5)}
+.bar-mp{background:linear-gradient(90deg,#1144cc,#3366ff);height:8px;box-shadow:0 0 4px rgba(51,102,255,.5)}
+.bar-sp{background:linear-gradient(90deg,#11aa33,#33ee55);height:8px;box-shadow:0 0 4px rgba(51,238,85,.4)}
+.bar-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:var(--font-body);font-size:.65rem;color:#fff;text-shadow:1px 1px 3px rgba(0,0,0,.8);pointer-events:none}
+.tmr{text-align:center;min-width:60px;display:flex;flex-direction:column;justify-content:center}
+.tmr .rnd{font-family:var(--font-display);font-size:clamp(.32rem,1.7vw,.38rem);color:var(--yellow);text-shadow:0 0 5px var(--yellow)}
+.tmr .t{font-family:var(--font-display);font-size:clamp(.9rem,5vw,1.4rem);color:var(--cyan);text-shadow:0 0 10px var(--cyan);line-height:1.2}
+
+/* === 战场 === */
+.fld{width:100%;max-width:600px;aspect-ratio:3/1;background:#000;border:2px solid var(--bd-dim);margin:6px 0;position:relative;border-radius:var(--radius-sm);overflow:hidden}
+.fld canvas{width:100%;height:100%;image-rendering:pixelated}
+
+/* === 行动队列 === */
+.aq{width:100%;max-width:600px;background:var(--bg-panel);border:1px solid var(--bd-dim);padding:10px;margin:4px 0;border-radius:var(--radius-sm)}
+.aq.hidden{display:none}
+.aq h3{font-family:var(--font-display);font-size:clamp(.35rem,1.8vw,.42rem);color:var(--yellow);margin-bottom:8px}
+.aslots{display:flex;flex-wrap:wrap;gap:3px;min-height:32px;margin-bottom:8px}
+.as{background:var(--bg-card);border:1px solid var(--bd-lit);padding:5px 8px;font-family:var(--font-body);font-size:.7rem;color:var(--cyan);cursor:pointer;position:relative;border-radius:1px;transition:.1s}
+.as:hover{border-color:var(--cyan)}
+.as .sn{position:absolute;top:-8px;left:4px;font-family:var(--font-body);font-size:.6rem;color:var(--tx-muted);background:var(--bg-panel);padding:0 3px}
+.abtns{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:8px}
+.ab{background:var(--bg-card);border:1px solid var(--bd-dim);color:var(--cyan);padding:10px 3px;font-family:var(--font-display);font-size:clamp(.28rem,1.4vw,.32rem);cursor:pointer;transition:all .1s;border-radius:1px}
+.ab:hover{border-color:var(--cyan);box-shadow:0 0 8px rgba(0,229,255,.2)}
+.ab:active{background:var(--cyan);color:var(--bg-deep)}
+.qc{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+
+/* === 战斗日志 === */
+.log{width:100%;max-width:600px;max-height:80px;background:rgba(0,0,0,.7);border:1px solid var(--bd-dim);padding:6px;overflow-y:auto;font-family:var(--font-body);font-size:.65rem;border-radius:var(--radius-sm)}
+.log .l{padding:1px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.log .ld{color:var(--red)}.log .lb{color:var(--blue)}.log .ls{color:var(--magenta)}.log .lg{color:var(--green)}
+
+/* === 战斗队列展示 === */
+.bq-row{display:flex;align-items:center;gap:6px;margin:2px 0}
+.bq-label{font-family:var(--font-display);font-size:.32rem;color:var(--cyan);min-width:24px}
+.bq-slots{display:flex;flex-wrap:wrap;gap:2px}
+.bq-slot{font-family:var(--font-body);font-size:.55rem;padding:2px 4px;background:var(--bg-card);border:1px solid var(--bd-dim);color:var(--tx-muted);border-radius:1px}
+.bq-slot.active{color:var(--yellow);border-color:var(--yellow);background:rgba(255,229,64,.08);box-shadow:0 0 5px rgba(255,229,64,.3)}
+
+/* === 结果页 === */
+#result{justify-content:center}
+.res{text-align:center;padding:var(--space-xl) var(--space-md);display:flex;flex-direction:column;align-items:center;gap:var(--space-md)}
+.res .n1{margin-bottom:var(--space-sm)}
+.res p{font-family:var(--font-body);font-size:.85rem;color:var(--tx-secondary);margin-bottom:var(--space-lg);line-height:2}
+
+/* === 编辑器 === */
+.edp{background:var(--bg-panel);border:2px dashed var(--bd-lit);padding:var(--space-xl) var(--space-lg);margin:var(--space-md) 0;text-align:center;border-radius:var(--radius-md);width:100%;max-width:440px}
+.edp p{font-family:var(--font-display);font-size:.45rem;color:var(--cyan);margin:5px 0}
+.edp .h{font-family:var(--font-body);font-size:.7rem;color:var(--tx-muted)}
+
+/* ============================================
+   图鉴 Wiki
+   ============================================ */
+#wiki{padding:var(--space-md);overflow-y:auto;max-height:100dvh;gap:0;align-items:stretch}
+.wiki-tabs{display:flex;gap:0;width:100%;max-width:500px;margin:0 auto 16px;border:2px solid var(--bd-dim);border-radius:var(--radius-sm);overflow:hidden}
+.wiki-tab{flex:1;font-family:var(--font-display);font-size:clamp(.35rem,1.8vw,.45rem);padding:12px 6px;background:var(--bg-card);color:var(--tx-muted);border:none;cursor:pointer;transition:all .15s;border-right:1px solid var(--bd-dim)}
 .wiki-tab:last-child{border-right:none}
-.wiki-tab.active{color:var(--c1);background:rgba(0,255,255,.08);box-shadow:inset 0 -2px 0 var(--c1)}
-.wiki-tab:hover{color:var(--c1)}
-.wiki-panel{display:none;width:100%;max-width:500px;padding-bottom:16px}
+.wiki-tab.active{color:var(--cyan);background:rgba(0,229,255,.06);box-shadow:inset 0 -2px 0 var(--cyan)}
+.wiki-tab:hover{color:var(--cyan)}
+.wiki-panel{display:none;width:100%;max-width:500px;margin:0 auto;padding-bottom:var(--space-xl)}
 .wiki-panel.active{display:block}
 
 /* 角色卡片 */
-.wiki-char-card{background:var(--panel);border:2px solid #1a1a2e;padding:12px;margin-bottom:10px;border-radius:2px;transition:.15s}
-.wiki-char-card:hover{border-color:var(--c1);box-shadow:0 0 12px rgba(0,255,255,.1)}
-.wiki-char-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.wiki-char-avatar{width:36px;height:36px;border:2px solid;display:flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0}
-.wiki-char-name{font-size:.5rem;line-height:1.4}
-.wiki-char-desc{font-size:.3rem;color:#888}
-.wiki-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 0}
-.wiki-stat-item{background:#0a0a14;border:1px solid #1a1a2e;padding:5px 4px;text-align:center}
-.wiki-stat-val{font-size:.55rem;color:var(--c1)}
-.wiki-stat-label{font-size:.25rem;color:#666;margin-top:2px}
-.wiki-stat-label.regen{color:var(--c4)}
-.wiki-char-skills{margin-top:6px;border-top:1px solid #1a1a2e;padding-top:6px}
-.wiki-char-skills h4{font-size:.33rem;color:var(--c3);margin-bottom:4px}
+.wiki-char-card{background:var(--bg-panel);border:2px solid var(--bd-dim);padding:14px;margin-bottom:12px;border-radius:var(--radius-sm);transition:all .15s}
+.wiki-char-card:hover{border-color:var(--cyan);box-shadow:0 0 16px rgba(0,229,255,.08)}
+.wiki-char-header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.wiki-char-avatar{width:40px;height:40px;border:2px solid;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;border-radius:var(--radius-sm)}
+.wiki-char-name{font-family:var(--font-display);font-size:clamp(.45rem,2.5vw,.55rem);line-height:1.5}
+.wiki-char-desc{font-family:var(--font-body);font-size:.75rem;color:var(--tx-secondary)}
+.wiki-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:10px 0}
+.wiki-stat-item{background:rgba(0,0,0,.4);border:1px solid var(--bd-dim);padding:8px 4px;text-align:center;border-radius:var(--radius-sm)}
+.wiki-stat-val{font-family:var(--font-display);font-size:clamp(.45rem,2.5vw,.6rem);color:var(--cyan)}
+.wiki-stat-label{font-family:var(--font-body);font-size:.6rem;color:var(--tx-muted);margin-top:3px}
+.wiki-stat-label.regen{color:var(--green)}
+.wiki-char-skills{margin-top:8px;border-top:1px solid var(--bd-dim);padding-top:8px}
+.wiki-char-skills h4{font-family:var(--font-display);font-size:.35rem;color:var(--yellow);margin-bottom:6px}
+.wiki-skill-item{background:rgba(0,0,0,.4);border:1px solid var(--bd-dim);padding:7px 10px;margin-bottom:3px;display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-size:.72rem;border-radius:1px}
+.wiki-skill-item .ws-name{font-family:var(--font-display);font-size:.32rem;min-width:55px;flex-shrink:0}
+.wiki-skill-item .ws-info{color:var(--tx-secondary);flex:1;font-size:.68rem}
+.wiki-skill-item .ws-cost{color:var(--green);font-size:.65rem;text-align:right;min-width:70px;flex-shrink:0}
 
-/* 技能列表 */
-.wiki-skill-item{background:#0a0a14;border:1px solid #1a1a2e;padding:6px 8px;margin-bottom:3px;display:flex;align-items:center;gap:6px;font-size:.28rem}
-.wiki-skill-item .ws-name{color:var(--c2);min-width:50px;font-weight:bold}
-.wiki-skill-item .ws-info{color:#888;flex:1}
-.wiki-skill-item .ws-cost{color:var(--c4);font-size:.24rem;text-align:right;min-width:60px}
-
-/* 技能卡片(大) */
-.wiki-skill-card{background:var(--panel);border:2px solid #1a1a2e;padding:12px;margin-bottom:8px;border-radius:2px}
-.wiki-skill-card:hover{border-color:var(--c2);box-shadow:0 0 10px rgba(255,0,255,.08)}
-.wiki-skill-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.wiki-skill-title .wst-name{font-size:.5rem;color:var(--c2)}
-.wiki-skill-title .wst-char{font-size:.28rem;color:#555}
-.wiki-skill-desc{font-size:.3rem;color:#aaa;margin-bottom:6px;line-height:1.6}
+/* 技能大卡片 */
+.wiki-skill-card{background:var(--bg-panel);border:2px solid var(--bd-dim);padding:14px;margin-bottom:8px;border-radius:var(--radius-sm);transition:all .15s}
+.wiki-skill-card:hover{border-color:var(--magenta);box-shadow:0 0 12px rgba(255,64,255,.08)}
+.wiki-skill-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.wiki-skill-title .wst-name{font-family:var(--font-display);font-size:clamp(.4rem,2vw,.5rem)}
+.wiki-skill-title .wst-char{font-family:var(--font-body);font-size:.7rem;color:var(--tx-muted)}
+.wiki-skill-desc{font-family:var(--font-body);font-size:.78rem;color:var(--tx-secondary);margin-bottom:8px;line-height:1.6}
 .wiki-skill-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
-.wiki-skill-stat{background:#0a0a14;border:1px solid #1a1a2e;padding:3px;text-align:center;font-size:.24rem}
-.wiki-skill-stat .wss-val{color:var(--c1);font-size:.35rem}
-.wiki-skill-stat .wss-lbl{color:#555}
+.wiki-skill-stat{background:rgba(0,0,0,.4);border:1px solid var(--bd-dim);padding:5px 2px;text-align:center;border-radius:1px}
+.wiki-skill-stat .wss-val{font-family:var(--font-display);font-size:.38rem;color:var(--cyan)}
+.wiki-skill-stat .wss-lbl{font-family:var(--font-body);font-size:.6rem;color:var(--tx-muted)}
 
 /* 规则面板 */
-.wiki-section{margin-bottom:16px}
-.wiki-section h3{font-size:.45rem;color:var(--c3);margin-bottom:8px;text-shadow:0 0 4px var(--c3)}
-.wiki-section h4{font-size:.35rem;color:var(--c1);margin-bottom:4px}
-.wiki-section p{font-size:.3rem;color:#aaa;line-height:1.8;margin-bottom:6px}
-.wiki-card{background:var(--panel);border:1px solid #1a1a2e;padding:10px;margin-bottom:6px;border-radius:2px}
-.wiki-formula{font-size:.35rem;color:var(--c4);font-family:monospace;background:#0a0a14;padding:6px 8px;border:1px solid #1a1a2e;margin:4px 0;text-align:center;letter-spacing:1px;word-break:break-all}
-.wiki-formula .hl{color:var(--c2)}
-.wiki-stat-row{font-size:.3rem;color:#aaa;padding:4px 0;display:flex;align-items:center;gap:6px;line-height:1.6}
-.wiki-stat-icon{font-size:.4rem;min-width:24px;text-align:center}
-.hp-icon{color:#f44}.mp-icon{color:#48f}.sp-icon{color:#4f4}
-.wiki-table{width:100%;border-collapse:collapse;font-size:.28rem;margin:6px 0}
-.wiki-table th{background:rgba(0,255,255,.08);color:var(--c1);padding:6px 8px;border:1px solid #1a1a2e;text-align:left;font-size:.28rem}
-.wiki-table td{padding:5px 8px;border:1px solid #1a1a2e;color:#aaa}
-.wiki-table tr:hover td{background:rgba(0,255,255,.03)}
+.wiki-section{margin-bottom:18px}
+.wiki-section h3{font-family:var(--font-display);font-size:clamp(.4rem,2.2vw,.48rem);color:var(--yellow);margin-bottom:10px;text-shadow:0 0 5px var(--yellow)}
+.wiki-section h4{font-family:var(--font-display);font-size:.38rem;color:var(--cyan);margin-bottom:5px}
+.wiki-section p{font-family:var(--font-body);font-size:.78rem;color:var(--tx-secondary);line-height:1.8;margin-bottom:4px}
+.wiki-card{background:var(--bg-panel);border:1px solid var(--bd-dim);padding:12px;margin-bottom:8px;border-radius:var(--radius-sm)}
+.wiki-formula{font-family:var(--font-body);font-size:.8rem;color:var(--green);background:rgba(0,0,0,.4);padding:8px 10px;border:1px solid var(--bd-dim);margin:4px 0;text-align:center;letter-spacing:1px;word-break:break-all;border-radius:var(--radius-sm)}
+.wiki-formula .hl{color:var(--magenta)}
+.wiki-stat-row{font-family:var(--font-body);font-size:.78rem;color:var(--tx-secondary);padding:5px 0;display:flex;align-items:center;gap:8px;line-height:1.6}
+.wiki-stat-icon{font-size:.9rem;min-width:26px;text-align:center}
+.hp-icon{color:var(--red)}.mp-icon{color:var(--blue)}.sp-icon{color:var(--green)}
+.wiki-table{width:100%;border-collapse:collapse;font-family:var(--font-body);font-size:.72rem;margin:6px 0}
+.wiki-table th{background:rgba(0,229,255,.06);color:var(--cyan);padding:8px 10px;border:1px solid var(--bd-dim);text-align:left;font-family:var(--font-display);font-size:.3rem}
+.wiki-table td{padding:7px 10px;border:1px solid var(--bd-dim);color:var(--tx-secondary)}
+.wiki-table tr:hover td{background:rgba(0,229,255,.03)}
 .wiki-tips{list-style:none;padding:0}
-.wiki-tips li{font-size:.28rem;color:#aaa;padding:4px 0 4px 14px;position:relative;line-height:1.7}
-.wiki-tips li::before{content:'▸';position:absolute;left:0;color:var(--c1)}
+.wiki-tips li{font-family:var(--font-body);font-size:.75rem;color:var(--tx-secondary);padding:5px 0 5px 16px;position:relative;line-height:1.7}
+.wiki-tips li::before{content:'\25B8';position:absolute;left:0;color:var(--cyan);font-family:var(--font-display);font-size:.4rem}
+
+/* ============================================
+   手机竖屏适配
+   ============================================ */
+@media (max-width: 480px) {
+  .screen{padding:10px 8px}
+  .menu-btns{max-width:100%}
+  .menu-btns .btn{padding:13px 10px}
+  .cg{grid-template-columns:1fr 1fr;gap:8px}
+  .cc{padding:10px 8px}
+  .cc .ccn{font-size:.5rem}
+  .sg{grid-template-columns:1fr 1fr}
+  .sc{padding:8px 6px}
+  .abtns{grid-template-columns:repeat(4,1fr)}
+  .bh{gap:4px}
+  .pi{padding:5px}
+  .fld{border-width:1px}
+  .wiki-tab{padding:10px 4px}
+  .wiki-stat-grid{grid-template-columns:repeat(2,1fr)}
+  .wiki-skill-stats{grid-template-columns:repeat(2,1fr)}
+  .wiki-skill-item{flex-wrap:wrap}
+  .wiki-skill-item .ws-cost{min-width:auto}
+  .lbi{flex-direction:column}
+  .lbi .btn{width:100%}
+}
+
+@media (max-width: 360px) {
+  .n1{font-size:.9rem}
+  .n1.sm{font-size:.6rem}
+  .btn{padding:10px 14px}
+  .menu-btns .btn{font-size:.48rem;padding:11px 8px}
+  .cg{grid-template-columns:1fr}
+  .abtns{grid-template-columns:repeat(3,1fr)}
+  .sg{grid-template-columns:1fr 1fr}
+}
+
+/* ============================================
+   像素图标系统 — 用 CSS 替代 emoji
+   每个图标是 8x8 像素网格，通过 box-shadow 绘制
+   ============================================ */
+.px-icon{display:inline-block;width:10px;height:10px;position:relative;vertical-align:middle;margin-right:4px;image-rendering:pixelated}
+.px-icon::after{content:'';position:absolute;top:0;left:0;width:2px;height:2px}
+
+/* HP 心形 — 红色 */
+.px-hp::after{box-shadow:
+  0 4px var(--red),2px 4px var(--red),4px 4px var(--red),6px 4px var(--red),8px 4px var(--red),
+  0 6px var(--red),2px 6px var(--red),4px 6px var(--red),6px 6px var(--red),8px 6px var(--red),
+  2px 8px var(--red),4px 8px var(--red),6px 8px var(--red),
+  4px 10px var(--red)}
+
+/* MP 菱形 — 蓝色 */
+.px-mp::after{box-shadow:
+  4px 0 var(--blue),
+  2px 2px var(--blue),6px 2px var(--blue),
+  0 4px var(--blue),8px 4px var(--blue),
+  2px 6px var(--blue),6px 6px var(--blue),
+  4px 8px var(--blue)}
+
+/* SP 闪电 — 绿色 */
+.px-sp::after{box-shadow:
+  6px 0 var(--green),
+  4px 2px var(--green),
+  4px 4px var(--green),8px 4px var(--green),
+  2px 6px var(--green),
+  6px 6px var(--green),
+  4px 8px var(--green)}
+
+/* ATK 剑 — 白色/青 */
+.px-atk::after{box-shadow:
+  4px 0 var(--cyan),
+  4px 2px var(--cyan),
+  2px 4px var(--cyan),4px 4px var(--cyan),6px 4px var(--cyan),
+  4px 6px var(--cyan),
+  2px 8px var(--cyan),6px 8px var(--cyan)}
+
+/* DEF 盾 — 浅蓝 */
+.px-def::after{box-shadow:
+  2px 0 var(--blue),4px 0 var(--blue),6px 0 var(--blue),
+  2px 2px var(--blue),6px 2px var(--blue),
+  0 4px var(--blue),2px 4px var(--blue),4px 4px var(--blue),6px 4px var(--blue),8px 4px var(--blue),
+  0 6px var(--blue),2px 6px var(--blue),4px 6px var(--blue),6px 6px var(--blue),8px 6px var(--blue),
+  0 8px var(--blue),8px 8px var(--blue),
+  0 10px var(--blue),8px 10px var(--blue)}
+
+/* REGEN 循环箭头 — 绿色 */
+.px-regen::after{box-shadow:
+  2px 0 var(--green),6px 0 var(--green),
+  0 2px var(--green),4px 2px var(--green),8px 2px var(--green),
+  2px 4px var(--green),
+  2px 6px var(--green),6px 6px var(--green),
+  4px 8px var(--green)}
+
+/* 像素图标文字替代 — inline 小标签 */
+.pix-label{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-display);font-size:.5rem}
+.pix-label .px-dot{width:6px;height:6px;display:inline-block;box-shadow:0 0 4px currentColor}
+
+/* 用于菜单按钮的前缀标记 */
+.btn-prefix{font-family:var(--font-display);font-size:.55rem;opacity:.7}
+
+/* 图鉴属性标签 — 无 emoji 纯文本样式 */
+.wiki-stat-label{font-family:var(--font-body);font-size:.6rem;color:var(--tx-muted);margin-top:3px}
+.wiki-stat-label.c-red{color:var(--red)}
+.wiki-stat-label.c-blue{color:var(--blue)}
+.wiki-stat-label.c-green{color:var(--green)}
+.wiki-stat-label.c-cyan{color:var(--cyan)}
+.wiki-stat-label.c-yellow{color:var(--yellow)}
+
