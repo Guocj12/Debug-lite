@@ -16,6 +16,7 @@
       <button class="btn btn-g" onclick="enterCharSelect('train')">🎯 训练场</button>
       <button class="btn btn-p" onclick="enterCharSelect('online')">🌐 联机对战</button>
       <button class="btn btn-y" onclick="nav('editor')">📝 技能编辑</button>
+      <button class="btn btn-g" onclick="nav('wiki')">📖 图鉴</button>
     </div>
     <div class="ver">16格横版 · 弹幕碰撞 · 像素动画</div>
   </div>
@@ -92,6 +93,104 @@
     <h2 class="n1 sm">技能编辑器</h2>
     <div class="edp"><p>🔧 技能编辑器开发中...</p><p class="h">即将支持自定义像素动画配置</p></div>
     <button class="btn btn-d" onclick="nav('menu')">返回</button>
+  </div>
+
+  <!-- 图鉴页面 -->
+  <div id="wiki" class="screen">
+    <div class="wiki-tabs" id="wikiTabs">
+      <button class="wiki-tab active" data-tab="chars">角色</button>
+      <button class="wiki-tab" data-tab="skills">技能</button>
+      <button class="wiki-tab" data-tab="rules">规则</button>
+    </div>
+
+    <!-- 角色图鉴 -->
+    <div class="wiki-panel active" id="wikiChars"></div>
+
+    <!-- 技能图鉴 -->
+    <div class="wiki-panel" id="wikiSkills"></div>
+
+    <!-- 游戏规则 -->
+    <div class="wiki-panel" id="wikiRules">
+      <div class="wiki-section">
+        <h3>⚔️ 战斗流程</h3>
+        <p>每回合分为<strong>编辑阶段</strong>和<strong>战斗阶段</strong>。</p>
+        <div class="wiki-card">
+          <h4>📋 编辑阶段（60秒）</h4>
+          <p>在行动队列中编排<strong>16个行动格</strong>。每格可选择技能、移动、防御或转向。点击「✅ 完成」提交，双方都提交后立即进入战斗。</p>
+        </div>
+        <div class="wiki-card">
+          <h4>⚡ 战斗阶段</h4>
+          <p>双方行动队列<strong>同时逐格执行</strong>（共16 tick），系统自动计算伤害和效果。观察回放，看谁的策略更胜一筹！</p>
+        </div>
+      </div>
+
+      <div class="wiki-section">
+        <h3>📊 资源系统</h3>
+        <div class="wiki-stat-row"><span class="wiki-stat-icon hp-icon">❤️</span><strong>HP（生命值）</strong>——归零则落败，回合结束继承到下一轮</div>
+        <div class="wiki-stat-row"><span class="wiki-stat-icon mp-icon">💎</span><strong>MP（法力值）</strong>——释放技能消耗，每tick自动回复（速率因角色而异）</div>
+        <div class="wiki-stat-row"><span class="wiki-stat-icon sp-icon">⚡</span><strong>SP（体力值）</strong>——移动/闪避/技能消耗，每tick自动回复（速率因角色而异）</div>
+      </div>
+
+      <div class="wiki-section">
+        <h3>🎯 伤害计算</h3>
+        <div class="wiki-card">
+          <h4>普通伤害</h4>
+          <p class="wiki-formula">伤害 = ATK × 技能倍率 × (1 − <span class="hl">DEF</span> / (<span class="hl">DEF</span> + 40))</p>
+          <p>最低伤害为 <strong>1</strong>。防御越高，减伤越多，但不会完全免疫。</p>
+        </div>
+        <div class="wiki-card">
+          <h4>真实伤害（真伤）</h4>
+          <p class="wiki-formula">伤害 = ATK × 技能倍率</p>
+          <p><strong>完全无视防御</strong>！刺客的匕首攻击即为真伤。</p>
+        </div>
+        <div class="wiki-card">
+          <h4>碰撞伤害</h4>
+          <p>双方移动到同一格时，各受到对方 ATK × 0.25 的碰撞伤害（也受减伤影响）。</p>
+        </div>
+      </div>
+
+      <div class="wiki-section">
+        <h3>🛡️ 基础行动</h3>
+        <table class="wiki-table">
+          <tr><th>行动</th><th>效果</th><th>SP消耗</th></tr>
+          <tr><td>⬅️ 左移 / ➡️ 右移</td><td>向该方向移动1格</td><td>0</td></tr>
+          <tr><td>💨 左闪 / 右闪</td><td>向该方向冲刺2格（可穿越敌人）</td><td>10</td></tr>
+          <tr><td>🛡️ 防御</td><td>本tick获得 DEF×0.8 临时护甲</td><td>0</td></tr>
+          <tr><td>🔄 转向</td><td>转身（面朝反方向）</td><td>0</td></tr>
+        </table>
+      </div>
+
+      <div class="wiki-section">
+        <h3>🎮 异常状态</h3>
+        <table class="wiki-table">
+          <tr><th>状态</th><th>效果</th><th>来源</th></tr>
+          <tr><td>💫 眩晕 (stun)</td><td>本tick无法行动</td><td>战士重击</td></tr>
+          <tr><td>❄️ 冰冻 (freeze)</td><td>本tick无法行动</td><td>法师冰锥</td></tr>
+          <tr><td>🔥 燃烧 (burn)</td><td>每tick受到持续伤害</td><td>法师火球术</td></tr>
+          <tr><td>☠️ 中毒 (poison)</td><td>每tick受到持续伤害</td><td>刺客毒瓶</td></tr>
+        </table>
+      </div>
+
+      <div class="wiki-section">
+        <h3>🏆 胜利条件</h3>
+        <p>一方 HP 归零则<strong>立即判负</strong>。若 30 回合后双方均存活，以<strong>剩余 HP 多者</strong>获胜。HP 相同则为平局。</p>
+      </div>
+
+      <div class="wiki-section">
+        <h3>💡 进阶技巧</h3>
+        <ul class="wiki-tips">
+          <li>预判对手行动——他可能移动到哪里？会用什么技能？</li>
+          <li>闪避可以<strong>穿越敌人</strong>并躲开当tick的伤害</li>
+          <li>防御只持续<strong>1 tick</strong>，要在对手可能攻击的tick精准使用</li>
+          <li>技能有<strong>冷却时间</strong>（CD），合理安排释放节奏</li>
+          <li>资源不足时技能会<strong>空过（exhausted）</strong>——注意 MP/SP 余量！</li>
+          <li>弹幕可以被护盾或更高优先级的弹幕<strong>抵消</strong></li>
+          <li>射手克制法师（远程压制短手），刺客克制战士（真伤无视高防）</li>
+        </ul>
+      </div>
+    </div>
+
+    <button class="btn btn-d" onclick="nav('menu')" style="margin-top:16px;">返回菜单</button>
   </div>
 </div>
 <script src="/socket.io/socket.io.js"></script>

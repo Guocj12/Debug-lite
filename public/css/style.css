@@ -82,3 +82,65 @@ body{background:var(--bg);color:var(--txt);font-family:'Press Start 2P',monospac
 .bq-slots{display:flex;flex-wrap:wrap;gap:1px}
 .bq-slot{font-size:.22rem;padding:2px 3px;background:#12122a;border:1px solid #1a1a2e;color:#666}
 .bq-slot.active{color:var(--c3);border-color:var(--c3);background:#1a1a0a;box-shadow:0 0 4px var(--c3)}
+
+/* ==================== 图鉴 Wiki ==================== */
+#wiki{padding:10px;overflow-y:auto;max-height:100vh}
+.wiki-tabs{display:flex;gap:0;width:100%;max-width:500px;margin-bottom:12px;border:2px solid var(--border);border-radius:4px;overflow:hidden}
+.wiki-tab{flex:1;font-family:'Press Start 2P';font-size:.4rem;padding:10px 6px;background:rgba(0,0,0,.85);color:#555;border:none;cursor:pointer;transition:.15s;border-right:1px solid var(--border)}
+.wiki-tab:last-child{border-right:none}
+.wiki-tab.active{color:var(--c1);background:rgba(0,255,255,.08);box-shadow:inset 0 -2px 0 var(--c1)}
+.wiki-tab:hover{color:var(--c1)}
+.wiki-panel{display:none;width:100%;max-width:500px;padding-bottom:16px}
+.wiki-panel.active{display:block}
+
+/* 角色卡片 */
+.wiki-char-card{background:var(--panel);border:2px solid #1a1a2e;padding:12px;margin-bottom:10px;border-radius:2px;transition:.15s}
+.wiki-char-card:hover{border-color:var(--c1);box-shadow:0 0 12px rgba(0,255,255,.1)}
+.wiki-char-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.wiki-char-avatar{width:36px;height:36px;border:2px solid;display:flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0}
+.wiki-char-name{font-size:.5rem;line-height:1.4}
+.wiki-char-desc{font-size:.3rem;color:#888}
+.wiki-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 0}
+.wiki-stat-item{background:#0a0a14;border:1px solid #1a1a2e;padding:5px 4px;text-align:center}
+.wiki-stat-val{font-size:.55rem;color:var(--c1)}
+.wiki-stat-label{font-size:.25rem;color:#666;margin-top:2px}
+.wiki-stat-label.regen{color:var(--c4)}
+.wiki-char-skills{margin-top:6px;border-top:1px solid #1a1a2e;padding-top:6px}
+.wiki-char-skills h4{font-size:.33rem;color:var(--c3);margin-bottom:4px}
+
+/* 技能列表 */
+.wiki-skill-item{background:#0a0a14;border:1px solid #1a1a2e;padding:6px 8px;margin-bottom:3px;display:flex;align-items:center;gap:6px;font-size:.28rem}
+.wiki-skill-item .ws-name{color:var(--c2);min-width:50px;font-weight:bold}
+.wiki-skill-item .ws-info{color:#888;flex:1}
+.wiki-skill-item .ws-cost{color:var(--c4);font-size:.24rem;text-align:right;min-width:60px}
+
+/* 技能卡片(大) */
+.wiki-skill-card{background:var(--panel);border:2px solid #1a1a2e;padding:12px;margin-bottom:8px;border-radius:2px}
+.wiki-skill-card:hover{border-color:var(--c2);box-shadow:0 0 10px rgba(255,0,255,.08)}
+.wiki-skill-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.wiki-skill-title .wst-name{font-size:.5rem;color:var(--c2)}
+.wiki-skill-title .wst-char{font-size:.28rem;color:#555}
+.wiki-skill-desc{font-size:.3rem;color:#aaa;margin-bottom:6px;line-height:1.6}
+.wiki-skill-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.wiki-skill-stat{background:#0a0a14;border:1px solid #1a1a2e;padding:3px;text-align:center;font-size:.24rem}
+.wiki-skill-stat .wss-val{color:var(--c1);font-size:.35rem}
+.wiki-skill-stat .wss-lbl{color:#555}
+
+/* 规则面板 */
+.wiki-section{margin-bottom:16px}
+.wiki-section h3{font-size:.45rem;color:var(--c3);margin-bottom:8px;text-shadow:0 0 4px var(--c3)}
+.wiki-section h4{font-size:.35rem;color:var(--c1);margin-bottom:4px}
+.wiki-section p{font-size:.3rem;color:#aaa;line-height:1.8;margin-bottom:6px}
+.wiki-card{background:var(--panel);border:1px solid #1a1a2e;padding:10px;margin-bottom:6px;border-radius:2px}
+.wiki-formula{font-size:.35rem;color:var(--c4);font-family:monospace;background:#0a0a14;padding:6px 8px;border:1px solid #1a1a2e;margin:4px 0;text-align:center;letter-spacing:1px;word-break:break-all}
+.wiki-formula .hl{color:var(--c2)}
+.wiki-stat-row{font-size:.3rem;color:#aaa;padding:4px 0;display:flex;align-items:center;gap:6px;line-height:1.6}
+.wiki-stat-icon{font-size:.4rem;min-width:24px;text-align:center}
+.hp-icon{color:#f44}.mp-icon{color:#48f}.sp-icon{color:#4f4}
+.wiki-table{width:100%;border-collapse:collapse;font-size:.28rem;margin:6px 0}
+.wiki-table th{background:rgba(0,255,255,.08);color:var(--c1);padding:6px 8px;border:1px solid #1a1a2e;text-align:left;font-size:.28rem}
+.wiki-table td{padding:5px 8px;border:1px solid #1a1a2e;color:#aaa}
+.wiki-table tr:hover td{background:rgba(0,255,255,.03)}
+.wiki-tips{list-style:none;padding:0}
+.wiki-tips li{font-size:.28rem;color:#aaa;padding:4px 0 4px 14px;position:relative;line-height:1.7}
+.wiki-tips li::before{content:'▸';position:absolute;left:0;color:var(--c1)}

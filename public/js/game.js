@@ -1611,6 +1611,10 @@ function nav(screen) {
     if (canvas) Renderer.init(canvas);
     startRenderLoop();
   }
+  if (screen === 'wiki') {
+    if (!_wikiActiveTab) initWiki();
+    else { renderWikiChars(); renderWikiSkills(); }
+  }
 }
 
 function updatePrepareUI() {
@@ -1730,6 +1734,101 @@ function joinRoom() {
   if (G.socket && rid) {
     G.socket.emit('selectChar', { charId: G.myCharId, skillIds: G.mySkillIds, customSkills: {} });
   }
+}
+
+// ==================== 图鉴系统 Wiki ====================
+let _wikiActiveTab = 'chars';
+
+function initWiki() {
+  _wikiActiveTab = 'chars';
+  // Tab 切换事件
+  document.querySelectorAll('#wikiTabs .wiki-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _wikiActiveTab = btn.dataset.tab;
+      document.querySelectorAll('#wikiTabs .wiki-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('#wiki .wiki-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('wiki' + (_wikiActiveTab === 'chars' ? 'Chars' : _wikiActiveTab === 'skills' ? 'Skills' : 'Rules')).classList.add('active');
+      if (_wikiActiveTab === 'chars') renderWikiChars();
+      else if (_wikiActiveTab === 'skills') renderWikiSkills();
+    });
+  });
+  renderWikiChars();
+}
+
+function renderWikiChars() {
+  const el = document.getElementById('wikiChars');
+  if (!el) return;
+  const chars = _charsData?.characters || [];
+  const skills = _skillsData?.skills || {};
+
+  el.innerHTML = chars.map(c => {
+    const reduction = (c.def / (c.def + 40) * 100).toFixed(1);
+    const charSkills = Object.values(skills).filter(s => s.charId === c.id);
+    return `
+    <div class="wiki-char-card">
+      <div class="wiki-char-header">
+        <div class="wiki-char-avatar" style="border-color:${c.color};color:${c.color};box-shadow:0 0 8px ${c.color}">
+          ${c.shape === 'square' ? '■' : c.shape === 'triangle' ? '▶' : c.shape === 'diamond' ? '◆' : '▼'}
+        </div>
+        <div>
+          <div class="wiki-char-name" style="color:${c.color}">${c.name}</div>
+          <div class="wiki-char-desc">${c.desc}</div>
+        </div>
+      </div>
+      <div class="wiki-stat-grid">
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxHp}</div><div class="wiki-stat-label">❤️ HP</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxMp}</div><div class="wiki-stat-label">💎 MP</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.maxSp}</div><div class="wiki-stat-label">⚡ SP</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.atk}</div><div class="wiki-stat-label">⚔️ ATK</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val">${c.def} <span style="font-size:.22rem;color:#888">(${reduction}%)</span></div><div class="wiki-stat-label">🛡️ DEF</div></div>
+        <div class="wiki-stat-item"><div class="wiki-stat-val" style="color:var(--c4)">MP+${c.mpRegen||1} SP+${c.spRegen||2}</div><div class="wiki-stat-label regen">🔄 回复/tick</div></div>
+      </div>
+      <div class="wiki-char-skills">
+        <h4>📜 技能 (${charSkills.length})</h4>
+        ${charSkills.map(s => `
+        <div class="wiki-skill-item">
+          <span class="ws-name" style="color:${s.color||'var(--c2)'}">${s.name}</span>
+          <span class="ws-info">${s.desc||''}</span>
+          <span class="ws-cost">${s.mpCost>0?'💎'+s.mpCost:''} ${s.spCost>0?'⚡'+s.spCost:''} CD:${s.cooldown||0}</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderWikiSkills() {
+  const el = document.getElementById('wikiSkills');
+  if (!el) return;
+  const skills = _skillsData?.skills || {};
+  const chars = _charsData?.characters || [];
+  const charMap = {};
+  chars.forEach(c => { charMap[c.id] = c; });
+
+  el.innerHTML = Object.values(skills).map(s => {
+    const ch = charMap[s.charId];
+    const typeLabel = { melee: '🔪 近战', projectile: '🏹 弹幕', targeted_aoe: '💥 AOE', dash: '💨 冲刺', teleport_backstab: '🌀 瞬移', shield_wall: '🛡️ 护盾' }[s.type] || s.type;
+    const effectLabel = { normal_damage: '普通伤害', stun_damage: '眩晕', freeze_damage: '冰冻', burn_debuff: '燃烧', poison_debuff: '中毒', true_damage: '真伤', dash_knockback: '击退', shield_bullet: '护盾', none: '位移' }[s.effect] || s.effect;
+    const backstabInfo = s.backstabRatio ? `<br>🔪 背刺倍率：<span style="color:#f44">×${s.backstabRatio}</span>` : '';
+    const dotInfo = s.burnTicks ? `<br>🔥 燃烧 ${s.burnTicks}tick · 每tick ATK×${s.burnRatio||0}` : (s.poisonTicks ? `<br>☠️ 中毒 ${s.poisonTicks}tick · 每tick ATK×${s.poisonRatio||0}` : '');
+    return `
+    <div class="wiki-skill-card">
+      <div class="wiki-skill-title">
+        <span class="wst-name" style="color:${s.color||'var(--c2)'}">${s.name}</span>
+        <span class="wst-char">${ch ? ch.name : s.charId}</span>
+      </div>
+      <div class="wiki-skill-desc">${typeLabel} · ${effectLabel}${backstabInfo}${dotInfo}</div>
+      <div class="wiki-skill-stats">
+        <div class="wiki-skill-stat"><div class="wss-val">${s.damageRatio ? '×'+s.damageRatio : '-'}</div><div class="wss-lbl">倍率</div></div>
+        <div class="wiki-skill-stat"><div class="wss-val">${s.range||s.bulletRange||'-'}</div><div class="wss-lbl">射程</div></div>
+        <div class="wiki-skill-stat"><div class="wss-val">${s.cooldown||0}tick</div><div class="wss-lbl">冷却</div></div>
+        <div class="wiki-skill-stat"><div class="wss-val">${s.bulletPriority||'-'}</div><div class="wss-lbl">弹幕Lv</div></div>
+      </div>
+      <div style="font-size:.24rem;color:#555;margin-top:4px;">
+        💎${s.mpCost||0} ⚡${s.spCost||0} ${s.multiShot ? '· '+s.multiShot+'连发' : ''} ${s.aoeRadius ? '· AOE±'+s.aoeRadius : ''} ${s.stunDuration ? '· 眩晕'+s.stunDuration+'tick' : ''} ${s.freezeDuration ? '· 冰冻'+s.freezeDuration+'tick' : ''} ${s.knockback ? '· 击退'+s.knockback+'格' : ''} ${s.defBuff ? '· 防御↑'+(s.defBuff*100)+'%' : ''}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ==================== 初始化 ====================
