@@ -3,8 +3,22 @@
   "battle": { "ticksPerRound": 16, "tickIntervalMs": 1000 },
   "prepare": { "maxActions": 16, "timeSeconds": 60 },
   "damage": {
-    "normal": "atk * ratio - def",
-    "true": "atk * ratio",
-    "backstabMultiplier": 1.2
+    "formula": "ATK × ratio × (1 - DEF/(DEF+40)), min 1",
+    "true": "ATK × ratio (完全无视防御)",
+    "defReduction": "DEF / (DEF + 40)",
+    "collisionRatio": 0.25,
+    "backstabMultiplier": 2.0
+  },
+  "regen": {
+    "description": "每个角色拥有独立的 mpRegen 和 spRegen（在 characters.json 中定义）",
+    "warrior": { "mpRegen": 1, "spRegen": 2, "note": "SP回复标准，战士依赖SP释放技能" },
+    "archer": { "mpRegen": 2, "spRegen": 2, "note": "MP回复较快，支持高频弹幕" },
+    "mage": { "mpRegen": 3, "spRegen": 1, "note": "MP回复最快，是法术炮台" },
+    "assassin": { "mpRegen": 1, "spRegen": 3, "note": "SP回复最快，支持高机动" }
+  },
+  "design": {
+    "ttk": "2-3回合（32-48 tick）",
+    "philosophy": "每tick的选择都有意义，四角色打法完全不同",
+    "counterChain": "战士(高防)→刺客(真伤)→法师(高爆发)→射手(远程压制)→战士"
   }
 }

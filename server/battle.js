@@ -1,10 +1,24 @@
-// Battle Engine v3 - Cooldowns, exhaust, debuff true damage
+// Battle Engine v4 - 百分比减伤 · 个性恢复 · 动态防御
 const skillsData = require('../data/skills.json');
+const charsData = require('../data/characters.json');
+
 class BattleEngine {
   constructor() { this.state = null; this.p1Actions = []; this.p2Actions = []; }
-  init(s) { this.state = s; s._cooldowns_p1 = {}; s._cooldowns_p2 = {}; }
+  init(s) {
+    this.state = s;
+    s._cooldowns_p1 = {};
+    s._cooldowns_p2 = {};
+    // 缓存角色定义
+    s._charDef_p1 = charsData.characters.find(c => c.id === s.p1.charId) || charsData.characters[0];
+    s._charDef_p2 = charsData.characters.find(c => c.id === s.p2.charId) || charsData.characters[0];
+  }
   setActions(a1, a2) { this.p1Actions = a1; this.p2Actions = a2; }
   getState() { return JSON.parse(JSON.stringify(this.state)); }
+
+  /** 百分比减伤公式：减伤率 = DEF / (DEF + 40)，最终伤害 = max(1, floor(基础 × (1-减伤率))) */
+  getDefReduction(def) {
+    return def / (def + 40);
+  }
 
   executeAll() {
     const frames = [], s = this.state;
@@ -62,10 +76,12 @@ class BattleEngine {
 
     this.updateBullets(s);
 
-    s.p1.sp = Math.min(s.p1.maxSp, s.p1.sp + 2);
-    s.p2.sp = Math.min(s.p2.maxSp, s.p2.sp + 2);
-    s.p1.mp = Math.min(s.p1.maxMp, s.p1.mp + 1);
-    s.p2.mp = Math.min(s.p2.maxMp, s.p2.mp + 1);
+    // 个性化资源恢复（每个角色不同恢复速率）
+    const cd1 = s._charDef_p1, cd2 = s._charDef_p2;
+    s.p1.sp = Math.min(s.p1.maxSp, s.p1.sp + (cd1.spRegen || 2));
+    s.p2.sp = Math.min(s.p2.maxSp, s.p2.sp + (cd2.spRegen || 2));
+    s.p1.mp = Math.min(s.p1.maxMp, s.p1.mp + (cd1.mpRegen || 1));
+    s.p2.mp = Math.min(s.p2.maxMp, s.p2.mp + (cd2.mpRegen || 1));
 
     return {
       tick, p1: this.clonePlayer(s.p1), p2: this.clonePlayer(s.p2),
@@ -97,24 +113,24 @@ class BattleEngine {
 
   checkCollision(p1, p2, i1, i2) {
     const events = [], p1D = p1.x + i1.dx, p2D = p2.x + i2.dx;
+    // 碰撞伤害用百分比减伤（但保留最低伤害）
+    const dmgP1toP2 = Math.max(1, Math.floor(p1.atk * 0.25 * (1 - this.getDefReduction(p2.def))));
+    const dmgP2toP1 = Math.max(1, Math.floor(p2.atk * 0.25 * (1 - this.getDefReduction(p1.def))));
     if (i1.dx !== 0 && i2.dx !== 0) {
       if (p1D === p2D) {
-        const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
-        p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-        events.push({ type: 'collision', x: p1D, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
+        p1.hp = Math.max(0, p1.hp - dmgP2toP1); p2.hp = Math.max(0, p2.hp - dmgP1toP2);
+        events.push({ type: 'collision', x: p1D, dmg1: dmgP2toP1, dmg2: dmgP1toP2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
         return { type: 'both', events };
       }
     }
     if (i1.dx !== 0 && p1D === p2.x && i2.dx === 0 && !i1.isDodge) {
-      const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
-      p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-      events.push({ type: 'collision', x: p2.x, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
+      p1.hp = Math.max(0, p1.hp - dmgP2toP1); p2.hp = Math.max(0, p2.hp - dmgP1toP2);
+      events.push({ type: 'collision', x: p2.x, dmg1: dmgP2toP1, dmg2: dmgP1toP2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
       return { type: 'p1Blocked', events };
     }
     if (i2.dx !== 0 && p2D === p1.x && i1.dx === 0 && !i2.isDodge) {
-      const d1 = Math.max(1, Math.floor(p2.atk * 0.3)), d2 = Math.max(1, Math.floor(p1.atk * 0.3));
-      p1.hp = Math.max(0, p1.hp - d1); p2.hp = Math.max(0, p2.hp - d2);
-      events.push({ type: 'collision', x: p1.x, dmg1: d1, dmg2: d2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
+      p1.hp = Math.max(0, p1.hp - dmgP2toP1); p2.hp = Math.max(0, p2.hp - dmgP1toP2);
+      events.push({ type: 'collision', x: p1.x, dmg1: dmgP2toP1, dmg2: dmgP1toP2, hit_anim:'collisionFX', bullet_color:'#ffff00' });
       return { type: 'p2Blocked', events };
     }
     return null;
@@ -123,8 +139,8 @@ class BattleEngine {
   applyMovement(p1, p2, i1, i2, collision, a1, a2) {
     if (i1.isTurn) p1.facing *= -1;
     if (i2.isTurn) p2.facing *= -1;
-    if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.5);
-    if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.5);
+    if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.8);
+    if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.8);
     if (collision) return;
     if (i1.dx !== 0 && !i1.isTurn) {
       let d = p1.x + i1.dx; d = Math.max(0, Math.min(15, d));
@@ -214,7 +230,8 @@ class BattleEngine {
         if (inRange) {
           let ratio = sk.damageRatio || 1;
           if (sk.backstabRatio && isBehind) ratio = sk.backstabRatio;
-          const dmg = this.calcDmg(caster.atk, ratio, target.def, sk.effect);
+          const defBuff = target._defBuff || 0;
+          const dmg = this.calcDmg(caster.atk, ratio, target.def, sk.effect, defBuff);
           if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
           else events.push({ type: 'dodged', actor: tKey });
           const evType = sk.effect === 'stun_damage' ? 'stun_hit' : (sk.effect === 'true_damage' && isBehind ? 'backstab_hit' : 'melee_hit');
@@ -251,7 +268,8 @@ class BattleEngine {
             if (blocked) break;
             if (sx === targetX) {
               if (!target._dodging) {
-                const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+                const defBuff = target._defBuff || 0;
+                const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
                 target.hp = Math.max(0, target.hp - dmg);
                 const evT = sk.effect === 'freeze_damage' ? 'freeze_hit' : (sk.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
                 events.push({ type: evT, actor: cKey, target: tKey, dmg, x: sx, skillId: sid,
@@ -281,7 +299,8 @@ class BattleEngine {
           if (ax < 0 || ax > 15) continue;
           if (ax === target.x) {
             if (!target._dodging) {
-              const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+              const defBuff = target._defBuff || 0;
+              const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
               target.hp = Math.max(0, target.hp - dmg);
               const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
               events.push({ type: evT, actor: cKey, target: tKey, dmg, x: ax, skillId: sid,
@@ -309,7 +328,8 @@ class BattleEngine {
         dest = Math.max(0, Math.min(15, dest));
         const startX = Math.min(caster.x, dest), endX = Math.max(caster.x, dest);
         if (target.x >= startX && target.x <= endX && !target._dodging) {
-          const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect);
+          const defBuff = target._defBuff || 0;
+          const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
           target.hp = Math.max(0, target.hp - dmg);
           events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest });
           if (sk.knockback) {
@@ -341,11 +361,11 @@ class BattleEngine {
         const oldX = caster.x;
         // 碰撞检测：如果目标格已被占据（敌人移动到了那里），则留在原地并碰撞
         if (tpX === target.x) {
-          const dmg1 = Math.max(1, Math.floor(caster.atk * 0.3));
-          const dmg2 = Math.max(1, Math.floor(target.atk * 0.3));
-          caster.hp = Math.max(0, caster.hp - dmg2);
-          target.hp = Math.max(0, target.hp - dmg1);
-          events.push({ type: 'collision', x: tpX, dmg1, dmg2, hit_anim: 'collisionFX', bullet_color: '#ffff00' });
+          const dmgToTarget = Math.max(1, Math.floor(caster.atk * 0.25 * (1 - this.getDefReduction(target.def))));
+          const dmgToCaster = Math.max(1, Math.floor(target.atk * 0.25 * (1 - this.getDefReduction(caster.def))));
+          caster.hp = Math.max(0, caster.hp - dmgToCaster);
+          target.hp = Math.max(0, target.hp - dmgToTarget);
+          events.push({ type: 'collision', x: tpX, dmg1: dmgToCaster, dmg2: dmgToTarget, hit_anim: 'collisionFX', bullet_color: '#ffff00' });
           console.log(`[BACKSTAB] ${cKey} collision at ${tpX}! enemy already there. staying at ${oldX}`);
         } else {
           caster.x = tpX;
@@ -367,10 +387,14 @@ class BattleEngine {
     return { events };
   }
 
-  calcDmg(atk, ratio, def, effect) {
+  calcDmg(atk, ratio, def, effect, defBuff = 0) {
     const base = atk * ratio;
+    // 真实伤害：完全无视防御和防御buff
     if (effect === 'true_damage' || effect === 'true_damage_backstab') return Math.max(1, Math.floor(base));
-    return Math.max(1, Math.floor(base - (def || 0)));
+    // 计算有效防御（基础DEF + 临时防御buff）
+    const effectiveDef = Math.max(0, (def || 0) + defBuff);
+    const reduction = this.getDefReduction(effectiveDef);
+    return Math.max(1, Math.floor(base * (1 - reduction)));
   }
 
   updateBullets(s) {

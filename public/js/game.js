@@ -863,12 +863,15 @@ const G = {
     return true;
   },
 
-  /** tick 资源恢复 */
+  /** tick 资源恢复（每个角色个性化恢复速率） */
   tickResources() {
     if (!this.p1) return;
-    this.p1.sp = Math.min(this.p1.maxSp, (this.p1.sp || 0) + 2);
-    this.p1.mp = Math.min(this.p1.maxMp, (this.p1.mp || 0) + 1);
-    DBG.log(`[RESOURCE] tick=${this.tick} P1 MP+1 SP+2 => mp=${this.p1.mp} sp=${this.p1.sp}`);
+    const cd = getCharDef(this.p1.charId) || { mpRegen: 1, spRegen: 2 };
+    const mr = cd.mpRegen || 1;
+    const sr = cd.spRegen || 2;
+    this.p1.sp = Math.min(this.p1.maxSp, (this.p1.sp || 0) + sr);
+    this.p1.mp = Math.min(this.p1.maxMp, (this.p1.mp || 0) + mr);
+    DBG.log(`[RESOURCE] tick=${this.tick} P1 MP+${mr} SP+${sr} => mp=${this.p1.mp} sp=${this.p1.sp}`);
     // tick cooldowns
     for (const k in this._cooldowns) { if (this._cooldowns[k] > 0) this._cooldowns[k]--; }
   }
