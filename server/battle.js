@@ -179,22 +179,25 @@ class BattleEngine {
 
     // Check cooldown
     const cdKey = '_cooldowns_' + cKey;
-    if (this.state[cdKey]?.[sid] > 0) {
+    const isTraining = this.state._training === true;
+    if (!isTraining && this.state[cdKey]?.[sid] > 0) {
       events.push({ type: 'on_cooldown', actor: cKey, skillId: sid });
       return { events };
     }
 
-    // Check resources - if insufficient, EXHAUST
+    // Check resources - if insufficient, EXHAUST (skip in training mode)
     const hasMp = (caster.mp || 0) >= (sk.mpCost || 0);
     const hasSp = (caster.sp || 0) >= (sk.spCost || 0);
-    if (!hasMp || !hasSp) {
+    if (!isTraining && (!hasMp || !hasSp)) {
       events.push({ type: 'exhausted', actor: cKey, skillId: sid });
       return { events };
     }
-    caster.mp -= (sk.mpCost || 0);
-    caster.sp -= (sk.spCost || 0);
-    // Set cooldown
-    if (sk.cooldown) this.state[cdKey][sid] = sk.cooldown;
+    if (!isTraining) {
+      caster.mp -= (sk.mpCost || 0);
+      caster.sp -= (sk.spCost || 0);
+    }
+    // Set cooldown (skip in training mode)
+    if (!isTraining && sk.cooldown) this.state[cdKey][sid] = sk.cooldown;
 
     const dir = caster.facing;
     const isBehind = (dir === 1 && caster.x > target.x) || (dir === -1 && caster.x < target.x);
@@ -209,28 +212,16 @@ class BattleEngine {
         if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && targetX >= caster.x) || (dir === -1 && targetX <= caster.x));
         else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
         else if (sk.direction === 'around') inRange = dist <= rg;
-        // ★ 近战弹幕：根据技能范围在覆盖的格子上各播一次
-        const bulletGrids = [];
+        // ★ 近战弹幕：中心格 = 攻击范围的中心
+        let centerGX = caster.x;
         if (sk.direction === 'forward') {
-          for (let offset = 1; offset <= (sk.range || 1); offset++) {
-            const gx = caster.x + dir * offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
-        } else if (sk.direction === 'forward_and_back') {
-          for (let offset = -(sk.range || 1); offset <= (sk.range || 1); offset++) {
-            const gx = caster.x + offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
-        } else {
-          for (let offset = -(sk.range || 1); offset <= (sk.range || 1); offset++) {
-            const gx = caster.x + offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
+          // 前方 range 格，中心在 caster.x + dir * (range+1)/2
+          const midOffset = Math.floor((rg + 1) / 2);
+          centerGX = caster.x + dir * midOffset;
         }
-        for (const gx of bulletGrids) {
-          events.push({ type: 'melee_slash', actor: cKey, skillId: sid,
-            bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: gx });
-        }
+        // forward_and_back 和 around：中心在 caster.x
+        events.push({ type: 'melee_slash', actor: cKey, skillId: sid,
+          bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: centerGX });
 
         if (inRange) {
           let ratio = sk.damageRatio || 1;
@@ -260,13 +251,24 @@ class BattleEngine {
           for (let scan = 1; scan <= range; scan++) {
             const sx = caster.x + dir * scan;
             if (sx < 0 || sx > 15) break;
-            const enemyB = bState.bullets.filter(b => b.owner !== cKey && !b.isShield);
+            const enemyB = bState.bullets.filter(b => b.owner !== cKey);
             let blocked = false;
             for (const eb of enemyB) {
               if (eb.x === sx) {
-                if (pri < eb.priority) bState.bullets = bState.bullets.filter(b => b !== eb);
-                else if (pri > eb.priority) { blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: eb.owner, hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color }); }
-                else { bState.bullets = bState.bullets.filter(b => b !== eb); blocked = true; events.push({ type: 'bullet_clash', x: sx, winner: 'both', hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color }); }
+                if (pri < eb.priority) {
+                  // 我方低优先级：我方弹幕消失，对手的保留
+                  blocked = true;
+                  events.push({ type: 'bullet_clash', x: sx, winner: eb.owner, hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color });
+                } else if (pri > eb.priority) {
+                  // 我方高优先级：对手弹幕消失，我方继续
+                  bState.bullets = bState.bullets.filter(b => b !== eb);
+                  events.push({ type: 'bullet_clash', x: sx, winner: cKey, hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color });
+                } else {
+                  // 同级：双方都消失
+                  bState.bullets = bState.bullets.filter(b => b !== eb);
+                  blocked = true;
+                  events.push({ type: 'bullet_clash', x: sx, winner: 'both', hit_anim: sk.anim_hit||'hitExplosion', bullet_color: sk.color });
+                }
                 break;
               }
             }
@@ -299,32 +301,34 @@ class BattleEngine {
       case 'targeted_aoe': {
         const aoeR = sk.aoeRadius || 1;
         const tX = target.x;
-        for (let ox = -aoeR; ox <= aoeR; ox++) {
-          const ax = tX + ox;
-          if (ax < 0 || ax > 15) continue;
-          if (ax === target.x) {
-            if (!target._dodging) {
-              const defBuff = target._defBuff || 0;
-              const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
-              target.hp = Math.max(0, target.hp - dmg);
-              const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
-              events.push({ type: evT, actor: cKey, target: tKey, dmg, x: ax, skillId: sid,
-                bullet_anim: sk.anim_bullet||'arrowRainDrop', hit_anim: sk.anim_hit||'hitAOE', bullet_color: sk.color });
-              if (sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.burnRatio || 0.1))) }); }
-            } else { events.push({ type: 'dodged', actor: tKey, x: ax }); }
+        // 伤害判定（仅目标格）
+        if (!target._dodging) {
+          const defBuff = target._defBuff || 0;
+          const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
+          target.hp = Math.max(0, target.hp - dmg);
+          const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
+          events.push({ type: evT, actor: cKey, target: tKey, dmg, x: tX, skillId: sid,
+            bullet_anim: sk.anim_bullet||'arrowRainDrop', hit_anim: sk.anim_hit||'hitAOE', bullet_color: sk.color });
+          if (sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(caster.atk * (sk.burnRatio || 0.1))) }); }
+        } else { events.push({ type: 'dodged', actor: tKey, x: tX }); }
+
+        // 火球术(burn_debuff)：只落一个弹幕
+        if (sk.effect === 'burn_debuff') {
+          events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: tX,
+            bullet_anim: sk.anim_bullet||'fireballDrop', bullet_color: sk.color, bullet_noHit: false });
+        } else {
+          // 箭雨：多根箭接力下落（目标格 + 周围空格的视觉箭）
+          for (let ox = -aoeR; ox <= aoeR; ox++) {
+            const ax = tX + ox;
+            if (ax < 0 || ax > 15) continue;
+            if (ax !== tX) {
+              events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: ax,
+                bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
+            }
           }
+          events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: tX,
+            bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
         }
-        // Also spawn visual drops on empty aoe positions
-        for (let ox = -aoeR; ox <= aoeR; ox++) {
-          const ax = tX + ox;
-          if (ax < 0 || ax > 15) continue;
-          if (ax !== target.x) {
-            events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: ax,
-              bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
-          }
-        }
-        events.push({ type: 'aoe_cast', actor: cKey, skillId: sid, x: tX,
-          bullet_anim: sk.anim_bullet||'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
         break;
       }
       case 'dash': {
@@ -382,12 +386,7 @@ class BattleEngine {
           bullet_anim: sk.anim_bullet || 'teleportFlash', hit_anim: sk.anim_hit || 'teleportFlash', bullet_color: sk.color });
         break;
       }
-      case 'shield_wall': {
-        const sX = caster.x + dir;
-        this.state.bullets.push({ id: sid + '_' + Date.now(), x: sX, dir, priority: sk.bulletPriority || 2, isShield: true, color: sk.color, owner: cKey });
-        events.push({ type: 'shield_wall', actor: cKey, x: sX, skillId: sid, color: sk.color });
-        break;
-      }
+
     }
     return { events };
   }
@@ -403,9 +402,7 @@ class BattleEngine {
   }
 
   updateBullets(s) {
-    for (const b of s.bullets) {
-      if (b.isShield) { b.x = (b.owner === 'p1' ? s.p1.x : s.p2.x) + (b.owner === 'p1' ? s.p1.facing : s.p2.facing); }
-    }
+    // plain projectiles need no special update
   }
 
   tickEffects(s, key) {

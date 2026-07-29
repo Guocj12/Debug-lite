@@ -129,20 +129,12 @@ const Sprites = {
         ctx.closePath(); ctx.fill();
         break;
       case 'triangle2': {
-        // 刺客：双刀造型（两个小三角上下排列）
-        const s2 = s * 0.9;
-        // 上方三角（正对方向）
-        const tip1 = facing > 0 ? x + s2/2 : x - s2/2;
+        // 刺客：单三角（与射手相同的三角形，但颜色不同）
+        const tip = facing > 0 ? x + s/2 : x - s/2;
         ctx.beginPath();
-        ctx.moveTo(tip1, y - s2);
-        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2/2);
-        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2);
-        ctx.closePath(); ctx.fill();
-        // 下方三角（反方向，刃朝后）
-        ctx.beginPath();
-        ctx.moveTo(x + (facing > 0 ? -s2/2 : s2/2), y);
-        ctx.lineTo(x + (facing > 0 ? s2/2 : -s2/2), y - s2/2);
-        ctx.lineTo(x + (facing > 0 ? -s2/2 : s2/2), y - s2);
+        ctx.moveTo(tip, y - s/2);
+        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y - s);
+        ctx.lineTo(x + (facing > 0 ? -s/2 : s/2), y);
         ctx.closePath(); ctx.fill();
         break;
       }
@@ -293,14 +285,7 @@ const Renderer = {
     }
   },
 
-  /** 绘制护盾弹幕 */
-  drawShields(bullets) {
-    for (const b of (bullets || [])) {
-      if (b.isShield) {
-        this.drawBulletSprite('shield', this.gridToPixelX(b.x), this.baseY - 10, 1.2, 0.7, b.color || '#4488ff');
-      }
-    }
-  }
+  /** 绘制护盾弹幕 — 已移除，护盾现在作为普通弹幕处理 */
 };
 
 // ==================== FX 动画特效系统 ====================
@@ -313,20 +298,22 @@ const FX = {
     const animName = ev.bullet_anim || ev.hit_anim;
     const anim = getAnim(animName);
     const color = ev.bullet_color || '#ffffff';
+    const stagger = ev._stagger || 0; // 错时延迟(ms)
 
     switch (ev.type) {
-      // === 近战弹幕（纯视觉，每个覆盖格子播一个） ===
+      // === 近战弹幕（多格宽字符画，根据 spreadGrids 控制宽度） ===
       case 'melee_slash': {
         const x = Renderer.gridToPixelX(ev.bullet_x ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
+        const spread = anim?.spreadGrids || 1;
         if (ev.bullet_anim) {
-          this.active.push(new MeleeBulletFX(ev.bullet_anim, x, y, color, anim?.fadeTime || 300));
+          this.active.push(new MeleeBulletFX(ev.bullet_anim, x, y, color, anim?.fadeTime || 350, spread, stagger));
         }
-        AE.play('skill');
+        if (!stagger) AE.play('skill');
         break;
       }
 
-      // === 近战命中（命中环 + 伤害） ===
+      // === 近战命中 ===
       case 'melee_hit':
       case 'stun_hit':
       case 'backstab_hit':
@@ -340,33 +327,30 @@ const FX = {
         break;
       }
 
-      // === 平射弹幕 ===
+      // === 平射弹幕（支持 stagger 错时延迟） ===
       case 'bullet_hit':
       case 'freeze_hit':
-      case 'poison_hit':
-      case 'burn_hit':
-      case 'aoe_hit': {
-        // 弹幕飞行 + 命中
+      case 'poison_hit': {
         const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
         const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
         if (ev.bullet_anim) {
-          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, true));
+          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, true, stagger));
         }
         if (ev.hit_anim) {
-          this.active.push(new HitRingFX(ev.hit_anim, toX, y, color));
+          this.active.push(new HitRingFX(ev.hit_anim, toX, y, color, stagger));
         }
-        AE.play('hit');
+        if (!stagger) AE.play('hit');
         break;
       }
 
-      // === 弹幕飞到尽头消失（不触发命中环） ===
+      // === 弹幕飞到尽头消失 ===
       case 'bullet_trail': {
         const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
         const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
         if (ev.bullet_anim) {
-          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false));
+          this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false, stagger));
         }
         break;
       }
@@ -382,13 +366,33 @@ const FX = {
         break;
       }
 
-      // === 垂直弹幕 AOE ===
+      // === 垂直弹幕 AOE（箭雨接力下落 / 火球单发） ===
       case 'aoe_cast': {
         const ax = Renderer.gridToPixelX(ev.x ?? 0);
-        const ay = 0; // 从屏幕顶部下落
+        const ay = ev._startY || 0;
+        const endY = ev._endY || Renderer.baseY;
+        // 所有落下的箭（包括视觉箭）都触发落地爆炸
+        const doExplode = true;
         if (ev.bullet_anim) {
-          this.active.push(new VerticalBulletFX(ev.bullet_anim, ax, ay, Renderer.baseY, color, frameDuration));
+          this.active.push(new VerticalBulletFX(ev.bullet_anim, ax, ay, endY, color, frameDuration, doExplode, stagger));
         }
+        break;
+      }
+
+      // === AOE 命中（火球爆炸扩圈特效，箭雨由 VerticalBulletFX 落地处理） ===
+      case 'burn_hit':
+      case 'aoe_hit': {
+        const hitX = Renderer.gridToPixelX(ev.x ?? 0);
+        const y = Renderer.baseY - 10;
+        // 火球命中：播放爆炸扩圈特效 + 命中环
+        if (ev.bullet_anim === 'fireballDrop') {
+          this.active.push(new ExplosionRingFX('fireballExplosion', hitX, y, color, stagger));
+          if (ev.hit_anim) {
+            this.active.push(new HitRingFX(ev.hit_anim, hitX, y, color, stagger));
+          }
+        }
+        // 箭雨的 aoe_hit 不再额外播放命中环（由 VerticalBulletFX 落地处理）
+        if (!stagger) AE.play('hit');
         break;
       }
 
@@ -428,14 +432,6 @@ const FX = {
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, kx, Renderer.baseY - 10, ev.bullet_color || '#ffaa00'));
         }
-        break;
-      }
-
-      // === 护盾 ===
-      case 'shield_wall': {
-        const sx = Renderer.gridToPixelX(ev.x ?? 0);
-        this.active.push(new HitRingFX('shieldWall', sx, Renderer.baseY - 10, ev.color || '#4488ff'));
-        AE.play('block');
         break;
       }
 
@@ -509,37 +505,41 @@ const FX = {
   }
 };
 
-// ==================== 近战弹幕 FX ====================
-// 瞬间出现在目标位置，闪亮后淡出
+// ==================== 近战弹幕 FX (单个大字符画) ====================
 class MeleeBulletFX {
-  constructor(animName, x, y, color, fadeTime = 300) {
+  constructor(animName, x, y, color, fadeTime = 350, spreadGrids = 1, stagger = 0) {
     const anim = getAnim(animName);
-    this.spriteName = anim?.sprite || animName;  // 从 anim 配置读 sprite
+    this.spriteName = anim?.sprite || animName;
     this.x = x;
     this.y = y;
     this.color = color;
     this.fadeTime = anim?.fadeTime || fadeTime;
-    this.elapsed = 0;
+    this.stagger = stagger;
+    this.elapsed = -stagger;
     this.done = false;
-    DBG.log('[FX] MeleeBullet created sprite='+this.spriteName+' at pixel('+x.toFixed(0)+','+y.toFixed(0)+') fade='+this.fadeTime);
   }
 
   update(dt) {
     this.elapsed += dt;
+    if (this.elapsed < 0) return;
     if (this.elapsed >= this.fadeTime) this.done = true;
   }
 
   render(ctx, R) {
-    const progress = this.elapsed / this.fadeTime;
-    const alpha = progress < 0.2 ? 1 : Math.max(0, 1 - (progress - 0.2) / 0.8);
-    const scale = 1 + progress * 0.3;
+    if (this.elapsed < 0) return;
+    const progress = Math.min(1, this.elapsed / this.fadeTime);
+    // 闪亮 → 淡出
+    const alpha = progress < 0.15 ? progress / 0.15 : Math.max(0, 1 - (progress - 0.15) / 0.85);
+    // 微缩放
+    const scale = 1.0 + progress * 0.15;
+    // 只绘制一个大字符画
     R.drawBulletSprite(this.spriteName, this.x, this.y, scale, alpha, this.color);
   }
 }
 
-// ==================== 平射弹幕 FX ====================
+// ==================== 平射弹幕 FX (支持错时发射) ====================
 class ProjectileBulletFX {
-  constructor(animName, fromX, toX, y, color, frameDuration, hasHit = true) {
+  constructor(animName, fromX, toX, y, color, frameDuration, hasHit = true, stagger = 0) {
     const anim = getAnim(animName);
     this.spriteName = anim?.sprite || animName;
     this.fromX = fromX;
@@ -547,29 +547,28 @@ class ProjectileBulletFX {
     this.x = fromX;
     this.y = y;
     this.color = color;
-    this.totalDuration = frameDuration * 0.8;
-    this.elapsed = 0;
+    this.totalDuration = frameDuration * 0.75;
+    this.stagger = stagger;
+    this.elapsed = -stagger; // 负值 = 延迟
     this.done = false;
     this.hasHit = hasHit;
-    this.speedStart = anim?.speedStart || 4;
-    this.speedEnd = anim?.speedEnd || 2;
-    this.instant = anim?.instant || false;
-    if (this.instant) this.totalDuration = frameDuration * 0.15;
-    DBG.log('[FX] ProjectileBullet created sprite='+this.spriteName+' from('+fromX.toFixed(0)+')->to('+toX.toFixed(0)+') dur='+this.totalDuration);
+    this.speedStart = anim?.speedStart || 10;
+    this.speedEnd = anim?.speedEnd || 4;
   }
 
   update(dt) {
     this.elapsed += dt;
+    if (this.elapsed < 0) return; // 还在延迟
     const t = Math.min(1, this.elapsed / this.totalDuration);
-    // ease-out: 速度递减
-    const ease = 1 - Math.pow(1 - t, 1.5);
+    // ease-out (快起慢停)
+    const ease = 1 - Math.pow(1 - t, 2);
     this.x = this.fromX + (this.toX - this.fromX) * ease;
     if (t >= 1) this.done = true;
   }
 
   render(ctx, R) {
+    if (this.elapsed < 0) return;
     const t = Math.min(1, this.elapsed / this.totalDuration);
-    // 到达末端后淡出（仅无命中时）
     let alpha = 1;
     if (t > 0.85 && !this.hasHit) alpha = Math.max(0, 1 - (t - 0.85) / 0.15);
     else if (t > 0.9 && this.hasHit) alpha = Math.max(0, 1 - (t - 0.9) / 0.1);
@@ -577,43 +576,56 @@ class ProjectileBulletFX {
   }
 }
 
-// ==================== 垂直弹幕 FX ====================
+// ==================== 垂直弹幕 FX (每支箭落地触发独立hit环) ====================
 class VerticalBulletFX {
-  constructor(animName, x, startY, targetY, color, frameDuration) {
+  constructor(animName, x, startY, targetY, color, frameDuration, hasHit = true, stagger = 0) {
     const anim = getAnim(animName);
     this.spriteName = anim?.sprite || animName;
     this.x = x;
     this.startY = startY;
-    this.targetY = targetY;
+    this.targetY = targetY; // 落地位置（地面线）
     this.y = startY;
     this.color = color;
-    this.totalDuration = frameDuration * 0.7;
-    this.elapsed = 0;
+    this.hasHit = hasHit;
+    this.stagger = stagger;
+    this.elapsed = -stagger;
+    this.totalDuration = frameDuration * 0.55;
     this.done = false;
-    this.speedStart = anim?.speedStart || 3;
-    this.speedEnd = anim?.speedEnd || 15;
-    DBG.log('[FX] VerticalBullet created sprite='+this.spriteName+' y='+startY+'->'+targetY);
+    this.explosionAnim = anim?.explosion || null;
+    this._hitSpawned = false; // 确保每支箭只触发一次命中环
   }
 
   update(dt) {
     this.elapsed += dt;
+    if (this.elapsed < 0) return;
     const t = Math.min(1, this.elapsed / this.totalDuration);
-    // ease-in: 速度递增（加速下落）
+    // ease-in (加速下落)
     const ease = t * t;
     this.y = this.startY + (this.targetY - this.startY) * ease;
-    if (t >= 1) this.done = true;
+    if (t >= 1) {
+      // 落地瞬间：触发小爆炸环（每支箭独立）
+      if (!this._hitSpawned && this.hasHit) {
+        this._hitSpawned = true;
+        FX.active.push(new HitRingFX('hitExplosion', this.x, this.targetY, this.color, 0));
+        // 火球还有额外的大爆炸
+        if (this.explosionAnim) {
+          FX.active.push(new ExplosionRingFX(this.explosionAnim, this.x, this.targetY, this.color, 0));
+        }
+      }
+      this.done = true;
+    }
   }
 
   render(ctx, R) {
-    const alpha = this.elapsed < 50 ? this.elapsed / 50 : 1;
+    if (this.elapsed < 0) return;
+    const alpha = this.elapsed < 40 ? this.elapsed / 40 : 1;
     R.drawBulletSprite(this.spriteName, this.x, this.y, 1, alpha, this.color);
   }
 }
 
-// ==================== 命中圆环 FX ====================
-// 扩散圆环淡出 + 粒子
+// ==================== 命中圆环 FX (支持延迟) ====================
 class HitRingFX {
-  constructor(animName, x, y, color) {
+  constructor(animName, x, y, color, stagger = 0) {
     const anim = getAnim(animName);
     this.x = x;
     this.y = y;
@@ -621,12 +633,12 @@ class HitRingFX {
     this.particleColor = anim?.particleColor || this.color;
     this.ringStart = anim?.ringStartSize || 0.1;
     this.ringEnd = anim?.ringEndSize || 0.6;
-    this.fadeTime = anim?.fadeTime || 300;
-    this.particleCount = anim?.particles || 8;
-    this.particleSpread = anim?.particleSpread || 4;
-    this.elapsed = 0;
+    this.fadeTime = anim?.fadeTime || 350;
+    this.particleCount = anim?.particles || 10;
+    this.particleSpread = anim?.particleSpread || 5;
+    this.stagger = stagger;
+    this.elapsed = -stagger;
     this.done = false;
-    // 初始化粒子
     this.particles = [];
     for (let i = 0; i < this.particleCount; i++) {
       const angle = (Math.PI * 2 * i) / this.particleCount + (Math.random() - 0.5) * 0.5;
@@ -637,14 +649,14 @@ class HitRingFX {
 
   update(dt) {
     this.elapsed += dt;
+    if (this.elapsed < 0) return;
     if (this.elapsed >= this.fadeTime) this.done = true;
   }
 
   render(ctx, R) {
+    if (this.elapsed < 0) return;
     const t = Math.min(1, this.elapsed / this.fadeTime);
     const alpha = 1 - t;
-
-    // 扩散圆环
     const ringRadius = (this.ringStart + (this.ringEnd - this.ringStart) * t) * R.cellW;
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -656,8 +668,6 @@ class HitRingFX {
     ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.shadowBlur = 0;
-
-    // 粒子
     for (const p of this.particles) {
       const pLife = Math.min(1, this.elapsed / (this.fadeTime * p.life));
       const pAlpha = 1 - pLife;
@@ -667,6 +677,76 @@ class HitRingFX {
       ctx.fillStyle = this.particleColor;
       ctx.globalAlpha = pAlpha * 0.8;
       ctx.fillRect(px - 2, py - 2, 4, 4);
+    }
+    ctx.restore();
+  }
+}
+
+// ==================== 爆炸扩圈 FX (火球落地专用) ====================
+// 像素字符画 + 扩圈环 + 大量粒子
+class ExplosionRingFX {
+  constructor(animName, x, y, color, stagger = 0) {
+    const anim = getAnim(animName);
+    this.x = x;
+    this.y = y;
+    this.color = anim?.color || color;
+    this.particleColor = anim?.particleColor || this.color;
+    this.spriteName = anim?.sprite || null;
+    this.ringStart = anim?.ringStartSize || 0.15;
+    this.ringEnd = anim?.ringEndSize || 1.5;
+    this.fadeTime = anim?.fadeTime || 600;
+    this.particleCount = anim?.particles || 24;
+    this.particleSpread = anim?.particleSpread || 12;
+    this.stagger = stagger;
+    this.elapsed = -stagger;
+    this.done = false;
+    this.particles = [];
+    for (let i = 0; i < this.particleCount; i++) {
+      const angle = (Math.PI * 2 * i) / this.particleCount + (Math.random() - 0.5) * 0.4;
+      const speed = 3 + Math.random() * this.particleSpread;
+      this.particles.push({ angle, speed, life: 0.4 + Math.random() * 0.6 });
+    }
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed < 0) return;
+    if (this.elapsed >= this.fadeTime) this.done = true;
+  }
+
+  render(ctx, R) {
+    if (this.elapsed < 0) return;
+    const t = Math.min(1, this.elapsed / this.fadeTime);
+    const alpha = t < 0.3 ? 1 : Math.max(0, 1 - (t - 0.3) / 0.7);
+    // 扩圈
+    const ringRadius = (this.ringStart + (this.ringEnd - this.ringStart) * t) * R.cellW;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 像素字符画爆炸图案（在中心放大+淡出）
+    if (this.spriteName) {
+      const sprScale = 1 + t * 1.2;
+      const sprAlpha = t < 0.2 ? t / 0.2 : Math.max(0, 1 - (t - 0.2) / 0.8);
+      ctx.globalAlpha = sprAlpha;
+      R.drawBulletSprite(this.spriteName, this.x, this.y, sprScale, sprAlpha, this.color);
+    }
+    // 粒子
+    for (const p of this.particles) {
+      const pLife = Math.min(1, this.elapsed / (this.fadeTime * p.life));
+      const pAlpha = 1 - pLife;
+      const dist = pLife * R.cellW * this.particleSpread * 1.2;
+      const px = this.x + Math.cos(p.angle) * dist;
+      const py = this.y + Math.sin(p.angle) * dist;
+      ctx.fillStyle = this.particleColor;
+      ctx.globalAlpha = pAlpha * 0.85;
+      ctx.fillRect(px - 3, py - 3, 6, 6);
     }
     ctx.restore();
   }
@@ -838,6 +918,11 @@ const G = {
     this.round = 0; this.timeLeft = 60; this.tick = 0;
     this.p1Actions = []; this.p2Actions = [];
     this._cooldowns = {}; this._snapshots = [];
+    this._battleFrames = null; this._battleFinal = null;
+    this._battleStep = null; this._battleGameOver = false;
+    this._originP1 = null; this._originP2 = null;
+    this._renderP1 = null; this._renderP2 = null;
+    this._mode = 'prepare';
     if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
     FX.clear(); Tween.clear();
   },
@@ -1036,7 +1121,7 @@ function setupSocket() {
     // 保存原始状态（用于清空恢复）
     G._originP1 = JSON.parse(JSON.stringify(d.p1));
     G._originP2 = JSON.parse(JSON.stringify(d.p2));
-    G.actions = []; G._cooldowns = {}; G._snapshots = []; G._shieldBullets = [];
+    G.actions = []; G._cooldowns = {}; G._snapshots = [];
     G.p1Actions = []; G.p2Actions = []; G.tick = 0;
     FX.clear();
     updatePrepareUI();
@@ -1114,17 +1199,20 @@ const LocalStep = {
     const sid = mySids[idx];
     if (!sk || !sid) return events;
     const cd = G._cooldowns || {};
+    const isTraining = G.mode === 'train';
 
-    // 消耗资源
-    const hasMp = (p1.mp || 0) >= (sk.mpCost || 0);
-    const hasSp = (p1.sp || 0) >= (sk.spCost || 0);
-    if (!hasMp || !hasSp) {
-      events.push({ type: 'exhausted', actor: 'p1', skillId: sid });
-      return events;
+    // 消耗资源（训练场跳过）
+    if (!isTraining) {
+      const hasMp = (p1.mp || 0) >= (sk.mpCost || 0);
+      const hasSp = (p1.sp || 0) >= (sk.spCost || 0);
+      if (!hasMp || !hasSp) {
+        events.push({ type: 'exhausted', actor: 'p1', skillId: sid });
+        return events;
+      }
+      p1.mp -= (sk.mpCost || 0);
+      p1.sp -= (sk.spCost || 0);
+      if (sk.cooldown) G._cooldowns[sid] = sk.cooldown;
     }
-    p1.mp -= (sk.mpCost || 0);
-    p1.sp -= (sk.spCost || 0);
-    if (sk.cooldown) G._cooldowns[sid] = sk.cooldown;
 
     const dir = p1.facing;
     const target = p2;
@@ -1139,30 +1227,15 @@ const LocalStep = {
         if (sk.direction === 'forward') inRange = dist <= rg && ((dir === 1 && target.x >= p1.x) || (dir === -1 && target.x <= p1.x));
         else if (sk.direction === 'forward_and_back') inRange = dist <= rg;
 
-        // ★ 近战弹幕：根据技能范围在覆盖的格子上各播一次
-        const bulletGrids = [];
+        // ★ 近战弹幕：中心格 = 攻击范围的中心
+        let centerGX = p1.x;
         if (sk.direction === 'forward') {
-          for (let offset = 1; offset <= rg; offset++) {
-            const gx = p1.x + dir * offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
-        } else if (sk.direction === 'forward_and_back') {
-          for (let offset = -rg; offset <= rg; offset++) {
-            const gx = p1.x + offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
-        } else {
-          for (let offset = -rg; offset <= rg; offset++) {
-            const gx = p1.x + offset;
-            if (gx >= 0 && gx <= 15) bulletGrids.push(gx);
-          }
+          const midOffset = Math.floor((rg + 1) / 2);
+          centerGX = p1.x + dir * midOffset;
         }
-        // 每一个覆盖的格子生成一个 bulletFX 事件
-        for (const gx of bulletGrids) {
-          events.push({ type: 'melee_slash', actor: 'p1', skillId: sid,
-            bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: gx });
-          DBG.log(`[FX] melee bullet at grid=${gx} anim=${sk.anim_bullet}`);
-        }
+        events.push({ type: 'melee_slash', actor: 'p1', skillId: sid,
+          bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: centerGX });
+        DBG.log(`[FX] melee bullet center at grid=${centerGX} anim=${sk.anim_bullet}`);
 
         // 伤害判定
         if (inRange) {
@@ -1207,24 +1280,33 @@ const LocalStep = {
       case 'targeted_aoe': {
         const aoeR = sk.aoeRadius || 1;
         const tX = target.x;
-        for (let ox = -aoeR; ox <= aoeR; ox++) {
-          const ax = tX + ox;
-          if (ax < 0 || ax > 15) continue;
-          if (ax === target.x) {
-            const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
-            if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
-            events.push({ type: 'aoe_hit', actor: 'p1', target: 'p2', dmg, x: ax, skillId: sid,
-              bullet_anim: sk.anim_bullet || 'arrowRainDrop', hit_anim: sk.anim_hit || 'hitAOE', bullet_color: sk.color });
-            DBG.log(`[HIT] aoe dmg=${dmg} at x=${ax} bullet_anim=${sk.anim_bullet}${isEditStep?' (edit: no dmg)':''}`);
-            if (!isEditStep && sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(p1.atk * (sk.burnRatio || 0.1))) }); }
-          } else {
-            events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: ax,
-              bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
-            DBG.log(`[CAST] aoe drop at x=${ax} (no hit)`);
+        // 伤害判定（仅目标格）
+        const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
+        if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
+        const evT = sk.effect === 'burn_debuff' ? 'burn_hit' : 'aoe_hit';
+        events.push({ type: evT, actor: 'p1', target: 'p2', dmg, x: tX, skillId: sid,
+          bullet_anim: sk.anim_bullet || 'arrowRainDrop', hit_anim: sk.anim_hit || 'hitAOE', bullet_color: sk.color });
+        DBG.log(`[HIT] aoe dmg=${dmg} at x=${tX} bullet_anim=${sk.anim_bullet}${isEditStep?' (edit: no dmg)':''}`);
+        if (!isEditStep && sk.effect === 'burn_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'burn', ticks: sk.burnTicks || 3, dmgPerTick: Math.max(1, Math.floor(p1.atk * (sk.burnRatio || 0.1))) }); }
+
+        // 火球术：只落一个弹幕
+        if (sk.effect === 'burn_debuff') {
+          events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: tX,
+            bullet_anim: sk.anim_bullet || 'fireballDrop', bullet_color: sk.color, bullet_noHit: false });
+        } else {
+          // 箭雨：多根箭接力下落
+          for (let ox = -aoeR; ox <= aoeR; ox++) {
+            const ax = tX + ox;
+            if (ax < 0 || ax > 15) continue;
+            if (ax !== tX) {
+              events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: ax,
+                bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: true });
+              DBG.log(`[CAST] aoe drop at x=${ax} (no hit)`);
+            }
           }
+          events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: tX,
+            bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
         }
-        events.push({ type: 'aoe_cast', actor: 'p1', skillId: sid, x: tX,
-          bullet_anim: sk.anim_bullet || 'arrowRainDrop', bullet_color: sk.color, bullet_noHit: false });
         break;
       }
       case 'dash': {
@@ -1278,15 +1360,6 @@ const LocalStep = {
         DBG.log(`[BACKSTAB] teleport from=${oldX} to=${tpX}, enemy at ${enemyX} (facing=${enemyFacing}), myFacing=${p1.facing}`);
         break;
       }
-      case 'shield_wall': {
-        const sX = p1.x + dir;
-        events.push({ type: 'shield_wall', actor: 'p1', x: sX, skillId: sid, color: sk.color });
-        DBG.log(`[FX] shield at x=${sX}`);
-        // 盾牌存到 G._shield 中 (简化)
-        G._shieldBullets = G._shieldBullets || [];
-        G._shieldBullets.push({ x: sX, dir, isShield: true, color: sk.color });
-        break;
-      }
     }
     return events;
   },
@@ -1336,15 +1409,6 @@ function startRenderLoop() {
 
     Renderer.resize();
     Renderer.drawGrid();
-
-    // 护盾
-    const shields = G._shieldBullets || [];
-    if (G._mode === 'battle' && G._battleFrames) {
-      const cf = G._battleFrames[Math.min(G.tick, G._battleFrames.length - 1)];
-      if (cf) Renderer.drawShields(cf.bullets || []);
-    } else {
-      Renderer.drawShields(shields);
-    }
 
     // 画玩家——使用渲染位置（如果有缓动动画就用缓动位置）
     if (G.p1 && G.p2) {
@@ -1441,7 +1505,6 @@ function clearActions() {
   G.tick = 0;
   G.actions = [];
   G._snapshots = [];
-  G._shieldBullets = [];
   FX.clear();
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: [] });
   UI.renderActionSlots();
@@ -1454,7 +1517,6 @@ function undoAction() {
   DBG.log('[UNDO] 撤销最后一个行动 #' + (G.actions.length-1) + ' = ' + G.actions[G.actions.length-1]);
   G.actions.pop();
   G.restoreSnapshot();
-  G._shieldBullets = [];
   FX.clear();
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
   UI.renderActionSlots();
@@ -1497,7 +1559,6 @@ function playBattleAnim(frames, final) {
   G._battleFinal = final;
   FX.clear();
   G.tick = 0;
-  G._shieldBullets = [];
   G._renderP1 = null; G._renderP2 = null; // 清除缓动渲染位置
 
   // ★ 恢复双方为本回合初始状态
@@ -1593,8 +1654,37 @@ function playBattleAnim(frames, final) {
 
       const events = frame.events || [];
       DBG.log('[BATTLE] tick=' + tickIdx + ' events=' + events.length + ' types=' + events.map(e=>e.type).join(','));
+      // 计算错时发射的 stagger 间隔
+      // 找出此帧中需要错时的弹幕类型 (projectile/vertical 多段)
+      const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','aoe_cast','burn_hit','aoe_hit','melee_slash'];
+      let staggerCount = 0;
+      const sortedEvents = [];
+      const staggerEvents = [];
       for (const ev of events) {
-        DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' hit_anim='+ev.hit_anim+' x='+(ev.x??ev.bullet_x)+' from='+ev.bullet_from+' to='+ev.bullet_to);
+        if (staggerTypes.includes(ev.type)) {
+          staggerEvents.push(ev);
+        } else {
+          sortedEvents.push(ev);
+        }
+      }
+      // 弹幕类事件按 stagger 错时
+      for (const ev of staggerEvents) {
+        const animName = ev.bullet_anim || ev.hit_anim;
+        const anim = getAnim(animName);
+        const interval = anim?.stagger || 0;
+        if (interval > 0 && staggerEvents.length > 1) {
+          ev._stagger = staggerCount * interval;
+          staggerCount++;
+        } else {
+          ev._stagger = 0;
+        }
+        sortedEvents.push(ev);
+      }
+      // 按 stagger 排序（先发射的在前）
+      sortedEvents.sort((a, b) => (a._stagger || 0) - (b._stagger || 0));
+
+      for (const ev of sortedEvents) {
+        DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' stagger='+(ev._stagger||0));
         FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
       }
       FX.ensureBuffEmitter(frame.p1, 'p1');
@@ -1646,6 +1736,7 @@ let _selMode = 'ai';
 
 async function enterCharSelect(mode) {
   _selMode = mode;
+  G.reset();
   if (!_skillsData) await loadData();
   _selChar = null; _selSkills = [];
   UI.showScreen('charSel');
@@ -1683,7 +1774,7 @@ function renderSkillGrid(char) {
     const card = document.createElement('div');
     card.className = 'sc';
     if (_selSkills.includes(sk.id)) card.classList.add('selected');
-    var typeName = {melee:'[MELEE]',projectile:'[RANGE]',targeted_aoe:'[AOE]',dash:'[DASH]',teleport_backstab:'[WARP]',shield_wall:'[SHIELD]'}[sk.type]||sk.type;
+    var typeName = {melee:'[MELEE]',projectile:'[RANGE]',targeted_aoe:'[AOE]',dash:'[DASH]',teleport_backstab:'[WARP]'}[sk.type]||sk.type;
     card.innerHTML = '<div class="sn">' + sk.name + '</div><div class="st">' + typeName + ' | ' + (sk.desc||'') + '<br><span class="pix-label" style="color:var(--blue)">MP</span>' + (sk.mpCost||0) + ' <span class="pix-label" style="color:var(--green)">SP</span>' + (sk.spCost||0) + ' CD:' + (sk.cooldown||0) + ' x' + (sk.damageRatio||'-') + '</div>';
     card.onclick = () => {
       if (_selSkills.includes(sk.id)) {
@@ -1823,8 +1914,8 @@ function renderWikiSkills() {
 
   el.innerHTML = Object.values(skills).map(s => {
     const ch = charMap[s.charId];
-    const typeLabel = { melee: '[MELEE]', projectile: '[RANGE]', targeted_aoe: '[AOE]', dash: '[DASH]', teleport_backstab: '[WARP]', shield_wall: '[SHIELD]' }[s.type] || s.type;
-    const effectLabel = { normal_damage: 'DMG', stun_damage: 'STUN', freeze_damage: 'FREEZE', burn_debuff: 'BURN', poison_debuff: 'POISON', true_damage: 'TRUE', dash_knockback: 'KNOCK', shield_bullet: 'SHIELD', none: 'MOVE' }[s.effect] || s.effect;
+    const typeLabel = { melee: '[MELEE]', projectile: '[RANGE]', targeted_aoe: '[AOE]', dash: '[DASH]', teleport_backstab: '[WARP]' }[s.type] || s.type;
+    const effectLabel = { normal_damage: 'DMG', stun_damage: 'STUN', freeze_damage: 'FREEZE', burn_debuff: 'BURN', poison_debuff: 'POISON', true_damage: 'TRUE', dash_knockback: 'KNOCK', none: 'MOVE' }[s.effect] || s.effect;
     const backstabInfo = s.backstabRatio ? '<br>[BACKSTAB] x' + s.backstabRatio : '';
     const dotInfo = s.burnTicks ? '<br>[BURN] ' + s.burnTicks + 'tick ATKx' + (s.burnRatio||0) : (s.poisonTicks ? '<br>[POISON] ' + s.poisonTicks + 'tick ATKx' + (s.poisonRatio||0) : '');
     return `

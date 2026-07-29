@@ -51,6 +51,7 @@ class GameRoom {
 
     this.engine = new BattleEngine();
     this.engine.init({
+      _training: this.puppet || false,
       p1: { id: 'P1', charId: c1.id, x: 5, facing: 1, hp: c1.maxHp, maxHp: c1.maxHp, mp: c1.maxMp, maxMp: c1.maxMp, sp: c1.maxSp, maxSp: c1.maxSp, atk: c1.atk, def: c1.def, skills: this.pSkills[p1.sid] || c1.defaultSkills, customSkills: this.pCustom[p1.sid] || {} },
       p2: { id: 'P2', charId: c2.id, x: 10, facing: -1, hp: p2MaxHp, maxHp: p2MaxHp, mp: c2.maxMp, maxMp: c2.maxMp, sp: c2.maxSp, maxSp: c2.maxSp, atk: c2.atk, def: c2.def, skills: this.pSkills[p2.sid] || c2.defaultSkills, customSkills: this.pCustom[p2.sid] || {} },
     });
