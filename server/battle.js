@@ -10,8 +10,10 @@ class BattleEngine {
     const frames = [], s = this.state;
     s.bullets = [];
     for (let tick = 0; tick < 16; tick++) {
+      const preHp1 = s.p1.hp, preHp2 = s.p2.hp;
       const frame = this.executeTick(tick);
       frames.push(frame);
+      console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')}`);
       if (s.p1.hp <= 0 || s.p2.hp <= 0) break;
     }
     return frames;

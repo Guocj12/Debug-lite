@@ -54,6 +54,7 @@ class GameRoom {
       p1: { id: 'P1', charId: c1.id, x: 5, facing: 1, hp: c1.maxHp, maxHp: c1.maxHp, mp: c1.maxMp, maxMp: c1.maxMp, sp: c1.maxSp, maxSp: c1.maxSp, atk: c1.atk, def: c1.def, skills: this.pSkills[p1.sid] || c1.defaultSkills, customSkills: this.pCustom[p1.sid] || {} },
       p2: { id: 'P2', charId: c2.id, x: 10, facing: -1, hp: p2MaxHp, maxHp: p2MaxHp, mp: c2.maxMp, maxMp: c2.maxMp, sp: c2.maxSp, maxSp: c2.maxSp, atk: c2.atk, def: c2.def, skills: this.pSkills[p2.sid] || c2.defaultSkills, customSkills: this.pCustom[p2.sid] || {} },
     });
+    console.log(`[INIT] engine created, p1(char=${c1.id},hp=${c1.maxHp}) p2(char=${c2.id},hp=${p2MaxHp})`);
   }
 
   startPrepare() {
@@ -63,7 +64,22 @@ class GameRoom {
     this.pReady[this.players[1].sid] = false;
     this.pActions[this.players[0].sid] = [];
     this.pActions[this.players[1].sid] = [];
-    if (!this.engine) this.initEngine();
+    
+    // 保存上一轮最终 HP（如果 engine 存在）
+    let prevP1Hp = null, prevP2Hp = null;
+    if (this.engine) {
+      const prevS = this.engine.getState();
+      prevP1Hp = prevS.p1.hp;
+      prevP2Hp = prevS.p2.hp;
+    }
+    
+    // 重新初始化 engine，清除残留 effects/bullets/cooldowns
+    this.initEngine();
+    
+    // 继承上一轮 HP
+    if (prevP1Hp !== null) this.engine.state.p1.hp = prevP1Hp;
+    if (prevP2Hp !== null) this.engine.state.p2.hp = prevP2Hp;
+
 
     const s = this.engine.getState();
     io.to(this.id).emit('prepareStart', {
@@ -93,9 +109,14 @@ class GameRoom {
     while (a1.length < TICKS) a1.push('wait');
     while (a2.length < TICKS) a2.push('wait');
 
+    console.log(`[BATTLE] round=${this.round} a1=${a1.slice(0,4).join(',')} a2=${a2.slice(0,4).join(',')}`);
+    console.log(`[BATTLE] pre-state p1(hp=${this.engine.state.p1.hp},mp=${this.engine.state.p1.mp},sp=${this.engine.state.p1.sp}) p2(hp=${this.engine.state.p2.hp})`);
+
     this.engine.setActions(a1, a2);
     const frames = this.engine.executeAll();
     const s = this.engine.getState();
+
+    console.log(`[BATTLE] post-state p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) frames=${frames.length}`);
 
     io.to(this.id).emit('battleFrames', { frames, final: s, round: this.round });
 
