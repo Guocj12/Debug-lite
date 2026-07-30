@@ -1040,17 +1040,7 @@ class DamageTextFX {
 }
 
 // ==================== 拖尾 FX (动态跟随角色身后) ====================
-// TrailFX 通过 getter 每帧读取角色的实时渲染位置
-// 内部维护位置历史，渲染时从近到远衰减
 class TrailFX {
-  /**
-   * @param {string} animName - 动画配置名
-   * @param {number} fromX   - 像素起点
-   * @param {number} toX     - 像素终点
-   * @param {number} y       - 像素 Y
-   * @param {string} color   - 颜色
-   * @param {object} getActorPos - { getX: () => pixelX } 实时读取角色位置
-   */
   constructor(animName, fromX, toX, y, color, getActorPos = null) {
     const anim = getAnim(animName);
     this.animName = animName;
@@ -1060,60 +1050,48 @@ class TrailFX {
     this.fadeTime = anim?.fadeTime || 400;
     this.elapsed = 0;
     this.done = false;
-    this.getActorPos = getActorPos; // 角色位置获取器
+    this.getActorPos = getActorPos;
     // 位置历史: [{x, time}] 最近的在前面
     this._history = [];
-    // 记录上次位置用于速度估算
     this._lastX = fromX;
+    // 预填起点确保至少能渲染
+    this._history.push({ x: fromX, time: 0 });
+    if (getActorPos) {
+      // 有实时跟踪时也加入终点估计
+      this._history.push({ x: toX, time: 0 });
+    }
   }
 
   update(dt) {
     this.elapsed += dt;
-    // 获取角色当前位置
     const currentX = this.getActorPos ? this.getActorPos.getX() : null;
     if (currentX !== null) {
-      // 记录当前位置到历史
       this._history.unshift({ x: currentX, time: this.elapsed });
       this._lastX = currentX;
-      // 只保留 segmentCount*2 个采样点
       while (this._history.length > this.segmentCount * 3) this._history.pop();
-    } else {
-      // 没有实时引用时退化为静态拖尾（冲刺/闪避事件已过去）
-      // 使用简单的插值模拟
-      if (this._history.length === 0) {
-        this._history.push({ x: this._lastX, time: 0 });
-      }
     }
-    // 清理过期历史（超过 fadeTime 的旧位置）
+    // 清理过期历史
     this._history = this._history.filter(h => this.elapsed - h.time < this.fadeTime);
-    if (this.elapsed >= this.fadeTime && this._history.length === 0) this.done = true;
+    if (this.elapsed >= this.fadeTime && this._history.length <= 1) this.done = true;
   }
 
   render(ctx, R) {
     const t = Math.min(1, this.elapsed / this.fadeTime);
     const alpha = 1 - t;
     if (alpha <= 0) return;
-
-    // 使用位置历史绘制拖尾：最新的位置在历史开头，最旧的末尾
     const history = this._history;
     if (history.length < 2) return;
-
     ctx.save();
     for (let i = 1; i < history.length; i++) {
       const prev = history[i - 1];
       const curr = history[i];
-      // 进度：i=0 是最新（最靠近角色），i 越大越远
       const segFrac = Math.min(1, i / this.segmentCount);
-      // 越远越透明、越短
       const segAlpha = alpha * Math.max(0, 1 - segFrac) * 0.8;
       if (segAlpha <= 0.01) continue;
-      // 取两点中点绘制
       const segX = (prev.x + curr.x) / 2;
-      // 拖尾宽度：越远越窄
       const widthScale = 1 - segFrac * 0.6;
       const w = R.cellW * 0.6 * widthScale;
       const h = 8 * widthScale;
-
       ctx.globalAlpha = segAlpha;
       ctx.fillStyle = this.color;
       ctx.shadowColor = this.color;
@@ -1907,15 +1885,15 @@ function addActionToQueue(actionId, skillSid) {
 // ==================== 编辑阶段：清空/撤销/填充 ====================
 function clearActions() {
   DBG.log('[CLEAR] 清空所有' + G.actions.length + '个行动');
-  // 恢复到最初状态（第一个快照）
   while (G._snapshots.length > 0) G.restoreSnapshot();
-  // 还需要恢复到 round 开始时的状态：从 prepareStart 存一份原始状态
   if (G._originP1) { G.p1 = JSON.parse(JSON.stringify(G._originP1)); }
   if (G._originP2) { G.p2 = JSON.parse(JSON.stringify(G._originP2)); }
   G._cooldowns = {};
   G.tick = 0;
   G.actions = [];
   G._snapshots = [];
+  G._renderP1 = null;  // 清除缓动渲染位置
+  G._renderP2 = null;
   FX.clear();
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: [] });
   UI.renderActionSlots();
@@ -1929,6 +1907,8 @@ function undoAction() {
   G.actions.pop();
   G.restoreSnapshot();
   FX.clear();
+  G._renderP1 = null;  // 清除缓动渲染位置
+  G._renderP2 = null;
   if (G.socket && G.roomId) G.socket.emit('updateActions', { actions: G.actions });
   UI.renderActionSlots();
   UI.renderActionButtons();
@@ -2056,29 +2036,31 @@ function playBattleAnim(frames, final) {
         const colGrid = colEv ? colEv.x : Math.round((prevP1.x + prevP2.x) / 2);
         const colPX = Renderer.gridToPixelX(colGrid);
 
+        // p1FromX/p2FromX 是双方本 tick 的起点（服务端 send）
         const p1FromGrid = frame.p1FromX ?? prevP1.x;
         const p2FromGrid = frame.p2FromX ?? prevP2.x;
 
-        // 谁移动了？只有移动方才需要缓动到碰撞点
-        const p1Moved = (frame.p1FromX !== undefined && frame.p1FromX !== G.p1.x) || prevP1.x !== G.p1.x;
-        const p2Moved = (frame.p2FromX !== undefined && frame.p2FromX !== G.p2.x) || prevP2.x !== G.p2.x;
-        // 如果都没移动（罕见的双方原地碰撞），双方各向对方移半步
-        const bothMoved = p1Moved && p2Moved;
+        // 碰撞时服务端阻止了移动，G.p1.x == p1FromGrid。需要从 p1FromGrid 推断谁在移动：
+        // 如果 p1FromGrid != colGrid，说明 P1 在朝碰撞格移动
+        const p1Moved = p1FromGrid !== colGrid;
+        const p2Moved = p2FromGrid !== colGrid;
 
+        const p1FromPX = Renderer.gridToPixelX(p1FromGrid);
+        const p2FromPX = Renderer.gridToPixelX(p2FromGrid);
+        const p1FinalPX = Renderer.gridToPixelX(G.p1.x);
+        const p2FinalPX = Renderer.gridToPixelX(G.p2.x);
+
+        // 创建渲染位置（从起点开始）
         if (p1Moved) {
-          const p1FromPX = Renderer.gridToPixelX(p1FromGrid);
           G._renderP1 = { x: p1FromPX, facing: G.p1.facing };
           Tween.add(G._renderP1, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
         }
         if (p2Moved) {
-          const p2FromPX = Renderer.gridToPixelX(p2FromGrid);
           G._renderP2 = { x: p2FromPX, facing: G.p2.facing };
           Tween.add(G._renderP2, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
         }
 
         // 碰撞后弹回最终位置
-        const p1FinalPX = Renderer.gridToPixelX(G.p1.x);
-        const p2FinalPX = Renderer.gridToPixelX(G.p2.x);
         setTimeout(() => {
           if (p1Moved && G._renderP1) {
             G._renderP1.x = colPX;
