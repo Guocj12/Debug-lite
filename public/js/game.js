@@ -246,46 +246,54 @@ const Renderer = {
     this.drawBases(ctx);
   },
 
-  /** 绘制两侧基地 */
+  /** 绘制两侧基地（地图左右边界变为基地颜色条） */
   drawBases(ctx) {
     if (!G.bases) return;
-    const baseCfg = { p1: { x: 0, color: '#00ffff' }, p2: { x: 15, color: '#ff4444' } };
+    const barW = this.cellW * 0.22;
     for (const key of ['p1', 'p2']) {
-      const cfg = baseCfg[key];
-      const bx = this.gridToPixelX(cfg.x);
-      const by = this.baseY;
-      const bw = this.cellW * 0.9;
-      const bh = 24;
-      // 基地颜色随HP变化
       const hpPct = G.bases[key].hp / G.bases[key].maxHp;
-      const r = cfg.color === '#00ffff' ? Math.floor(0 + (255-0) * (1-hpPct)) : Math.floor(255 * hpPct + 100 * (1-hpPct));
-      const g = cfg.color === '#00ffff' ? Math.floor(255 * hpPct + 100 * (1-hpPct)) : Math.floor(0 + (68-0) * (1-hpPct));
-      const b = cfg.color === '#00ffff' ? Math.floor(255 * hpPct + 50 * (1-hpPct)) : Math.floor(0 + (68-0) * (1-hpPct));
+      // P1基地在左侧边界，颜色cyan→红（随受损变红）；P2在右侧，颜色红→暗
+      let r, g, b;
+      if (key === 'p1') {
+        // cyan #00ffff → 受损变红
+        r = Math.floor(255 * (1 - hpPct));
+        g = Math.floor(255 * hpPct + 60 * (1 - hpPct));
+        b = Math.floor(255 * hpPct + 40 * (1 - hpPct));
+      } else {
+        // red #ff4444
+        r = Math.floor(255 * hpPct + 80 * (1 - hpPct));
+        g = Math.floor(68 * hpPct + 20 * (1 - hpPct));
+        b = Math.floor(68 * hpPct + 20 * (1 - hpPct));
+      }
       const baseColor = `rgb(${r},${g},${b})`;
-      
+      const bx = key === 'p1' ? 0 : this.canvas.width - barW;
+      const by = 0;
+      const bh = this.canvas.height;
+
       ctx.save();
-      // 底座（虚线轮廓矩形）
+      // 填充
+      ctx.fillStyle = baseColor;
+      ctx.globalAlpha = 0.35 + hpPct * 0.35;
+      ctx.fillRect(bx, by, barW, bh);
+      ctx.globalAlpha = 1;
+      // 发光边框
       ctx.strokeStyle = baseColor;
       ctx.lineWidth = 2;
       ctx.shadowColor = baseColor;
-      ctx.shadowBlur = 10;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(bx - bw/2, by - bh, bw, bh);
-      ctx.setLineDash([]);
+      ctx.shadowBlur = 8;
+      ctx.strokeRect(bx, by, barW, bh);
       ctx.shadowBlur = 0;
-      
-      // 填充（半透明）
-      ctx.fillStyle = baseColor.replace('rgb', 'rgba').replace(')', ',0.15)');
-      ctx.fillRect(bx - bw/2, by - bh, bw, bh);
-      
-      // HP文字
-      ctx.fillStyle = baseColor;
-      ctx.font = `${Math.max(8, this.cellW*0.22)}px monospace`;
+      // HP文字（竖直写在中间）
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(9, this.cellW*0.2)}px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText(`${G.bases[key].hp}`, bx, by - bh/2 + 4);
-      
-      // 标签
-      ctx.fillText(key === 'p1' ? 'BASE1' : 'BASE2', bx, by - bh - 4);
+      ctx.save();
+      const cx = bx + barW / 2;
+      const cy = bh * 0.55;
+      ctx.translate(cx, cy);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(`${G.bases[key].hp}`, 0, 4);
+      ctx.restore();
       ctx.restore();
     }
   },
@@ -1942,8 +1950,14 @@ function renderTutContent() {
       '</table></div>'+
     '</div>'+
     '<div class="wiki-section">'+
+      '<h3>[BASE] 基地系统</h3>'+
+      '<div class="wiki-card"><p>双方各有一个<strong>基地</strong>（HP 100，位于地图<strong>边界之外</strong>）。玩家无法站在基地格上——当你位于左右边界格并<strong>向敌方方向移动</strong>时，即触发<strong>攻击基地</strong>。</p>'+
+      '<p class="wiki-formula">基地伤害 = ATK × 0.75 × (1 − 基地减伤率)</p>'+
+      '<p>基地反弹伤害恒为 <strong>1</strong>（基地ATK=0）。但多次撞击会快速消耗自身HP。</p></div>'+
+    '</div>'+
+    '<div class="wiki-section">'+
       '<h3>[WIN] 胜利条件</h3>'+
-      '<p>一方 HP 归零则<strong>立即判负</strong>。30 回合打满以 HP 多者胜。HP 相同平局。</p>'+
+      '<p>一方 HP 归零 <strong>或 基地被摧毁</strong> 则立即判负。击杀对手后再拆基地是迟早的事。30 回合打满以 HP 多者胜。</p>'+
     '</div>',
 
     2: // 角色
@@ -2039,8 +2053,8 @@ function renderTutContent() {
       '</div>'+
       '<div class="wiki-card">'+
       '<h4>碰撞伤害</h4>'+
-      '<p class="wiki-formula">DMG = 对方ATK * 0.25 * (1 - 我方DEF/(DEF+40))</p>'+
-      '<p>同时移动到同一格，或走入对方占据的格子时触发。</p>'+
+      '<p class="wiki-formula">DMG = 对方ATK * 0.75 * (1 - 我方DEF/(DEF+40))</p>'+
+      '<p>同时移动到同一格，或走入对方占据的格子时触发。向敌方边界外移动则改为攻击基地。</p>'+
       '</div>'+
     '</div>'+
     '<div class="wiki-section">'+
@@ -2057,6 +2071,10 @@ function renderTutContent() {
     5: // 进阶
     '<div class="wiki-section">'+
       '<h3>[TIPS] 进阶策略</h3>'+
+      '<div class="wiki-card"><h4>基地攻防</h4>'+
+      '<p>基地位于场地<strong>边界之外</strong>，走到边界格再向敌方方向移动即可攻击基地。</p>'+
+      '<p>对手一定会来攻击你的基地——这就是<strong>预测对方位置的依据</strong>。你不需要猜他在哪，你只需要想："他会走哪条路来拆我的基地？"</p>'+
+      '<p>击杀对手后，无人防守的基地随便拆。也可以<strong>绕过敌人直取基地</strong>（刺客暗影步+冲刺）。</p></div>'+
       '<div class="wiki-card"><h4>行动编排</h4>'+
       '<p>预判对手位置再放技能。打不中=浪费一 tick。</p>'+
       '<p>闪避可穿越敌人且躲伤害，但消耗 SP 较多。</p>'+

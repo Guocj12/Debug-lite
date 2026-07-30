@@ -3,25 +3,25 @@
   "battle": { "ticksPerRound": 16, "tickIntervalMs": 1000 },
   "prepare": { "maxActions": 16, "timeSeconds": 60 },
   "base": {
-    "hp": 200,
+    "hp": 100,
     "def": 10,
     "atk": 0,
-    "desc": "基地位于地图两端（格0和格15），只受碰撞伤害（玩家向基地移动被阻挡时）。基地ATK=0，不会反击。基地HP归零则拥有方落败。基地也受百分比减伤公式影响。",
+    "desc": "基地位于地图边界外（P1在格0左侧，P2在格15右侧）。只受碰撞伤害（玩家向边界外移动攻击基地时触发）。基地ATK=0，不会反击。基地HP归零则拥有方落败。",
     "positions": { "p1": 0, "p2": 15 }
   },
   "damage": {
     "formula": "ATK × ratio × (1 - DEF/(DEF+40)), min 1",
     "true": "ATK × ratio (完全无视防御)",
     "defReduction": "DEF / (DEF + 40)",
-    "collisionRatio": 0.25,
+    "collisionRatio": 0.75,
     "backstabMultiplier": 2.0
   },
   "regen": {
-    "description": "每个角色拥有独立的 mpRegen 和 spRegen（在 characters.json 中定义）",
-    "warrior": { "mpRegen": 1, "spRegen": 2, "note": "SP回复标准，战士依赖SP释放技能" },
-    "archer": { "mpRegen": 2, "spRegen": 2, "note": "MP回复较快，支持高频弹幕" },
-    "mage": { "mpRegen": 3, "spRegen": 1, "note": "MP回复最快，是法术炮台" },
-    "assassin": { "mpRegen": 1, "spRegen": 3, "note": "SP回复最快，支持高机动" }
+    "description": "每个角色拥有独立的 mpRegen 和 spRegen（在 characters.json 中定义），当前版本已整体上调约3点",
+    "warrior": { "mpRegen": 5, "spRegen": 7, "note": "SP回复较快，战士依赖SP释放技能" },
+    "archer": { "mpRegen": 6, "spRegen": 7, "note": "MP回复较快，支持高频弹幕" },
+    "mage": { "mpRegen": 7, "spRegen": 6, "note": "MP回复最快，是法术炮台" },
+    "assassin": { "mpRegen": 5, "spRegen": 8, "note": "SP回复最快，支持高机动" }
   },
   "design": {
     "ttk": "2-3回合（32-48 tick）",

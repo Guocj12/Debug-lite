@@ -45,12 +45,23 @@
 
   <!-- 战斗场景 -->
   <div id="battle" class="screen">
+    <!-- 基地HP条（独立于角色HUD，放在最上面） -->
+    <div class="base-hud" id="baseHud">
+      <div class="base-hud-item" id="b1hud">
+        <span class="base-hud-label">🏰 BASE1</span>
+        <div class="base-hud-bar-c"><div class="base-hud-bar" id="b1hp"></div><span class="base-hud-txt" id="b1hpt">100/100</span></div>
+      </div>
+      <div class="base-hud-vs">VS</div>
+      <div class="base-hud-item mir" id="b2hud">
+        <span class="base-hud-label">🏰 BASE2</span>
+        <div class="base-hud-bar-c"><div class="base-hud-bar" id="b2hp"></div><span class="base-hud-txt" id="b2hpt">100/100</span></div>
+      </div>
+    </div>
     <div class="bh">
       <div class="pi" id="p1i"><div class="pn">P1</div>
         <div class="bar-c"><div class="bar bar-hp" id="p1hp"></div><span class="bar-txt" id="p1hpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-mp" id="p1mp"></div><span class="bar-txt" id="p1mpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-sp" id="p1sp"></div><span class="bar-txt" id="p1spt">0/0</span></div>
-        <div class="bar-c base-bar"><div class="bar bar-base" id="b1hp"></div><span class="bar-txt" id="b1hpt">200/200</span></div>
       </div>
       <div class="tmr" id="tmrArea">
         <div class="rnd" id="rnd">ROUND 1</div>
@@ -60,7 +71,6 @@
         <div class="bar-c"><div class="bar bar-hp" id="p2hp"></div><span class="bar-txt" id="p2hpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-mp" id="p2mp"></div><span class="bar-txt" id="p2mpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-sp" id="p2sp"></div><span class="bar-txt" id="p2spt">0/0</span></div>
-        <div class="bar-c base-bar"><div class="bar bar-base" id="b2hp"></div><span class="bar-txt" id="b2hpt">200/200</span></div>
       </div>
     </div>
     <div class="fld"><canvas id="fc"></canvas></div>
@@ -148,7 +158,7 @@
         </div>
         <div class="wiki-card">
           <h4>碰撞伤害</h4>
-          <p>双方移动到同一格时，各受到对方 ATK × 0.25 的碰撞伤害（也受减伤影响）。</p>
+          <p>双方移动到同一格时，各受到对方 ATK × <strong>0.75</strong> 的碰撞伤害（也受减伤影响）。移动到敌方边界时改为攻击敌方基地。</p>
         </div>
       </div>
 
@@ -175,8 +185,14 @@
       </div>
 
       <div class="wiki-section">
+        <h3>[BASE] 基地系统</h3>
+        <p>双方各有一个<strong>基地</strong>（HP 100, DEF 10），位于地图<strong>边界之外</strong>（左右两侧竖条）。玩家无法站到基地格上，只能在边界格<strong>向敌方方向移动</strong>时攻击基地。</p>
+        <p class="wiki-formula">基地伤害 = ATK × 0.75 × (1 − 10/(10+40))，反弹伤害 = 0 × 0.75 × (1 − 我方DEF/(DEF+40)) = 1</p>
+        <p>基地ATK=0所以反弹伤害恒为<strong>1</strong>。但多次撞击基地会快速消耗自身HP——必须权衡。</p>
+      </div>
+      <div class="wiki-section">
         <h3>[WIN] 胜利条件</h3>
-        <p>一方<strong>HP 归零</strong>或<strong>基地被摧毁</strong>则立即判负。基地位于地图两端（格0和格15），攻击对手基地需移动到其位置造成碰撞伤害（基地ATK=0不会反击）。若 30 回合后双方均存活，以<strong>剩余 HP 多者</strong>获胜。</p>
+        <p>一方<strong>HP 归零</strong>或<strong>基地被摧毁</strong>则立即判负。击杀对手后攻击无防守的基地是迟早的事。若 30 回合后双方均存活，以<strong>剩余 HP 多者</strong>获胜。</p>
       </div>
 
       <div class="wiki-section">

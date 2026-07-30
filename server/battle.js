@@ -136,8 +136,8 @@ class BattleEngine {
   checkCollision(p1, p2, i1, i2) {
     const events = [], p1D = p1.x + i1.dx, p2D = p2.x + i2.dx;
     // 碰撞伤害用百分比减伤（但保留最低伤害）
-    const dmgP1toP2 = Math.max(1, Math.floor(p1.atk * 0.25 * (1 - this.getDefReduction(p2.def))));
-    const dmgP2toP1 = Math.max(1, Math.floor(p2.atk * 0.25 * (1 - this.getDefReduction(p1.def))));
+    const dmgP1toP2 = Math.max(1, Math.floor(p1.atk * 0.75 * (1 - this.getDefReduction(p2.def))));
+    const dmgP2toP1 = Math.max(1, Math.floor(p2.atk * 0.75 * (1 - this.getDefReduction(p1.def))));
     if (i1.dx !== 0 && i2.dx !== 0) {
       if (p1D === p2D) {
         p1.hp = Math.max(0, p1.hp - dmgP2toP1); p2.hp = Math.max(0, p2.hp - dmgP1toP2);
@@ -166,45 +166,39 @@ class BattleEngine {
     if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.8);
     if (collision) return events;
     if (i1.dx !== 0 && !i1.isTurn) {
-      let d = p1.x + i1.dx; d = Math.max(0, Math.min(15, d));
+      let d = p1.x + i1.dx;
       if (!i1.isDodge && d === p2.x) d = p1.x;
       if (i1.isDodge && d === p2.x) d = p2.x + (i1.dx > 0 ? -1 : 1);
-      // 基地碰撞检测
-      const targetX = Math.max(0, Math.min(15, d));
-      if (targetX === 15 && this.state.bases) {
+      // 基地攻击：P1向右侧边界（=P2基地方向）移动攻击基地
+      if (i1.dx > 0 && d > 15 && this.state.bases) {
         const base = this.state.bases.p2;
-        const dmg = Math.max(1, Math.floor(p1.atk * 0.25 * (1 - this.getDefReduction(base.def))));
+        const dmg = Math.max(1, Math.floor(p1.atk * 0.75 * (1 - this.getDefReduction(base.def))));
         base.hp = Math.max(0, base.hp - dmg);
-        const rebound = Math.max(1, Math.floor(base.atk * 0.25 * (1 - this.getDefReduction(p1.def))));
+        const rebound = Math.max(1, Math.floor(base.atk * 0.75 * (1 - this.getDefReduction(p1.def))));
         p1.hp = Math.max(0, p1.hp - rebound);
-        p1.x = 14;
+        p1.x = 15;
         events.push({ type: 'base_hit', actor: 'p1', target: 'p2_base', dmg, x: 15, bullet_color: '#ff8800' });
-        console.log(`[BASE_HIT] P1 hit P2's base! base_hp=${base.hp} dmg=${dmg} p1_bounced_to=14`);
-      } else if (targetX === 0 && this.state.bases) {
-        p1.x = targetX;
+        console.log(`[BASE_HIT] P1 hit P2's base! base_hp=${base.hp} dmg=${dmg} p1_at_15`);
       } else {
-        p1.x = targetX;
+        p1.x = Math.max(0, Math.min(15, d));
       }
     }
     if (i2.dx !== 0 && !i2.isTurn) {
-      let d = p2.x + i2.dx; d = Math.max(0, Math.min(15, d));
+      let d = p2.x + i2.dx;
       if (!i2.isDodge && d === p1.x) d = p2.x;
       if (i2.isDodge && d === p1.x) d = p1.x + (i2.dx > 0 ? -1 : 1);
-      // 基地碰撞检测
-      const targetX = Math.max(0, Math.min(15, d));
-      if (targetX === 0 && this.state.bases) {
+      // 基地攻击：P2向左侧边界（=P1基地方向）移动攻击基地
+      if (i2.dx < 0 && d < 0 && this.state.bases) {
         const base = this.state.bases.p1;
-        const dmg = Math.max(1, Math.floor(p2.atk * 0.25 * (1 - this.getDefReduction(base.def))));
+        const dmg = Math.max(1, Math.floor(p2.atk * 0.75 * (1 - this.getDefReduction(base.def))));
         base.hp = Math.max(0, base.hp - dmg);
-        const rebound = Math.max(1, Math.floor(base.atk * 0.25 * (1 - this.getDefReduction(p2.def))));
+        const rebound = Math.max(1, Math.floor(base.atk * 0.75 * (1 - this.getDefReduction(p2.def))));
         p2.hp = Math.max(0, p2.hp - rebound);
-        p2.x = 1;
+        p2.x = 0;
         events.push({ type: 'base_hit', actor: 'p2', target: 'p1_base', dmg, x: 0, bullet_color: '#ff8800' });
-        console.log(`[BASE_HIT] P2 hit P1's base! base_hp=${base.hp} dmg=${dmg} p2_bounced_to=1`);
-      } else if (targetX === 15 && this.state.bases) {
-        p2.x = targetX;
+        console.log(`[BASE_HIT] P2 hit P1's base! base_hp=${base.hp} dmg=${dmg} p2_at_0`);
       } else {
-        p2.x = targetX;
+        p2.x = Math.max(0, Math.min(15, d));
       }
     }
     p1._dodging = i1.isDodge; p2._dodging = i2.isDodge;
@@ -419,8 +413,8 @@ class BattleEngine {
         const oldX = caster.x;
         // 碰撞检测：如果目标格已被占据（敌人移动到了那里），则留在原地并碰撞
         if (tpX === target.x) {
-          const dmgToTarget = Math.max(1, Math.floor(caster.atk * 0.25 * (1 - this.getDefReduction(target.def))));
-          const dmgToCaster = Math.max(1, Math.floor(target.atk * 0.25 * (1 - this.getDefReduction(caster.def))));
+          const dmgToTarget = Math.max(1, Math.floor(caster.atk * 0.75 * (1 - this.getDefReduction(target.def))));
+          const dmgToCaster = Math.max(1, Math.floor(target.atk * 0.75 * (1 - this.getDefReduction(caster.def))));
           caster.hp = Math.max(0, caster.hp - dmgToCaster);
           target.hp = Math.max(0, target.hp - dmgToTarget);
           events.push({ type: 'collision', x: tpX, dmg1: dmgToCaster, dmg2: dmgToTarget, hit_anim: 'collisionFX', bullet_color: '#ffff00' });
