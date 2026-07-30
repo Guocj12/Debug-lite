@@ -378,6 +378,10 @@ const FX = {
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, hitX, y, color));
         }
+        // 伤害跳字
+        if (ev.dmg && ev.dmg > 0) {
+          this.active.push(new DamageTextFX(hitX, y - 10, ev.dmg, '#ff4444'));
+        }
         AE.play('hit');
         break;
       }
@@ -395,6 +399,10 @@ const FX = {
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, toX, y, color, stagger));
         }
+        // 伤害跳字
+        if (ev.dmg && ev.dmg > 0) {
+          this.active.push(new DamageTextFX(toX, y - 10, ev.dmg, '#ff4444'));
+        }
         if (!stagger) AE.play('hit');
         break;
       }
@@ -406,6 +414,17 @@ const FX = {
         const y = Renderer.baseY - 10;
         if (ev.bullet_anim) {
           this.active.push(new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false, stagger));
+        }
+        break;
+      }
+
+      // === DOT tick 伤害（燃烧/中毒每tick扣血） ===
+      case 'burn_tick':
+      case 'poison_tick': {
+        const dotX = Renderer.gridToPixelX(ev.x ?? 0);
+        const dotY = Renderer.baseY - 10;
+        if (ev.dmg && ev.dmg > 0) {
+          this.active.push(new DamageTextFX(dotX, dotY - 10, ev.dmg, ev.bullet_color || '#88ff00'));
         }
         break;
       }
@@ -445,6 +464,10 @@ const FX = {
           if (ev.hit_anim) {
             this.active.push(new HitRingFX(ev.hit_anim, hitX, y, color, stagger));
           }
+        }
+        // 伤害跳字
+        if (ev.dmg && ev.dmg > 0) {
+          this.active.push(new DamageTextFX(hitX, y - 10, ev.dmg, '#ff6600'));
         }
         // 箭雨的 aoe_hit 不再额外播放命中环（由 VerticalBulletFX 落地处理）
         if (!stagger) AE.play('hit');
@@ -530,6 +553,13 @@ const FX = {
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, cx, Renderer.baseY - 10, ev.bullet_color || '#ffff00'));
         }
+        // 碰撞双方伤害跳字
+        if (ev.dmg1 && ev.dmg1 > 0) {
+          this.active.push(new DamageTextFX(cx, Renderer.baseY - 20, ev.dmg1, '#ffff00'));
+        }
+        if (ev.dmg2 && ev.dmg2 > 0) {
+          this.active.push(new DamageTextFX(cx, Renderer.baseY - 20, ev.dmg2, '#ffff00'));
+        }
         AE.play('block');
         break;
       }
@@ -540,6 +570,10 @@ const FX = {
         const by = Renderer.baseY - 20;
         // 橙色大命中环
         this.active.push(new HitRingFX('baseHit', bx, by, ev.bullet_color || '#ff8800'));
+        // 基地伤害跳字
+        if (ev.dmg && ev.dmg > 0) {
+          this.active.push(new DamageTextFX(bx, by - 10, ev.dmg, '#ff8800'));
+        }
         AE.play('hit');
         break;
       }
@@ -722,7 +756,7 @@ class VerticalBulletFX {
   }
 }
 
-// ==================== 命中圆环 FX (支持延迟) ====================
+// ==================== 命中像素圈 FX (像素风：方框扩圈 + 方块粒子) ====================
 class HitRingFX {
   constructor(animName, x, y, color, stagger = 0) {
     const anim = getAnim(animName);
@@ -744,6 +778,8 @@ class HitRingFX {
       const speed = 2 + Math.random() * this.particleSpread;
       this.particles.push({ angle, speed, life: 0.6 + Math.random() * 0.4 });
     }
+    // 预计算像素圈路径（方形像素环）
+    this._pixelRingSize = 2; // 像素块大小
   }
 
   update(dt) {
@@ -752,37 +788,61 @@ class HitRingFX {
     if (this.elapsed >= this.fadeTime) this.done = true;
   }
 
+  /** 绘制像素化方框环 */
+  _drawPixelRing(ctx, cx, cy, radius, alpha) {
+    const ps = this._pixelRingSize;
+    // 用 step 量化半径，产生像素锯齿感
+    const step = ps * 1.5;
+    const snappedR = Math.floor(radius / step) * step;
+    if (snappedR < step) return;
+    // 在 snappedR ± step 范围内绘制像素方块（多条错位像素环）
+    for (let offset = -step; offset <= step; offset += step) {
+      const r = snappedR + offset;
+      if (r <= 0) continue;
+      const circ = Math.floor(2 * Math.PI * r / step);
+      const skipChance = offset === 0 ? 0.2 : 0.5;
+      for (let i = 0; i < circ; i++) {
+        if (Math.random() < skipChance) continue;
+        const a = (i / circ) * Math.PI * 2;
+        const px = Math.floor((cx + Math.cos(a) * r) / step) * step;
+        const py = Math.floor((cy + Math.sin(a) * r) / step) * step;
+        ctx.fillStyle = this.color;
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.fillRect(px, py, ps, ps);
+      }
+    }
+  }
+
   render(ctx, R) {
     if (this.elapsed < 0) return;
     const t = Math.min(1, this.elapsed / this.fadeTime);
     const alpha = 1 - t;
     const ringRadius = (this.ringStart + (this.ringEnd - this.ringStart) * t) * R.cellW;
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = this.color;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+
+    // 像素风方框环（替代圆环）
+    this._drawPixelRing(ctx, this.x, this.y, ringRadius, alpha);
+
+    // 像素粒子：飞出的像素方块
     for (const p of this.particles) {
       const pLife = Math.min(1, this.elapsed / (this.fadeTime * p.life));
       const pAlpha = 1 - pLife;
       const dist = pLife * R.cellW * this.particleSpread;
       const px = this.x + Math.cos(p.angle) * dist;
       const py = this.y + Math.sin(p.angle) * dist;
+      // 像素风：用 step 量化位置
+      const ps = 3;
+      const sx = Math.floor(px / ps) * ps;
+      const sy = Math.floor(py / ps) * ps;
       ctx.fillStyle = this.particleColor;
-      ctx.globalAlpha = pAlpha * 0.8;
-      ctx.fillRect(px - 2, py - 2, 4, 4);
+      ctx.globalAlpha = pAlpha * 0.9;
+      ctx.fillRect(sx, sy, ps, ps);
     }
     ctx.restore();
   }
 }
 
-// ==================== 爆炸扩圈 FX (火球落地专用) ====================
-// 像素字符画 + 扩圈环 + 大量粒子
+// ==================== 爆炸扩圈 FX (纯像素风：像素方框扩圈 + 乱飞方块粒子) ====================
 class ExplosionRingFX {
   constructor(animName, x, y, color, stagger = 0) {
     const anim = getAnim(animName);
@@ -803,7 +863,10 @@ class ExplosionRingFX {
     for (let i = 0; i < this.particleCount; i++) {
       const angle = (Math.PI * 2 * i) / this.particleCount + (Math.random() - 0.5) * 0.4;
       const speed = 3 + Math.random() * this.particleSpread;
-      this.particles.push({ angle, speed, life: 0.4 + Math.random() * 0.6 });
+      // 随机决定粒子是方形还是长条
+      const pW = 2 + Math.floor(Math.random() * 4);
+      const pH = 2 + Math.floor(Math.random() * 4);
+      this.particles.push({ angle, speed, life: 0.4 + Math.random() * 0.6, pw: pW, ph: pH });
     }
   }
 
@@ -813,30 +876,47 @@ class ExplosionRingFX {
     if (this.elapsed >= this.fadeTime) this.done = true;
   }
 
+  /** 像素方框环 */
+  _drawPixelRing(ctx, cx, cy, radius, alpha) {
+    const step = 4;
+    const snappedR = Math.floor(radius / step) * step;
+    if (snappedR < step) return;
+    // 多层错位像素环，产生厚重爆炸感
+    for (let offset = -step * 1.5; offset <= step * 1.5; offset += step) {
+      const r = snappedR + offset;
+      if (r <= 0) continue;
+      const circ = Math.floor(2 * Math.PI * r / step);
+      for (let i = 0; i < circ; i++) {
+        if (Math.random() < 0.35) continue; // 随机空缺
+        const a = (i / circ) * Math.PI * 2;
+        const px = Math.floor((cx + Math.cos(a) * r) / step) * step;
+        const py = Math.floor((cy + Math.sin(a) * r) / step) * step;
+        ctx.fillStyle = this.color;
+        ctx.globalAlpha = alpha * 0.7;
+        ctx.fillRect(px, py, step * 0.7, step * 0.7);
+      }
+    }
+  }
+
   render(ctx, R) {
     if (this.elapsed < 0) return;
     const t = Math.min(1, this.elapsed / this.fadeTime);
     const alpha = t < 0.3 ? 1 : Math.max(0, 1 - (t - 0.3) / 0.7);
-    // 扩圈
     const ringRadius = (this.ringStart + (this.ringEnd - this.ringStart) * t) * R.cellW;
     ctx.save();
-    ctx.globalAlpha = alpha * 0.6;
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth = 4;
-    ctx.shadowColor = this.color;
-    ctx.shadowBlur = 20;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 像素字符画爆炸图案（在中心放大+淡出）
+
+    // 像素扩圈
+    this._drawPixelRing(ctx, this.x, this.y, ringRadius, alpha);
+
+    // 中心像素字符画（如果有）
     if (this.spriteName) {
-      const sprScale = 1 + t * 1.2;
+      const sprScale = 1 + t * 1.0;
       const sprAlpha = t < 0.2 ? t / 0.2 : Math.max(0, 1 - (t - 0.2) / 0.8);
       ctx.globalAlpha = sprAlpha;
       R.drawBulletSprite(this.spriteName, this.x, this.y, sprScale, sprAlpha, this.color);
     }
-    // 粒子
+
+    // 像素粒子：飞出的像素方块（大小不一）
     for (const p of this.particles) {
       const pLife = Math.min(1, this.elapsed / (this.fadeTime * p.life));
       const pAlpha = 1 - pLife;
@@ -844,10 +924,103 @@ class ExplosionRingFX {
       const px = this.x + Math.cos(p.angle) * dist;
       const py = this.y + Math.sin(p.angle) * dist;
       ctx.fillStyle = this.particleColor;
-      ctx.globalAlpha = pAlpha * 0.85;
-      ctx.fillRect(px - 3, py - 3, 6, 6);
+      ctx.globalAlpha = pAlpha * 0.9;
+      ctx.fillRect(px - p.pw / 2, py - p.ph / 2, p.pw, p.ph);
     }
     ctx.restore();
+  }
+}
+
+// ==================== 伤害跳字 FX (像素风数字，上飘淡出) ====================
+class DamageTextFX {
+  /**
+   * @param {number} x - 像素X坐标
+   * @param {number} y - 像素Y坐标
+   * @param {number} dmg - 伤害值
+   * @param {string} color - 数字颜色
+   */
+  constructor(x, y, dmg, color = '#ff4444') {
+    // 位置加随机偏移
+    this.x = x + (Math.random() - 0.5) * 30;
+    this.y = y - 10 + (Math.random() - 0.5) * 20;
+    this.dmg = Math.floor(dmg);
+    this.color = color;
+    this.duration = 700; // 持续时间 ms
+    this.elapsed = 0;
+    this.done = false;
+    // 随机水平偏移方向
+    this.driftX = (Math.random() - 0.5) * 20;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed >= this.duration) this.done = true;
+  }
+
+  render(ctx, R) {
+    if (this.elapsed >= this.duration) return;
+    const t = this.elapsed / this.duration;
+    // 上飘
+    const offsetY = -30 * t;
+    // 淡出（前10%闪烁，之后渐隐）
+    let alpha;
+    if (t < 0.1) alpha = t / 0.1;
+    else alpha = Math.max(0, 1 - (t - 0.1) / 0.9);
+    // 微缩放
+    const scale = 1 + t * 0.2;
+
+    const px = this.x + this.driftX * t;
+    const py = this.y + offsetY;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(px, py);
+    ctx.scale(scale, scale);
+
+    // 像素风字体：用 fillRect 画数字
+    this._drawPixelNumber(ctx, this.dmg, this.color);
+
+    ctx.restore();
+  }
+
+  /** 简易像素数字渲染（5x3 像素网格） */
+  _drawPixelNumber(ctx, num, color) {
+    const ps = 3; // 像素块大小
+    const digits = String(num).split('');
+    const digitW = 4; // 每位数字宽度（像素块单位）
+    const totalW = digits.length * (digitW + 1) * ps;
+    const startX = -totalW / 2;
+
+    digits.forEach((ch, di) => {
+      const glyph = this._digitGlyph(ch);
+      if (!glyph) return;
+      const ox = startX + di * (digitW + 1) * ps;
+      for (let row = 0; row < glyph.length; row++) {
+        for (let col = 0; col < glyph[row].length; col++) {
+          if (glyph[row][col] === '#') {
+            ctx.fillStyle = color;
+            ctx.fillRect(ox + col * ps, -10 + row * ps, ps, ps);
+          }
+        }
+      }
+    });
+  }
+
+  /** 5x7 像素数字字模 */
+  _digitGlyph(ch) {
+    const glyphs = {
+      '0': [' ### ', '#   #','#   #','#   #','#   #','#   #',' ### '],
+      '1': ['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ','#####'],
+      '2': [' ### ','#   #','    #','   # ','  #  ',' #   ','#####'],
+      '3': [' ### ','#   #','    #','  ## ','    #','#   #',' ### '],
+      '4': ['#   #','#   #','#   #','#####','    #','    #','    #'],
+      '5': ['#####','#    ','#    ','#### ','    #','#   #',' ### '],
+      '6': [' ### ','#    ','#    ','#### ','#   #','#   #',' ### '],
+      '7': ['#####','    #','   # ','  #  ',' #   ','#    ','#    '],
+      '8': [' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '],
+      '9': [' ### ','#   #','#   #',' ####','    #','    #',' ### '],
+    };
+    return glyphs[ch] || glyphs['0'];
   }
 }
 
@@ -937,16 +1110,16 @@ class TrailFX {
   }
 }
 
-// ==================== Buff 粒子发射器 FX ====================
-// 角色身上源源不断的粒子效果
+// ==================== Buff 像素粒子发射器 FX ====================
+// 角色身上源源不断的像素粒子效果
 class BuffEmitterFX {
   constructor(animName, x, y) {
     const anim = getAnim(animName);
     this.x = x;
     this.y = y;
     this.color = anim?.color || '#4488ff';
-    this.emissionRate = anim?.emissionRate || 4;  // 每秒钟发射粒子数
-    this.particleLife = anim?.particleLife || 600; // ms
+    this.emissionRate = anim?.emissionRate || 4;
+    this.particleLife = anim?.particleLife || 600;
     this.spread = anim?.spread || 3;
     this.elapsed = 0;
     this.done = false;
@@ -956,19 +1129,19 @@ class BuffEmitterFX {
 
   update(dt) {
     this.elapsed += dt;
-    // 发射新粒子
     this.emissionAccum += dt * (this.emissionRate / 1000);
     while (this.emissionAccum >= 1) {
       this.emissionAccum -= 1;
+      const pw = 2 + Math.floor(Math.random() * 3);
+      const ph = 2 + Math.floor(Math.random() * 3);
       this.particles.push({
         angle: Math.random() * Math.PI * 2,
         speed: 1 + Math.random() * this.spread,
         life: this.particleLife * (0.5 + Math.random() * 0.5),
-        elapsed: 0
+        elapsed: 0,
+        pw, ph
       });
     }
-
-    // 更新现有粒子
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.elapsed += dt;
@@ -986,10 +1159,7 @@ class BuffEmitterFX {
       ctx.save();
       ctx.globalAlpha = alpha * 0.7;
       ctx.fillStyle = this.color;
-      ctx.shadowColor = this.color;
-      ctx.shadowBlur = 4;
-      ctx.fillRect(px - 2, py - 2, 4, 4);
-      ctx.shadowBlur = 0;
+      ctx.fillRect(px - p.pw / 2, py - p.ph / 2, p.pw, p.ph);
       ctx.restore();
     }
   }

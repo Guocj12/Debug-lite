@@ -65,8 +65,10 @@ class BattleEngine {
     const a1 = this.p1Actions[tick] || 'wait';
     const a2 = this.p2Actions[tick] || 'wait';
 
-    const p1Stunned = this.tickEffects(s, 'p1');
-    const p2Stunned = this.tickEffects(s, 'p2');
+    const p1Result = this.tickEffects(s, 'p1');
+    const p2Result = this.tickEffects(s, 'p2');
+    const p1Stunned = p1Result.stunned;
+    const p2Stunned = p2Result.stunned;
     let p1Act = p1Stunned ? 'stunned' : a1;
     let p2Act = p2Stunned ? 'stunned' : a2;
 
@@ -109,7 +111,7 @@ class BattleEngine {
       p1FromX, p1FromFacing, p2FromX, p2FromFacing,
       p1Actions: [...this.p1Actions], p2Actions: [...this.p2Actions],
       bullets: JSON.parse(JSON.stringify(s.bullets)),
-      events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || []), ...(baseEvents || [])],
+      events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || []), ...(baseEvents || []), ...(p1Result.dotEvents || []), ...(p2Result.dotEvents || [])],
       animData: this.getAnimData([...(p1SR?.events||[]),...(p2SR?.events||[]),...(collision?.events||[])]),
       p1Act, p2Act, p1Stunned, p2Stunned,
       bases: this.cloneBases(s.bases),
@@ -118,7 +120,7 @@ class BattleEngine {
 
   getAnimData(events) {
     const anims = require('../data/skills.json').animations || {};
-    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall', base_hit: 'baseHit' };
+    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall', base_hit: 'baseHit', burn_tick: 'burn', poison_tick: 'poison' };
     return events.map(ev => ({ ...ev, anim: anims[map[ev.type]] || null }));
   }
 
@@ -450,9 +452,13 @@ class BattleEngine {
 
   tickEffects(s, key) {
     const p = s[key]; let stunned = false;
+    const dotEvents = [];
     p._effects = (p._effects || []).filter(e => {
       if ((e.type === 'dot' || e.type === 'burn' || e.type === 'poison') && e.ticks > 0) {
-        if (!p._dodging) p.hp = Math.max(0, p.hp - (e.dmgPerTick || 1));
+        const dmg = e.dmgPerTick || 1;
+        if (!p._dodging) p.hp = Math.max(0, p.hp - dmg);
+        dotEvents.push({ type: e.type + '_tick', actor: key, dmg: p._dodging ? 0 : dmg, x: p.x,
+          hit_anim: e.type === 'burn' ? 'hitBurn' : 'hitPoison', bullet_color: e.type === 'burn' ? '#ff6600' : '#88ff00' });
         e.ticks--; return e.ticks > 0;
       }
       if ((e.type === 'stun' || e.type === 'freeze') && e.ticks > 0) { stunned = true; e.ticks--; return e.ticks > 0; }
@@ -460,7 +466,7 @@ class BattleEngine {
     });
     p._defBuff = 0; p._dodging = false;
     if (p._defDash) { p._defBuff = (p._defBuff || 0) + p._defDash; p._defDash = 0; }
-    return stunned;
+    return { stunned, dotEvents };
   }
 
   clonePlayer(p) {
