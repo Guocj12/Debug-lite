@@ -1,6 +1,7 @@
-// Battle Engine v4 - 百分比减伤 · 个性恢复 · 动态防御
+// Battle Engine v4 - 百分比减伤 · 个性恢复 · 动态防御 · 基地系统
 const skillsData = require('../data/skills.json');
 const charsData = require('../data/characters.json');
+const configData = require('../data/config.json');
 
 class BattleEngine {
   constructor() { this.state = null; this.p1Actions = []; this.p2Actions = []; }
@@ -11,9 +12,24 @@ class BattleEngine {
     // 缓存角色定义
     s._charDef_p1 = charsData.characters.find(c => c.id === s.p1.charId) || charsData.characters[0];
     s._charDef_p2 = charsData.characters.find(c => c.id === s.p2.charId) || charsData.characters[0];
+    // 基地数据
+    const baseCfg = configData.base;
+    s.bases = {
+      p1: { hp: baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p1 },
+      p2: { hp: baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p2 }
+    };
   }
   setActions(a1, a2) { this.p1Actions = a1; this.p2Actions = a2; }
-  getState() { return JSON.parse(JSON.stringify(this.state)); }
+  getState() {
+    const s = JSON.parse(JSON.stringify(this.state));
+    // 清理内部字段，只保留前端需要的
+    delete s._cooldowns_p1;
+    delete s._cooldowns_p2;
+    delete s._charDef_p1;
+    delete s._charDef_p2;
+    delete s._training;
+    return s;
+  }
 
   /** 百分比减伤公式：减伤率 = DEF / (DEF + 40)，最终伤害 = max(1, floor(基础 × (1-减伤率))) */
   getDefReduction(def) {
@@ -64,7 +80,7 @@ class BattleEngine {
     const p1Intent = this.getMoveIntent(s.p1, p1Act);
     const p2Intent = this.getMoveIntent(s.p2, p2Act);
     const collision = this.checkCollision(s.p1, s.p2, p1Intent, p2Intent);
-    this.applyMovement(s.p1, s.p2, p1Intent, p2Intent, collision, p1Act, p2Act);
+    const baseEvents = this.applyMovement(s.p1, s.p2, p1Intent, p2Intent, collision, p1Act, p2Act);
 
     // 保存敌人移动前位置，供 teleport_backstab 使用
     s.p1._enemyFromX = p2FromX; s.p2._enemyFromX = p1FromX;
@@ -93,15 +109,16 @@ class BattleEngine {
       p1FromX, p1FromFacing, p2FromX, p2FromFacing,
       p1Actions: [...this.p1Actions], p2Actions: [...this.p2Actions],
       bullets: JSON.parse(JSON.stringify(s.bullets)),
-      events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || [])],
+      events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || []), ...(baseEvents || [])],
       animData: this.getAnimData([...(p1SR?.events||[]),...(p2SR?.events||[]),...(collision?.events||[])]),
       p1Act, p2Act, p1Stunned, p2Stunned,
+      bases: this.cloneBases(s.bases),
     };
   }
 
   getAnimData(events) {
     const anims = require('../data/skills.json').animations || {};
-    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall' };
+    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall', base_hit: 'baseHit' };
     return events.map(ev => ({ ...ev, anim: anims[map[ev.type]] || null }));
   }
 
@@ -142,24 +159,56 @@ class BattleEngine {
   }
 
   applyMovement(p1, p2, i1, i2, collision, a1, a2) {
+    const events = [];
     if (i1.isTurn) p1.facing *= -1;
     if (i2.isTurn) p2.facing *= -1;
     if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.8);
     if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.8);
-    if (collision) return;
+    if (collision) return events;
     if (i1.dx !== 0 && !i1.isTurn) {
       let d = p1.x + i1.dx; d = Math.max(0, Math.min(15, d));
       if (!i1.isDodge && d === p2.x) d = p1.x;
       if (i1.isDodge && d === p2.x) d = p2.x + (i1.dx > 0 ? -1 : 1);
-      p1.x = Math.max(0, Math.min(15, d));
+      // 基地碰撞检测
+      const targetX = Math.max(0, Math.min(15, d));
+      if (targetX === 15 && this.state.bases) {
+        const base = this.state.bases.p2;
+        const dmg = Math.max(1, Math.floor(p1.atk * 0.25 * (1 - this.getDefReduction(base.def))));
+        base.hp = Math.max(0, base.hp - dmg);
+        const rebound = Math.max(1, Math.floor(base.atk * 0.25 * (1 - this.getDefReduction(p1.def))));
+        p1.hp = Math.max(0, p1.hp - rebound);
+        p1.x = 14;
+        events.push({ type: 'base_hit', actor: 'p1', target: 'p2_base', dmg, x: 15, bullet_color: '#ff8800' });
+        console.log(`[BASE_HIT] P1 hit P2's base! base_hp=${base.hp} dmg=${dmg} p1_bounced_to=14`);
+      } else if (targetX === 0 && this.state.bases) {
+        p1.x = targetX;
+      } else {
+        p1.x = targetX;
+      }
     }
     if (i2.dx !== 0 && !i2.isTurn) {
       let d = p2.x + i2.dx; d = Math.max(0, Math.min(15, d));
       if (!i2.isDodge && d === p1.x) d = p2.x;
       if (i2.isDodge && d === p1.x) d = p1.x + (i2.dx > 0 ? -1 : 1);
-      p2.x = Math.max(0, Math.min(15, d));
+      // 基地碰撞检测
+      const targetX = Math.max(0, Math.min(15, d));
+      if (targetX === 0 && this.state.bases) {
+        const base = this.state.bases.p1;
+        const dmg = Math.max(1, Math.floor(p2.atk * 0.25 * (1 - this.getDefReduction(base.def))));
+        base.hp = Math.max(0, base.hp - dmg);
+        const rebound = Math.max(1, Math.floor(base.atk * 0.25 * (1 - this.getDefReduction(p2.def))));
+        p2.hp = Math.max(0, p2.hp - rebound);
+        p2.x = 1;
+        events.push({ type: 'base_hit', actor: 'p2', target: 'p1_base', dmg, x: 0, bullet_color: '#ff8800' });
+        console.log(`[BASE_HIT] P2 hit P1's base! base_hp=${base.hp} dmg=${dmg} p2_bounced_to=1`);
+      } else if (targetX === 15 && this.state.bases) {
+        p2.x = targetX;
+      } else {
+        p2.x = targetX;
+      }
     }
     p1._dodging = i1.isDodge; p2._dodging = i2.isDodge;
+    return events;
   }
 
   executeAction(caster, target, action, cKey, tKey, tick, enemyFromX, enemyFromFacing) {
@@ -427,6 +476,14 @@ class BattleEngine {
       atk: p.atk, def: p.def, charId: p.charId,
       effects: JSON.parse(JSON.stringify(p._effects || [])),
       dodging: p._dodging || false, defBuff: p._defBuff || 0,
+    };
+  }
+
+  cloneBases(bases) {
+    if (!bases) return null;
+    return {
+      p1: { hp: bases.p1.hp, maxHp: bases.p1.maxHp, def: bases.p1.def, atk: bases.p1.atk, x: bases.p1.x },
+      p2: { hp: bases.p2.hp, maxHp: bases.p2.maxHp, def: bases.p2.def, atk: bases.p2.atk, x: bases.p2.x }
     };
   }
 }

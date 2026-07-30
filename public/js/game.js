@@ -241,6 +241,53 @@ const Renderer = {
     for (let i = 0; i < this.gridW; i++) {
       ctx.fillText(i, this.gridToPixelX(i), this.baseY + this.cellW * 0.4);
     }
+
+    // 基地标记
+    this.drawBases(ctx);
+  },
+
+  /** 绘制两侧基地 */
+  drawBases(ctx) {
+    if (!G.bases) return;
+    const baseCfg = { p1: { x: 0, color: '#00ffff' }, p2: { x: 15, color: '#ff4444' } };
+    for (const key of ['p1', 'p2']) {
+      const cfg = baseCfg[key];
+      const bx = this.gridToPixelX(cfg.x);
+      const by = this.baseY;
+      const bw = this.cellW * 0.9;
+      const bh = 24;
+      // 基地颜色随HP变化
+      const hpPct = G.bases[key].hp / G.bases[key].maxHp;
+      const r = cfg.color === '#00ffff' ? Math.floor(0 + (255-0) * (1-hpPct)) : Math.floor(255 * hpPct + 100 * (1-hpPct));
+      const g = cfg.color === '#00ffff' ? Math.floor(255 * hpPct + 100 * (1-hpPct)) : Math.floor(0 + (68-0) * (1-hpPct));
+      const b = cfg.color === '#00ffff' ? Math.floor(255 * hpPct + 50 * (1-hpPct)) : Math.floor(0 + (68-0) * (1-hpPct));
+      const baseColor = `rgb(${r},${g},${b})`;
+      
+      ctx.save();
+      // 底座（虚线轮廓矩形）
+      ctx.strokeStyle = baseColor;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = baseColor;
+      ctx.shadowBlur = 10;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(bx - bw/2, by - bh, bw, bh);
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
+      
+      // 填充（半透明）
+      ctx.fillStyle = baseColor.replace('rgb', 'rgba').replace(')', ',0.15)');
+      ctx.fillRect(bx - bw/2, by - bh, bw, bh);
+      
+      // HP文字
+      ctx.fillStyle = baseColor;
+      ctx.font = `${Math.max(8, this.cellW*0.22)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${G.bases[key].hp}`, bx, by - bh/2 + 4);
+      
+      // 标签
+      ctx.fillText(key === 'p1' ? 'BASE1' : 'BASE2', bx, by - bh - 4);
+      ctx.restore();
+    }
   },
 
   /** 绘制玩家。p1/p2 如有 _isPixelX 则 x 已经是像素坐标 */
@@ -476,6 +523,16 @@ const FX = {
           this.active.push(new HitRingFX(ev.hit_anim, cx, Renderer.baseY - 10, ev.bullet_color || '#ffff00'));
         }
         AE.play('block');
+        break;
+      }
+
+      // === 基地受到攻击 ===
+      case 'base_hit': {
+        const bx = Renderer.gridToPixelX(ev.x ?? 0);
+        const by = Renderer.baseY - 20;
+        // 橙色大命中环
+        this.active.push(new HitRingFX('baseHit', bx, by, ev.bullet_color || '#ff8800'));
+        AE.play('hit');
         break;
       }
     }
@@ -981,6 +1038,7 @@ const G = {
   myCustomSkills: {},
   p1: null,          // 当前帧 p1 数据
   p2: null,          // 当前帧 p2 数据
+  bases: null,       // 基地数据 {p1:{hp,maxHp}, p2:{hp,maxHp}}
   actions: [],       // 我的行动队列
   maxActions: 16,
   round: 0,
@@ -994,13 +1052,14 @@ const G = {
   _lastFrameTime: 0,
 
   reset() {
-    this.p1 = null; this.p2 = null; this.actions = [];
+    this.p1 = null; this.p2 = null; this.bases = null; this.actions = [];
     this.round = 0; this.timeLeft = 60; this.tick = 0;
     this.p1Actions = []; this.p2Actions = [];
     this._cooldowns = {}; this._snapshots = [];
     this._battleFrames = null; this._battleFinal = null;
     this._battleStep = null; this._battleGameOver = false;
     this._originP1 = null; this._originP2 = null;
+    this._originBases = null;
     this._renderP1 = null; this._renderP2 = null;
     this._mode = 'prepare';
     if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
@@ -1061,6 +1120,22 @@ const UI = {
     if (hptEl) hptEl.textContent = `${p.hp||0}/${p.maxHp||0}`;
     if (mptEl) mptEl.textContent = `${p.mp||0}/${p.maxMp||0}`;
     if (sptEl) sptEl.textContent = `${p.sp||0}/${p.maxSp||0}`;
+  },
+
+  updateBaseHUD(bases) {
+    if (!bases) return;
+    const b1hp = document.getElementById('b1hp');
+    const b1hpt = document.getElementById('b1hpt');
+    const b2hp = document.getElementById('b2hp');
+    const b2hpt = document.getElementById('b2hpt');
+    if (b1hp && bases.p1) {
+      b1hp.style.width = Math.max(0, bases.p1.hp / bases.p1.maxHp * 100) + '%';
+      if (b1hpt) b1hpt.textContent = `${bases.p1.hp}/${bases.p1.maxHp}`;
+    }
+    if (b2hp && bases.p2) {
+      b2hp.style.width = Math.max(0, bases.p2.hp / bases.p2.maxHp * 100) + '%';
+      if (b2hpt) b2hpt.textContent = `${bases.p2.hp}/${bases.p2.maxHp}`;
+    }
   },
 
   updatePrepareUI(p) {
@@ -1198,9 +1273,11 @@ function setupSocket() {
   G.socket.on('prepareStart', (d) => {
     G._mode = 'prepare'; G.round = d.round; G.timeLeft = d.time;
     G.p1 = d.p1; G.p2 = d.p2;
+    G.bases = d.bases || null;
     // 保存原始状态（用于清空恢复）
     G._originP1 = JSON.parse(JSON.stringify(d.p1));
     G._originP2 = JSON.parse(JSON.stringify(d.p2));
+    G._originBases = d.bases ? JSON.parse(JSON.stringify(d.bases)) : null;
     G.actions = []; G._cooldowns = {}; G._snapshots = [];
     G.p1Actions = []; G.p2Actions = []; G.tick = 0;
     FX.clear();
@@ -1208,11 +1285,12 @@ function setupSocket() {
     UI.showScreen('battle');
     UI.renderActionSlots();
     UI.renderActionButtons();
+    UI.updateBaseHUD(G.bases);
     document.getElementById('actionQueuePanel').classList.remove('hidden');
     document.getElementById('battleQueuePanel').classList.add('hidden');
     document.getElementById('rdyBtn').disabled = false;
 
-    DBG.log('[PHASE] 进入编辑阶段 round=' + d.round + ' p1(x='+d.p1.x+',mp='+d.p1.mp+',sp='+d.p1.sp+')');
+    DBG.log('[PHASE] 进入编辑阶段 round=' + d.round + ' p1(x='+d.p1.x+',mp='+d.p1.mp+',sp='+d.p1.sp+') bases=' + JSON.stringify(G.bases));
 
     if (G.mode === 'ai') {
       G.socket.emit('aiReady', { roomId: G.roomId });
@@ -1246,7 +1324,7 @@ function setupSocket() {
     FX.clear();
     UI.showScreen('result');
     document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : `${d.winner} 获胜!`;
-    document.getElementById('rdetail').textContent = `P1 HP: ${d.p1Hp} | P2 HP: ${d.p2Hp} | ${d.reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜'}`;
+    document.getElementById('rdetail').textContent = `P1 HP: ${d.p1Hp} | P2 HP: ${d.p2Hp} | ${d.reason === 'baseDestroyed' ? '基地被摧毁' : (d.reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
   });
 
   G.socket.on('err', (d) => { UI.log('❌ ' + d.msg); });
@@ -1507,6 +1585,7 @@ function startRenderLoop() {
     // 更新 HUD
     if (G.p1) UI.updateHUD(G.p1, 'p1');
     if (G.p2) UI.updateHUD(G.p2, 'p2');
+    if (G.bases) UI.updateBaseHUD(G.bases);
     if (G._mode === 'battle' || G._mode === 'prepare') {
       document.getElementById('tm').textContent = G._mode === 'battle' ? G.tick : G.timeLeft;
       document.getElementById('rnd').textContent = `ROUND ${G.round}`;
@@ -1644,6 +1723,7 @@ function playBattleAnim(frames, final) {
   // ★ 恢复双方为本回合初始状态
   if (G._originP1) G.p1 = JSON.parse(JSON.stringify(G._originP1));
   if (G._originP2) G.p2 = JSON.parse(JSON.stringify(G._originP2));
+  if (G._originBases) G.bases = JSON.parse(JSON.stringify(G._originBases));
   G._cooldowns = {};
 
   DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, p1(x='+G.p1.x+',hp='+G.p1.hp+') p2(x='+G.p2.x+',hp='+G.p2.hp+')');
@@ -1674,9 +1754,11 @@ function playBattleAnim(frames, final) {
       // 所有帧播完，等 FX 也播完
       if (FX.active.length === 0) {
         G.p1 = final.p1; G.p2 = final.p2;
+        if (final.bases) G.bases = final.bases;
+        UI.updateBaseHUD(G.bases);
         G._renderP1 = null; G._renderP2 = null;
         UI.updateHUD(G.p1, 'p1'); UI.updateHUD(G.p2, 'p2');
-        UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}`);
+        UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}` + (final.bases ? ` BASE1:${final.bases.p1.hp} BASE2:${final.bases.p2.hp}` : ''));
         G.tick = frames.length;
         UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
         DBG.log('[BATTLE] 播放完毕');
@@ -1684,14 +1766,19 @@ function playBattleAnim(frames, final) {
 
         // 所有帧+特效播完后才判断胜负
         if (G._battleGameOver) {
-          const w = final.p1.hp <= 0 ? 'P2' : (final.p2.hp <= 0 ? 'P1' : (final.p1.hp > final.p2.hp ? 'P1' : 'draw'));
-          const reason = G.round >= 30 ? 'maxRounds' : 'death';
+          let w, reason;
+          if (final.p1.hp <= 0) { w = 'P2'; reason = 'death'; }
+          else if (final.p2.hp <= 0) { w = 'P1'; reason = 'death'; }
+          else if (final.bases && final.bases.p1.hp <= 0) { w = 'P2'; reason = 'baseDestroyed'; }
+          else if (final.bases && final.bases.p2.hp <= 0) { w = 'P1'; reason = 'baseDestroyed'; }
+          else if (G.round >= 30) { w = final.p1.hp > final.p2.hp ? 'P1' : 'draw'; reason = 'maxRounds'; }
+          else { w = final.p1.hp > final.p2.hp ? 'P1' : 'draw'; reason = 'maxRounds'; }
           G._mode = 'result';
           FX.clear();
           UI.showScreen('result');
           document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : `${w} 获胜!`;
-          document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜'}`;
-          DBG.log('[BATTLE] 游戏结束, winner=' + w);
+          document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'baseDestroyed' ? '基地被摧毁' : (reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
+          DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
         }
       }
       return;
@@ -1705,6 +1792,8 @@ function playBattleAnim(frames, final) {
 
       const frame = frames[tickIdx];
       G.p1 = frame.p1; G.p2 = frame.p2;
+      if (frame.bases) G.bases = frame.bases;
+      UI.updateBaseHUD(G.bases);
       G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
       G.tick = tickIdx;
 

@@ -82,7 +82,12 @@ class GameRoom {
         this.engine.state.p1[key] = prevState.p1[key];
         this.engine.state.p2[key] = prevState.p2[key];
       }
-      console.log(`[STATE_INHERIT] after init+inherit p1(hp=${this.engine.state.p1.hp},mp=${this.engine.state.p1.mp},sp=${this.engine.state.p1.sp},x=${this.engine.state.p1.x},facing=${this.engine.state.p1.facing}) p2(hp=${this.engine.state.p2.hp},mp=${this.engine.state.p2.mp},sp=${this.engine.state.p2.sp},x=${this.engine.state.p2.x},facing=${this.engine.state.p2.facing})`);
+      // 继承基地状态
+      if (prevState.bases) {
+        this.engine.state.bases.p1.hp = prevState.bases.p1.hp;
+        this.engine.state.bases.p2.hp = prevState.bases.p2.hp;
+      }
+      console.log(`[STATE_INHERIT] after init+inherit p1(hp=${this.engine.state.p1.hp},mp=${this.engine.state.p1.mp},sp=${this.engine.state.p1.sp},x=${this.engine.state.p1.x},facing=${this.engine.state.p1.facing}) p2(hp=${this.engine.state.p2.hp},mp=${this.engine.state.p2.mp},sp=${this.engine.state.p2.sp},x=${this.engine.state.p2.x},facing=${this.engine.state.p2.facing}) base1(hp=${this.engine.state.bases.p1.hp}) base2(hp=${this.engine.state.bases.p2.hp})`);
     }
 
 
@@ -91,6 +96,7 @@ class GameRoom {
       round: this.round, time: this.prepTime,
       p1: s.p1, p2: s.p2,
       p1Char: s.p1.charId, p2Char: s.p2.charId,
+      bases: s.bases,
     });
     this.clearTimer();
     // 仅发送 tick 信息，不再自动倒计时到0触发战斗
@@ -121,9 +127,9 @@ class GameRoom {
     const frames = this.engine.executeAll();
     const s = this.engine.getState();
 
-    console.log(`[BATTLE] post-state p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) frames=${frames.length}`);
+    console.log(`[BATTLE] post-state p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) frames=${frames.length} base1(hp=${s.bases.p1.hp}) base2(hp=${s.bases.p2.hp})`);
 
-    const gameOver = s.p1.hp <= 0 || s.p2.hp <= 0 || this.round >= this.maxRounds;
+    const gameOver = s.p1.hp <= 0 || s.p2.hp <= 0 || (s.bases && (s.bases.p1.hp <= 0 || s.bases.p2.hp <= 0)) || this.round >= this.maxRounds;
     
     io.to(this.id).emit('battleFrames', { frames, final: s, round: this.round, gameOver });
 

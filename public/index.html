@@ -50,6 +50,7 @@
         <div class="bar-c"><div class="bar bar-hp" id="p1hp"></div><span class="bar-txt" id="p1hpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-mp" id="p1mp"></div><span class="bar-txt" id="p1mpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-sp" id="p1sp"></div><span class="bar-txt" id="p1spt">0/0</span></div>
+        <div class="bar-c base-bar"><div class="bar bar-base" id="b1hp"></div><span class="bar-txt" id="b1hpt">200/200</span></div>
       </div>
       <div class="tmr" id="tmrArea">
         <div class="rnd" id="rnd">ROUND 1</div>
@@ -59,6 +60,7 @@
         <div class="bar-c"><div class="bar bar-hp" id="p2hp"></div><span class="bar-txt" id="p2hpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-mp" id="p2mp"></div><span class="bar-txt" id="p2mpt">0/0</span></div>
         <div class="bar-c"><div class="bar bar-sp" id="p2sp"></div><span class="bar-txt" id="p2spt">0/0</span></div>
+        <div class="bar-c base-bar"><div class="bar bar-base" id="b2hp"></div><span class="bar-txt" id="b2hpt">200/200</span></div>
       </div>
     </div>
     <div class="fld"><canvas id="fc"></canvas></div>
@@ -174,7 +176,7 @@
 
       <div class="wiki-section">
         <h3>[WIN] 胜利条件</h3>
-        <p>一方 HP 归零则<strong>立即判负</strong>。若 30 回合后双方均存活，以<strong>剩余 HP 多者</strong>获胜。HP 相同则为平局。</p>
+        <p>一方<strong>HP 归零</strong>或<strong>基地被摧毁</strong>则立即判负。基地位于地图两端（格0和格15），攻击对手基地需移动到其位置造成碰撞伤害（基地ATK=0不会反击）。若 30 回合后双方均存活，以<strong>剩余 HP 多者</strong>获胜。</p>
       </div>
 
       <div class="wiki-section">

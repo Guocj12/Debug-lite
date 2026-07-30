@@ -314,6 +314,16 @@
       "particleSpread":3,
       "particleColor":"#4488ff"
     },
+    "baseHit": {
+      "type":"hit_ring",
+      "color":"#ff8800",
+      "ringStartSize":0.2,
+      "ringEndSize":1.0,
+      "fadeTime":500,
+      "particles":20,
+      "particleSpread":9,
+      "particleColor":"#ffaa00"
+    },
     "knockbackFX": {
       "type":"hit_ring",
       "color":"#ffaa00",

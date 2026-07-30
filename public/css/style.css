@@ -74,10 +74,12 @@ body{background:var(--bg-deep);color:var(--tx-primary);font-family:var(--font-bo
 .pi.mir{text-align:right}
 .pn{font-family:var(--font-display);font-size:clamp(.35rem,1.8vw,.4rem);color:var(--cyan);margin-bottom:6px;text-shadow:0 0 3px var(--cyan)}
 .bar-c{background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.08);height:14px;position:relative;margin:4px 0;border-radius:1px;overflow:hidden}
+.bar-c.base-bar{height:10px;margin-top:2px;border-color:rgba(255,200,0,.15)}
 .bar{height:100%;transition:width .35s cubic-bezier(.4,0,.2,1)}
 .bar-hp{background:linear-gradient(90deg,#cc1133,#ff3355);box-shadow:0 0 6px rgba(255,50,80,.5)}
 .bar-mp{background:linear-gradient(90deg,#1144cc,#3366ff);height:8px;box-shadow:0 0 4px rgba(51,102,255,.5)}
 .bar-sp{background:linear-gradient(90deg,#11aa33,#33ee55);height:8px;box-shadow:0 0 4px rgba(51,238,85,.4)}
+.bar-base{background:linear-gradient(90deg,#ff8800,#ffcc00);height:8px;box-shadow:0 0 4px rgba(255,200,0,.5)}
 .bar-txt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:var(--font-body);font-size:.65rem;color:#fff;text-shadow:1px 1px 3px rgba(0,0,0,.8);pointer-events:none}
 .tmr{text-align:center;min-width:60px;display:flex;flex-direction:column;justify-content:center}
 .tmr .rnd{font-family:var(--font-display);font-size:clamp(.32rem,1.7vw,.38rem);color:var(--yellow);text-shadow:0 0 5px var(--yellow)}

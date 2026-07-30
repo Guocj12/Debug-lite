@@ -2,6 +2,13 @@
   "field": { "width": 16, "groundY": 0.7 },
   "battle": { "ticksPerRound": 16, "tickIntervalMs": 1000 },
   "prepare": { "maxActions": 16, "timeSeconds": 60 },
+  "base": {
+    "hp": 200,
+    "def": 10,
+    "atk": 0,
+    "desc": "基地位于地图两端（格0和格15），只受碰撞伤害（玩家向基地移动被阻挡时）。基地ATK=0，不会反击。基地HP归零则拥有方落败。基地也受百分比减伤公式影响。",
+    "positions": { "p1": 0, "p2": 15 }
+  },
   "damage": {
     "formula": "ATK × ratio × (1 - DEF/(DEF+40)), min 1",
     "true": "ATK × ratio (完全无视防御)",
@@ -18,7 +25,7 @@
   },
   "design": {
     "ttk": "2-3回合（32-48 tick）",
-    "philosophy": "每tick的选择都有意义，四角色打法完全不同",
+    "philosophy": "每tick的选择都有意义，四角色打法完全不同。每方各有一个基地（格0和格15），穿过敌人攻击基地是核心战略目标。击杀对手后攻击基地是迟早的事。",
     "counterChain": "战士(高防)→刺客(真伤)→法师(高爆发)→射手(远程压制)→战士"
   }
 }
