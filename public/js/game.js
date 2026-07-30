@@ -361,7 +361,7 @@ const FX = {
     const anim = getAnim(animName);
     const color = ev.bullet_color || '#ffffff';
     const stagger = ev._stagger || 0; // 错时延迟(ms)
-    // 弹幕朝向：优先 event.facing，否则从 bullet_from→bullet_to 推断
+    // 弹幕朝向
     const facing = ev.facing || (
       (ev.bullet_from !== undefined && ev.bullet_to !== undefined)
         ? (ev.bullet_to > ev.bullet_from ? 1 : -1)
@@ -496,19 +496,24 @@ const FX = {
       case 'dash': {
         const dashFrom = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
         const dashTo = Renderer.gridToPixelX(ev.bullet_to ?? ev.to ?? 0);
-        const dy = Renderer.baseY - 5;
+        const dy = Renderer.baseY;
         if (ev.bullet_anim) {
-          const actorKey = ev.actor;
+          const dashKey = ev.actor;
           const getPos = {
             getX: () => {
-              const rp = actorKey === 'p1' ? G._renderP1 : G._renderP2;
-              const p = actorKey === 'p1' ? G.p1 : G.p2;
+              const rp = dashKey === 'p1' ? G._renderP1 : G._renderP2;
+              const p = dashKey === 'p1' ? G.p1 : G.p2;
               if (rp) return rp.x;
               if (p) return Renderer.gridToPixelX(p.x);
               return dashTo;
+            },
+            getFacing: () => {
+              const p = dashKey === 'p1' ? G.p1 : G.p2;
+              return p ? p.facing : 1;
             }
           };
-          this.active.push(new TrailFX(ev.bullet_anim, dashFrom, dashTo, dy, color, getPos));
+          const charId = dashKey === 'p1' ? (p1||G.p1)?.charId : (p2||G.p2)?.charId;
+          this.active.push(new AfterimageFX(charId, dashFrom, dashTo, dy, frameDuration * 0.7, getPos));
         }
         if (!isEdit) AE.play('dodge');
         break;
@@ -518,16 +523,26 @@ const FX = {
       case 'dodged': {
         const dx = Renderer.gridToPixelX(ev.x ?? 0);
         const dodgeKey = ev.actor;
+        // 从 Tween 获取起止位置
+        const rp = dodgeKey === 'p1' ? G._renderP1 : G._renderP2;
+        const p = dodgeKey === 'p1' ? G.p1 : G.p2;
+        const fromX = rp ? rp.x : (p ? Renderer.gridToPixelX(p.x) - Renderer.cellW * 2 : dx - Renderer.cellW * 2);
+        const toX = rp ? (Tween._tweens.find(t => t.obj === rp)?.end?.x || dx) : dx;
         const getPos = {
           getX: () => {
-            const rp = dodgeKey === 'p1' ? G._renderP1 : G._renderP2;
-            const p = dodgeKey === 'p1' ? G.p1 : G.p2;
-            if (rp) return rp.x;
-            if (p) return Renderer.gridToPixelX(p.x);
+            const r = dodgeKey === 'p1' ? G._renderP1 : G._renderP2;
+            const pl = dodgeKey === 'p1' ? G.p1 : G.p2;
+            if (r) return r.x;
+            if (pl) return Renderer.gridToPixelX(pl.x);
             return dx;
+          },
+          getFacing: () => {
+            const pl = dodgeKey === 'p1' ? G.p1 : G.p2;
+            return pl ? pl.facing : 1;
           }
         };
-        this.active.push(new TrailFX('dodgeTrail', dx - Renderer.cellW, dx + Renderer.cellW, Renderer.baseY - 5, '#8888ff', getPos));
+        const charId = dodgeKey === 'p1' ? (p1||G.p1)?.charId : (p2||G.p2)?.charId;
+        this.active.push(new AfterimageFX(charId, fromX, toX, Renderer.baseY, 400, getPos));
         if (!isEdit) AE.play('dodge');
         break;
       }
@@ -542,7 +557,7 @@ const FX = {
         break;
       }
 
-      // === 击退（加上拖尾） ===
+      // === 击退（残影跟随被击退方） ===
       case 'knockback': {
         const kFrom = Renderer.gridToPixelX(ev.from ?? ev.x ?? 0);
         const kTo = Renderer.gridToPixelX(ev.to ?? ev.x ?? 0);
@@ -554,9 +569,14 @@ const FX = {
             if (rp) return rp.x;
             if (p) return Renderer.gridToPixelX(p.x);
             return kTo;
+          },
+          getFacing: () => {
+            const p = kbKey === 'p1' ? G.p1 : G.p2;
+            return p ? p.facing : 1;
           }
         };
-        this.active.push(new TrailFX('dodgeTrail', kFrom, kTo, Renderer.baseY - 5, ev.bullet_color || '#ffaa00', getPos));
+        const charId = kbKey === 'p1' ? (p1||G.p1)?.charId : (p2||G.p2)?.charId;
+        this.active.push(new AfterimageFX(charId, kFrom, kTo, Renderer.baseY, 350, getPos));
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, kTo, Renderer.baseY - 10, ev.bullet_color || '#ffaa00'));
         }
@@ -1039,67 +1059,69 @@ class DamageTextFX {
   }
 }
 
-// ==================== 拖尾 FX (动态跟随角色身后) ====================
-class TrailFX {
-  constructor(animName, fromX, toX, y, color, getActorPos = null) {
-    const anim = getAnim(animName);
-    this.animName = animName;
+// ==================== 像素残影 FX（角色移动时身后留下半透明残影） ====================
+class AfterimageFX {
+  /**
+   * @param {string} charId   - 角色 ID，用于获取颜色和形状
+   * @param {number} fromX    - 像素起点
+   * @param {number} toX      - 像素终点
+   * @param {number} y        - 角色脚底像素 Y（Renderer.baseY）
+   * @param {number} duration - 整个位移持续时间 ms
+   * @param {object} getActorPos - { getX: () => pixelX, getFacing: () => ±1 } 实时位置
+   */
+  constructor(charId, fromX, toX, y, duration, getActorPos) {
+    this.charDef = getCharDef(charId) || { color:'#ffffff', shape:'square', size:18 };
+    this.fromX = fromX;
+    this.toX = toX;
     this.y = y;
-    this.color = anim?.color || color;
-    this.segmentCount = anim?.segments || 8;
-    this.fadeTime = anim?.fadeTime || 400;
+    this.duration = duration;
+    this.getActorPos = getActorPos;
     this.elapsed = 0;
     this.done = false;
-    this.getActorPos = getActorPos;
-    // 位置历史: [{x, time}] 最近的在前面
-    this._history = [];
-    this._lastX = fromX;
-    // 预填起点确保至少能渲染
-    this._history.push({ x: fromX, time: 0 });
-    if (getActorPos) {
-      // 有实时跟踪时也加入终点估计
-      this._history.push({ x: toX, time: 0 });
-    }
+    // 残影列表：{ x, facing, life, maxLife }
+    this.images = [];
+    this._lastSnapshotX = fromX;
+    this._snapInterval = 25; // 每 25ms 拍一个残影
+    this._snapAccum = 0;
+    const facing = getActorPos ? getActorPos.getFacing() : 1;
+    this.images.push({ x: fromX, facing, life: 250, maxLife: 250 });
   }
 
   update(dt) {
     this.elapsed += dt;
-    const currentX = this.getActorPos ? this.getActorPos.getX() : null;
-    if (currentX !== null) {
-      this._history.unshift({ x: currentX, time: this.elapsed });
-      this._lastX = currentX;
-      while (this._history.length > this.segmentCount * 3) this._history.pop();
+    if (this.elapsed >= this.duration + 600) { this.done = true; return; }
+
+    // 持续在角色当前位置拍残影
+    if (this.getActorPos && this.elapsed < this.duration + 200) {
+      this._snapAccum += dt;
+      const currentX = this.getActorPos.getX();
+      const currentFacing = this.getActorPos.getFacing();
+      if (currentX !== null && Math.abs(currentX - this._lastSnapshotX) > 1) {
+        while (this._snapAccum >= this._snapInterval) {
+          this._snapAccum -= this._snapInterval;
+          this.images.push({ x: currentX, facing: currentFacing, life: 250, maxLife: 250 });
+          this._lastSnapshotX = currentX;
+        }
+      }
     }
-    // 清理过期历史
-    this._history = this._history.filter(h => this.elapsed - h.time < this.fadeTime);
-    if (this.elapsed >= this.fadeTime && this._history.length <= 1) this.done = true;
+
+    // 更新残影生命
+    for (let i = this.images.length - 1; i >= 0; i--) {
+      this.images[i].life -= dt;
+      if (this.images[i].life <= 0) this.images.splice(i, 1);
+    }
   }
 
   render(ctx, R) {
-    const t = Math.min(1, this.elapsed / this.fadeTime);
-    const alpha = 1 - t;
-    if (alpha <= 0) return;
-    const history = this._history;
-    if (history.length < 2) return;
-    ctx.save();
-    for (let i = 1; i < history.length; i++) {
-      const prev = history[i - 1];
-      const curr = history[i];
-      const segFrac = Math.min(1, i / this.segmentCount);
-      const segAlpha = alpha * Math.max(0, 1 - segFrac) * 0.8;
-      if (segAlpha <= 0.01) continue;
-      const segX = (prev.x + curr.x) / 2;
-      const widthScale = 1 - segFrac * 0.6;
-      const w = R.cellW * 0.6 * widthScale;
-      const h = 8 * widthScale;
-      ctx.globalAlpha = segAlpha;
-      ctx.fillStyle = this.color;
-      ctx.shadowColor = this.color;
-      ctx.shadowBlur = 4 * widthScale;
-      ctx.fillRect(segX - w / 2, this.y - h / 2, w, h);
+    if (this.images.length === 0) return;
+    const cd = this.charDef;
+    for (const img of this.images) {
+      const lifeT = img.life / img.maxLife;
+      const alpha = lifeT * 0.45; // 最大 45% 透明度
+      if (alpha < 0.02) continue;
+      const scale = 0.7 + lifeT * 0.3; // 逐渐缩小
+      Sprites.drawCharacter(ctx, cd, img.x, this.y, cd.size * scale, img.facing, alpha);
     }
-    ctx.shadowBlur = 0;
-    ctx.restore();
   }
 }
 
@@ -1801,7 +1823,10 @@ function addActionToQueue(actionId, skillSid) {
     const toPX = Renderer.gridToPixelX(G.p1.x);
     G._renderP1 = { x: fromPX, facing: G.p1.facing };
     Tween.add(G._renderP1, { x: toPX }, 400, 'easeOutQuad');
-    DBG.log('[TWEEN] 编辑阶段P1位移缓动 grid='+oldP1X+'->'+G.p1.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+    // 编辑阶段位移残影
+    const getPos = { getX: () => G._renderP1 ? G._renderP1.x : toPX, getFacing: () => G.p1.facing };
+    FX.active.push(new AfterimageFX(G.p1.charId, fromPX, toPX, Renderer.baseY, 400, getPos));
+    DBG.log('[TWEEN] 编辑阶段P1位移缓动 grid='+oldP1X+'->'+G.p1.x);
   }
 
   // 步进后 tick 资源回复
@@ -1836,8 +1861,11 @@ function addActionToQueue(actionId, skillSid) {
                  ev.type === 'backstab_hit' || ev.type === 'dash_hit' ||
                  ev.type === 'collision' || ev.type === 'base_hit' ||
                  ev.type === 'knockback' || ev.type === 'bullet_clash' ||
-                 ev.type === 'dodged' || ev.type === 'burn_tick' || ev.type === 'poison_tick') {
+                 ev.type === 'burn_tick' || ev.type === 'poison_tick') {
         // 纯命中/碰撞事件：直接跳过
+      } else if (ev.type === 'dodged') {
+        // 闪避：保留拖尾动画但去掉音效（spawnFromEvent 的 isEdit 会跳过音效）
+        filteredEvents.push(ev);
       } else {
         // 其他事件保留（melee_slash, bullet_trail, aoe_cast, dash, teleport, move, turn, defend 等）
         filteredEvents.push(ev);
@@ -2030,18 +2058,67 @@ function playBattleAnim(frames, final) {
       G.tick = tickIdx;
 
       // ★ 碰撞事件：先让双方移动到碰撞格中点，再弹回最终位置
+      // ★ 基地攻击事件：攻击方先向前微移，然后弹回
       const hasCollision = (frame.events || []).some(e => e.type === 'collision');
-      if (hasCollision && prevP1 && prevP2 && G.p1 && G.p2) {
+      const hasBaseHit = (frame.events || []).some(e => e.type === 'base_hit');
+
+      if (hasBaseHit && prevP1 && prevP2 && G.p1 && G.p2) {
+        const baseEv = (frame.events || []).find(e => e.type === 'base_hit');
+        const actorKey = baseEv.actor;
+        const actorPrev = actorKey === 'p1' ? prevP1 : prevP2;
+        const actorNow = actorKey === 'p1' ? G.p1 : G.p2;
+        const actorFromGrid = actorKey === 'p1' ? (frame.p1FromX ?? actorPrev.x) : (frame.p2FromX ?? actorPrev.x);
+
+        const fromPX = Renderer.gridToPixelX(actorFromGrid);
+        const dir = actorKey === 'p1' ? 1 : -1;
+        const bumpPX = fromPX + dir * Renderer.cellW * 0.5;
+        const finalPX = Renderer.gridToPixelX(actorNow.x);
+
+        // 残影跟随整个动画过程
+        const renderRef = actorKey === 'p1' ? G._renderP1 : G._renderP2;
+
+        if (actorKey === 'p1') {
+          G._renderP1 = { x: fromPX, facing: G.p1.facing };
+          Tween.add(G._renderP1, { x: bumpPX }, FRAME_DURATION * 0.25, 'easeInQuad');
+        } else {
+          G._renderP2 = { x: fromPX, facing: G.p2.facing };
+          Tween.add(G._renderP2, { x: bumpPX }, FRAME_DURATION * 0.25, 'easeInQuad');
+        }
+        // 残影
+        const baseCharId = actorKey === 'p1' ? G.p1.charId : G.p2.charId;
+        const baseGetPos = {
+          getX: () => {
+            const r = actorKey === 'p1' ? G._renderP1 : G._renderP2;
+            if (r) return r.x;
+            return finalPX;
+          },
+          getFacing: () => actorNow.facing
+        };
+        FX.active.push(new AfterimageFX(baseCharId, fromPX, finalPX, Renderer.baseY, FRAME_DURATION * 0.55, baseGetPos));
+
+        setTimeout(() => {
+          const renderObj = actorKey === 'p1' ? G._renderP1 : G._renderP2;
+          if (renderObj) {
+            renderObj.x = bumpPX;
+            Tween.add(renderObj, { x: finalPX }, FRAME_DURATION * 0.3, 'easeOutQuad');
+          }
+          for (const ev of (frame.events || [])) {
+            if (ev.type === 'base_hit') {
+              FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
+            }
+          }
+        }, FRAME_DURATION * 0.22);
+
+        DBG.log('[BASE_HIT] 基地攻击动画 actor='+actorKey+' from='+actorFromGrid+'->'+actorNow.x);
+
+      } else if (hasCollision && prevP1 && prevP2 && G.p1 && G.p2) {
         const colEv = (frame.events || []).find(e => e.type === 'collision');
         const colGrid = colEv ? colEv.x : Math.round((prevP1.x + prevP2.x) / 2);
         const colPX = Renderer.gridToPixelX(colGrid);
 
-        // p1FromX/p2FromX 是双方本 tick 的起点（服务端 send）
         const p1FromGrid = frame.p1FromX ?? prevP1.x;
         const p2FromGrid = frame.p2FromX ?? prevP2.x;
 
-        // 碰撞时服务端阻止了移动，G.p1.x == p1FromGrid。需要从 p1FromGrid 推断谁在移动：
-        // 如果 p1FromGrid != colGrid，说明 P1 在朝碰撞格移动
         const p1Moved = p1FromGrid !== colGrid;
         const p2Moved = p2FromGrid !== colGrid;
 
@@ -2050,17 +2127,20 @@ function playBattleAnim(frames, final) {
         const p1FinalPX = Renderer.gridToPixelX(G.p1.x);
         const p2FinalPX = Renderer.gridToPixelX(G.p2.x);
 
-        // 创建渲染位置（从起点开始）
         if (p1Moved) {
           G._renderP1 = { x: p1FromPX, facing: G.p1.facing };
           Tween.add(G._renderP1, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
+          // 残影
+          const getPos1 = { getX: () => G._renderP1 ? G._renderP1.x : p1FinalPX, getFacing: () => G.p1.facing };
+          FX.active.push(new AfterimageFX(G.p1.charId, p1FromPX, p1FinalPX, Renderer.baseY, FRAME_DURATION * 0.65, getPos1));
         }
         if (p2Moved) {
           G._renderP2 = { x: p2FromPX, facing: G.p2.facing };
           Tween.add(G._renderP2, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
+          const getPos2 = { getX: () => G._renderP2 ? G._renderP2.x : p2FinalPX, getFacing: () => G.p2.facing };
+          FX.active.push(new AfterimageFX(G.p2.charId, p2FromPX, p2FinalPX, Renderer.baseY, FRAME_DURATION * 0.65, getPos2));
         }
 
-        // 碰撞后弹回最终位置
         setTimeout(() => {
           if (p1Moved && G._renderP1) {
             G._renderP1.x = colPX;
@@ -2072,7 +2152,6 @@ function playBattleAnim(frames, final) {
           }
         }, FRAME_DURATION * 0.3);
 
-        // 碰撞特效在接近完成时播放
         setTimeout(() => {
           for (const ev of (frame.events || [])) {
             if (ev.type === 'collision') {
@@ -2088,7 +2167,10 @@ function playBattleAnim(frames, final) {
           const toPX = Renderer.gridToPixelX(G.p1.x);
           G._renderP1 = { x: fromPX, facing: G.p1.facing };
           Tween.add(G._renderP1, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
-          DBG.log('[TWEEN] P1 位移缓动 grid='+prevP1.x+'->'+G.p1.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+          // 普通位移残影
+          const getPos1 = { getX: () => G._renderP1 ? G._renderP1.x : toPX, getFacing: () => G.p1.facing };
+          FX.active.push(new AfterimageFX(G.p1.charId, fromPX, toPX, Renderer.baseY, FRAME_DURATION * 0.7, getPos1));
+          DBG.log('[TWEEN] P1 位移缓动 grid='+prevP1.x+'->'+G.p1.x);
         } else {
           G._renderP1 = null;
         }
@@ -2099,7 +2181,9 @@ function playBattleAnim(frames, final) {
           const toPX = Renderer.gridToPixelX(G.p2.x);
           G._renderP2 = { x: fromPX, facing: G.p2.facing };
           Tween.add(G._renderP2, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
-          DBG.log('[TWEEN] P2 位移缓动 grid='+prevP2.x+'->'+G.p2.x+' pixel='+fromPX.toFixed(0)+'->'+toPX.toFixed(0));
+          const getPos2 = { getX: () => G._renderP2 ? G._renderP2.x : toPX, getFacing: () => G.p2.facing };
+          FX.active.push(new AfterimageFX(G.p2.charId, fromPX, toPX, Renderer.baseY, FRAME_DURATION * 0.7, getPos2));
+          DBG.log('[TWEEN] P2 位移缓动 grid='+prevP2.x+'->'+G.p2.x);
         } else {
           G._renderP2 = null;
         }
@@ -2136,8 +2220,9 @@ function playBattleAnim(frames, final) {
       // 按 stagger 排序（先发射的在前）
       sortedEvents.sort((a, b) => (a._stagger || 0) - (b._stagger || 0));
 
-      // 碰撞帧：碰撞事件已通过 setTimeout 延迟播放，这里只播非碰撞事件
-      const nonColEvents = sortedEvents.filter(ev => ev.type !== 'collision');
+      // 碰撞/基地帧：碰撞和基地事件已通过 setTimeout 延迟播放，这里只播其他事件
+      const skipTypes = ['collision', 'base_hit'];
+      const nonColEvents = sortedEvents.filter(ev => !skipTypes.includes(ev.type));
       for (const ev of nonColEvents) {
         DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' stagger='+(ev._stagger||0));
         FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
