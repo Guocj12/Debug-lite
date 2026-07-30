@@ -14,7 +14,7 @@
     <div class="menu-btns">
       <button class="btn btn-b" onclick="enterCharSelect('ai')"><span class="btn-prefix">[VS]</span> 人机对战</button>
       <button class="btn btn-g" onclick="enterCharSelect('train')"><span class="btn-prefix">[TR]</span> 训练场</button>
-      <button class="btn btn-p" onclick="enterCharSelect('online')"><span class="btn-prefix">[NET]</span> 联机对战</button>
+      <button class="btn btn-p" onclick="enterLobby()"><span class="btn-prefix">[NET]</span> 联机对战</button>
       <button class="btn btn-y" onclick="nav('editor')"><span class="btn-prefix">[ED]</span> 技能编辑</button>
       <button class="btn btn-g" onclick="nav('wiki')"><span class="btn-prefix">[DB]</span> 图鉴</button>
       <button class="btn btn-p" onclick="nav('tutorial')"><span class="btn-prefix">[?]</span> 教程</button>
@@ -35,12 +35,49 @@
     </div>
   </div>
 
+  <!-- 联机大厅 -->
   <div id="lobby" class="screen">
-    <h2 class="n1 sm">联机对战</h2>
-    <div class="lbi"><input id="pname" class="inp" placeholder="昵称" maxlength="10"><button class="btn btn-b" onclick="createRoom()">创建</button></div>
-    <div class="lbi"><input id="rcode" class="inp" placeholder="房间号" maxlength="6" style="text-transform:uppercase"><button class="btn btn-p" onclick="joinRoom()">加入</button></div>
-    <div id="ostatus" class="sts"></div>
-    <button class="btn btn-d" onclick="nav('menu')">返回</button>
+    <h2 class="n1 sm">联机大厅</h2>
+    <div class="lobby-top">
+      <input id="pname" class="inp" placeholder="昵称" maxlength="10">
+      <button class="btn btn-b" onclick="createRoom()">创建房间</button>
+      <button class="btn btn-p" onclick="showJoinDialog()">加入房间</button>
+    </div>
+    <!-- 加入房间弹窗 -->
+    <div id="joinDialog" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3>加入房间</h3>
+        <input id="rcode" class="inp" placeholder="输入房间号" maxlength="6" style="text-transform:uppercase;width:100%;">
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="btn btn-b" onclick="joinRoom()">确认加入</button>
+          <button class="btn btn-d" onclick="hideJoinDialog()">取消</button>
+        </div>
+      </div>
+    </div>
+    <div class="room-list" id="roomList">
+      <p class="room-list-empty">加载中...</p>
+    </div>
+    <button class="btn btn-d" onclick="leaveLobby()">返回菜单</button>
+  </div>
+
+  <!-- 房间页面 -->
+  <div id="room" class="screen">
+    <h2 class="n1 sm">房间</h2>
+    <div class="room-info">
+      <span>房间号: <strong id="roomIdDisplay">------</strong></span>
+      <button class="btn btn-y s" id="roomReadyBtn" onclick="toggleReady()">准备</button>
+      <button class="btn btn-d s" onclick="leaveRoom()">离开房间</button>
+    </div>
+    <div class="slot-grid" id="slotGrid"></div>
+    <!-- 角色选择（仅游戏位玩家显示） -->
+    <div id="roomCharSelect" class="hidden">
+      <h3>选择角色</h3>
+      <div id="roomCharGrid" class="cg"></div>
+      <div id="roomSkillSel" class="sk hidden">
+        <h3>选择技能 (3个)</h3>
+        <div id="roomSkillGrid" class="sg"></div>
+      </div>
+    </div>
   </div>
 
   <!-- 战斗场景 -->

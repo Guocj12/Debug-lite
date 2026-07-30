@@ -62,11 +62,43 @@ body{background:var(--bg-deep);color:var(--tx-primary);font-family:var(--font-bo
 
 /* === 联机大厅 === */
 #lobby{gap:var(--space-md)}
-.lbi{display:flex;gap:var(--space-sm);width:100%;max-width:400px;margin:4px 0}
+.lobby-top{display:flex;gap:var(--space-sm);width:100%;max-width:500px;align-items:center;flex-wrap:wrap}
+.lobby-top .inp{flex:1;min-width:120px}
+.modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-overlay.hidden{display:none}
+.modal-card{background:var(--bg-panel);border:2px solid var(--cyan);padding:var(--space-lg);width:90%;max-width:360px;border-radius:var(--radius-md);box-shadow:0 0 30px rgba(0,229,255,.15)}
+.modal-card h3{font-family:var(--font-display);font-size:.5rem;color:var(--cyan);margin-bottom:var(--space-md)}
+.room-list{width:100%;max-width:500px;flex:1;overflow-y:auto;max-height:50vh}
+.room-list-empty{text-align:center;color:var(--tx-muted);font-size:.8rem}
+.room-item{display:flex;align-items:center;justify-content:space-between;background:var(--bg-card);border:1px solid var(--bd-dim);padding:10px 14px;margin-bottom:6px;border-radius:var(--radius-sm);cursor:pointer;transition:all .15s}
+.room-item:hover{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.1)}
+.room-item-info{display:flex;flex-direction:column;gap:2px}
+.room-item-id{font-family:var(--font-display);font-size:.42rem;color:var(--cyan)}
+.room-item-meta{font-family:var(--font-body);font-size:.7rem;color:var(--tx-secondary)}
+.room-item-state{font-family:var(--font-display);font-size:.35rem;padding:4px 8px;border-radius:2px}
+.room-item-state.waiting{color:var(--green);border:1px solid var(--green)}
+.room-item-state.playing{color:var(--yellow);border:1px solid var(--yellow)}
+
+/* === 房间页面 === */
+#room{gap:var(--space-sm)}
+.room-info{display:flex;align-items:center;gap:var(--space-sm);width:100%;max-width:500px;flex-wrap:wrap;justify-content:center}
+.room-info span{font-family:var(--font-body);font-size:.85rem;color:var(--tx-secondary)}
+.room-info strong{font-family:var(--font-display);font-size:.55rem;color:var(--cyan)}
+.slot-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;width:100%;max-width:500px}
+.slot-card{background:var(--bg-card);border:2px solid var(--bd-dim);padding:10px 8px;text-align:center;cursor:pointer;transition:all .15s;border-radius:var(--radius-sm);min-height:80px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px}
+.slot-card:hover{border-color:var(--cyan)}
+.slot-card.my-slot{border-color:var(--yellow);box-shadow:0 0 10px rgba(255,229,64,.2)}
+.slot-card.occupied:not(.my-slot){border-color:var(--bd-lit);cursor:default;opacity:.8}
+.slot-card.player-slot{border-style:solid}
+.slot-card.spectator-slot{border-style:dashed}
+.slot-label{font-family:var(--font-display);font-size:.28rem;color:var(--tx-muted)}
+.slot-name{font-family:var(--font-body);font-size:.7rem;color:var(--tx-primary)}
+.slot-char{font-family:var(--font-body);font-size:.6rem;color:var(--cyan)}
+.slot-ready{font-family:var(--font-display);font-size:.25rem;color:var(--green)}
+.slot-ready.not{color:var(--red)}
 .inp{flex:1;background:var(--bg-input);border:2px solid var(--bd-lit);color:var(--cyan);padding:12px 14px;font-family:var(--font-display);font-size:clamp(.4rem,2vw,.5rem);outline:none;border-radius:var(--radius-sm);transition:border-color .15s}
 .inp:focus{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.2)}
 .inp::placeholder{color:var(--tx-dim)}
-.sts{font-family:var(--font-body);font-size:.8rem;color:var(--yellow);min-height:24px;margin:var(--space-sm) 0;text-align:center}
 
 /* === 战斗 HUD === */
 .bh{display:flex;justify-content:space-between;width:100%;padding:4px;gap:8px}

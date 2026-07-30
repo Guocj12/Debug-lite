@@ -1225,7 +1225,7 @@ const G = {
   mode: null,        // 'ai' | 'train' | 'online'
   _mode: 'prepare',  // 'prepare' | 'battle' | 'result'
   roomId: null,
-  playerN: 1,
+  mySlotIndex: null, // 我在房间中的槽位索引
   myCharId: null,
   mySkillIds: [],
   myCustomSkills: {},
@@ -1243,6 +1243,8 @@ const G = {
   _snapshots: [],    // 编辑阶段快照栈，用于撤回
   _renderLoop: null, // raf id
   _lastFrameTime: 0,
+  _roomSlots: [],    // 房间槽位列表
+  _roomHostId: null, // 房主sid
 
   reset() {
     this.p1 = null; this.p2 = null; this.bases = null; this.actions = [];
@@ -1254,7 +1256,11 @@ const G = {
     this._originP1 = null; this._originP2 = null;
     this._originBases = null;
     this._renderP1 = null; this._renderP2 = null;
+    this._pendingCreate = null; this._pendingJoin = null;
     this._mode = 'prepare';
+    this._roomSlots = [];
+    this._roomHostId = null;
+    this.mySlotIndex = null;
     if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
     FX.clear(); Tween.clear();
   },
@@ -1463,70 +1469,61 @@ function setupSocket() {
   if (G.socket) { G.socket.removeAllListeners(); G.socket.disconnect(); }
   G.socket = io();
 
-  G.socket.on('prepareStart', (d) => {
-    G._mode = 'prepare'; G.round = d.round; G.timeLeft = d.time;
-    G.p1 = d.p1; G.p2 = d.p2;
-    G.bases = d.bases || null;
-    // 保存原始状态（用于清空恢复）
-    G._originP1 = JSON.parse(JSON.stringify(d.p1));
-    G._originP2 = JSON.parse(JSON.stringify(d.p2));
-    G._originBases = d.bases ? JSON.parse(JSON.stringify(d.bases)) : null;
-    G.actions = []; G._cooldowns = {}; G._snapshots = [];
-    G.p1Actions = []; G.p2Actions = []; G.tick = 0;
-    FX.clear();
-    updatePrepareUI();
-    UI.showScreen('battle');
-    UI.renderActionSlots();
-    UI.renderActionButtons();
-    UI.updateBaseHUD(G.bases);
-    document.getElementById('actionQueuePanel').classList.remove('hidden');
-    document.getElementById('battleQueuePanel').classList.add('hidden');
-    document.getElementById('rdyBtn').disabled = false;
-
-    DBG.log('[PHASE] 进入编辑阶段 round=' + d.round + ' p1(x='+d.p1.x+',mp='+d.p1.mp+',sp='+d.p1.sp+') bases=' + JSON.stringify(G.bases));
-
-    if (G.mode === 'ai') {
-      G.socket.emit('aiReady', { roomId: G.roomId });
-      // AI 模式也显示编辑UI，用户可以操作
-    }
-    if (G.mode === 'train') {
-      G.socket.emit('trainReady', { roomId: G.roomId });
-    }
-    UI.log(`Round ${d.round} — 准备阶段 (${d.time}s)`);
-    startRenderLoop();
+  G.socket.on('connect', () => {
+    console.log('[SOCKET] connected');
+    if (G._pendingCreate) { G.socket.emit('createRoom', G._pendingCreate); G._pendingCreate = null; }
+    if (G._pendingJoin) { G.socket.emit('joinRoom', G._pendingJoin); G._pendingJoin = null; }
   });
 
-  G.socket.on('prepareTick', (d) => {
-    G.timeLeft = d.t;
-    document.getElementById('tm').textContent = d.t;
+  // 联机战斗事件（在 enterRoomUI / toggleReady 触发开始后激活）
+  bindOnlineBattleEvents();
+
+  // --- 大厅事件 ---
+  G.socket.on('roomList', (list) => {
+    renderRoomList(list);
   });
 
-  G.socket.on('battleFrames', (d) => {
-    G._mode = 'battle';
-    G._battleGameOver = d.gameOver; // 服务端告诉客户端这轮是否终结
-    document.getElementById('actionQueuePanel').classList.add('hidden');
-    document.getElementById('battleQueuePanel').classList.remove('hidden');
-    document.getElementById('rdyBtn').disabled = true;
-    DBG.log('[PHASE] 进入战斗阶段, frames=' + d.frames.length + ' gameOver=' + d.gameOver);
-    playBattleAnim(d.frames, d.final);
+  G.socket.on('roomListUpdate', (data) => {
+    // 局部更新：刷新整个大厅列表最简单
+    if (G.socket) G.socket.emit('getRoomList');
   });
 
-  // gameOver 仅作为备用（不再由服务端主动发出，只清理状态）
-  G.socket.on('gameOver', (d) => {
-    G._mode = 'result';
-    FX.clear();
-    UI.showScreen('result');
-    document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : `${d.winner} 获胜!`;
-    document.getElementById('rdetail').textContent = `P1 HP: ${d.p1Hp} | P2 HP: ${d.p2Hp} | ${d.reason === 'baseDestroyed' ? '基地被摧毁' : (d.reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
+  G.socket.on('roomListRemove', (data) => {
+    if (G.socket) G.socket.emit('getRoomList');
   });
 
-  G.socket.on('err', (d) => { UI.log('❌ ' + d.msg); });
-  G.socket.on('roomCreated', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`房间已创建: ${d.roomId}`); });
-  G.socket.on('roomJoined', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`已加入房间: ${d.roomId}`); });
-  G.socket.on('playerJoined', (d) => { UI.log(`玩家已加入: ${d.players.map(p=>p.name).join(', ')}`); });
-  G.socket.on('playerReady', (d) => { UI.log(`P${d.n} 已准备`); });
-  G.socket.on('trainStart', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log('训练场已就绪'); });
-  G.socket.on('aiStart', (d) => { G.roomId = d.roomId; G.playerN = d.n; UI.log(`人机对战 (AI: ${d.aiChar})`); });
+  // --- 房间事件 ---
+  G.socket.on('roomCreated', (d) => {
+    G.roomId = d.roomId;
+    G.mySlotIndex = d.slotIndex;
+    G._roomSlots = d.slots;
+    G._roomHostId = d.hostId;
+    console.log('[ROOM] created', d.roomId, 'slot', d.slotIndex);
+    enterRoomUI();
+  });
+
+  G.socket.on('roomJoined', (d) => {
+    G.roomId = d.roomId;
+    G.mySlotIndex = d.slotIndex;
+    G._roomSlots = d.slots;
+    G._roomHostId = d.hostId;
+    console.log('[ROOM] joined', d.roomId, 'slot', d.slotIndex);
+    enterRoomUI();
+  });
+
+  G.socket.on('playerJoined', (d) => {
+    G._roomSlots = d.slots;
+    console.log('[ROOM] player joined:', d.joinerName);
+    renderRoomSlots();
+  });
+
+  G.socket.on('slotsUpdated', (d) => {
+    G._roomSlots = d.slots;
+    G._roomHostId = d.hostId;
+    renderRoomSlots();
+  });
+
+  G.socket.on('err', (d) => { alert(d.msg); });
 }
 
 // ==================== 本地步进引擎 ====================
@@ -1970,6 +1967,109 @@ function quitBattle() {
   nav('menu');
 }
 
+// ==================== 联机战斗事件绑定 ====================
+/** 绑定所有联机战斗相关的 socket 事件 */
+function bindOnlineBattleEvents() {
+  if (!G.socket) return;
+
+  // 清除旧的监听避免重复绑定
+  G.socket.off('prepareStart');
+  G.socket.off('prepareTick');
+  G.socket.off('battleFrames');
+  G.socket.off('gameOver');
+
+  G.socket.on('prepareStart', (d) => {
+    onPrepareStart(d);
+  });
+
+  G.socket.on('prepareTick', (d) => {
+    G.timeLeft = d.t;
+    document.getElementById('tm').textContent = d.t;
+  });
+
+  G.socket.on('battleFrames', (d) => {
+    onBattleFrames(d);
+  });
+
+  G.socket.on('gameOver', (d) => {
+    onGameOver(d);
+  });
+}
+
+// ==================== 联机战斗流程 ====================
+
+/**
+ * 【联机】准备阶段开始
+ * 由服务端 startPrepare() → emit('prepareStart') 触发
+ */
+function onPrepareStart(d) {
+  G._mode = 'prepare';
+  G.round = d.round;
+  G.timeLeft = d.time;
+  G.p1 = d.p1;
+  G.p2 = d.p2;
+  G.bases = d.bases || null;
+  G._originP1 = JSON.parse(JSON.stringify(d.p1));
+  G._originP2 = JSON.parse(JSON.stringify(d.p2));
+  G._originBases = d.bases ? JSON.parse(JSON.stringify(d.bases)) : null;
+  G.actions = [];
+  G._cooldowns = {};
+  G._snapshots = [];
+  G.p1Actions = [];
+  G.p2Actions = [];
+  G.tick = 0;
+  FX.clear();
+  updatePrepareUI();
+  UI.showScreen('battle');
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+  UI.updateBaseHUD(G.bases);
+  document.getElementById('actionQueuePanel').classList.remove('hidden');
+  document.getElementById('battleQueuePanel').classList.add('hidden');
+  document.getElementById('rdyBtn').disabled = false;
+  console.log('[ONLINE:BATTLE] prepare round=' + d.round);
+  UI.log('Round ' + d.round + ' — 准备阶段 (' + d.time + 's)');
+  startRenderLoop();
+}
+
+/**
+ * 【联机】战斗帧回放
+ * 由服务端 runBattle() → emit('battleFrames') 触发
+ */
+function onBattleFrames(d) {
+  G._mode = 'battle';
+  G._battleGameOver = d.gameOver;
+  document.getElementById('actionQueuePanel').classList.add('hidden');
+  document.getElementById('battleQueuePanel').classList.remove('hidden');
+  document.getElementById('rdyBtn').disabled = true;
+  console.log('[ONLINE:BATTLE] battle round=' + d.round + ' frames=' + d.frames.length + ' gameOver=' + d.gameOver);
+  playBattleAnim(d.frames, d.final);
+}
+
+/**
+ * 【联机】游戏结束
+ * 由服务端 runBattle() → emit('gameOver') 触发
+ */
+function onGameOver(d) {
+  G._mode = 'result';
+  FX.clear();
+  if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+  UI.showScreen('result');
+  document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
+  document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+}
+
+/**
+ * 【联机】入口：当所有人准备完毕时由服务端 startPrepare() 触发
+ * 在整个流程中 startPrepare 是最顶层的战斗入口
+ * 详细逻辑已在 onPrepareStart → onBattleFrames → onGameOver 中
+ * 
+ * TODO: 未来可在此处添加：
+ *   - 角色位置交换动画
+ *   - 转场特效
+ *   - 倒计时音效
+ */
+
 // ==================== 战斗动画播放（服务端发来的帧序列） ====================
 const FRAME_DURATION = 600;
 
@@ -2247,7 +2347,7 @@ function playBattleAnim(frames, final) {
 function nav(screen) {
   if (screen === 'menu') {
     G.reset();
-    if (G.socket) G.socket.emit('leaveRoom');
+    if (G.socket) { G.socket.emit('leaveRoom'); G.socket.removeAllListeners(); G.socket.disconnect(); G.socket = null; }
   }
   UI.showScreen(screen);
   if (screen === 'battle') {
@@ -2483,6 +2583,259 @@ async function enterCharSelect(mode) {
   document.getElementById('skillSel').classList.add('hidden');
 }
 
+// ==================== 联机大厅 ====================
+async function enterLobby() {
+  _selMode = 'online';
+  G.mode = 'online';
+  G.reset();
+  if (!_skillsData) await loadData();
+  _selChar = null; _selSkills = [];
+  setupSocket();
+  UI.showScreen('lobby');
+  if (G.socket && G.socket.connected) {
+    G.socket.emit('getRoomList');
+  }
+}
+
+function showJoinDialog() {
+  document.getElementById('joinDialog').classList.remove('hidden');
+  document.getElementById('rcode').focus();
+}
+
+function hideJoinDialog() {
+  document.getElementById('joinDialog').classList.add('hidden');
+}
+
+function createRoom() {
+  const name = document.getElementById('pname').value || 'Player';
+  console.log('[ONLINE] createRoom', name);
+  if (!G.socket || !G.socket.connected) {
+    setupSocket();
+    G._pendingCreate = { name };
+  } else {
+    G.socket.emit('createRoom', { name });
+  }
+}
+
+function joinRoom() {
+  const name = document.getElementById('pname').value || 'Player';
+  const rid = document.getElementById('rcode').value.trim();
+  if (!rid) return;
+  hideJoinDialog();
+  console.log('[ONLINE] joinRoom', rid, name);
+  if (!G.socket || !G.socket.connected) {
+    setupSocket();
+    G._pendingJoin = { roomId: rid, name };
+  } else {
+    G.socket.emit('joinRoom', { roomId: rid, name });
+  }
+}
+
+function leaveLobby() {
+  if (G.socket) { G.socket.removeAllListeners(); G.socket.disconnect(); G.socket = null; }
+  G.reset();
+  nav('menu');
+}
+
+// --- 房间列表渲染 ---
+function getStateLabel(state) {
+  return state === 'playing' ? '游戏中' : '准备中';
+}
+
+function renderRoomList(list) {
+  const el = document.getElementById('roomList');
+  if (!el) return;
+  if (!list || list.length === 0) {
+    el.innerHTML = '<p class="room-list-empty">暂无房间，创建一个吧！</p>';
+    return;
+  }
+  el.innerHTML = '';
+  list.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    item.innerHTML = '<div class="room-item-info">' +
+      '<span class="room-item-id">#' + r.roomId + '</span>' +
+      '<span class="room-item-meta">' + r.playerCount + '/' + r.maxSlots + ' 人</span>' +
+      '</div>' +
+      '<span class="room-item-state ' + r.state + '">' + getStateLabel(r.state) + '</span>';
+    item.onclick = () => {
+      const name = document.getElementById('pname').value || 'Player';
+      if (!G.socket || !G.socket.connected) {
+        setupSocket();
+        G._pendingJoin = { roomId: r.roomId, name };
+      } else {
+        G.socket.emit('joinRoom', { roomId: r.roomId, name });
+      }
+    };
+    el.appendChild(item);
+  });
+}
+
+// --- 房间页面 ---
+function enterRoomUI() {
+  UI.showScreen('room');
+  document.getElementById('roomIdDisplay').textContent = G.roomId;
+  document.getElementById('roomCharSelect').classList.add('hidden');
+  renderRoomSlots();
+  updateRoomCharSelect();
+}
+
+function renderRoomSlots() {
+  const grid = document.getElementById('slotGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const slots = G._roomSlots || [];
+  const mySid = G.socket ? G.socket.id : null;
+
+  slots.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.className = 'slot-card';
+    if (s.type === 'player') card.classList.add('player-slot');
+    else card.classList.add('spectator-slot');
+    if (s.occupied && s.index === G.mySlotIndex) card.classList.add('my-slot');
+    if (s.occupied && s.index !== G.mySlotIndex) card.classList.add('occupied');
+
+    const label = s.type === 'player' ? '游戏位 ' + (i + 1) : '观战位 ' + (i - 1);
+    let inner = '<span class="slot-label">' + label + '</span>';
+
+    if (s.occupied) {
+      inner += '<span class="slot-name">' + (s.name || '?') + '</span>';
+      if (s.type === 'player') {
+        if (s.charId) {
+          const char = getCharDef(s.charId);
+          inner += '<span class="slot-char">' + (char ? char.name : s.charId) + '</span>';
+        } else {
+          inner += '<span class="slot-char" style="color:var(--tx-muted);">未选择</span>';
+        }
+        const readyText = s.ready ? '已准备' : '未准备';
+        const readyClass = s.ready ? '' : 'not';
+        inner += '<span class="slot-ready ' + readyClass + '">' + readyText + '</span>';
+      }
+    } else {
+      inner += '<span class="slot-name" style="color:var(--tx-dim);">空位</span>';
+    }
+
+    // 点击交互：如果位置为空或者是自己的位置，可以切换
+    if (!s.occupied || s.index === G.mySlotIndex) {
+      card.style.cursor = 'pointer';
+    }
+
+    card.innerHTML = inner;
+    card.onclick = () => {
+      if (s.occupied && s.index !== G.mySlotIndex) return; // 别人的位置不能点
+      if (s.index === G.mySlotIndex) return; // 已经是自己的位置
+      if (G.socket) G.socket.emit('switchSlot', { targetIndex: s.index });
+    };
+    grid.appendChild(card);
+  });
+
+  updateRoomCharSelect();
+}
+
+function updateRoomCharSelect() {
+  const panel = document.getElementById('roomCharSelect');
+  const readyBtn = document.getElementById('roomReadyBtn');
+  if (!panel) return;
+
+  // 检查当前槽位是否是游戏位
+  const mySlot = G._roomSlots.find(s => s.index === G.mySlotIndex);
+  if (mySlot && mySlot.type === 'player') {
+    panel.classList.remove('hidden');
+    if (!_selChar) {
+      // 还没选角色，渲染角色选择
+      if (!_charsData) return;
+      renderRoomCharGrid();
+      document.getElementById('roomSkillSel').classList.add('hidden');
+    }
+    // 更新准备按钮文字
+    if (readyBtn) {
+      readyBtn.textContent = mySlot.ready ? '取消准备' : '准备';
+    }
+  } else {
+    panel.classList.add('hidden');
+    if (readyBtn) readyBtn.textContent = '准备';
+  }
+}
+
+function renderRoomCharGrid() {
+  const cg = document.getElementById('roomCharGrid');
+  if (!cg || !_charsData) return;
+  cg.innerHTML = '';
+  _charsData.characters.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'cc';
+    if (_selChar === c.id) card.classList.add('selected');
+    const defPct = (c.def / (c.def + 40) * 100).toFixed(0);
+    card.innerHTML = '<div class="ccn">' + c.name + '</div><div class="ccs" style="color:' + c.color + '">' + (c.shape === 'square' ? '■' : c.shape === 'triangle' ? '▶' : c.shape === 'diamond' ? '◆' : '▼') + '</div><div class="ccd">' + c.desc + '<br><span class="pix-label" style="color:var(--red)">[HP]</span>' + c.maxHp + ' <span class="pix-label" style="color:var(--blue)">[MP]</span>' + c.maxMp + ' <span class="pix-label" style="color:var(--green)">[SP]</span>' + c.maxSp + '<br><span class="pix-label" style="color:var(--cyan)">[ATK]</span>' + c.atk + ' <span class="pix-label" style="color:var(--blue)">[DEF]</span>' + c.def + ' (' + defPct + '%)<br><span class="pix-label" style="color:var(--green)">[REG]</span>MP+' + (c.mpRegen||1) + ' SP+' + (c.spRegen||2) + '</div>';
+    card.onclick = () => {
+      _selChar = c.id;
+      _selSkills = [...c.defaultSkills];
+      renderRoomCharGrid();
+      renderRoomSkillGrid(c);
+      document.getElementById('roomSkillSel').classList.remove('hidden');
+    };
+    cg.appendChild(card);
+  });
+}
+
+function renderRoomSkillGrid(char) {
+  const sg = document.getElementById('roomSkillGrid');
+  if (!sg || !_skillsData) return;
+  sg.innerHTML = '';
+  const allSkills = Object.values(_skillsData.skills || {}).filter(s => s.charId === char.id);
+  allSkills.forEach(sk => {
+    const card = document.createElement('div');
+    card.className = 'sc';
+    if (_selSkills.includes(sk.id)) card.classList.add('selected');
+    var typeName = {melee:'[MELEE]',projectile:'[RANGE]',targeted_aoe:'[AOE]',dash:'[DASH]',teleport_backstab:'[WARP]'}[sk.type]||sk.type;
+    card.innerHTML = '<div class="sn">' + sk.name + '</div><div class="st">' + typeName + ' | ' + (sk.desc||'') + '<br><span class="pix-label" style="color:var(--blue)">MP</span>' + (sk.mpCost||0) + ' <span class="pix-label" style="color:var(--green)">SP</span>' + (sk.spCost||0) + ' CD:' + (sk.cooldown||0) + ' x' + (sk.damageRatio||'-') + '</div>';
+    card.onclick = () => {
+      if (_selSkills.includes(sk.id)) {
+        if (_selSkills.length <= 3) return;
+        _selSkills = _selSkills.filter(s => s !== sk.id);
+      } else {
+        if (_selSkills.length >= 3) _selSkills.shift();
+        _selSkills.push(sk.id);
+      }
+      renderRoomSkillGrid(char);
+    };
+    sg.appendChild(card);
+  });
+}
+
+function confirmRoomChar() {
+  if (!_selChar || _selSkills.length < 3) return;
+  G.myCharId = _selChar;
+  G.mySkillIds = [..._selSkills];
+  if (G.socket) {
+    G.socket.emit('selectChar', { charId: _selChar, skillIds: _selSkills, customSkills: {} });
+    console.log('[ONLINE] selectChar sent', _selChar);
+  }
+}
+
+function toggleReady() {
+  if (!G.socket) return;
+  // 如果还没确认角色，先确认
+  if (_selChar && _selSkills.length >= 3) {
+    const mySlot = G._roomSlots.find(s => s.index === G.mySlotIndex);
+    if (mySlot && mySlot.type === 'player' && !mySlot.charId) {
+      confirmRoomChar();
+    }
+  }
+  G.socket.emit('toggleReady');
+}
+
+function leaveRoom() {
+  if (G.socket) G.socket.emit('leaveRoom');
+  G.roomId = null;
+  G.mySlotIndex = null;
+  G._roomSlots = [];
+  G._selChar = null;
+  G._selSkills = [];
+  UI.showScreen('lobby');
+  if (G.socket) G.socket.emit('getRoomList');
+}
+
 function renderCharGrid() {
   const cg = document.getElementById('cg');
   if (!cg || !_charsData) return;
@@ -2538,47 +2891,11 @@ function startGame() {
 
   if (_selMode === 'ai') {
     const aiChar = _charsData.characters.find(c => c.id !== _selChar) || _charsData.characters[0];
-    G.socket.emit('startAI', {
-      name: 'Player',
-      charId: _selChar,
-      skillIds: _selSkills,
-      aiCharId: aiChar.id,
-      aiSkillIds: [...aiChar.defaultSkills],
-    });
+    G.socket.emit('startAI', { name:'Player', charId:_selChar, skillIds:_selSkills, aiCharId:aiChar.id, aiSkillIds:[...aiChar.defaultSkills] });
     G.mode = 'ai';
   } else if (_selMode === 'train') {
-    G.socket.emit('startTrain', {
-      name: 'Player',
-      charId: _selChar,
-      skillIds: _selSkills,
-    });
+    G.socket.emit('startTrain', { name:'Player', charId:_selChar, skillIds:_selSkills });
     G.mode = 'train';
-  } else if (_selMode === 'online') {
-    G.mode = 'online';
-    UI.showScreen('lobby');
-  }
-}
-
-function createRoom() {
-  const name = document.getElementById('pname').value || 'Player';
-  if (!G.socket) setupSocket();
-  G.socket.emit('createRoom', { name });
-  document.getElementById('ostatus').textContent = '创建中...';
-}
-
-function joinRoom() {
-  const name = document.getElementById('pname').value || 'Player';
-  const rid = document.getElementById('rcode').value.trim().toUpperCase();
-  if (!rid) return;
-  if (!G.socket) setupSocket();
-  G.socket.emit('joinRoom', { roomId: rid, name });
-  document.getElementById('ostatus').textContent = '加入中...';
-  // 加入后角色选择
-  const chars = _charsData?.characters || [];
-  G.myCharId = chars[0]?.id || 'warrior';
-  G.mySkillIds = [...(chars[0]?.defaultSkills || [])];
-  if (G.socket && rid) {
-    G.socket.emit('selectChar', { charId: G.myCharId, skillIds: G.mySkillIds, customSkills: {} });
   }
 }
 
