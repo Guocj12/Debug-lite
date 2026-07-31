@@ -466,60 +466,15 @@ const FX = {
         break;
       }
 
-      // === 弹幕相撞（重写：精确计算碰撞像素位置） ===
+      // === 弹幕相撞（在碰撞对应格位置播放动画） ===
       case 'bullet_clash': {
-        const clashGX = ev.x ?? 0;
-        const clashPX = Renderer.gridToPixelX(clashGX);
+        const cx = Renderer.gridToPixelX(ev.x ?? 0);
         const cy = Renderer.baseY - 10;
-
-        // ★ 计算碰撞的精确像素位置（考虑缓动函数）
-        // 弹幕飞行使用 ease-out: ease = 1 - (1-t)^2
-        // 给定 progress（路径比例 0~1），反算在像素空间中的位置
-        const computeClashPixel = (fromGX, toGX, progress) => {
-          if (fromGX === undefined || toGX === undefined) return null;
-          const fromPX = Renderer.gridToPixelX(fromGX);
-          const toPX = Renderer.gridToPixelX(toGX);
-          // progress 是路径中的比例（0~1），对应缓动中的 t
-          // easeOutQuad: eased = 1 - (1-t)^2
-          // 反向：给定 eased_progress，求 t？
-          // 实际上 progress 直接对应 eased 值（因为路径是等距网格，每格对应等量 eased 进度）
-          const ease = Math.min(1, Math.max(0, progress));
-          const pixelX = fromPX + (toPX - fromPX) * ease;
-          return pixelX;
-        };
-
-        // 生成碰撞命中环（主碰撞位置在交叉格中心）
-        const hitAnim = ev.hit_anim || 'collisionFX';
-        const clashColor = ev.bullet_color || '#ffff00';
-        this.active.push(new HitRingFX(hitAnim, clashPX, cy, clashColor));
-
-        // ★ 如果提供碰撞进度，在更精确的位置生成额外的碰撞粒子
-        // 胜出方弹幕继续飞行到目标位置（碰撞点之后的路径），此处只播放碰撞动画
-        if (ev.clash_at_loser !== undefined && ev.progress_loser !== undefined) {
-          const loserPX = computeClashPixel(ev.clash_from_loser, ev.clash_to_loser, ev.progress_loser);
-          if (loserPX !== null) {
-            // 失败方弹幕在碰撞位置消失，生成额外的命中粒子
-            this.active.push(new HitRingFX('hitExplosion', loserPX, cy, ev.bullet_color || '#ff4444'));
-            // 失败方弹幕的碎片粒子
-            this.active.push(new BulletClashFragmentFX(loserPX, cy, ev.bullet_color || '#ff4444'));
-          }
+        if (ev.hit_anim) {
+          this.active.push(new HitRingFX(ev.hit_anim, cx, cy, ev.bullet_color || '#ffff00'));
         }
-        if (ev.clash_at_b !== undefined && ev.progress_b !== undefined) {
-          const bPX = computeClashPixel(ev.clash_from_b, ev.clash_to_b, ev.progress_b);
-          if (bPX !== null) {
-            this.active.push(new HitRingFX('hitExplosion', bPX, cy, ev.bullet_color || '#ff4444'));
-            this.active.push(new BulletClashFragmentFX(bPX, cy, ev.bullet_color || '#ff4444'));
-          }
-        }
-        // 胜出方：在其碰撞位置也放一个小标记
-        if (ev.clash_at !== undefined && ev.clash_from_winner !== undefined) {
-          const winnerPX = computeClashPixel(ev.clash_from_winner, ev.clash_to_winner, ev.progress_winner || 0.5);
-          if (winnerPX !== null && ev.winner !== 'both') {
-            // 胜出方继续飞行的闪光
-            this.active.push(new HitRingFX('shieldWall', winnerPX, cy, ev.bullet_color || '#ffff00'));
-          }
-        }
-
+        // 碰撞碎片粒子
+        this.active.push(new BulletClashFragmentFX(cx, cy, ev.bullet_color || '#ffff00'));
         if (!isEdit) AE.play('block');
         break;
       }
@@ -1647,6 +1602,15 @@ function setupSocket() {
   });
 
   G.socket.on('err', (d) => { alert(d.msg); });
+
+  // === AI/训练场事件（服务端运算结果） ===
+  G.socket.on('aiPrepareStart', (d) => {
+    onOnlinePrepareStart(d);
+  });
+
+  G.socket.on('aiBattleResult', (d) => {
+    onOnlineBattleResult(d);
+  });
 }
 
 // ==================== 本地步进引擎 ====================
@@ -2076,7 +2040,25 @@ function randomFill() {
 
 function readyBattle() {
   DBG.log('[READY] 完成，发送队列 ' + G.actions.length + '个行动');
-  if (G.socket && G.roomId) {
+  if (G.mode === 'ai') {
+    // AI 对战：发送序列到服务端运算
+    if (G.socket) {
+      G.socket.emit('aiSubmitActions', {
+        charId: G.myCharId, skillIds: G.mySkillIds,
+        aiCharId: G.p2?.charId, aiSkillIds: [],
+        actions: G.actions,
+      });
+    }
+  } else if (G.mode === 'train') {
+    // 训练场：发送序列到服务端运算
+    if (G.socket) {
+      G.socket.emit('trainSubmitActions', {
+        charId: G.myCharId, skillIds: G.mySkillIds,
+        actions: G.actions,
+      });
+    }
+  } else if (G.socket && G.roomId) {
+    // 联机对战
     G.socket.emit('updateActions', { actions: G.actions });
     G.socket.emit('ready');
   }

@@ -138,6 +138,44 @@ function getOpponentInRoom(room, sid) {
   return null;
 }
 
+/** 生成 AI 的 16 tick 行动序列（简单随机） */
+function generateAIActions(charId, skillIds) {
+  const genericActions = ['move_left','move_right','dodge_left','dodge_right','defend','turn','wait'];
+  const skillActions = (skillIds || []).map((_, i) => 'skill' + (i + 1));
+  const pool = [...genericActions, ...skillActions];
+  const actions = [];
+  for (let i = 0; i < TICKS; i++) {
+    actions.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  return actions;
+}
+
+/**
+ * 运行单局 AI/训练战斗，返回帧序列和最终状态。
+ * 双方均使用 BattleEngine，p1=玩家, p2=对手(AI)
+ */
+function runSingleBattle(p1Def, p2Def, p1Actions, p2Actions) {
+  const engine = new BattleEngine();
+  engine.init({
+    p1: {
+      id: 'P1', charId: p1Def.charId, x: 5, facing: 1,
+      hp: p1Def.maxHp, maxHp: p1Def.maxHp, mp: p1Def.maxMp, maxMp: p1Def.maxMp,
+      sp: p1Def.maxSp, maxSp: p1Def.maxSp, atk: p1Def.atk, def: p1Def.def,
+      skills: p1Def.skillIds, customSkills: p1Def.customSkills || {},
+    },
+    p2: {
+      id: 'P2', charId: p2Def.charId, x: 10, facing: -1,
+      hp: p2Def.maxHp, maxHp: p2Def.maxHp, mp: p2Def.maxMp, maxMp: p2Def.maxMp,
+      sp: p2Def.maxSp, maxSp: p2Def.maxSp, atk: p2Def.atk, def: p2Def.def,
+      skills: p2Def.skillIds, customSkills: p2Def.customSkills || {},
+    },
+  });
+  engine.setActions(p1Actions, p2Actions);
+  const frames = engine.executeAll();
+  const state = engine.getState();
+  return { frames, state };
+}
+
 // ==================== 联机战斗核心：双 AI 房间，独立运算 ====================
 
 /**
@@ -350,6 +388,119 @@ function forceCloseRoom(lobby, reason) {
 // ==================== Socket Events ====================
 io.on('connection', (socket) => {
   console.log('connect:', socket.id);
+
+  // === 人机对战 ===
+  socket.on('startAI', (d) => {
+    console.log('[AI] startAI player=' + d.name + ' char=' + d.charId + ' vs AI char=' + d.aiCharId);
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    const aiChar = chars.find(c => c.id === d.aiCharId) || chars[0];
+
+    const p1Def = {
+      charId: pChar.id, maxHp: pChar.maxHp, maxMp: pChar.maxMp, maxSp: pChar.maxSp,
+      atk: pChar.atk, def: pChar.def, skillIds: d.skillIds, customSkills: d.customSkills || {},
+    };
+    const p2Def = {
+      charId: aiChar.id, maxHp: aiChar.maxHp, maxMp: aiChar.maxMp, maxSp: aiChar.maxSp,
+      atk: aiChar.atk, def: aiChar.def, skillIds: d.aiSkillIds, customSkills: {},
+    };
+
+    const aiActions = generateAIActions(aiChar.id, d.aiSkillIds);
+    const playerActions = []; // 玩家在编排阶段填写，发到服务端时为空，由客户端本地模拟
+    // AI 对战：玩家在前端编排序列后发给后端计算
+    // 这里先返回准备数据，实际战斗在玩家提交序列后计算
+    const bases = { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } };
+
+    socket.emit('aiPrepareStart', {
+      round: 1, time: 60,
+      p1: { id: 'P1', charId: pChar.id, x: 5, facing: 1, hp: pChar.maxHp, maxHp: pChar.maxHp, mp: pChar.maxMp, maxMp: pChar.maxMp, sp: pChar.maxSp, maxSp: pChar.maxSp, atk: pChar.atk, def: pChar.def, skills: d.skillIds || pChar.defaultSkills },
+      p2: { id: 'P2', charId: aiChar.id, x: 10, facing: -1, hp: aiChar.maxHp, maxHp: aiChar.maxHp, mp: aiChar.maxMp, maxMp: aiChar.maxMp, sp: aiChar.maxSp, maxSp: aiChar.maxSp, atk: aiChar.atk, def: aiChar.def, skills: d.aiSkillIds || aiChar.defaultSkills },
+      p1Char: pChar.id, p2Char: aiChar.id, bases,
+    });
+  });
+
+  // AI 对战：玩家提交了行动序列 → 运算战斗
+  socket.on('aiSubmitActions', (d) => {
+    console.log('[AI] received player actions length=' + (d.actions?.length || 0));
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    const aiChar = chars.find(c => c.id === d.aiCharId) || chars[0];
+
+    const p1Def = {
+      charId: pChar.id, maxHp: pChar.maxHp, maxMp: pChar.maxMp, maxSp: pChar.maxSp,
+      atk: pChar.atk, def: pChar.def, skillIds: d.skillIds, customSkills: {},
+    };
+    const p2Def = {
+      charId: aiChar.id, maxHp: aiChar.maxHp, maxMp: aiChar.maxMp, maxSp: aiChar.maxSp,
+      atk: aiChar.atk, def: aiChar.def, skillIds: d.aiSkillIds, customSkills: {},
+    };
+
+    const playerActions = (d.actions || []).slice(0, TICKS);
+    while (playerActions.length < TICKS) playerActions.push('wait');
+    const aiActions = generateAIActions(aiChar.id, d.aiSkillIds);
+
+    const { frames, state } = runSingleBattle(p1Def, p2Def, playerActions, aiActions);
+    socket.emit('aiBattleResult', {
+      frames, final: state, round: 1,
+      myCharId: pChar.id, opponentCharId: aiChar.id, opponentName: 'AI',
+    });
+  });
+
+  // === 训练场 ===
+  socket.on('startTrain', (d) => {
+    console.log('[TRAIN] startTrain player=' + d.name + ' char=' + d.charId);
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    // 训练场：对手为木桩（不动的战士），只用 move_left 和 wait
+    const dummyChar = chars[0]; // warrior as dummy
+    const dummyActions = ['wait','wait','wait','wait','wait','wait','wait','wait',
+      'wait','wait','wait','wait','wait','wait','wait','wait'];
+
+    const p1Def = {
+      charId: pChar.id, maxHp: pChar.maxHp, maxMp: pChar.maxMp, maxSp: pChar.maxSp,
+      atk: pChar.atk, def: pChar.def, skillIds: d.skillIds, customSkills: {},
+    };
+    const p2Def = {
+      charId: dummyChar.id, maxHp: dummyChar.maxHp, maxMp: dummyChar.maxMp, maxSp: dummyChar.maxSp,
+      atk: dummyChar.atk, def: dummyChar.def, skillIds: dummyChar.defaultSkills, customSkills: {},
+    };
+
+    const bases = { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } };
+    socket.emit('aiPrepareStart', {
+      round: 1, time: 60,
+      p1: { id: 'P1', charId: pChar.id, x: 5, facing: 1, hp: pChar.maxHp, maxHp: pChar.maxHp, mp: pChar.maxMp, maxMp: pChar.maxMp, sp: pChar.maxSp, maxSp: pChar.maxSp, atk: pChar.atk, def: pChar.def, skills: d.skillIds || pChar.defaultSkills },
+      p2: { id: 'P2', charId: dummyChar.id, x: 10, facing: -1, hp: dummyChar.maxHp, maxHp: dummyChar.maxHp, mp: dummyChar.maxMp, maxMp: dummyChar.maxMp, sp: dummyChar.maxSp, maxSp: dummyChar.maxSp, atk: dummyChar.atk, def: dummyChar.def, skills: dummyChar.defaultSkills },
+      p1Char: pChar.id, p2Char: dummyChar.id, bases,
+    });
+  });
+
+  // 训练场：玩家提交序列 → 运算战斗
+  socket.on('trainSubmitActions', (d) => {
+    console.log('[TRAIN] received player actions length=' + (d.actions?.length || 0));
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    const dummyChar = chars[0];
+
+    const p1Def = {
+      charId: pChar.id, maxHp: pChar.maxHp, maxMp: pChar.maxMp, maxSp: pChar.maxSp,
+      atk: pChar.atk, def: pChar.def, skillIds: d.skillIds, customSkills: {},
+    };
+    const p2Def = {
+      charId: dummyChar.id, maxHp: dummyChar.maxHp, maxMp: dummyChar.maxMp, maxSp: dummyChar.maxSp,
+      atk: dummyChar.atk, def: dummyChar.def, skillIds: dummyChar.defaultSkills, customSkills: {},
+    };
+
+    const playerActions = (d.actions || []).slice(0, TICKS);
+    while (playerActions.length < TICKS) playerActions.push('wait');
+    const dummyActions = ['wait','wait','wait','wait','wait','wait','wait','wait',
+      'wait','wait','wait','wait','wait','wait','wait','wait'];
+
+    const { frames, state } = runSingleBattle(p1Def, p2Def, playerActions, dummyActions);
+    socket.emit('aiBattleResult', {
+      frames, final: state, round: 1,
+      myCharId: pChar.id, opponentCharId: dummyChar.id, opponentName: '训练木桩',
+    });
+  });
 
   socket.on('getRoomList', () => {
     const list = [];
