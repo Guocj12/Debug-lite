@@ -1967,45 +1967,37 @@ function quitBattle() {
   nav('menu');
 }
 
-// ==================== 联机战斗事件绑定 ====================
-/** 绑定所有联机战斗相关的 socket 事件 */
+// ==================== 联机战斗事件 ====================
+/**
+ * 绑定联机战斗相关的 socket 事件。
+ * 联机模式流程：
+ *   1. 房间内双方选角色+准备 → 服务端发 prepareStart → 进入编排界面
+ *   2. 玩家编排序列+点"完成" → 发 updateActions + ready → 服务端运算
+ *   3. 服务端发 onlineBattleResult → 播放帧回放
+ */
 function bindOnlineBattleEvents() {
   if (!G.socket) return;
 
-  // 清除旧的监听避免重复绑定
   G.socket.off('prepareStart');
-  G.socket.off('prepareTick');
-  G.socket.off('battleFrames');
-  G.socket.off('gameOver');
+  G.socket.off('onlineBattleResult');
 
   G.socket.on('prepareStart', (d) => {
-    onPrepareStart(d);
+    onOnlinePrepareStart(d);
   });
 
-  G.socket.on('prepareTick', (d) => {
-    G.timeLeft = d.t;
-    document.getElementById('tm').textContent = d.t;
-  });
-
-  G.socket.on('battleFrames', (d) => {
-    onBattleFrames(d);
-  });
-
-  G.socket.on('gameOver', (d) => {
-    onGameOver(d);
+  G.socket.on('onlineBattleResult', (d) => {
+    onOnlineBattleResult(d);
   });
 }
 
-// ==================== 联机战斗流程 ====================
-
 /**
- * 【联机】准备阶段开始
- * 由服务端 startPrepare() → emit('prepareStart') 触发
+ * 【联机】进入准备阶段，编排序列
+ * 由服务端双方准备后 emit('prepareStart') 触发
  */
-function onPrepareStart(d) {
+function onOnlinePrepareStart(d) {
   G._mode = 'prepare';
   G.round = d.round;
-  G.timeLeft = d.time;
+  G.timeLeft = d.time || 60;
   G.p1 = d.p1;
   G.p2 = d.p2;
   G.bases = d.bases || null;
@@ -2019,6 +2011,7 @@ function onPrepareStart(d) {
   G.p2Actions = [];
   G.tick = 0;
   FX.clear();
+
   updatePrepareUI();
   UI.showScreen('battle');
   UI.renderActionSlots();
@@ -2027,48 +2020,48 @@ function onPrepareStart(d) {
   document.getElementById('actionQueuePanel').classList.remove('hidden');
   document.getElementById('battleQueuePanel').classList.add('hidden');
   document.getElementById('rdyBtn').disabled = false;
-  console.log('[ONLINE:BATTLE] prepare round=' + d.round);
-  UI.log('Round ' + d.round + ' — 准备阶段 (' + d.time + 's)');
+  document.getElementById('tm').textContent = G.timeLeft;
+  document.getElementById('rnd').textContent = 'ROUND ' + d.round + ' (联机)';
+
+  console.log('[ONLINE:PREPARE] round=' + d.round);
+  UI.log('Round ' + d.round + ' — 编排你的序列 (' + G.timeLeft + 's)');
+
   startRenderLoop();
 }
 
 /**
- * 【联机】战斗帧回放
- * 由服务端 runBattle() → emit('battleFrames') 触发
+ * 【联机】收到服务端战斗结果 → 直接播放帧回放
  */
-function onBattleFrames(d) {
+function onOnlineBattleResult(d) {
+  console.log('[ONLINE:BATTLE] received result, round=' + d.round +
+    ', opponent=' + d.opponentName + ', frames=' + d.frames.length);
+
   G._mode = 'battle';
-  G._battleGameOver = d.gameOver;
+  G.round = d.round;
+  G.p1 = d.final.p1;
+  G.p2 = d.final.p2;
+  G.bases = d.final.bases || null;
+
+  FX.clear();
+  UI.showScreen('battle');
   document.getElementById('actionQueuePanel').classList.add('hidden');
   document.getElementById('battleQueuePanel').classList.remove('hidden');
   document.getElementById('rdyBtn').disabled = true;
-  console.log('[ONLINE:BATTLE] battle round=' + d.round + ' frames=' + d.frames.length + ' gameOver=' + d.gameOver);
+  document.getElementById('rnd').textContent = 'VS ' + d.opponentName;
+  document.getElementById('tm').textContent = '';
+
+  UI.updateBaseHUD(G.bases);
+  UI.log('对战 ' + d.opponentName + ' | Round ' + d.round);
+
+  startRenderLoop();
   playBattleAnim(d.frames, d.final);
 }
 
-/**
- * 【联机】游戏结束
- * 由服务端 runBattle() → emit('gameOver') 触发
- */
-function onGameOver(d) {
-  G._mode = 'result';
-  FX.clear();
-  if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
-  UI.showScreen('result');
-  document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
-  document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+function quitBattle() {
+  if (G.socket) G.socket.emit('leaveRoom');
+  G.reset();
+  nav('menu');
 }
-
-/**
- * 【联机】入口：当所有人准备完毕时由服务端 startPrepare() 触发
- * 在整个流程中 startPrepare 是最顶层的战斗入口
- * 详细逻辑已在 onPrepareStart → onBattleFrames → onGameOver 中
- * 
- * TODO: 未来可在此处添加：
- *   - 角色位置交换动画
- *   - 转场特效
- *   - 倒计时音效
- */
 
 // ==================== 战斗动画播放（服务端发来的帧序列） ====================
 const FRAME_DURATION = 600;
