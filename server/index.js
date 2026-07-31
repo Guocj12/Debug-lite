@@ -313,16 +313,16 @@ function sendNextRound(lobby) {
 
   io.to(p1Slot.sid).emit('prepareStart', {
     round: lobby.round + 1, time: 60, opponent: p2Slot.name,
-    p1: { id: 'P1', charId: p1c.id, x: 5, facing: 1, hp: s1.p1.hp, maxHp: p1c.maxHp, mp: s1.p1.mp, maxMp: p1c.maxMp, sp: s1.p1.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
-    p2: { id: 'P2', charId: p2c.id, x: 10, facing: -1, hp: s1.p2.hp, maxHp: p2c.maxHp, mp: s1.p2.mp, maxMp: p2c.maxMp, sp: s1.p2.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
+    p1: { id: 'P1', charId: p1c.id, x: s1.p1.x, facing: s1.p1.facing, hp: s1.p1.hp, maxHp: p1c.maxHp, mp: s1.p1.mp, maxMp: p1c.maxMp, sp: s1.p1.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
+    p2: { id: 'P2', charId: p2c.id, x: s1.p2.x, facing: s1.p2.facing, hp: s1.p2.hp, maxHp: p2c.maxHp, mp: s1.p2.mp, maxMp: p2c.maxMp, sp: s1.p2.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
     p1Char: p1c.id, p2Char: p2c.id,
     bases: s1.bases || { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
   });
 
   io.to(p2Slot.sid).emit('prepareStart', {
     round: lobby.round + 1, time: 60, opponent: p1Slot.name,
-    p1: { id: 'P1', charId: p2c.id, x: 5, facing: 1, hp: s2.p1.hp, maxHp: p2c.maxHp, mp: s2.p1.mp, maxMp: p2c.maxMp, sp: s2.p1.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
-    p2: { id: 'P2', charId: p1c.id, x: 10, facing: -1, hp: s2.p2.hp, maxHp: p1c.maxHp, mp: s2.p2.mp, maxMp: p1c.maxMp, sp: s2.p2.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
+    p1: { id: 'P1', charId: p2c.id, x: s2.p1.x, facing: s2.p1.facing, hp: s2.p1.hp, maxHp: p2c.maxHp, mp: s2.p1.mp, maxMp: p2c.maxMp, sp: s2.p1.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
+    p2: { id: 'P2', charId: p1c.id, x: s2.p2.x, facing: s2.p2.facing, hp: s2.p2.hp, maxHp: p1c.maxHp, mp: s2.p2.mp, maxMp: p1c.maxMp, sp: s2.p2.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
     p1Char: p2c.id, p2Char: p1c.id,
     bases: s2.bases || { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
   });
