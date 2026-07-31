@@ -1261,6 +1261,7 @@ const G = {
     this._roomSlots = [];
     this._roomHostId = null;
     this.mySlotIndex = null;
+    this._onBattleEnd = null; // 联机模式战斗播放结束回调
     if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
     FX.clear(); Tween.clear();
   },
@@ -1981,6 +1982,7 @@ function bindOnlineBattleEvents() {
   G.socket.off('prepareStart');
   G.socket.off('onlineBattleResult');
   G.socket.off('opponentDisconnected');
+  G.socket.off('roomForceClosed');
 
   G.socket.on('prepareStart', (d) => {
     onOnlinePrepareStart(d);
@@ -1992,6 +1994,10 @@ function bindOnlineBattleEvents() {
 
   G.socket.on('opponentDisconnected', (d) => {
     onOpponentDisconnected(d);
+  });
+
+  G.socket.on('roomForceClosed', (d) => {
+    onRoomForceClosed(d);
   });
 }
 
@@ -2042,6 +2048,7 @@ function onOnlineBattleResult(d) {
     ', opponent=' + d.opponentName + ', frames=' + d.frames.length);
 
   G._mode = 'battle';
+  G._battleGameOver = false;
   G.round = d.round;
   G.p1 = d.final.p1;
   G.p2 = d.final.p2;
@@ -2058,6 +2065,19 @@ function onOnlineBattleResult(d) {
   UI.updateBaseHUD(G.bases);
   UI.log('对战 ' + d.opponentName + ' | Round ' + d.round);
 
+  // 播放结束后，把本端看到的状态回传给服务端
+  G._onBattleEnd = (final) => {
+    if (G.socket) {
+      G.socket.emit('reportBattleState', {
+        roomId: G.roomId,
+        p1: { hp: final.p1.hp, mp: final.p1.mp, sp: final.p1.sp, x: final.p1.x, facing: final.p1.facing },
+        p2: { hp: final.p2.hp, mp: final.p2.mp, sp: final.p2.sp, x: final.p2.x, facing: final.p2.facing },
+        bases: final.bases ? { p1: { hp: final.bases.p1.hp }, p2: { hp: final.bases.p2.hp } } : null,
+      });
+    }
+    UI.log('等待对方确认...');
+  };
+
   startRenderLoop();
   playBattleAnim(d.frames, d.final);
 }
@@ -2072,6 +2092,18 @@ function onOpponentDisconnected(d) {
   UI.showScreen('result');
   document.getElementById('rtitle').textContent = '你获胜了!';
   document.getElementById('rdetail').textContent = d.reason || '对手断开了连接';
+}
+
+/**
+ * 【联机】房间被强制关闭（状态不一致等异常）
+ */
+function onRoomForceClosed(d) {
+  console.log('[ONLINE:FORCE_CLOSE]', d.reason);
+  if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+  FX.clear();
+  G.reset();
+  alert(d.reason || '房间已关闭');
+  nav('menu');
 }
 
 // ==================== 战斗动画播放（服务端发来的帧序列） ====================
@@ -2143,6 +2175,10 @@ function playBattleAnim(frames, final) {
           document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : `${w} 获胜!`;
           document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'baseDestroyed' ? '基地被摧毁' : (reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
           DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
+        } else if (G._onBattleEnd) {
+          // 联机模式：播放结束，调用回调回传状态
+          G._onBattleEnd(final);
+          G._onBattleEnd = null;
         }
       }
       return;
