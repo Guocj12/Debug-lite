@@ -436,6 +436,25 @@ const FX = {
         break;
       }
 
+      // === 弹幕被碰撞截断（飞到碰撞位置后消失，不飞完整路径） ===
+      case 'bullet_trail_cut': {
+        const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
+        const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
+        const y = Renderer.baseY - 10;
+        // ★ 缩短飞行时间以匹配截断距离
+        // 使用 progress 来计算实际飞行时长
+        const progress = ev.progress || 0.5;
+        const cutDuration = frameDuration * 0.75 * progress;
+        if (ev.bullet_anim) {
+          const fx = new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, cutDuration, false, stagger);
+          fx.facing = facing;
+          this.active.push(fx);
+        }
+        // 在截断位置播放小碰撞效果
+        this.active.push(new BulletClashFragmentFX(toX, y, ev.bullet_color || '#ffff00'));
+        break;
+      }
+
       // === DOT tick 伤害（燃烧/中毒每tick扣血） ===
       case 'burn_tick':
       case 'poison_tick': {
@@ -447,13 +466,60 @@ const FX = {
         break;
       }
 
-      // === 弹幕相撞 ===
+      // === 弹幕相撞（重写：精确计算碰撞像素位置） ===
       case 'bullet_clash': {
-        const cx = Renderer.gridToPixelX(ev.x ?? 0);
+        const clashGX = ev.x ?? 0;
+        const clashPX = Renderer.gridToPixelX(clashGX);
         const cy = Renderer.baseY - 10;
-        if (ev.hit_anim) {
-          this.active.push(new HitRingFX(ev.hit_anim, cx, cy, ev.bullet_color || '#ffff00'));
+
+        // ★ 计算碰撞的精确像素位置（考虑缓动函数）
+        // 弹幕飞行使用 ease-out: ease = 1 - (1-t)^2
+        // 给定 progress（路径比例 0~1），反算在像素空间中的位置
+        const computeClashPixel = (fromGX, toGX, progress) => {
+          if (fromGX === undefined || toGX === undefined) return null;
+          const fromPX = Renderer.gridToPixelX(fromGX);
+          const toPX = Renderer.gridToPixelX(toGX);
+          // progress 是路径中的比例（0~1），对应缓动中的 t
+          // easeOutQuad: eased = 1 - (1-t)^2
+          // 反向：给定 eased_progress，求 t？
+          // 实际上 progress 直接对应 eased 值（因为路径是等距网格，每格对应等量 eased 进度）
+          const ease = Math.min(1, Math.max(0, progress));
+          const pixelX = fromPX + (toPX - fromPX) * ease;
+          return pixelX;
+        };
+
+        // 生成碰撞命中环（主碰撞位置在交叉格中心）
+        const hitAnim = ev.hit_anim || 'collisionFX';
+        const clashColor = ev.bullet_color || '#ffff00';
+        this.active.push(new HitRingFX(hitAnim, clashPX, cy, clashColor));
+
+        // ★ 如果提供碰撞进度，在更精确的位置生成额外的碰撞粒子
+        // 胜出方弹幕继续飞行到目标位置（碰撞点之后的路径），此处只播放碰撞动画
+        if (ev.clash_at_loser !== undefined && ev.progress_loser !== undefined) {
+          const loserPX = computeClashPixel(ev.clash_from_loser, ev.clash_to_loser, ev.progress_loser);
+          if (loserPX !== null) {
+            // 失败方弹幕在碰撞位置消失，生成额外的命中粒子
+            this.active.push(new HitRingFX('hitExplosion', loserPX, cy, ev.bullet_color || '#ff4444'));
+            // 失败方弹幕的碎片粒子
+            this.active.push(new BulletClashFragmentFX(loserPX, cy, ev.bullet_color || '#ff4444'));
+          }
         }
+        if (ev.clash_at_b !== undefined && ev.progress_b !== undefined) {
+          const bPX = computeClashPixel(ev.clash_from_b, ev.clash_to_b, ev.progress_b);
+          if (bPX !== null) {
+            this.active.push(new HitRingFX('hitExplosion', bPX, cy, ev.bullet_color || '#ff4444'));
+            this.active.push(new BulletClashFragmentFX(bPX, cy, ev.bullet_color || '#ff4444'));
+          }
+        }
+        // 胜出方：在其碰撞位置也放一个小标记
+        if (ev.clash_at !== undefined && ev.clash_from_winner !== undefined) {
+          const winnerPX = computeClashPixel(ev.clash_from_winner, ev.clash_to_winner, ev.progress_winner || 0.5);
+          if (winnerPX !== null && ev.winner !== 'both') {
+            // 胜出方继续飞行的闪光
+            this.active.push(new HitRingFX('shieldWall', winnerPX, cy, ev.bullet_color || '#ffff00'));
+          }
+        }
+
         if (!isEdit) AE.play('block');
         break;
       }
@@ -873,6 +939,62 @@ class HitRingFX {
       ctx.fillRect(sx, sy, ps, ps);
     }
     ctx.restore();
+  }
+}
+
+// ==================== 弹幕碰撞碎片 FX（碰撞瞬间飞溅的像素碎片） ====================
+class BulletClashFragmentFX {
+  /**
+   * @param {number} x - 碰撞像素X坐标
+   * @param {number} y - 碰撞像素Y坐标
+   * @param {string} color - 碎片颜色
+   */
+  constructor(x, y, color = '#ffff00') {
+    this.x = x;
+    this.y = y;
+    this.color = color;
+    this.duration = 300; // ms
+    this.elapsed = 0;
+    this.done = false;
+    // 生成 6-10 个随机方向的碎片
+    const count = 6 + Math.floor(Math.random() * 5);
+    this.fragments = [];
+    for (let i = 0; i < count; i++) {
+      this.fragments.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 2 + Math.random() * 6,
+        size: 2 + Math.floor(Math.random() * 4),
+        life: 0.5 + Math.random() * 0.5
+      });
+    }
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    if (this.elapsed >= this.duration) this.done = true;
+  }
+
+  render(ctx, R) {
+    if (this.elapsed >= this.duration) return;
+    const t = Math.min(1, this.elapsed / this.duration);
+    // ease-out 减速
+    const moveEase = 1 - Math.pow(1 - t, 3);
+    const alpha = 1 - t;
+
+    for (const f of this.fragments) {
+      const dist = moveEase * R.cellW * f.speed * 0.7;
+      const px = this.x + Math.cos(f.angle) * dist;
+      const py = this.y + Math.sin(f.angle) * dist;
+      const ps = f.size;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = this.color;
+      // 像素风量化
+      const sx = Math.floor(px / 3) * 3;
+      const sy = Math.floor(py / 3) * 3;
+      ctx.fillRect(sx, sy, ps, ps);
+      ctx.restore();
+    }
   }
 }
 
@@ -1865,13 +1987,13 @@ function addActionToQueue(actionId, skillSid) {
         // 闪避：保留拖尾动画但去掉音效（spawnFromEvent 的 isEdit 会跳过音效）
         filteredEvents.push(ev);
       } else {
-        // 其他事件保留（melee_slash, bullet_trail, aoe_cast, dash, teleport, move, turn, defend 等）
+        // 其他事件保留（melee_slash, bullet_trail, bullet_trail_cut, aoe_cast, dash, teleport, move, turn, defend 等）
         filteredEvents.push(ev);
       }
     }
 
     // 为弹幕/施法事件添加 stagger 错时（箭雨多箭、连射等）
-    const staggerTypes = ['bullet_trail','aoe_cast','melee_slash','dash','teleport'];
+    const staggerTypes = ['bullet_trail','bullet_trail_cut','aoe_cast','melee_slash','dash','teleport'];
     const staggerEvents = filteredEvents.filter(ev => staggerTypes.includes(ev.type));
     const nonStaggerEvents = filteredEvents.filter(ev => !staggerTypes.includes(ev.type));
 
