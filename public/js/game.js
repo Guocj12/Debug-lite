@@ -1980,6 +1980,7 @@ function bindOnlineBattleEvents() {
 
   G.socket.off('prepareStart');
   G.socket.off('onlineBattleResult');
+  G.socket.off('opponentDisconnected');
 
   G.socket.on('prepareStart', (d) => {
     onOnlinePrepareStart(d);
@@ -1987,6 +1988,10 @@ function bindOnlineBattleEvents() {
 
   G.socket.on('onlineBattleResult', (d) => {
     onOnlineBattleResult(d);
+  });
+
+  G.socket.on('opponentDisconnected', (d) => {
+    onOpponentDisconnected(d);
   });
 }
 
@@ -2057,10 +2062,16 @@ function onOnlineBattleResult(d) {
   playBattleAnim(d.frames, d.final);
 }
 
-function quitBattle() {
-  if (G.socket) G.socket.emit('leaveRoom');
-  G.reset();
-  nav('menu');
+/**
+ * 【联机】对手断线 → 我方直接胜利
+ */
+function onOpponentDisconnected(d) {
+  console.log('[ONLINE:DISCONNECT] opponent left:', d.reason);
+  if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+  FX.clear();
+  UI.showScreen('result');
+  document.getElementById('rtitle').textContent = '你获胜了!';
+  document.getElementById('rdetail').textContent = d.reason || '对手断开了连接';
 }
 
 // ==================== 战斗动画播放（服务端发来的帧序列） ====================

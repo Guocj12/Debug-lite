@@ -127,6 +127,17 @@ class LobbyRoom {
   }
 }
 
+// ==================== 辅助函数 ====================
+
+/** 获取某个玩家在房间中的对手（另一游戏位玩家），没有则返回 null */
+function getOpponentInRoom(room, sid) {
+  const slot = room.getPlayerSlot(sid);
+  if (!slot || slot.type !== 'player') return null;
+  const opponentIndex = room.slots[0].sid === sid ? 1 : 0;
+  if (room.slots[opponentIndex].sid) return room.slots[opponentIndex];
+  return null;
+}
+
 // ==================== 联机战斗核心：双 AI 房间，独立运算 ====================
 
 function startOnlineBattle(lobby) {
@@ -204,13 +215,44 @@ function startOnlineBattle(lobby) {
     myCharId: p2Char.id, opponentCharId: p1Char.id, opponentName: p1Slot.name,
   });
 
-  // 重置准备状态
+  // 重置准备状态，发送下一轮 prepareStart
   lobby.state = 'waiting';
   p1Slot.ready = false; p2Slot.ready = false;
+  p1Slot.battleReady = false; p2Slot.battleReady = false;
   delete lobby.pActions[p1Slot.sid];
   delete lobby.pActions[p2Slot.sid];
   lobby.round++;
   io.to(lobby.id).emit('slotsUpdated', { slots: lobby.getSlotSummary(), hostId: lobby.hostId });
+
+  // 等待播放结束后自动进入下一轮准备（延迟略大于帧播放时长）
+  const roundDelay = TICKS * 650 + 2000;
+  setTimeout(() => {
+    // 检查房间还存在且两个玩家都在
+    if (!lobbyRooms.has(lobby.id)) return;
+    if (!lobby.slots[0].sid || !lobby.slots[1].sid) return;
+
+    lobby.state = 'playing';
+    lobby.pActions = {};
+    const chars = require('../data/characters.json').characters;
+    const p1c = chars.find(c => c.id === p1Slot.charId) || chars[0];
+    const p2c = chars.find(c => c.id === p2Slot.charId) || chars[0];
+
+    io.to(p1Slot.sid).emit('prepareStart', {
+      round: lobby.round + 1, time: 60, opponent: p2Slot.name,
+      p1: { id: 'P1', charId: p1c.id, x: 5, facing: 1, hp: s1.p1.hp, maxHp: p1c.maxHp, mp: s1.p1.mp, maxMp: p1c.maxMp, sp: s1.p1.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
+      p2: { id: 'P2', charId: p2c.id, x: 10, facing: -1, hp: s1.p2.hp, maxHp: p2c.maxHp, mp: s1.p2.mp, maxMp: p2c.maxMp, sp: s1.p2.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
+      p1Char: p1c.id, p2Char: p2c.id,
+      bases: s1.bases || { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
+    });
+
+    io.to(p2Slot.sid).emit('prepareStart', {
+      round: lobby.round + 1, time: 60, opponent: p1Slot.name,
+      p1: { id: 'P1', charId: p2c.id, x: 5, facing: 1, hp: s2.p1.hp, maxHp: p2c.maxHp, mp: s2.p1.mp, maxMp: p2c.maxMp, sp: s2.p1.sp, maxSp: p2c.maxSp, atk: p2c.atk, def: p2c.def, skills: p2Slot.skillIds || p2c.defaultSkills },
+      p2: { id: 'P2', charId: p1c.id, x: 10, facing: -1, hp: s2.p2.hp, maxHp: p1c.maxHp, mp: s2.p2.mp, maxMp: p1c.maxMp, sp: s2.p2.sp, maxSp: p1c.maxSp, atk: p1c.atk, def: p1c.def, skills: p1Slot.skillIds || p1c.defaultSkills },
+      p1Char: p2c.id, p2Char: p1c.id,
+      bases: s2.bases || { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
+    });
+  }, roundDelay);
 }
 
 // ==================== Socket Events ====================
@@ -283,13 +325,21 @@ io.on('connection', (socket) => {
           const chars = require('../data/characters.json').characters;
           const p1Char = chars.find(c => c.id === r.slots[0].charId) || chars[0];
           const p2Char = chars.find(c => c.id === r.slots[1].charId) || chars[0];
-          // 发送 prepareStart 给房间，让双方进入编排界面
-          io.to(rid).emit('prepareStart', {
-            round: r.round + 1,
-            time: 60,
+
+          // 分别给 P1 和 P2 发各自的视角：自己始终是 P1，对手是 P2
+          io.to(r.slots[0].sid).emit('prepareStart', {
+            round: r.round + 1, time: 60,
             p1: { id: 'P1', charId: p1Char.id, x: 5, facing: 1, hp: p1Char.maxHp, maxHp: p1Char.maxHp, mp: p1Char.maxMp, maxMp: p1Char.maxMp, sp: p1Char.maxSp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def, skills: r.slots[0].skillIds || p1Char.defaultSkills },
             p2: { id: 'P2', charId: p2Char.id, x: 10, facing: -1, hp: p2Char.maxHp, maxHp: p2Char.maxHp, mp: p2Char.maxMp, maxMp: p2Char.maxMp, sp: p2Char.maxSp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def, skills: r.slots[1].skillIds || p2Char.defaultSkills },
             p1Char: p1Char.id, p2Char: p2Char.id,
+            bases: { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
+          });
+
+          io.to(r.slots[1].sid).emit('prepareStart', {
+            round: r.round + 1, time: 60,
+            p1: { id: 'P1', charId: p2Char.id, x: 5, facing: 1, hp: p2Char.maxHp, maxHp: p2Char.maxHp, mp: p2Char.maxMp, maxMp: p2Char.maxMp, sp: p2Char.maxSp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def, skills: r.slots[1].skillIds || p2Char.defaultSkills },
+            p2: { id: 'P2', charId: p1Char.id, x: 10, facing: -1, hp: p1Char.maxHp, maxHp: p1Char.maxHp, mp: p1Char.maxMp, maxMp: p1Char.maxMp, sp: p1Char.maxSp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def, skills: r.slots[0].skillIds || p1Char.defaultSkills },
+            p1Char: p2Char.id, p2Char: p1Char.id,
             bases: { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
           });
         }
@@ -328,6 +378,7 @@ io.on('connection', (socket) => {
   socket.on('leaveRoom', () => {
     for (const [rid, r] of lobbyRooms) {
       if (r.getPlayerSlot(socket.id)) {
+        const opponentSlot = getOpponentInRoom(r, socket.id);
         r.removePlayer(socket.id); socket.leave(rid);
         if (r.getAllPlayers().length === 0) {
           lobbyRooms.delete(rid);
@@ -335,6 +386,10 @@ io.on('connection', (socket) => {
         } else {
           io.to(rid).emit('slotsUpdated', { slots: r.getSlotSummary(), hostId: r.hostId });
           io.emit('roomListUpdate', { roomId: rid, info: r.getPublicInfo() });
+          // 如果是游戏位玩家离开，通知对手获胜
+          if (opponentSlot && opponentSlot.type === 'player' && r.state === 'playing') {
+            io.to(opponentSlot.sid).emit('opponentDisconnected', { reason: '对手离开了房间' });
+          }
         }
         break;
       }
@@ -344,6 +399,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     for (const [rid, r] of lobbyRooms) {
       if (r.getPlayerSlot(socket.id)) {
+        const opponentSlot = getOpponentInRoom(r, socket.id);
         r.removePlayer(socket.id);
         if (r.getAllPlayers().length === 0) {
           lobbyRooms.delete(rid);
@@ -351,6 +407,10 @@ io.on('connection', (socket) => {
         } else {
           io.to(rid).emit('slotsUpdated', { slots: r.getSlotSummary(), hostId: r.hostId });
           io.emit('roomListUpdate', { roomId: rid, info: r.getPublicInfo() });
+          // 如果在战斗中掉线，通知对手获胜
+          if (opponentSlot && opponentSlot.type === 'player' && (r.state === 'playing' || r.state === 'waiting')) {
+            io.to(opponentSlot.sid).emit('opponentDisconnected', { reason: '对手断开了连接' });
+          }
         }
         break;
       }
