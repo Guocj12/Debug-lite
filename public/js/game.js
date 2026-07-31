@@ -2072,7 +2072,10 @@ function onOnlineBattleResult(d) {
         roomId: G.roomId,
         p1: { hp: final.p1.hp, mp: final.p1.mp, sp: final.p1.sp, x: final.p1.x, facing: final.p1.facing },
         p2: { hp: final.p2.hp, mp: final.p2.mp, sp: final.p2.sp, x: final.p2.x, facing: final.p2.facing },
-        bases: final.bases ? { p1: { hp: final.bases.p1.hp }, p2: { hp: final.bases.p2.hp } } : null,
+        bases: {
+          p1: { hp: final.bases?.p1?.hp ?? 100 },
+          p2: { hp: final.bases?.p2?.hp ?? 100 }
+        },
       });
     }
     UI.log('等待对方确认...');

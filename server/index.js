@@ -242,22 +242,59 @@ function startOnlineBattle(lobby) {
 
 /**
  * 校对双端状态：
- *   服务端 P1 的 p1.hp 应 ≈ P2 客户端的 p2.hp（对手血量）
- *   服务端 P1 的 p2.hp 应 ≈ P2 客户端的 p1.hp（自己血量）
+ *   P1 客户端回传的状态应 ≈ P1 服务端引擎状态（各自对比）
+ *   P2 客户端回传的状态应 ≈ P2 服务端引擎状态（各自对比）
+ * 同时校对两个引擎之间的镜像一致性（交叉验证）：
+ *   s1.p1 应镜像于 s2.p2（同一角色在不同视角中）
  * 若误差超过容限，返回 false。
  */
 function verifyBattleStates(s1, c1, s2, c2) {
-  const tolerance = 5;
-  // P1 服务端 vs P2 客户端（交叉验证）
-  const check1 = Math.abs(s1.p1.hp - c2.p2.hp) <= tolerance &&
-                 Math.abs(s1.p2.hp - c2.p1.hp) <= tolerance;
-  // P2 服务端 vs P1 客户端（交叉验证）
-  const check2 = Math.abs(s2.p1.hp - c1.p1.hp) <= tolerance &&
-                 Math.abs(s2.p2.hp - c1.p2.hp) <= tolerance;
-  console.log('[VERIFY] s1(p1hp='+s1.p1.hp+',p2hp='+s1.p2.hp+') c1(p1hp='+c1.p1.hp+',p2hp='+c1.p2.hp+')');
-  console.log('[VERIFY] s2(p1hp='+s2.p1.hp+',p2hp='+s2.p2.hp+') c2(p1hp='+c2.p1.hp+',p2hp='+c2.p2.hp+')');
-  console.log('[VERIFY] check1='+check1+' check2='+check2);
-  return check1 && check2;
+  const TOL = 5;
+  const MAX_X = 15; // 用于镜像坐标
+
+  // 辅助：比较两个状态对象的指定字段
+  function cmp(a, b, fields) {
+    for (const f of fields) {
+      if (Math.abs((a[f] ?? 0) - (b[f] ?? 0)) > TOL) return false;
+    }
+    return true;
+  }
+
+  // 检查 1：P1 服务端 vs P1 客户端（各自独立对比）
+  const check1 = cmp(s1.p1, c1.p1, ['hp','mp','sp','x','facing']) &&
+                 cmp(s1.p2, c1.p2, ['hp','mp','sp','x','facing']);
+
+  // 检查 2：P2 服务端 vs P2 客户端（各自独立对比）
+  const check2 = cmp(s2.p1, c2.p1, ['hp','mp','sp','x','facing']) &&
+                 cmp(s2.p2, c2.p2, ['hp','mp','sp','x','facing']);
+
+  // 检查 3：跨引擎镜像一致性
+  // s1.p1 的角色 = s2.p2 的角色（P1角色在P2视角中是p2对手）
+  // 坐标镜像：P1视角的 x <-> P2视角的 (MAX_X - x)
+  const check3 = Math.abs(s1.p1.hp - s2.p2.hp) <= TOL &&
+                 Math.abs(s1.p1.mp - s2.p2.mp) <= TOL &&
+                 Math.abs(s1.p1.sp - s2.p2.sp) <= TOL &&
+                 Math.abs((MAX_X - s1.p1.x) - s2.p2.x) <= 1 &&
+                 Math.abs(s1.p2.hp - s2.p1.hp) <= TOL &&
+                 Math.abs(s1.p2.mp - s2.p1.mp) <= TOL &&
+                 Math.abs(s1.p2.sp - s2.p1.sp) <= TOL &&
+                 Math.abs((MAX_X - s1.p2.x) - s2.p1.x) <= 1;
+
+  // 检查 4：基地血量对比
+  const b1hp1 = s1.bases?.p1?.hp ?? 100;
+  const b1hp2 = s1.bases?.p2?.hp ?? 100;
+  const b2hp1 = s2.bases?.p1?.hp ?? 100;
+  const b2hp2 = s2.bases?.p2?.hp ?? 100;
+  const check4 = Math.abs(b1hp1 - b2hp2) <= TOL &&
+                 Math.abs(b1hp2 - b2hp1) <= TOL;
+
+  console.log('[VERIFY] s1 p1(hp='+s1.p1.hp+',mp='+s1.p1.mp+',sp='+s1.p1.sp+',x='+s1.p1.x+',f='+s1.p1.facing+') p2(hp='+s1.p2.hp+',mp='+s1.p2.mp+',sp='+s1.p2.sp+',x='+s1.p2.x+',f='+s1.p2.facing+')');
+  console.log('[VERIFY] c1 p1(hp='+c1.p1.hp+',mp='+c1.p1.mp+',sp='+c1.p1.sp+',x='+c1.p1.x+',f='+c1.p1.facing+') p2(hp='+c1.p2.hp+',mp='+c1.p2.mp+',sp='+c1.p2.sp+',x='+c1.p2.x+',f='+c1.p2.facing+')');
+  console.log('[VERIFY] s2 p1(hp='+s2.p1.hp+',mp='+s2.p1.mp+',sp='+s2.p1.sp+',x='+s2.p1.x+',f='+s2.p1.facing+') p2(hp='+s2.p2.hp+',mp='+s2.p2.mp+',sp='+s2.p2.sp+',x='+s2.p2.x+',f='+s2.p2.facing+')');
+  console.log('[VERIFY] c2 p1(hp='+c2.p1.hp+',mp='+c2.p1.mp+',sp='+c2.p1.sp+',x='+c2.p1.x+',f='+c2.p1.facing+') p2(hp='+c2.p2.hp+',mp='+c2.p2.mp+',sp='+c2.p2.sp+',x='+c2.p2.x+',f='+c2.p2.facing+')');
+  console.log('[VERIFY] check1='+check1+' check2='+check2+' check3='+check3+' check4='+check4);
+
+  return check1 && check2 && check3 && check4;
 }
 
 /** 校对通过后，发送下一轮 prepareStart */
