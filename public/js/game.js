@@ -436,22 +436,24 @@ const FX = {
         break;
       }
 
-      // === 弹幕被碰撞截断（飞到碰撞位置后消失，不飞完整路径） ===
+      // === 弹幕被碰撞截断（飞到碰撞位置后消失） ===
       case 'bullet_trail_cut': {
+        console.log('[TRAIL_CUT_1] entered case, ev.bullet_anim=' + ev.bullet_anim + ' ev.bullet_from=' + ev.bullet_from + ' ev.bullet_to=' + ev.bullet_to + ' stagger=' + stagger + ' facing=' + facing + ' color=' + color);
         const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
         const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
-        // ★ 缩短飞行时间以匹配截断距离
-        // 使用 progress 来计算实际飞行时长
-        const progress = ev.progress || 0.5;
-        const cutDuration = frameDuration * 0.75 * progress;
+        console.log('[TRAIL_CUT_2] fromX=' + fromX + ' toX=' + toX + ' y=' + y + ' frameDuration=' + frameDuration);
         if (ev.bullet_anim) {
-          const fx = new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, cutDuration, false, stagger);
+          console.log('[TRAIL_CUT_3] creating ProjectileBulletFX...');
+          const fx = new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false, stagger);
+          console.log('[TRAIL_CUT_4] created ok, sprite=' + fx.spriteName + ' totalDuration=' + fx.totalDuration + ' elapsed=' + fx.elapsed + ' hasHit=' + fx.hasHit);
           fx.facing = facing;
+          console.log('[TRAIL_CUT_5] active length before push=' + this.active.length);
           this.active.push(fx);
+          console.log('[TRAIL_CUT_6] active length after push=' + this.active.length);
+        } else {
+          console.log('[TRAIL_CUT_SKIP] bullet_anim is falsy!');
         }
-        // 在截断位置播放小碰撞效果
-        this.active.push(new BulletClashFragmentFX(toX, y, ev.bullet_color || '#ffff00'));
         break;
       }
 
@@ -470,6 +472,7 @@ const FX = {
       case 'bullet_clash': {
         const cx = Renderer.gridToPixelX(ev.x ?? 0);
         const cy = Renderer.baseY - 10;
+        console.log('[FX_CREATE] bullet_clash at grid='+(ev.x||'?')+' pixel='+cx.toFixed(0)+' color='+(ev.bullet_color||'null'));
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, cx, cy, ev.bullet_color || '#ffff00'));
         }
@@ -664,7 +667,7 @@ const FX = {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const fx = this.active[i];
       fx.update(dt);
-      if (fx.done) this.active.splice(i, 1);
+      if (fx.done) { this.active.splice(i, 1); }
     }
     // 更新 buff emitters
     for (const k in this) {
@@ -677,7 +680,6 @@ const FX = {
 
   render(ctx) {
     for (const fx of this.active) fx.render(ctx, Renderer);
-    // 渲染 buff emitters
     for (const k in this) {
       if (k.startsWith('_buffFx_') && this[k]) {
         this[k].render(ctx, Renderer);
@@ -759,6 +761,7 @@ class ProjectileBulletFX {
     let alpha = 1;
     if (t > 0.85 && !this.hasHit) alpha = Math.max(0, 1 - (t - 0.85) / 0.15);
     else if (t > 0.9 && this.hasHit) alpha = Math.max(0, 1 - (t - 0.9) / 0.1);
+    console.log('[FX_DRAW] ProjectileBulletFX sprite='+this.spriteName+' x='+this.x.toFixed(0)+' y='+this.y.toFixed(0)+' from='+this.fromX.toFixed(0)+' to='+this.toX.toFixed(0)+' elapsed='+this.elapsed.toFixed(0)+' alpha='+alpha.toFixed(2)+' hasHit='+this.hasHit+' facing='+this.facing);
     R.drawBulletSprite(this.spriteName, this.x, this.y, 1, alpha, this.color, this.facing);
   }
 }
@@ -1843,13 +1846,15 @@ function startRenderLoop() {
     // 战斗阶段专用步进（必须在 FX.update 之前调用，以便新产生的 FX 在当帧就能渲染）
     if (G._mode === 'battle' && G._battleStep) G._battleStep();
 
+    if (G._mode === 'battle') console.log('[RENDER_LOOP_UPDATE] before FX.update dt=' + dt.toFixed(0) + ' active=' + FX.active.length);
     FX.update(dt);
+    if (G._mode === 'battle') console.log('[RENDER_LOOP_UPDATE] after FX.update active=' + FX.active.length);
     Tween.update();
 
     Renderer.resize();
     Renderer.drawGrid();
 
-    // 画玩家——使用渲染位置（如果有缓动动画就用缓动位置）
+    // 画玩家
     if (G.p1 && G.p2) {
       const rp1 = Object.assign({}, G.p1, G._renderP1 ? { x: G._renderP1.x, _isPixelX: true } : {});
       const rp2 = Object.assign({}, G.p2, G._renderP2 ? { x: G._renderP2.x, _isPixelX: true } : {});
@@ -1859,6 +1864,17 @@ function startRenderLoop() {
         const p2Hidden = Object.assign({}, rp2, { _alpha: 0 });
         Renderer.drawPlayers(rp1, p2Hidden);
       }
+    }
+
+    // ★ 每帧详细输出：正在渲染什么
+    if (G._mode === 'battle') {
+      const activeInfo = FX.active.map(fx => {
+        if (fx.constructor.name === 'ProjectileBulletFX') {
+          return 'bullet[sprite='+fx.spriteName+' x='+fx.x.toFixed(0)+' from='+fx.fromX.toFixed(0)+' to='+fx.toX.toFixed(0)+' elapsed='+fx.elapsed.toFixed(0)+' alpha='+((fx.elapsed/fx.totalDuration)>0.85&&!fx.hasHit?Math.max(0,1-((fx.elapsed/fx.totalDuration)-0.85)/0.15):1).toFixed(2)+']';
+        }
+        return fx.constructor.name;
+      }).join(' , ');
+      console.log('[FRAME_RENDER] battle frame, FX.active=[' + activeInfo + '] count=' + FX.active.length);
     }
 
     FX.render(Renderer.ctx);
@@ -2437,10 +2453,11 @@ function playBattleAnim(frames, final) {
       }
 
       const events = frame.events || [];
+      console.log('[BATTLE_FRAME] tick=' + tickIdx + ' events=[ ' + events.map(e=>e.type+'('+e.bullet_anim+')').join(' , ') + ' ]');
       DBG.log('[BATTLE] tick=' + tickIdx + ' events=' + events.length + ' types=' + events.map(e=>e.type).join(','));
       // 计算错时发射的 stagger 间隔
       // 找出此帧中需要错时的弹幕类型 (projectile/vertical 多段)
-      const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','aoe_cast','burn_hit','aoe_hit','melee_slash'];
+      const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','bullet_trail_cut','aoe_cast','burn_hit','aoe_hit','melee_slash']; // bullet_trail_cut goes through same stagger as bullet_trail
       let staggerCount = 0;
       const sortedEvents = [];
       const staggerEvents = [];
@@ -2471,6 +2488,7 @@ function playBattleAnim(frames, final) {
       const skipTypes = ['collision', 'base_hit'];
       const nonColEvents = sortedEvents.filter(ev => !skipTypes.includes(ev.type));
       for (const ev of nonColEvents) {
+        console.log('[BATTLE_SPAWN] type='+ev.type+' anim='+(ev.bullet_anim||ev.hit_anim||'null')+' from='+(ev.bullet_from||'-')+' to='+(ev.bullet_to||'-')+' x='+(ev.x||'-')+' stagger='+(ev._stagger||0));
         DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' stagger='+(ev._stagger||0));
         FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
       }
@@ -2483,7 +2501,9 @@ function playBattleAnim(frames, final) {
     }
 
     // 战斗阶段也需要持续更新 FX（每帧）
+    console.log('[BATTLE_STEP_UPDATE] before FX.update, active=' + FX.active.length + ' dt=' + dt);
     FX.update(Math.min(100, dt));
+    console.log('[BATTLE_STEP_UPDATE] after FX.update, active=' + FX.active.length);
     Tween.update();
   };
 

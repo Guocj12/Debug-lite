@@ -38,13 +38,10 @@ class BattleEngine {
 
   executeAll() {
     const frames = [], s = this.state;
-    // 活跃弹幕注册表：{ owner, priority, type:'projectile'|'melee', pathGrids:[], fromX, toX, dir, skillId, color, anim_bullet, anim_hit }
-    s._activeBullets = [];
     console.log(`[EXECUTE_ALL] START p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp})`);
     for (let tick = 0; tick < 16; tick++) {
       const preHp1 = s.p1.hp, preHp2 = s.p2.hp;
-      // 清除上一tick的弹幕（每tick弹幕只活一帧）
-      s._activeBullets = [];
+      s._bullets = [];
       const frame = this.executeTick(tick);
       frames.push(frame);
       console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')}`);
@@ -94,18 +91,15 @@ class BattleEngine {
     const p1SR = this.executeAction(s.p1, s.p2, p1Act, 'p1', 'p2', tick, p2FromX, p2FromFacing);
     const p2SR = this.executeAction(s.p2, s.p1, p2Act, 'p2', 'p1', tick, p1FromX, p1FromFacing);
 
-    // ★ 弹幕碰撞解析 —— 在所有行动执行完毕后，统一处理弹幕互撞
-    const clashEvents = this.resolveBulletCollisions(s._activeBullets);
+    // 弹幕碰撞
+    const clashEvents = this.resolveBulletCollisions(s._bullets);
 
-    // debug: log stun/effects
     if (s.p1._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p1 effects: ${JSON.stringify(s.p1._effects)}`);
     if (s.p2._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p2 effects: ${JSON.stringify(s.p2._effects)}`);
     if (p1Stunned) console.log(`[STUN] tick=${tick} p1 stunned, action=${p1Act}`);
     if (p2Stunned) console.log(`[STUN] tick=${tick} p2 stunned, action=${p2Act}`);
 
-    this.updateBullets(s);
-
-    // 个性化资源恢复（每个角色不同恢复速率）
+    // 资源恢复
     const cd1 = s._charDef_p1, cd2 = s._charDef_p2;
     s.p1.sp = Math.min(s.p1.maxSp, s.p1.sp + (cd1.spRegen || 2));
     s.p2.sp = Math.min(s.p2.maxSp, s.p2.sp + (cd2.spRegen || 2));
@@ -116,7 +110,7 @@ class BattleEngine {
       tick, p1: this.clonePlayer(s.p1), p2: this.clonePlayer(s.p2),
       p1FromX, p1FromFacing, p2FromX, p2FromFacing,
       p1Actions: [...this.p1Actions], p2Actions: [...this.p2Actions],
-      bullets: JSON.parse(JSON.stringify(s._activeBullets)),
+      bullets: JSON.parse(JSON.stringify(s._bullets)),
       events: [...(p1SR?.events || []), ...(p2SR?.events || []), ...(collision?.events || []), ...(baseEvents || []), ...(clashEvents || []), ...(p1Result.dotEvents || []), ...(p2Result.dotEvents || [])],
       animData: this.getAnimData([...(p1SR?.events||[]),...(p2SR?.events||[]),...(collision?.events||[]),...(clashEvents||[])]),
       p1Act, p2Act, p1Stunned, p2Stunned,
@@ -273,7 +267,7 @@ class BattleEngine {
         events.push({ type: 'melee_slash', actor: cKey, skillId: sid,
           bullet_anim: sk.anim_bullet || 'meleeSwing', bullet_color: sk.color, bullet_x: centerGX, facing: dir });
 
-        // ★ 注册近战弹幕到活跃弹幕表，参与碰撞
+        // 计算近战覆盖范围
         const meleePath = [];
         if (sk.direction === 'forward') {
           for (let d = 1; d <= rg; d++) {
@@ -291,13 +285,13 @@ class BattleEngine {
             if (gx >= 0 && gx <= 15) meleePath.push(gx);
           }
         }
-        this.state._activeBullets.push({
-          owner: cKey, priority: sk.bulletPriority || 3, type: 'melee',
-          pathGrids: meleePath, fromX: caster.x, toX: centerGX, dir,
-          skillId: sid, color: sk.color, anim_bullet: sk.anim_bullet || 'meleeSwing',
-          anim_hit: sk.anim_hit || 'hitSlash'
+        console.log(`[BULLET_FIRE] ${cKey} melee ${sid} from=${caster.x} dir=${dir} range=[${meleePath.join(',')}] pri=${sk.bulletPriority||3}`);
+
+        this.state._bullets.push({
+          owner: cKey, type: 'melee', priority: sk.bulletPriority || 3,
+          fromX: caster.x, dir, pathGrids: meleePath,
+          color: sk.color, anim_hit: sk.anim_hit || 'hitSlash', skillId: sid
         });
-        console.log(`[BULLET_REG] ${cKey} melee ${sid} path=[${meleePath.join(',')}] pri=${sk.bulletPriority||3}`);
 
         if (inRange) {
           let ratio = sk.damageRatio || 1;
@@ -321,7 +315,6 @@ class BattleEngine {
         const pri = sk.bulletPriority || 4;
         const shots = sk.multiShot || 1;
         const targetX = enemyFromX !== undefined ? enemyFromX : target.x;
-
         const maxX = Math.max(0, Math.min(15, caster.x + dir * range));
         const bulletPath = [];
         for (let scan = 1; scan <= range; scan++) {
@@ -331,45 +324,33 @@ class BattleEngine {
         }
 
         for (let s = 0; s < shots; s++) {
-          // 检查是否会命中目标（但不在此处应用伤害——留给碰撞解析后统一处理）
-          let willHit = false;
-          let hitGX = targetX;
           const hitIdx = bulletPath.indexOf(targetX);
-          if (hitIdx >= 0 && !target._dodging) {
-            willHit = true;
-            hitGX = targetX;
-          }
-          // 如果目标闪避，也记录（用于 dodged 事件）
-          const targetDodged = (hitIdx >= 0 && target._dodging);
+          const willHit = hitIdx >= 0 && !target._dodging;
+          const targetDodged = hitIdx >= 0 && target._dodging;
 
-          // 注册弹幕到活跃表（附带完整命中信息，供碰撞解析后应用）
-          this.state._activeBullets.push({
-            owner: cKey, priority: pri, type: 'projectile',
-            pathGrids: [...bulletPath], fromX: caster.x, toX: willHit ? targetX : maxX, dir,
-            skillId: sid, color: sk.color, anim_bullet: sk.anim_bullet || 'arrowFly',
-            anim_hit: sk.anim_hit || 'hitExplosion', multiIdx: s,
-            _hitTarget: willHit,
-            _hitDodged: targetDodged,
-            // 完整存储命中所需的所有上下文
-            _hitContext: willHit ? {
+          // 注册弹幕到 _bullets（不在此处应用伤害，留给碰撞解析后统一处理）
+          this.state._bullets.push({
+            owner: cKey, type: 'projectile', priority: pri,
+            fromX: caster.x, toX: maxX, dir,
+            pathGrids: [...bulletPath],
+            color: sk.color,
+            anim_bullet: sk.anim_bullet || 'arrowFly',
+            anim_hit: sk.anim_hit || 'hitExplosion',
+            skillId: sid, multiIdx: s,
+            _hitGrid: willHit ? targetX : null,
+            _hitCtx: willHit ? {
               casterKey: cKey, targetKey: tKey,
-              caster, target,
               dmg: this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, target._defBuff || 0),
-              x: hitGX,
-              skillId: sid,
-              bullet_anim: sk.anim_bullet || 'arrowFly',
-              hit_anim: sk.anim_hit || 'hitExplosion',
-              bullet_color: sk.color,
-              fromX: caster.x,
               effect: sk.effect,
               freezeDuration: sk.freezeDuration,
               poisonTicks: sk.poisonTicks,
               poisonRatio: sk.poisonRatio,
+              hitAnim: sk.anim_hit || 'hitExplosion',
+              fromX: caster.x,
             } : null
           });
-          console.log(`[BULLET_REG] ${cKey} projectile ${sid} shot#${s} path=[${bulletPath.join(',')}] pri=${pri} hit=${willHit} dodged=${targetDodged}`);
+          console.log(`[BULLET_FIRE] ${cKey} projectile ${sid}#${s} from=${caster.x} dir=${dir} to=${maxX} path=[${bulletPath.join(',')}] pri=${pri} hit=${willHit}`);
 
-          // 闪避事件可以立即生成（不受碰撞影响）
           if (targetDodged) {
             events.push({ type: 'dodged', actor: tKey, x: targetX });
           }
@@ -480,168 +461,135 @@ class BattleEngine {
   }
 
   /**
-   * ★ 弹幕碰撞解析器（重写，简化版）
+   * 弹幕碰撞解析器
    *
-   * 对所有活跃弹幕两两配对检测碰撞：
-   * - 近战 vs 近战：只播放碰撞动画，双方不消失
-   * - 近战 vs 投射物：近战等级 >= 投射物 → 投射物被截断消失；投射物更高 → 穿透
-   * - 投射物 vs 投射物：高等级消灭低等级；同级同归于尽
-   * - 碰撞动画在碰撞发生的网格位置播放
-   * - 被消灭的弹幕生成 bullet_trail_cut（截断飞行），未被消灭的生成 bullet_trail（完整飞行）
+   * 算法：
+   * 1. 遍历所有弹幕对，找路径交集
+   * 2. 交集中心 = Math.round((minOverlap + maxOverlap) / 2)
+   * 3. melee vs melee: 双方在中心爆炸，都不消失
+   * 4. melee vs projectile: projectile 被截断在交集的远端（projectile 最先进入交集的格）
+   * 5. projectile vs projectile: 低等级在中心被消灭，同级双方都消灭
+   * 6. 被消灭的弹幕生成 bullet_trail_cut（飞到截断位置）
+   * 7. 未被消灭的弹幕：有 _hitCtx 则生成 bullet_hit；否则生成 bullet_trail
    */
-  resolveBulletCollisions(activeBullets) {
+  resolveBulletCollisions(bullets) {
     const events = [];
-    if (!activeBullets || activeBullets.length === 0) return events;
+    if (!bullets || bullets.length < 2) {
+      // 无碰撞：直接给所有投射物生成最终事件
+      if (bullets) {
+        for (const b of bullets) {
+          if (b.type !== 'projectile') continue;
+          if (b._hitCtx) {
+            const ctx = b._hitCtx;
+            const target = this.state[ctx.targetKey === 'p1' ? 'p1' : 'p2'];
+            target.hp = Math.max(0, target.hp - ctx.dmg);
+            const evT = ctx.effect === 'freeze_damage' ? 'freeze_hit' : (ctx.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
+            events.push({ type: evT, actor: ctx.casterKey, target: ctx.targetKey, dmg: ctx.dmg, x: b._hitGrid,
+              bullet_anim: b.anim_bullet, hit_anim: ctx.hitAnim, bullet_color: b.color,
+              bullet_from: ctx.fromX, bullet_to: b._hitGrid, facing: b.dir });
+            if (ctx.effect === 'freeze_damage') { target._frozen = true; target._effects = target._effects || []; target._effects.push({ type: 'freeze', ticks: ctx.freezeDuration || 1 }); }
+            if (ctx.effect === 'poison_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'poison', ticks: ctx.poisonTicks || 5, dmgPerTick: Math.max(1, Math.floor(target.atk * (ctx.poisonRatio || 0.08))) }); }
+          } else {
+            events.push({ type: 'bullet_trail', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color,
+              bullet_from: b.fromX, bullet_to: b.toX, bullet_faded: true, facing: b.dir, skillId: b.skillId });
+          }
+        }
+      }
+      return events;
+    }
 
     const eliminated = new Set();
+    const n = bullets.length;
 
-    for (let i = 0; i < activeBullets.length; i++) {
+    for (let i = 0; i < n; i++) {
       if (eliminated.has(i)) continue;
-      const a = activeBullets[i];
-
-      for (let j = i + 1; j < activeBullets.length; j++) {
+      const a = bullets[i];
+      for (let j = i + 1; j < n; j++) {
         if (eliminated.has(j)) continue;
-        const b = activeBullets[j];
-
-        // 同属主不碰撞
+        const b = bullets[j];
         if (a.owner === b.owner) continue;
 
-        // 近战 vs 近战：只播放碰撞动画
+        const overlap = a.pathGrids.filter(g => b.pathGrids.includes(g));
+        if (overlap.length === 0) continue;
+
+        const center = Math.round((overlap[0] + overlap[overlap.length - 1]) / 2);
+        console.log(`[BULLET_CLASH] ${a.owner}(${a.skillId},${a.type},pri=${a.priority}) vs ${b.owner}(${b.skillId},${b.type},pri=${b.priority}) overlap=[${overlap.join(',')}] center=${center}`);
+
+        // melee vs melee
         if (a.type === 'melee' && b.type === 'melee') {
-          const intersection = a.pathGrids.filter(g => b.pathGrids.includes(g));
-          if (intersection.length > 0) {
-            events.push({
-              type: 'bullet_clash', x: intersection[0], winner: 'both',
-              hit_anim: 'collisionFX', bullet_color: '#ffff00'
-            });
-            console.log(`[CLASH] melee vs melee at grid ${intersection[0]}`);
-          }
+          events.push({ type: 'bullet_clash', x: center, winner: 'both', hit_anim: 'collisionFX', bullet_color: '#ffff00' });
           continue;
         }
 
-        // 辅助：为被消灭弹幕生成截断飞行事件
-        const emitLoserTrail = (loser, clashGX) => {
-          events.push({
-            type: 'bullet_trail_cut', actor: loser.owner, skillId: loser.skillId,
-            bullet_anim: loser.anim_bullet || 'arrowFly',
-            bullet_color: loser.color,
-            bullet_from: loser.fromX, bullet_to: clashGX,
-            facing: loser.dir || 1
-          });
-        };
-
-        // 近战 vs 投射物
+        // melee vs projectile
         if ((a.type === 'melee' && b.type === 'projectile') || (a.type === 'projectile' && b.type === 'melee')) {
           const melee = a.type === 'melee' ? a : b;
           const proj = a.type === 'projectile' ? a : b;
           const projIdx = a.type === 'projectile' ? i : j;
+          // projectile 被截断在 overlap 远端（projectile 最先到达的交集格）
+          const projCutX = proj.dir > 0 ? overlap[0] : overlap[overlap.length - 1];
 
-          const intersection = melee.pathGrids.filter(g => proj.pathGrids.includes(g));
-          if (intersection.length === 0) continue;
-
-          const clashGX = intersection[0];
-          const mPri = melee.priority, pPri = proj.priority;
-
-          if (mPri <= pPri) {
-            // 近战等级 >= 投射物：投射物被截断
+          if (melee.priority <= proj.priority) {
             eliminated.add(projIdx);
-            emitLoserTrail(proj, clashGX);
-            events.push({
-              type: 'bullet_clash', x: clashGX, winner: melee.owner,
-              hit_anim: proj.anim_hit, bullet_color: proj.color
-            });
-            console.log(`[CLASH] proj(${proj.skillId},pri=${pPri}) blocked by melee(${melee.skillId},pri=${mPri}) at ${clashGX}`);
+            events.push({ type: 'bullet_trail_cut', actor: proj.owner, bullet_anim: proj.anim_bullet, bullet_color: proj.color, bullet_from: proj.fromX, bullet_to: projCutX, facing: proj.dir, skillId: proj.skillId });
+            events.push({ type: 'bullet_clash', x: projCutX, winner: melee.owner, hit_anim: proj.anim_hit, bullet_color: proj.color });
+            console.log(`  => projectile eliminated at x=${projCutX}`);
           } else {
-            // 投射物等级更高：穿透
-            events.push({
-              type: 'bullet_clash', x: clashGX, winner: proj.owner,
-              hit_anim: melee.anim_hit, bullet_color: melee.color
-            });
-            console.log(`[CLASH] proj(${proj.skillId},pri=${pPri}) overpowers melee at ${clashGX}`);
+            events.push({ type: 'bullet_clash', x: center, winner: proj.owner, hit_anim: melee.anim_hit, bullet_color: melee.color });
+            console.log(`  => projectile overpowers melee at x=${center}`);
           }
           continue;
         }
 
-        // 投射物 vs 投射物
+        // projectile vs projectile
         if (a.type === 'projectile' && b.type === 'projectile') {
-          const intersection = a.pathGrids.filter(g => b.pathGrids.includes(g));
-          if (intersection.length === 0) continue;
-
-          const clashGX = intersection[0];
-          const aPri = a.priority, bPri = b.priority;
-
-          if (aPri < bPri) {
+          if (a.priority < b.priority) {
             eliminated.add(j);
-            emitLoserTrail(b, clashGX);
-            events.push({
-              type: 'bullet_clash', x: clashGX, winner: a.owner,
-              hit_anim: b.anim_hit, bullet_color: b.color
-            });
-            console.log(`[CLASH] proj a(${a.skillId},pri=${aPri}) wins vs b(${b.skillId},pri=${bPri}) at ${clashGX}`);
-          } else if (aPri > bPri) {
+            events.push({ type: 'bullet_trail_cut', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color, bullet_from: b.fromX, bullet_to: center, facing: b.dir, skillId: b.skillId });
+            events.push({ type: 'bullet_clash', x: center, winner: a.owner, hit_anim: b.anim_hit, bullet_color: b.color });
+            console.log(`  => b eliminated at center=${center}`);
+          } else if (a.priority > b.priority) {
             eliminated.add(i);
-            emitLoserTrail(a, clashGX);
-            events.push({
-              type: 'bullet_clash', x: clashGX, winner: b.owner,
-              hit_anim: a.anim_hit, bullet_color: a.color
-            });
-            console.log(`[CLASH] proj b(${b.skillId},pri=${bPri}) wins vs a(${a.skillId},pri=${aPri}) at ${clashGX}`);
+            events.push({ type: 'bullet_trail_cut', actor: a.owner, bullet_anim: a.anim_bullet, bullet_color: a.color, bullet_from: a.fromX, bullet_to: center, facing: a.dir, skillId: a.skillId });
+            events.push({ type: 'bullet_clash', x: center, winner: b.owner, hit_anim: a.anim_hit, bullet_color: a.color });
+            console.log(`  => a eliminated at center=${center}`);
+            break;
           } else {
             eliminated.add(i); eliminated.add(j);
-            emitLoserTrail(a, clashGX);
-            emitLoserTrail(b, clashGX);
-            events.push({
-              type: 'bullet_clash', x: clashGX, winner: 'both',
-              hit_anim: 'collisionFX', bullet_color: '#ffff00'
-            });
-            console.log(`[CLASH] both destroyed at ${clashGX}: a(${a.skillId}) vs b(${b.skillId})`);
+            events.push({ type: 'bullet_trail_cut', actor: a.owner, bullet_anim: a.anim_bullet, bullet_color: a.color, bullet_from: a.fromX, bullet_to: center, facing: a.dir, skillId: a.skillId });
+            events.push({ type: 'bullet_trail_cut', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color, bullet_from: b.fromX, bullet_to: center, facing: b.dir, skillId: b.skillId });
+            events.push({ type: 'bullet_clash', x: center, winner: 'both', hit_anim: 'collisionFX', bullet_color: '#ffff00' });
+            console.log(`  => both eliminated at center=${center}`);
+            break;
           }
-          if (eliminated.has(i)) break;
         }
       }
     }
 
-    // ★ 为所有未被消灭的投射物：应用命中伤害 + 生成飞行事件
-    for (let i = 0; i < activeBullets.length; i++) {
+    // 未被消灭的投射物：应用命中伤害或生成飞行
+    for (let i = 0; i < n; i++) {
       if (eliminated.has(i)) continue;
-      const bullet = activeBullets[i];
-      if (bullet.type !== 'projectile') continue;
+      const b = bullets[i];
+      if (b.type !== 'projectile') continue;
 
-      // 如果弹幕有命中意图且未被碰撞消灭，则在此处应用伤害
-      if (bullet._hitContext) {
-        const ctx = bullet._hitContext;
-        ctx.caster = null; ctx.target = null; // 不序列化对象引用
+      if (b._hitCtx) {
+        const ctx = b._hitCtx;
         const caster = this.state[ctx.casterKey === 'p1' ? 'p1' : 'p2'];
         const target = this.state[ctx.targetKey === 'p1' ? 'p1' : 'p2'];
         target.hp = Math.max(0, target.hp - ctx.dmg);
         const evT = ctx.effect === 'freeze_damage' ? 'freeze_hit' : (ctx.effect === 'poison_debuff' ? 'poison_hit' : 'bullet_hit');
-        events.push({
-          type: evT, actor: ctx.casterKey, target: ctx.targetKey, dmg: ctx.dmg, x: ctx.x, skillId: ctx.skillId,
-          bullet_anim: ctx.bullet_anim, hit_anim: ctx.hit_anim, bullet_color: ctx.bullet_color,
-          bullet_from: ctx.fromX, bullet_to: ctx.x, facing: bullet.dir || 1
-        });
+        events.push({ type: evT, actor: ctx.casterKey, target: ctx.targetKey, dmg: ctx.dmg, x: b._hitGrid,
+          bullet_anim: b.anim_bullet, hit_anim: ctx.hitAnim, bullet_color: b.color,
+          bullet_from: ctx.fromX, bullet_to: b._hitGrid, facing: b.dir, skillId: b.skillId });
         if (ctx.effect === 'freeze_damage') { target._frozen = true; target._effects = target._effects || []; target._effects.push({ type: 'freeze', ticks: ctx.freezeDuration || 1 }); }
         if (ctx.effect === 'poison_debuff') { target._effects = target._effects || []; target._effects.push({ type: 'poison', ticks: ctx.poisonTicks || 5, dmgPerTick: Math.max(1, Math.floor(caster.atk * (ctx.poisonRatio || 0.08))) }); }
-        // 命中目标的不需要额外 trail（bullet_hit 动画已经包含飞行轨迹）
-        continue;
+      } else {
+        events.push({ type: 'bullet_trail', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color,
+          bullet_from: b.fromX, bullet_to: b.toX, bullet_faded: true, facing: b.dir, skillId: b.skillId });
       }
-
-      // 未命中目标的存活弹幕：生成完整飞行事件
-      events.push({
-        type: 'bullet_trail', actor: bullet.owner, skillId: bullet.skillId,
-        bullet_anim: bullet.anim_bullet || 'arrowFly',
-        bullet_color: bullet.color,
-        bullet_from: bullet.fromX, bullet_to: bullet.toX,
-        bullet_faded: true, facing: bullet.dir || 1
-      });
     }
 
     return events;
-  }
-
-  /** @deprecated 弹幕维护已由 resolveBulletCollisions 替代 */
-  updateBullets(s) {
-    // 不再需要：弹幕每 tick 重建，碰撞由 resolveBulletCollisions 统一处理
   }
 
   tickEffects(s, key) {
