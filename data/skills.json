@@ -661,7 +661,7 @@
       "spCost": 14,
       "cooldown": 2,
       "bulletPriority": 2,
-      "desc": "前方1格真伤,背身翻倍,近战Lv2",
+      "desc": "前方1格真伤,背刺2倍真伤,近战Lv2",
       "color": "#ff4444",
       "anim_bullet": "meleeDagger",
       "anim_hit": "hitBackstab",

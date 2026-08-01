@@ -38,6 +38,25 @@ class BattleEngine {
     return def / (def + 40);
   }
 
+  /**
+   * 判断攻击是否来自受击者的背后
+   * 纯粹从受击者视角：受击者面朝前，攻击来源在身后 → true
+   * 与攻击者的朝向无关
+   * @param {number} attackFromX - 攻击来源的格子坐标
+   * @param {object} victim - 受击者（需要有 x 和 facing）
+   */
+  isAttackFromBehind(attackFromX, victim) {
+    const vf = victim.facing;
+    // 受击者面朝右(1)，攻击来自左侧(x<victim.x)才是背后
+    // 受击者面朝左(-1)，攻击来自右侧(x>victim.x)才是背后
+    return (vf === 1 && attackFromX < victim.x) || (vf === -1 && attackFromX > victim.x);
+  }
+
+  /** 通用背刺增伤倍率 */
+  getUniversalBackstabMultiplier() {
+    return configData.damage.universalBackstabMultiplier || 1.3;
+  }
+
   /** 
    * 统一结算规则（16tick 全部播完后调用）：
    *   优先级：基地摧毁 > 角色死亡
@@ -186,9 +205,12 @@ class BattleEngine {
 
   checkCollision(p1, p2, i1, i2) {
     const events = [], p1D = p1.x + i1.dx, p2D = p2.x + i2.dx;
-    // 碰撞伤害用百分比减伤（但保留最低伤害）
-    const dmgP1toP2 = Math.max(1, Math.floor(p1.atk * 0.75 * (1 - this.getDefReduction(p2.def))));
-    const dmgP2toP1 = Math.max(1, Math.floor(p2.atk * 0.75 * (1 - this.getDefReduction(p1.def))));
+    // 碰撞伤害用百分比减伤（但保留最低伤害），加上通用背刺增伤
+    let dmgP1toP2 = Math.max(1, Math.floor(p1.atk * 0.75 * (1 - this.getDefReduction(p2.def))));
+    let dmgP2toP1 = Math.max(1, Math.floor(p2.atk * 0.75 * (1 - this.getDefReduction(p1.def))));
+    // 通用背刺增伤：攻击来自受击者背后时 ×1.3
+    if (this.isAttackFromBehind(p1.x, p2)) dmgP1toP2 = Math.floor(dmgP1toP2 * this.getUniversalBackstabMultiplier());
+    if (this.isAttackFromBehind(p2.x, p1)) dmgP2toP1 = Math.floor(dmgP2toP1 * this.getUniversalBackstabMultiplier());
     if (i1.dx !== 0 && i2.dx !== 0) {
       if (p1D === p2D) {
         p1.hp = Math.max(0, p1.hp - dmgP2toP1); p2.hp = Math.max(0, p2.hp - dmgP1toP2);
@@ -294,7 +316,6 @@ class BattleEngine {
     if (!isTraining && sk.cooldown) this.state[cdKey][sid] = sk.cooldown;
 
     const dir = caster.facing;
-    const isBehind = (dir === 1 && caster.x > target.x) || (dir === -1 && caster.x < target.x);
 
     switch (sk.type) {
       case 'melee': {
@@ -343,10 +364,21 @@ class BattleEngine {
         });
 
         if (inRange) {
+          // 统一背刺判断：攻击来源(caster.x)是否在受击者(target)的背后
+          const isBehind = this.isAttackFromBehind(caster.x, target);
           let ratio = sk.damageRatio || 1;
-          if (sk.backstabRatio && isBehind) ratio = sk.backstabRatio;
+          // 刺客匕首背刺：2倍真实伤害（无视防御），不使用 backstabRatio
+          if (sk.effect === 'true_damage' && isBehind) {
+            ratio = (sk.damageRatio || 1) * 2;
+          } else if (sk.backstabRatio && isBehind) {
+            ratio = sk.backstabRatio;
+          }
           const defBuff = target._defBuff || 0;
-          const dmg = this.calcDmg(caster.atk, ratio, target.def, sk.effect, defBuff);
+          let dmg = this.calcDmg(caster.atk, ratio, target.def, sk.effect, defBuff);
+          // 通用背刺增伤：来自后方的攻击 ×1.3（刺客匕首已在上面单独处理，不叠加）
+          if (isBehind && sk.effect !== 'true_damage') {
+            dmg = Math.floor(dmg * this.getUniversalBackstabMultiplier());
+          }
           if (!target._dodging) target.hp = Math.max(0, target.hp - dmg);
           else events.push({ type: 'dodged', actor: tKey });
           const evType = sk.effect === 'stun_damage' ? 'stun_hit' : (sk.effect === 'true_damage' && isBehind ? 'backstab_hit' : 'melee_hit');
@@ -378,6 +410,12 @@ class BattleEngine {
           const targetDodged = hitIdx >= 0 && target._dodging;
 
           // 注册弹幕到 _bullets（不在此处应用伤害，留给碰撞解析后统一处理）
+          // 通用背刺判断：弹幕来自目标背后时 ×1.3
+          let projDmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, target._defBuff || 0);
+          const projIsBackstab = this.isAttackFromBehind(caster.x, target);
+          if (projIsBackstab) {
+            projDmg = Math.floor(projDmg * this.getUniversalBackstabMultiplier());
+          }
           this.state._bullets.push({
             owner: cKey, type: 'projectile', priority: pri,
             fromX: caster.x, toX: maxX, dir,
@@ -389,13 +427,14 @@ class BattleEngine {
             _hitGrid: willHit ? targetX : null,
             _hitCtx: willHit ? {
               casterKey: cKey, targetKey: tKey,
-              dmg: this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, target._defBuff || 0),
+              dmg: projDmg,
               effect: sk.effect,
               freezeDuration: sk.freezeDuration,
               poisonTicks: sk.poisonTicks,
               poisonRatio: sk.poisonRatio,
               hitAnim: sk.anim_hit || 'hitExplosion',
               fromX: caster.x,
+              isBackstab: projIsBackstab,
             } : null
           });
           console.log(`[BULLET_FIRE] ${cKey} projectile ${sid}#${s} from=${caster.x} dir=${dir} to=${maxX} path=[${bulletPath.join(',')}] pri=${pri} hit=${willHit}`);
@@ -447,7 +486,11 @@ class BattleEngine {
         const startX = Math.min(caster.x, dest), endX = Math.max(caster.x, dest);
         if (target.x >= startX && target.x <= endX && !target._dodging) {
           const defBuff = target._defBuff || 0;
-          const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
+          let dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
+          // 通用背刺增伤：冲刺命中来自目标背后时 ×1.3
+          if (this.isAttackFromBehind(caster.x, target)) {
+            dmg = Math.floor(dmg * this.getUniversalBackstabMultiplier());
+          }
           const hitTargetX = target.x; // 保存命中位置
           target.hp = Math.max(0, target.hp - dmg);
           events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, x: hitTargetX, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: dashFromX, bullet_to: dest, facing: dir });

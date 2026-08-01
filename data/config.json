@@ -14,7 +14,8 @@
     "true": "ATK × ratio (完全无视防御)",
     "defReduction": "DEF / (DEF + 40)",
     "collisionRatio": 0.75,
-    "backstabMultiplier": 2.0
+    "backstabMultiplier": 2.0,
+    "universalBackstabMultiplier": 1.3
   },
   "regen": {
     "description": "每个角色拥有独立的 mpRegen 和 spRegen（在 characters.json 中定义），当前版本已整体上调约3点",
