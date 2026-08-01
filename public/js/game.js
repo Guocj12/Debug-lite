@@ -2458,7 +2458,7 @@ function playBattleAnim(frames, final) {
           G._renderP1 = null;
         }
       }
-      if (!hasCollision && prevP2 && G.p2) {
+      if (!hasCollision && !hasBaseHit && prevP2 && G.p2) {
         if (prevP2.x !== G.p2.x) {
           const fromPX = Renderer.gridToPixelX(prevP2.x);
           const toPX = Renderer.gridToPixelX(G.p2.x);
