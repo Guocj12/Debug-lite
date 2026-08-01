@@ -546,9 +546,6 @@ function startOnlineBattle(lobby) {
   delete lobby.pActions[p1Slot.sid];
   delete lobby.pActions[p2Slot.sid];
   lobby.round++;
-  console.log('[BATTLE_SAVE] room=' + lobby.id + ' round=' + lobby.round +
-    ' s1.p1(hp='+s1.p1.hp+',x='+s1.p1.x+') s1.p2(hp='+s1.p2.hp+',x='+s1.p2.x+') ' +
-    's2.p1(hp='+s2.p1.hp+',x='+s2.p1.x+') s2.p2(hp='+s2.p2.hp+',x='+s2.p2.x+')');
   // 保存双方各自看到的状态，等待客户端回传后校对
   lobby._p1Reported = false;
   lobby._p2Reported = false;
@@ -607,12 +604,6 @@ function verifyBattleStates(s1, c1, s2, c2) {
   const check4 = Math.abs(b1hp1 - b2hp2) <= TOL &&
                  Math.abs(b1hp2 - b2hp1) <= TOL;
 
-  console.log('[VERIFY] s1 p1(hp='+s1.p1.hp+',mp='+s1.p1.mp+',sp='+s1.p1.sp+',x='+s1.p1.x+',f='+s1.p1.facing+') p2(hp='+s1.p2.hp+',mp='+s1.p2.mp+',sp='+s1.p2.sp+',x='+s1.p2.x+',f='+s1.p2.facing+')');
-  console.log('[VERIFY] c1 p1(hp='+c1.p1.hp+',mp='+c1.p1.mp+',sp='+c1.p1.sp+',x='+c1.p1.x+',f='+c1.p1.facing+') p2(hp='+c1.p2.hp+',mp='+c1.p2.mp+',sp='+c1.p2.sp+',x='+c1.p2.x+',f='+c1.p2.facing+')');
-  console.log('[VERIFY] s2 p1(hp='+s2.p1.hp+',mp='+s2.p1.mp+',sp='+s2.p1.sp+',x='+s2.p1.x+',f='+s2.p1.facing+') p2(hp='+s2.p2.hp+',mp='+s2.p2.mp+',sp='+s2.p2.sp+',x='+s2.p2.x+',f='+s2.p2.facing+')');
-  console.log('[VERIFY] c2 p1(hp='+c2.p1.hp+',mp='+c2.p1.mp+',sp='+c2.p1.sp+',x='+c2.p1.x+',f='+c2.p1.facing+') p2(hp='+c2.p2.hp+',mp='+c2.p2.mp+',sp='+c2.p2.sp+',x='+c2.p2.x+',f='+c2.p2.facing+')');
-  console.log('[VERIFY] check1='+check1+' check2='+check2+' check3='+check3+' check4='+check4);
-
   return check1 && check2 && check3 && check4;
 }
 
@@ -626,12 +617,6 @@ function sendNextRound(lobby) {
 
   const s1 = lobby._p1State;
   const s2 = lobby._p2State;
-
-  console.log('[NEXT_ROUND] room=' + lobby.id + ' round=' + (lobby.round+1));
-  console.log('[NEXT_ROUND] s1.p1 hp='+s1.p1.hp+' x='+s1.p1.x+' f='+s1.p1.facing+' s1.p2 hp='+s1.p2.hp+' x='+s1.p2.x+' f='+s1.p2.facing);
-  console.log('[NEXT_ROUND] s2.p1 hp='+s2.p1.hp+' x='+s2.p1.x+' f='+s2.p1.facing+' s2.p2 hp='+s2.p2.hp+' x='+s2.p2.x+' f='+s2.p2.facing);
-  if (s1.bases) console.log('[NEXT_ROUND] s1.bases p1hp='+s1.bases.p1.hp+' p2hp='+s1.bases.p2.hp);
-  if (s2.bases) console.log('[NEXT_ROUND] s2.bases p1hp='+s2.bases.p1.hp+' p2hp='+s2.bases.p2.hp);
 
   lobby.state = 'playing';
   lobby.pActions = {};
@@ -678,7 +663,6 @@ io.on('connection', (socket) => {
 
   // === 人机对战 ===
   socket.on('startAI', (d) => {
-    console.log('[AI] startAI player=' + d.name + ' char=' + d.charId + ' vs AI char=' + d.aiCharId);
     const chars = require('../data/characters.json').characters;
     const pChar = chars.find(c => c.id === d.charId) || chars[0];
     const aiChar = chars.find(c => c.id === d.aiCharId) || chars[0];
@@ -709,7 +693,6 @@ io.on('connection', (socket) => {
 
   // AI 对战：玩家提交了行动序列 → 运算战斗
   socket.on('aiSubmitActions', (d) => {
-    console.log('[AI] received player actions length=' + (d.actions?.length || 0));
     const chars = require('../data/characters.json').characters;
     const pChar = chars.find(c => c.id === d.charId) || chars[0];
     const aiChar = chars.find(c => c.id === d.aiCharId) || chars[0];
@@ -754,7 +737,6 @@ io.on('connection', (socket) => {
 
   // === 训练场 ===
   socket.on('startTrain', (d) => {
-    console.log('[TRAIN] startTrain player=' + d.name + ' char=' + d.charId);
     const chars = require('../data/characters.json').characters;
     const pChar = chars.find(c => c.id === d.charId) || chars[0];
     // 训练场：对手为木桩（不动的战士），只用 move_left 和 wait
@@ -782,7 +764,6 @@ io.on('connection', (socket) => {
 
   // 训练场：玩家提交序列 → 运算战斗
   socket.on('trainSubmitActions', (d) => {
-    console.log('[TRAIN] received player actions length=' + (d.actions?.length || 0));
     const chars = require('../data/characters.json').characters;
     const pChar = chars.find(c => c.id === d.charId) || chars[0];
     const dummyChar = chars[0];
@@ -920,9 +901,6 @@ io.on('connection', (socket) => {
         r._p2Reported = true;
       }
 
-      console.log('[REPORT] room=' + rid + ' p' + (slot===r.slots[0]?'1':'2') +
-        ' reported p1hp=' + d.p1.hp + ' p2hp=' + d.p2.hp);
-
       // 双方都回传了 → 校对
       if (r._p1Reported && r._p2Reported) {
         const s1 = r._p1State;
@@ -936,10 +914,8 @@ io.on('connection', (socket) => {
         }
 
         if (verifyBattleStates(s1, c1, s2, c2)) {
-          console.log('[VERIFY] PASS room=' + rid);
           sendNextRound(r);
         } else {
-          console.log('[VERIFY] FAIL room=' + rid);
           forceCloseRoom(r, '战斗状态不一致，房间已关闭');
         }
       }
@@ -1016,7 +992,6 @@ function runSoloBattle(room) {
   if (!room.training) {
     const aiCharId = room.engine.state.p2.charId;
     room.pActions[aiSid] = generateAIActionsSmart(room.engine, aiCharId);
-    console.log('[AI] generated actions (smart): ' + room.pActions[aiSid].join(','));
   }
 
   const pActions = (room.pActions[playerSid] || []).slice(0, TICKS);

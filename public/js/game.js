@@ -438,21 +438,13 @@ const FX = {
 
       // === 弹幕被碰撞截断（飞到碰撞位置后消失） ===
       case 'bullet_trail_cut': {
-        console.log('[TRAIL_CUT_1] entered case, ev.bullet_anim=' + ev.bullet_anim + ' ev.bullet_from=' + ev.bullet_from + ' ev.bullet_to=' + ev.bullet_to + ' stagger=' + stagger + ' facing=' + facing + ' color=' + color);
         const fromX = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
         const toX = Renderer.gridToPixelX(ev.bullet_to ?? ev.x ?? 0);
         const y = Renderer.baseY - 10;
-        console.log('[TRAIL_CUT_2] fromX=' + fromX + ' toX=' + toX + ' y=' + y + ' frameDuration=' + frameDuration);
         if (ev.bullet_anim) {
-          console.log('[TRAIL_CUT_3] creating ProjectileBulletFX...');
           const fx = new ProjectileBulletFX(ev.bullet_anim, fromX, toX, y, color, frameDuration, false, stagger);
-          console.log('[TRAIL_CUT_4] created ok, sprite=' + fx.spriteName + ' totalDuration=' + fx.totalDuration + ' elapsed=' + fx.elapsed + ' hasHit=' + fx.hasHit);
           fx.facing = facing;
-          console.log('[TRAIL_CUT_5] active length before push=' + this.active.length);
           this.active.push(fx);
-          console.log('[TRAIL_CUT_6] active length after push=' + this.active.length);
-        } else {
-          console.log('[TRAIL_CUT_SKIP] bullet_anim is falsy!');
         }
         break;
       }
@@ -472,7 +464,6 @@ const FX = {
       case 'bullet_clash': {
         const cx = Renderer.gridToPixelX(ev.x ?? 0);
         const cy = Renderer.baseY - 10;
-        console.log('[FX_CREATE] bullet_clash at grid='+(ev.x||'?')+' pixel='+cx.toFixed(0)+' color='+(ev.bullet_color||'null'));
         if (ev.hit_anim) {
           this.active.push(new HitRingFX(ev.hit_anim, cx, cy, ev.bullet_color || '#ffff00'));
         }
@@ -786,7 +777,6 @@ class ProjectileBulletFX {
     let alpha = 1;
     if (t > 0.85 && !this.hasHit) alpha = Math.max(0, 1 - (t - 0.85) / 0.15);
     else if (t > 0.9 && this.hasHit) alpha = Math.max(0, 1 - (t - 0.9) / 0.1);
-    console.log('[FX_DRAW] ProjectileBulletFX sprite='+this.spriteName+' x='+this.x.toFixed(0)+' y='+this.y.toFixed(0)+' from='+this.fromX.toFixed(0)+' to='+this.toX.toFixed(0)+' elapsed='+this.elapsed.toFixed(0)+' alpha='+alpha.toFixed(2)+' hasHit='+this.hasHit+' facing='+this.facing);
     R.drawBulletSprite(this.spriteName, this.x, this.y, 1, alpha, this.color, this.facing);
   }
 }
@@ -1681,7 +1671,6 @@ function setupSocket() {
   G.socket = io();
 
   G.socket.on('connect', () => {
-    console.log('[SOCKET] connected');
     if (G._pendingCreate) { G.socket.emit('createRoom', G._pendingCreate); G._pendingCreate = null; }
     if (G._pendingJoin) { G.socket.emit('joinRoom', G._pendingJoin); G._pendingJoin = null; }
     if (G._pendingLobbyRefresh) { G.socket.emit('getRoomList'); G._pendingLobbyRefresh = false; }
@@ -1710,7 +1699,6 @@ function setupSocket() {
     G.mySlotIndex = d.slotIndex;
     G._roomSlots = d.slots;
     G._roomHostId = d.hostId;
-    console.log('[ROOM] created', d.roomId, 'slot', d.slotIndex);
     enterRoomUI();
   });
 
@@ -1719,13 +1707,11 @@ function setupSocket() {
     G.mySlotIndex = d.slotIndex;
     G._roomSlots = d.slots;
     G._roomHostId = d.hostId;
-    console.log('[ROOM] joined', d.roomId, 'slot', d.slotIndex);
     enterRoomUI();
   });
 
   G.socket.on('playerJoined', (d) => {
     G._roomSlots = d.slots;
-    console.log('[ROOM] player joined:', d.joinerName);
     renderRoomSlots();
   });
 
@@ -1973,9 +1959,7 @@ function startRenderLoop() {
     // 战斗阶段专用步进（必须在 FX.update 之前调用，以便新产生的 FX 在当帧就能渲染）
     if (G._mode === 'battle' && G._battleStep) G._battleStep();
 
-    if (G._mode === 'battle') console.log('[RENDER_LOOP_UPDATE] before FX.update dt=' + dt.toFixed(0) + ' active=' + FX.active.length);
     FX.update(dt);
-    if (G._mode === 'battle') console.log('[RENDER_LOOP_UPDATE] after FX.update active=' + FX.active.length);
     Tween.update();
 
     Renderer.resize();
@@ -1991,17 +1975,6 @@ function startRenderLoop() {
         const p2Hidden = Object.assign({}, rp2, { _alpha: 0 });
         Renderer.drawPlayers(rp1, p2Hidden);
       }
-    }
-
-    // ★ 每帧详细输出：正在渲染什么
-    if (G._mode === 'battle') {
-      const activeInfo = FX.active.map(fx => {
-        if (fx.constructor.name === 'ProjectileBulletFX') {
-          return 'bullet[sprite='+fx.spriteName+' x='+fx.x.toFixed(0)+' from='+fx.fromX.toFixed(0)+' to='+fx.toX.toFixed(0)+' elapsed='+fx.elapsed.toFixed(0)+' alpha='+((fx.elapsed/fx.totalDuration)>0.85&&!fx.hasHit?Math.max(0,1-((fx.elapsed/fx.totalDuration)-0.85)/0.15):1).toFixed(2)+']';
-        }
-        return fx.constructor.name;
-      }).join(' , ');
-      console.log('[FRAME_RENDER] battle frame, FX.active=[' + activeInfo + '] count=' + FX.active.length);
     }
 
     FX.render(Renderer.ctx);
@@ -2270,7 +2243,6 @@ function onOnlinePrepareStart(d) {
   document.getElementById('tm').textContent = G.timeLeft;
   document.getElementById('rnd').textContent = 'ROUND ' + d.round + ' (联机)';
 
-  console.log('[ONLINE:PREPARE] round=' + d.round + ' p1(x='+d.p1.x+',hp='+d.p1.hp+') p2(x='+d.p2.x+',hp='+d.p2.hp+') bases(p1hp='+(d.bases?.p1?.hp??'?')+',p2hp='+(d.bases?.p2?.hp??'?')+')');
   UI.log('Round ' + d.round + ' — 编排你的序列 (' + G.timeLeft + 's)');
 
   startRenderLoop();
@@ -2280,9 +2252,6 @@ function onOnlinePrepareStart(d) {
  * 【联机】收到服务端战斗结果 → 直接播放帧回放
  */
 function onOnlineBattleResult(d) {
-  console.log('[ONLINE:BATTLE] received result, round=' + d.round +
-    ', opponent=' + d.opponentName + ', frames=' + d.frames.length + ', gameOver=' + d.gameOver);
-
   G._mode = 'battle';
   G._battleGameOver = d.gameOver || false;
   G._onlineResult = d; // 保存结算信息
@@ -2340,7 +2309,6 @@ function onOnlineBattleResult(d) {
  * 【联机】对手断线 → 我方直接胜利
  */
 function onOpponentDisconnected(d) {
-  console.log('[ONLINE:DISCONNECT] opponent left:', d.reason);
   if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
   FX.clear();
   UI.showScreen('result');
@@ -2352,7 +2320,6 @@ function onOpponentDisconnected(d) {
  * 【联机】房间被强制关闭（状态不一致等异常）
  */
 function onRoomForceClosed(d) {
-  console.log('[ONLINE:FORCE_CLOSE]', d.reason);
   if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
   FX.clear();
   G.reset();
@@ -2608,8 +2575,6 @@ function playBattleAnim(frames, final) {
       }
 
       const events = frame.events || [];
-      console.log('[BATTLE_FRAME] tick=' + tickIdx + ' events=[ ' + events.map(e=>e.type+'('+e.bullet_anim+')').join(' , ') + ' ]');
-      DBG.log('[BATTLE] tick=' + tickIdx + ' events=' + events.length + ' types=' + events.map(e=>e.type).join(','));
       // 计算错时发射的 stagger 间隔
       // 找出此帧中需要错时的弹幕类型 (projectile/vertical 多段)
       const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','bullet_trail_cut','aoe_cast','burn_hit','aoe_hit','melee_slash']; // bullet_trail_cut goes through same stagger as bullet_trail
@@ -2643,8 +2608,6 @@ function playBattleAnim(frames, final) {
       const skipTypes = ['collision', 'base_hit'];
       const nonColEvents = sortedEvents.filter(ev => !skipTypes.includes(ev.type));
       for (const ev of nonColEvents) {
-        console.log('[BATTLE_SPAWN] type='+ev.type+' anim='+(ev.bullet_anim||ev.hit_anim||'null')+' from='+(ev.bullet_from||'-')+' to='+(ev.bullet_to||'-')+' x='+(ev.x||'-')+' stagger='+(ev._stagger||0));
-        DBG.log('[BATTLE]   ev type='+ev.type+' bullet_anim='+ev.bullet_anim+' stagger='+(ev._stagger||0));
         FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
       }
       FX.ensureBuffEmitter(frame.p1, 'p1');
@@ -2656,9 +2619,7 @@ function playBattleAnim(frames, final) {
     }
 
     // 战斗阶段也需要持续更新 FX（每帧）
-    console.log('[BATTLE_STEP_UPDATE] before FX.update, active=' + FX.active.length + ' dt=' + dt);
     FX.update(Math.min(100, dt));
-    console.log('[BATTLE_STEP_UPDATE] after FX.update, active=' + FX.active.length);
     Tween.update();
   };
 
@@ -2934,7 +2895,6 @@ function hideJoinDialog() {
 
 function createRoom() {
   const name = document.getElementById('pname').value || 'Player';
-  console.log('[ONLINE] createRoom', name);
   if (!G.socket || !G.socket.connected) {
     setupSocket();
     G._pendingCreate = { name };
@@ -2948,7 +2908,6 @@ function joinRoom() {
   const rid = document.getElementById('rcode').value.trim();
   if (!rid) return;
   hideJoinDialog();
-  console.log('[ONLINE] joinRoom', rid, name);
   if (!G.socket || !G.socket.connected) {
     setupSocket();
     G._pendingJoin = { roomId: rid, name };
@@ -3135,7 +3094,6 @@ function confirmRoomChar() {
   G.mySkillIds = [..._selSkills];
   if (G.socket) {
     G.socket.emit('selectChar', { charId: _selChar, skillIds: _selSkills, customSkills: {} });
-    console.log('[ONLINE] selectChar sent', _selChar);
   }
 }
 

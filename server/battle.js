@@ -94,10 +94,8 @@ class BattleEngine {
 
   executeAll() {
     const frames = [], s = this.state;
-    console.log(`[EXECUTE_ALL] START p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp})`);
     let dead = false;
     for (let tick = 0; tick < 16; tick++) {
-      const preHp1 = s.p1.hp, preHp2 = s.p2.hp;
       s._bullets = [];
       if (dead) {
         const saved1 = this.p1Actions[tick], saved2 = this.p2Actions[tick];
@@ -108,17 +106,14 @@ class BattleEngine {
         this.p2Actions[tick] = saved2;
         frame._dead = true;
         frames.push(frame);
-        console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')} dead=true`);
       } else {
         const frame = this.executeTick(tick);
         frames.push(frame);
-        console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')} dead=false`);
       }
       if (!dead && (s.p1.hp <= 0 || s.p2.hp <= 0 || (s.bases && (s.bases.p1.hp <= 0 || s.bases.p2.hp <= 0)))) {
         dead = true;
       }
     }
-    console.log(`[EXECUTE_ALL] END frames=${frames.length} p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) bases(p1hp=${s.bases?.p1?.hp},p2hp=${s.bases?.p2?.hp})`);
     return frames;
   }
 
@@ -162,10 +157,10 @@ class BattleEngine {
     // 弹幕碰撞
     const clashEvents = this.resolveBulletCollisions(s._bullets);
 
-    if (s.p1._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p1 effects: ${JSON.stringify(s.p1._effects)}`);
-    if (s.p2._effects?.length > 0) console.log(`[EFFECTS] tick=${tick} p2 effects: ${JSON.stringify(s.p2._effects)}`);
-    if (p1Stunned) console.log(`[STUN] tick=${tick} p1 stunned, action=${p1Act}`);
-    if (p2Stunned) console.log(`[STUN] tick=${tick} p2 stunned, action=${p2Act}`);
+    if (s.p1._effects?.length > 0) {}
+    if (s.p2._effects?.length > 0) {}
+    if (p1Stunned) {}
+    if (p2Stunned) {}
 
     // 资源恢复
     const cd1 = s._charDef_p1, cd2 = s._charDef_p2;
@@ -251,7 +246,6 @@ class BattleEngine {
         p1.hp = Math.max(0, p1.hp - rebound);
         p1.x = 15;
         events.push({ type: 'base_hit', actor: 'p1', target: 'p2_base', dmg, x: 15, bullet_color: '#ff8800' });
-        console.log(`[BASE_HIT] P1 hit P2's base! base_hp=${base.hp} dmg=${dmg} p1_at_15`);
       } else {
         p1.x = Math.max(0, Math.min(15, d));
       }
@@ -269,7 +263,6 @@ class BattleEngine {
         p2.hp = Math.max(0, p2.hp - rebound);
         p2.x = 0;
         events.push({ type: 'base_hit', actor: 'p2', target: 'p1_base', dmg, x: 0, bullet_color: '#ff8800' });
-        console.log(`[BASE_HIT] P2 hit P1's base! base_hp=${base.hp} dmg=${dmg} p2_at_0`);
       } else {
         p2.x = Math.max(0, Math.min(15, d));
       }
@@ -355,8 +348,6 @@ class BattleEngine {
             if (gx >= 0 && gx <= 15) meleePath.push(gx);
           }
         }
-        console.log(`[BULLET_FIRE] ${cKey} melee ${sid} from=${caster.x} dir=${dir} range=[${meleePath.join(',')}] pri=${sk.bulletPriority||3}`);
-
         this.state._bullets.push({
           owner: cKey, type: 'melee', priority: sk.bulletPriority || 3,
           fromX: caster.x, dir, pathGrids: meleePath,
@@ -437,8 +428,6 @@ class BattleEngine {
               isBackstab: projIsBackstab,
             } : null
           });
-          console.log(`[BULLET_FIRE] ${cKey} projectile ${sid}#${s} from=${caster.x} dir=${dir} to=${maxX} path=[${bulletPath.join(',')}] pri=${pri} hit=${willHit}`);
-
           if (targetDodged) {
             events.push({ type: 'dodged', actor: tKey, x: targetX });
           }
@@ -504,7 +493,6 @@ class BattleEngine {
             tNewX = Math.max(0, Math.min(15, tNewX));
             target.x = tNewX;
             events.push({ type: 'knockback', actor: tKey, from: oldTargetX, to: tNewX, hit_anim: 'knockbackFX', bullet_color: '#ffaa00' });
-            console.log(`[KNOCKBACK] ${tKey} knocked from ${oldTargetX} to ${tNewX}, dir=${kbDir}`);
           }
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
           dest = Math.max(0, Math.min(15, dest));
@@ -520,7 +508,6 @@ class BattleEngine {
             newTargetX = Math.max(0, Math.min(15, newTargetX));
           }
           target.x = newTargetX;
-          console.log(`[DASH_DODGE] ${cKey} dash to ${dest}, ${tKey} dodged to ${dest} → pushed to ${target.x} (behind caster)`);
         }
         if (sk.defBuff) caster._defDash = Math.floor(caster.def * sk.defBuff);
         caster.x = dest;
@@ -544,10 +531,8 @@ class BattleEngine {
           caster.hp = Math.max(0, caster.hp - dmgToCaster);
           target.hp = Math.max(0, target.hp - dmgToTarget);
           events.push({ type: 'collision', x: tpX, dmg1: dmgToCaster, dmg2: dmgToTarget, hit_anim: 'collisionFX', bullet_color: '#ffff00' });
-          console.log(`[BACKSTAB] ${cKey} collision at ${tpX}! enemy already there. staying at ${oldX}`);
         } else {
           caster.x = tpX;
-          console.log(`[BACKSTAB] ${cKey} teleport: ${oldX}->${tpX}, enemyFromX=${enemyX} (now at ${target.x}), facing=${caster.facing}, enemyFromFacing=${enemyFacing} (now ${target.facing})`);
         }
         if (caster.x > enemyX) caster.facing = -1;
         else if (caster.x < enemyX) caster.facing = 1;
@@ -623,7 +608,6 @@ class BattleEngine {
         if (overlap.length === 0) continue;
 
         const center = Math.round((overlap[0] + overlap[overlap.length - 1]) / 2);
-        console.log(`[BULLET_CLASH] ${a.owner}(${a.skillId},${a.type},pri=${a.priority}) vs ${b.owner}(${b.skillId},${b.type},pri=${b.priority}) overlap=[${overlap.join(',')}] center=${center}`);
 
         // melee vs melee
         if (a.type === 'melee' && b.type === 'melee') {
@@ -643,10 +627,8 @@ class BattleEngine {
             eliminated.add(projIdx);
             events.push({ type: 'bullet_trail_cut', actor: proj.owner, bullet_anim: proj.anim_bullet, bullet_color: proj.color, bullet_from: proj.fromX, bullet_to: projCutX, facing: proj.dir, skillId: proj.skillId });
             events.push({ type: 'bullet_clash', x: projCutX, winner: melee.owner, hit_anim: proj.anim_hit, bullet_color: proj.color });
-            console.log(`  => projectile eliminated at x=${projCutX}`);
           } else {
             events.push({ type: 'bullet_clash', x: center, winner: proj.owner, hit_anim: melee.anim_hit, bullet_color: melee.color });
-            console.log(`  => projectile overpowers melee at x=${center}`);
           }
           continue;
         }
@@ -657,19 +639,16 @@ class BattleEngine {
             eliminated.add(j);
             events.push({ type: 'bullet_trail_cut', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color, bullet_from: b.fromX, bullet_to: center, facing: b.dir, skillId: b.skillId });
             events.push({ type: 'bullet_clash', x: center, winner: a.owner, hit_anim: b.anim_hit, bullet_color: b.color });
-            console.log(`  => b eliminated at center=${center}`);
           } else if (a.priority > b.priority) {
             eliminated.add(i);
             events.push({ type: 'bullet_trail_cut', actor: a.owner, bullet_anim: a.anim_bullet, bullet_color: a.color, bullet_from: a.fromX, bullet_to: center, facing: a.dir, skillId: a.skillId });
             events.push({ type: 'bullet_clash', x: center, winner: b.owner, hit_anim: a.anim_hit, bullet_color: a.color });
-            console.log(`  => a eliminated at center=${center}`);
             break;
           } else {
             eliminated.add(i); eliminated.add(j);
             events.push({ type: 'bullet_trail_cut', actor: a.owner, bullet_anim: a.anim_bullet, bullet_color: a.color, bullet_from: a.fromX, bullet_to: center, facing: a.dir, skillId: a.skillId });
             events.push({ type: 'bullet_trail_cut', actor: b.owner, bullet_anim: b.anim_bullet, bullet_color: b.color, bullet_from: b.fromX, bullet_to: center, facing: b.dir, skillId: b.skillId });
             events.push({ type: 'bullet_clash', x: center, winner: 'both', hit_anim: 'collisionFX', bullet_color: '#ffff00' });
-            console.log(`  => both eliminated at center=${center}`);
             break;
           }
         }
