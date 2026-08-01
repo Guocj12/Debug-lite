@@ -237,8 +237,8 @@ class BattleEngine {
       let d = p1.x + i1.dx;
       if (!i1.isDodge && d === p2.x) d = p1.x;
       if (i1.isDodge && d === p2.x) d = p2.x + (i1.dx > 0 ? -1 : 1);
-      // 基地攻击：P1向右侧边界（=P2基地方向）移动攻击基地
-      if (i1.dx > 0 && d > 15 && this.state.bases) {
+      // 基地攻击：只有面向敌方基地（P1面朝右 facing===1）且位于边界格(15)向敌方基地移动时才算攻击基地
+      if (i1.dx > 0 && d > 15 && this.state.bases && p1.facing === 1 && p1.x === 15) {
         const base = this.state.bases.p2;
         const dmg = Math.max(1, Math.floor(p1.atk * 0.75 * (1 - this.getDefReduction(base.def))));
         base.hp = Math.max(0, base.hp - dmg);
@@ -254,8 +254,8 @@ class BattleEngine {
       let d = p2.x + i2.dx;
       if (!i2.isDodge && d === p1.x) d = p2.x;
       if (i2.isDodge && d === p1.x) d = p1.x + (i2.dx > 0 ? -1 : 1);
-      // 基地攻击：P2向左侧边界（=P1基地方向）移动攻击基地
-      if (i2.dx < 0 && d < 0 && this.state.bases) {
+      // 基地攻击：只有面向敌方基地（P2面朝左 facing===-1）且位于边界格(0)向敌方基地移动时才算攻击基地
+      if (i2.dx < 0 && d < 0 && this.state.bases && p2.facing === -1 && p2.x === 0) {
         const base = this.state.bases.p1;
         const dmg = Math.max(1, Math.floor(p2.atk * 0.75 * (1 - this.getDefReduction(base.def))));
         base.hp = Math.max(0, base.hp - dmg);
