@@ -3,274 +3,274 @@
     "name": "战士",
     "vs": {
       "warrior": {
-        "fitness": 0.783125,
+        "fitness": 0.794375,
         "genes": [
           {
             "genes": [
-              "defend",
-              "defend",
-              "turn",
-              "dodge_right",
-              "skill1",
-              "move_right",
-              "dodge_left",
-              "skill1",
-              "dodge_left",
-              "turn",
-              "dodge_right",
-              "skill1",
               "skill2",
+              "skill1",
+              "skill3",
+              "skill1",
+              "dodge_left",
+              "dodge_right",
+              "move_right",
+              "move_right",
+              "move_right",
+              "turn",
+              "skill1",
               "dodge_right",
               "defend",
-              "dodge_left"
+              "skill2",
+              "skill3",
+              "dodge_right"
             ],
-            "fitness": 0.783125
+            "fitness": 0.794375
           },
           {
             "genes": [
-              "move_right",
-              "defend",
+              "skill3",
+              "dodge_left",
               "turn",
+              "skill1",
+              "dodge_left",
               "dodge_right",
-              "move_left",
               "move_right",
-              "dodge_left",
+              "move_right",
+              "move_right",
+              "turn",
               "skill1",
-              "dodge_left",
               "dodge_left",
               "defend",
-              "skill1",
-              "skill2",
               "dodge_right",
-              "defend",
-              "dodge_left"
+              "skill3",
+              "defend"
             ],
-            "fitness": 0.75125
+            "fitness": 0.66125
           },
           {
             "genes": [
-              "move_right",
-              "skill1",
               "move_left",
-              "dodge_right",
+              "skill1",
+              "skill3",
+              "skill1",
               "dodge_left",
+              "dodge_right",
+              "move_right",
               "move_right",
               "defend",
+              "turn",
               "skill1",
-              "dodge_left",
-              "skill1",
+              "move_right",
               "defend",
-              "skill1",
               "skill2",
-              "dodge_right",
-              "defend",
-              "dodge_left"
+              "skill3",
+              "defend"
             ],
-            "fitness": 0.745625
+            "fitness": 0.64125
           }
         ]
       },
       "archer": {
-        "fitness": 0.995625,
+        "fitness": 0.938125,
         "genes": [
           {
             "genes": [
+              "dodge_left",
+              "dodge_right",
+              "dodge_left",
               "defend",
-              "dodge_right",
-              "skill1",
-              "dodge_right",
               "dodge_left",
-              "skill1",
-              "move_left",
-              "dodge_left",
-              "dodge_left",
-              "move_left",
-              "skill1",
-              "move_left",
-              "skill1",
               "move_right",
-              "turn",
-              "dodge_right"
+              "move_left",
+              "dodge_left",
+              "move_right",
+              "skill2",
+              "dodge_right",
+              "dodge_right",
+              "skill1",
+              "defend",
+              "move_left",
+              "defend"
             ],
-            "fitness": 0.995625
+            "fitness": 0.938125
           },
           {
             "genes": [
-              "defend",
+              "dodge_left",
+              "move_left",
               "dodge_left",
               "defend",
+              "turn",
+              "move_right",
+              "move_left",
+              "dodge_left",
+              "dodge_left",
+              "skill2",
+              "dodge_right",
               "dodge_right",
               "skill1",
-              "move_left",
-              "move_left",
-              "dodge_left",
-              "dodge_left",
-              "move_left",
-              "skill1",
-              "move_left",
-              "skill1",
-              "move_right",
-              "turn",
-              "dodge_right"
+              "defend",
+              "dodge_right",
+              "defend"
             ],
-            "fitness": 0.989375
+            "fitness": 0.92875
           },
           {
             "genes": [
-              "defend",
-              "defend",
-              "defend",
-              "dodge_right",
               "dodge_left",
               "move_left",
-              "skill3",
-              "dodge_left",
               "dodge_left",
               "defend",
-              "dodge_right",
-              "move_left",
-              "skill1",
+              "dodge_left",
               "move_right",
-              "turn",
-              "dodge_right"
+              "move_left",
+              "dodge_left",
+              "move_right",
+              "skill2",
+              "dodge_right",
+              "dodge_right",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "defend"
             ],
-            "fitness": 0.971875
+            "fitness": 0.90625
           }
         ]
       },
       "mage": {
-        "fitness": 0.92125,
+        "fitness": 0.99375,
         "genes": [
           {
             "genes": [
+              "skill1",
+              "dodge_right",
+              "defend",
+              "move_left",
               "skill3",
-              "dodge_left",
-              "dodge_left",
-              "turn",
-              "dodge_left",
               "dodge_left",
               "skill1",
+              "dodge_right",
+              "move_left",
               "skill3",
-              "defend",
-              "turn",
-              "skill3",
-              "defend",
-              "dodge_right",
-              "dodge_right",
-              "dodge_left",
-              "dodge_right"
-            ],
-            "fitness": 0.92125
-          },
-          {
-            "genes": [
-              "dodge_right",
-              "dodge_left",
-              "turn",
-              "turn",
-              "dodge_left",
               "move_left",
               "skill1",
-              "dodge_right",
               "defend",
-              "turn",
-              "dodge_right",
               "defend",
-              "dodge_right",
-              "dodge_right",
-              "dodge_left",
-              "skill3"
+              "move_left",
+              "defend"
             ],
-            "fitness": 0.875
+            "fitness": 0.99375
           },
           {
             "genes": [
-              "dodge_right",
-              "dodge_left",
-              "turn",
-              "dodge_left",
-              "dodge_left",
-              "dodge_left",
               "skill1",
               "dodge_right",
               "defend",
-              "turn",
-              "skill3",
-              "defend",
-              "dodge_right",
-              "dodge_right",
+              "move_left",
+              "move_left",
               "dodge_left",
-              "skill3"
+              "skill1",
+              "dodge_right",
+              "move_left",
+              "skill3",
+              "move_left",
+              "skill1",
+              "defend",
+              "defend",
+              "move_left",
+              "defend"
             ],
-            "fitness": 0.865
+            "fitness": 0.993125
+          },
+          {
+            "genes": [
+              "skill1",
+              "dodge_right",
+              "defend",
+              "move_left",
+              "skill3",
+              "dodge_left",
+              "skill1",
+              "dodge_right",
+              "move_left",
+              "skill3",
+              "move_left",
+              "skill1",
+              "defend",
+              "defend",
+              "move_left",
+              "defend"
+            ],
+            "fitness": 0.9925
           }
         ]
       },
       "assassin": {
-        "fitness": 0.949375,
+        "fitness": 0.95125,
         "genes": [
           {
             "genes": [
-              "dodge_right",
-              "move_left",
-              "defend",
               "skill2",
+              "turn",
+              "move_left",
+              "dodge_right",
               "dodge_left",
-              "move_right",
+              "move_left",
               "turn",
               "dodge_left",
               "skill1",
-              "dodge_left",
-              "dodge_right",
               "dodge_right",
               "move_right",
+              "dodge_left",
               "dodge_right",
+              "move_right",
               "skill1",
-              "skill3"
+              "defend"
             ],
-            "fitness": 0.949375
+            "fitness": 0.95125
           },
           {
             "genes": [
+              "skill2",
+              "turn",
+              "move_left",
               "dodge_right",
               "dodge_left",
-              "defend",
-              "skill2",
-              "dodge_left",
-              "move_right",
+              "move_left",
               "turn",
               "dodge_left",
               "skill1",
-              "dodge_left",
-              "dodge_right",
               "dodge_right",
               "move_right",
+              "dodge_left",
               "dodge_right",
+              "move_right",
               "skill1",
-              "dodge_left"
+              "defend"
             ],
             "fitness": 0.9475
           },
           {
             "genes": [
-              "dodge_right",
-              "move_left",
-              "defend",
               "skill2",
+              "turn",
+              "move_left",
+              "dodge_right",
               "dodge_left",
-              "move_right",
+              "move_left",
               "turn",
               "dodge_left",
               "skill1",
-              "dodge_left",
-              "dodge_right",
               "dodge_right",
               "move_right",
+              "dodge_left",
               "dodge_right",
+              "move_right",
               "skill1",
-              "skill3"
+              "defend"
             ],
-            "fitness": 0.946875
+            "fitness": 0.94625
           }
         ]
       }
@@ -280,274 +280,274 @@
     "name": "射手",
     "vs": {
       "warrior": {
-        "fitness": 0.716875,
+        "fitness": 0.62625,
         "genes": [
           {
             "genes": [
-              "skill1",
-              "dodge_right",
+              "turn",
+              "turn",
+              "dodge_left",
               "turn",
               "skill3",
-              "dodge_left",
-              "dodge_left",
-              "move_left",
-              "defend",
-              "defend",
-              "skill3",
-              "defend",
-              "skill3",
-              "dodge_left",
+              "skill2",
               "defend",
               "skill2",
-              "move_right"
+              "dodge_left",
+              "move_right",
+              "move_left",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "skill2",
+              "skill3"
             ],
-            "fitness": 0.716875
+            "fitness": 0.62625
           },
           {
             "genes": [
-              "skill1",
-              "dodge_right",
+              "turn",
+              "defend",
+              "dodge_left",
               "turn",
               "skill3",
-              "dodge_left",
-              "dodge_left",
+              "skill2",
+              "skill2",
+              "skill2",
+              "turn",
+              "move_right",
               "move_left",
               "defend",
-              "defend",
-              "skill3",
-              "defend",
-              "skill3",
-              "dodge_left",
-              "defend",
               "skill2",
-              "move_right"
+              "move_right",
+              "skill2",
+              "skill3"
             ],
-            "fitness": 0.705625
+            "fitness": 0.448125
           },
           {
             "genes": [
-              "skill1",
-              "dodge_right",
-              "turn",
+              "move_left",
+              "dodge_left",
               "skill3",
+              "turn",
+              "move_left",
+              "skill2",
               "dodge_left",
-              "dodge_left",
+              "skill2",
+              "turn",
+              "move_right",
               "move_left",
               "defend",
-              "defend",
-              "skill3",
-              "defend",
-              "defend",
-              "dodge_left",
+              "skill2",
               "defend",
               "skill2",
-              "move_right"
+              "skill3"
             ],
-            "fitness": 0.6975
+            "fitness": 0.44625
           }
         ]
       },
       "archer": {
-        "fitness": 0.73,
+        "fitness": 0.80125,
         "genes": [
           {
             "genes": [
               "skill3",
-              "skill2",
-              "move_left",
               "dodge_left",
+              "move_right",
+              "dodge_right",
+              "skill1",
+              "skill2",
+              "skill1",
               "skill3",
               "defend",
-              "dodge_right",
+              "defend",
+              "move_right",
+              "move_left",
+              "turn",
+              "defend",
+              "skill3",
+              "dodge_right"
+            ],
+            "fitness": 0.80125
+          },
+          {
+            "genes": [
               "skill3",
               "dodge_left",
-              "skill2",
+              "skill1",
               "dodge_right",
+              "skill1",
+              "skill2",
+              "skill1",
               "skill3",
+              "skill3",
+              "turn",
               "move_right",
+              "defend",
+              "turn",
+              "defend",
+              "skill3",
+              "move_left"
+            ],
+            "fitness": 0.759375
+          },
+          {
+            "genes": [
+              "skill3",
+              "dodge_left",
+              "skill1",
+              "dodge_right",
+              "skill1",
               "skill2",
-              "skill2",
-              "move_right"
+              "skill1",
+              "defend",
+              "skill3",
+              "turn",
+              "move_right",
+              "dodge_right",
+              "turn",
+              "defend",
+              "skill3",
+              "skill3"
             ],
             "fitness": 0.73
-          },
-          {
-            "genes": [
-              "skill3",
-              "skill2",
-              "move_left",
-              "dodge_left",
-              "skill1",
-              "defend",
-              "dodge_right",
-              "skill3",
-              "dodge_left",
-              "defend",
-              "dodge_right",
-              "skill3",
-              "defend",
-              "skill2",
-              "skill2",
-              "skill3"
-            ],
-            "fitness": 0.7
-          },
-          {
-            "genes": [
-              "skill3",
-              "skill2",
-              "move_left",
-              "dodge_left",
-              "skill1",
-              "defend",
-              "dodge_right",
-              "skill3",
-              "dodge_left",
-              "skill2",
-              "dodge_right",
-              "skill3",
-              "defend",
-              "skill2",
-              "skill2",
-              "skill3"
-            ],
-            "fitness": 0.694375
           }
         ]
       },
       "mage": {
-        "fitness": 0.933125,
+        "fitness": 0.999375,
         "genes": [
           {
             "genes": [
-              "defend",
-              "defend",
               "dodge_right",
-              "skill3",
-              "skill3",
               "move_right",
+              "dodge_left",
+              "dodge_right",
+              "skill3",
               "dodge_right",
               "defend",
-              "defend",
+              "dodge_left",
+              "dodge_right",
+              "skill3",
               "move_left",
-              "turn",
-              "skill3",
-              "skill3",
-              "skill1",
-              "turn",
-              "dodge_right"
+              "move_right",
+              "defend",
+              "defend",
+              "dodge_right",
+              "skill2"
             ],
-            "fitness": 0.933125
+            "fitness": 0.999375
           },
           {
             "genes": [
-              "defend",
-              "dodge_right",
               "skill1",
-              "skill3",
-              "skill3",
-              "move_right",
-              "dodge_right",
               "defend",
+              "move_right",
               "defend",
               "move_left",
-              "turn",
+              "move_right",
+              "move_right",
+              "defend",
+              "skill2",
+              "defend",
+              "move_left",
+              "defend",
+              "defend",
               "skill3",
-              "skill3",
-              "skill1",
-              "turn",
-              "dodge_right"
+              "dodge_left",
+              "dodge_left"
             ],
-            "fitness": 0.845625
+            "fitness": 0.99125
           },
           {
             "genes": [
-              "defend",
-              "dodge_right",
               "skill1",
-              "skill3",
-              "skill3",
-              "move_right",
               "dodge_right",
               "defend",
+              "defend",
+              "dodge_right",
+              "move_right",
+              "move_right",
+              "move_left",
+              "skill2",
               "defend",
               "move_left",
-              "turn",
+              "defend",
+              "defend",
               "skill3",
-              "skill3",
-              "skill1",
-              "turn",
-              "dodge_right"
+              "dodge_left",
+              "dodge_left"
             ],
-            "fitness": 0.84
+            "fitness": 0.990625
           }
         ]
       },
       "assassin": {
-        "fitness": 0.8675,
+        "fitness": 0.50125,
         "genes": [
           {
             "genes": [
               "move_left",
               "move_left",
-              "dodge_left",
-              "defend",
-              "dodge_right",
-              "defend",
-              "skill3",
-              "dodge_right",
-              "defend",
-              "dodge_left",
-              "dodge_right",
-              "move_left",
               "move_right",
-              "dodge_right",
-              "move_left",
-              "skill3"
-            ],
-            "fitness": 0.8675
-          },
-          {
-            "genes": [
-              "move_left",
-              "move_left",
-              "dodge_left",
-              "defend",
-              "dodge_right",
-              "defend",
-              "defend",
-              "skill3",
-              "defend",
               "dodge_left",
               "dodge_right",
-              "move_left",
-              "move_left",
               "dodge_right",
-              "skill3",
-              "move_right"
-            ],
-            "fitness": 0.858125
-          },
-          {
-            "genes": [
+              "skill2",
+              "dodge_right",
               "move_left",
+              "move_left",
+              "skill3",
+              "turn",
+              "dodge_left",
               "move_left",
               "skill2",
-              "defend",
+              "skill2"
+            ],
+            "fitness": 0.50125
+          },
+          {
+            "genes": [
+              "move_left",
+              "move_left",
               "move_right",
-              "defend",
-              "dodge_right",
-              "skill3",
-              "defend",
               "dodge_left",
               "dodge_right",
-              "move_left",
-              "skill1",
               "dodge_right",
+              "skill2",
+              "move_left",
+              "move_right",
+              "move_left",
+              "skill3",
               "turn",
-              "skill3"
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "turn"
             ],
-            "fitness": 0.8525
+            "fitness": 0.445625
+          },
+          {
+            "genes": [
+              "move_left",
+              "move_left",
+              "move_right",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "move_right",
+              "move_left",
+              "skill3",
+              "turn",
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "turn"
+            ],
+            "fitness": 0.44375
           }
         ]
       }
@@ -557,274 +557,274 @@
     "name": "法师",
     "vs": {
       "warrior": {
-        "fitness": 0.88,
+        "fitness": 0.89875,
         "genes": [
           {
             "genes": [
-              "defend",
-              "skill2",
               "move_right",
-              "dodge_right",
-              "dodge_right",
-              "skill2",
-              "turn",
-              "dodge_left",
-              "skill2",
-              "turn",
-              "dodge_right",
               "defend",
-              "dodge_left",
-              "dodge_left",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "turn",
               "move_left",
+              "move_left",
+              "move_right",
+              "defend",
+              "move_right",
+              "defend",
+              "turn",
+              "move_left",
+              "dodge_right",
               "skill2"
             ],
-            "fitness": 0.88
+            "fitness": 0.89875
           },
           {
             "genes": [
-              "defend",
-              "skill2",
               "move_right",
-              "dodge_right",
-              "dodge_right",
               "skill2",
-              "turn",
-              "dodge_left",
-              "skill2",
-              "turn",
-              "dodge_right",
               "defend",
-              "dodge_left",
-              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "turn",
               "move_left",
-              "move_right"
+              "move_left",
+              "move_right",
+              "move_right",
+              "move_right",
+              "defend",
+              "turn",
+              "move_left",
+              "dodge_right",
+              "skill2"
             ],
-            "fitness": 0.879375
+            "fitness": 0.558125
           },
           {
             "genes": [
+              "move_right",
+              "skill2",
               "defend",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "move_left",
               "move_left",
               "move_right",
-              "dodge_right",
-              "dodge_right",
-              "dodge_left",
-              "turn",
-              "dodge_left",
-              "skill2",
-              "turn",
-              "dodge_right",
+              "move_right",
+              "move_right",
               "defend",
-              "dodge_left",
-              "dodge_left",
+              "turn",
               "move_left",
+              "dodge_right",
               "skill2"
             ],
-            "fitness": 0.8775
+            "fitness": 0.55625
           }
         ]
       },
       "archer": {
-        "fitness": 0.9875,
+        "fitness": 0.828125,
         "genes": [
           {
             "genes": [
+              "move_left",
+              "dodge_right",
+              "move_right",
               "defend",
-              "dodge_left",
-              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "skill2",
+              "move_left",
               "dodge_right",
               "dodge_left",
-              "skill1",
-              "move_left",
-              "move_left",
-              "move_right",
               "dodge_left",
-              "skill2",
-              "skill1",
+              "move_right",
+              "move_right",
               "move_left",
-              "move_left",
-              "move_left",
-              "move_right"
+              "skill2"
             ],
-            "fitness": 0.9875
+            "fitness": 0.828125
           },
           {
             "genes": [
+              "move_left",
+              "dodge_right",
+              "move_right",
               "defend",
-              "dodge_left",
-              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "skill2",
+              "move_left",
               "dodge_right",
               "dodge_left",
-              "skill1",
-              "move_left",
-              "move_left",
-              "move_right",
               "dodge_left",
-              "skill2",
-              "skill1",
-              "move_left",
-              "move_left",
-              "move_left",
-              "move_right"
+              "move_right",
+              "move_right",
+              "defend",
+              "skill2"
             ],
-            "fitness": 0.985
+            "fitness": 0.816875
           },
           {
             "genes": [
-              "defend",
-              "dodge_left",
-              "skill3",
+              "move_left",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "skill2",
+              "move_left",
               "dodge_right",
               "dodge_left",
-              "skill1",
-              "move_left",
-              "move_left",
-              "move_right",
               "dodge_left",
-              "skill2",
-              "skill1",
+              "move_right",
+              "move_right",
               "move_left",
-              "move_left",
-              "move_left",
-              "move_right"
+              "skill2"
             ],
-            "fitness": 0.985
+            "fitness": 0.81375
           }
         ]
       },
       "mage": {
-        "fitness": 0.9725,
+        "fitness": 0.853125,
         "genes": [
           {
             "genes": [
+              "dodge_left",
+              "skill1",
+              "skill2",
               "dodge_right",
-              "dodge_left",
-              "dodge_left",
-              "dodge_left",
               "skill2",
+              "skill3",
               "skill1",
-              "skill3",
-              "skill3",
-              "move_right",
-              "defend",
-              "dodge_left",
-              "move_right",
+              "turn",
+              "dodge_right",
+              "skill1",
               "skill2",
-              "dodge_left",
-              "skill1",
-              "move_right"
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "dodge_right",
+              "skill1"
             ],
-            "fitness": 0.9725
+            "fitness": 0.853125
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "skill1",
+              "skill2",
+              "turn",
+              "skill2",
+              "skill3",
+              "skill1",
+              "turn",
+              "dodge_right",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "skill2",
+              "skill3",
+              "dodge_right",
+              "skill1"
+            ],
+            "fitness": 0.745625
           },
           {
             "genes": [
               "dodge_right",
-              "dodge_left",
-              "dodge_left",
-              "dodge_left",
-              "skill2",
-              "skill1",
-              "skill3",
-              "skill3",
-              "move_right",
-              "defend",
-              "skill2",
-              "move_right",
-              "skill2",
-              "skill1",
-              "skill1",
-              "move_right"
-            ],
-            "fitness": 0.9525
-          },
-          {
-            "genes": [
               "dodge_right",
-              "dodge_left",
-              "dodge_left",
-              "dodge_left",
               "skill2",
-              "skill1",
+              "dodge_right",
+              "skill2",
               "skill3",
-              "skill3",
-              "move_right",
-              "skill2",
-              "skill2",
-              "move_right",
-              "skill2",
+              "dodge_right",
+              "turn",
+              "dodge_right",
               "skill1",
+              "defend",
+              "dodge_right",
+              "skill2",
+              "move_left",
               "skill1",
-              "move_right"
+              "skill1"
             ],
-            "fitness": 0.9525
+            "fitness": 0.644375
           }
         ]
       },
       "assassin": {
-        "fitness": 0.986875,
+        "fitness": 0.826875,
         "genes": [
           {
             "genes": [
               "dodge_left",
-              "move_left",
               "move_right",
+              "skill1",
+              "turn",
               "skill2",
               "dodge_right",
-              "dodge_left",
-              "defend",
-              "turn",
               "skill1",
               "move_right",
               "dodge_right",
+              "move_left",
+              "defend",
+              "defend",
+              "turn",
               "dodge_left",
-              "skill3",
-              "dodge_right",
-              "dodge_right",
-              "skill2"
+              "defend",
+              "move_right"
             ],
-            "fitness": 0.986875
+            "fitness": 0.826875
           },
           {
             "genes": [
               "dodge_left",
-              "move_left",
               "move_right",
+              "skill1",
+              "turn",
               "skill2",
               "dodge_right",
-              "dodge_left",
-              "defend",
-              "turn",
               "skill1",
               "move_right",
               "dodge_right",
+              "move_left",
+              "defend",
+              "defend",
+              "turn",
               "dodge_left",
-              "skill3",
-              "dodge_right",
-              "dodge_right",
-              "skill2"
+              "defend",
+              "move_right"
             ],
-            "fitness": 0.986875
+            "fitness": 0.815625
           },
           {
             "genes": [
               "dodge_left",
-              "move_left",
               "move_right",
+              "skill1",
+              "turn",
               "skill2",
               "dodge_right",
-              "dodge_right",
-              "defend",
-              "turn",
               "skill1",
               "move_right",
               "dodge_right",
-              "dodge_left",
-              "skill3",
               "move_left",
-              "dodge_right",
-              "skill2"
+              "defend",
+              "defend",
+              "turn",
+              "dodge_left",
+              "defend",
+              "move_right"
             ],
-            "fitness": 0.984375
+            "fitness": 0.806875
           }
         ]
       }
@@ -834,274 +834,274 @@
     "name": "刺客",
     "vs": {
       "warrior": {
-        "fitness": 0.646875,
+        "fitness": 0.861875,
         "genes": [
           {
             "genes": [
-              "defend",
-              "skill2",
-              "dodge_right",
-              "dodge_left",
-              "defend",
-              "skill2",
               "skill2",
               "skill3",
-              "skill3",
-              "move_left",
               "turn",
               "defend",
+              "defend",
+              "skill1",
+              "move_left",
+              "dodge_right",
               "skill1",
               "skill2",
-              "skill3",
+              "skill2",
+              "move_left",
+              "skill1",
+              "skill2",
+              "defend",
               "dodge_left"
             ],
-            "fitness": 0.646875
+            "fitness": 0.861875
           },
           {
             "genes": [
-              "skill2",
-              "dodge_right",
-              "dodge_left",
+              "move_right",
+              "move_right",
               "skill1",
-              "skill2",
-              "dodge_left",
-              "move_right",
-              "move_right",
-              "move_right",
-              "dodge_left",
-              "dodge_right",
-              "dodge_right",
-              "move_right",
               "defend",
+              "defend",
+              "skill2",
+              "defend",
+              "dodge_right",
               "skill1",
-              "skill3"
-            ],
-            "fitness": 0.553125
-          },
-          {
-            "genes": [
+              "skill2",
               "skill2",
               "move_left",
-              "dodge_left",
               "skill1",
               "skill2",
-              "dodge_left",
-              "skill2",
-              "dodge_left",
+              "defend",
+              "dodge_left"
+            ],
+            "fitness": 0.843125
+          },
+          {
+            "genes": [
               "move_right",
-              "dodge_right",
-              "skill3",
-              "dodge_right",
+              "move_right",
+              "skill1",
+              "defend",
               "defend",
               "skill2",
-              "turn",
-              "skill3"
+              "defend",
+              "dodge_right",
+              "skill1",
+              "skill2",
+              "skill2",
+              "move_left",
+              "skill1",
+              "skill2",
+              "defend",
+              "dodge_left"
             ],
-            "fitness": 0.3075
+            "fitness": 0.840625
           }
         ]
       },
       "archer": {
-        "fitness": 0.585625,
+        "fitness": 0.949375,
         "genes": [
           {
             "genes": [
+              "dodge_right",
+              "turn",
+              "skill1",
+              "move_left",
+              "turn",
+              "skill3",
+              "skill1",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "skill3",
               "dodge_left",
               "skill1",
               "skill2",
+              "skill1",
+              "skill2"
+            ],
+            "fitness": 0.949375
+          },
+          {
+            "genes": [
               "skill3",
+              "dodge_right",
+              "dodge_left",
+              "skill3",
+              "move_left",
+              "defend",
               "move_right",
               "dodge_left",
               "skill2",
-              "move_left",
+              "dodge_right",
+              "skill2",
+              "skill2",
               "skill3",
-              "dodge_left",
-              "defend",
-              "move_right",
-              "turn",
               "move_left",
               "skill1",
               "skill2"
             ],
-            "fitness": 0.585625
+            "fitness": 0.9375
           },
           {
             "genes": [
-              "dodge_left",
-              "defend",
-              "defend",
-              "dodge_left",
+              "dodge_right",
+              "turn",
+              "skill1",
+              "move_left",
+              "turn",
+              "skill3",
+              "skill1",
+              "dodge_right",
+              "skill2",
+              "dodge_right",
+              "turn",
               "turn",
               "skill1",
               "skill2",
               "skill1",
-              "skill3",
-              "skill2",
-              "skill3",
-              "skill2",
-              "skill2",
-              "dodge_right",
-              "skill3",
-              "defend"
+              "skill2"
             ],
-            "fitness": 0.33875
-          },
-          {
-            "genes": [
-              "dodge_left",
-              "defend",
-              "defend",
-              "skill2",
-              "turn",
-              "skill1",
-              "skill2",
-              "dodge_left",
-              "skill3",
-              "dodge_left",
-              "skill3",
-              "skill2",
-              "skill2",
-              "dodge_right",
-              "skill3",
-              "defend"
-            ],
-            "fitness": 0.315625
+            "fitness": 0.93125
           }
         ]
       },
       "mage": {
-        "fitness": 0.60375,
+        "fitness": 0.70375,
         "genes": [
           {
             "genes": [
-              "dodge_left",
-              "skill2",
-              "dodge_right",
+              "defend",
+              "turn",
               "skill1",
-              "dodge_left",
-              "skill1",
-              "skill3",
-              "dodge_right",
-              "move_left",
-              "dodge_left",
-              "dodge_left",
-              "dodge_right",
-              "move_left",
-              "skill1",
-              "dodge_left",
-              "skill2"
-            ],
-            "fitness": 0.60375
-          },
-          {
-            "genes": [
-              "skill1",
-              "skill2",
-              "dodge_right",
-              "dodge_left",
-              "move_left",
-              "dodge_left",
-              "skill1",
-              "skill2",
-              "move_left",
-              "dodge_left",
-              "dodge_left",
-              "dodge_right",
-              "dodge_left",
-              "dodge_right",
-              "dodge_left",
-              "skill2"
-            ],
-            "fitness": 0.43125
-          },
-          {
-            "genes": [
-              "skill1",
-              "skill2",
-              "dodge_right",
-              "dodge_left",
-              "move_left",
-              "dodge_left",
-              "skill1",
-              "skill2",
-              "move_left",
-              "dodge_left",
-              "dodge_left",
-              "dodge_right",
-              "dodge_left",
               "dodge_right",
               "turn",
-              "skill2"
+              "skill3",
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "dodge_left",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_left"
             ],
-            "fitness": 0.419375
+            "fitness": 0.70375
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_left",
+              "skill1",
+              "dodge_right",
+              "dodge_left",
+              "skill2",
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "dodge_right",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_left"
+            ],
+            "fitness": 0.67
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_left",
+              "skill2",
+              "dodge_right",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "dodge_right",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_left"
+            ],
+            "fitness": 0.67
           }
         ]
       },
       "assassin": {
-        "fitness": 0.825,
+        "fitness": 0.85,
         "genes": [
           {
             "genes": [
               "dodge_right",
-              "skill2",
-              "defend",
               "skill3",
-              "dodge_left",
-              "skill1",
-              "skill1",
-              "dodge_right",
+              "move_right",
+              "move_right",
+              "skill3",
+              "move_left",
               "turn",
+              "dodge_right",
+              "skill1",
+              "skill2",
+              "dodge_left",
               "defend",
               "dodge_left",
               "skill2",
-              "skill3",
-              "dodge_right",
-              "defend",
-              "turn"
+              "dodge_left",
+              "skill2"
             ],
-            "fitness": 0.825
+            "fitness": 0.85
           },
           {
             "genes": [
-              "dodge_right",
-              "skill2",
-              "defend",
-              "skill3",
-              "dodge_left",
-              "dodge_right",
-              "skill3",
-              "dodge_right",
-              "skill2",
-              "defend",
-              "dodge_left",
-              "skill2",
               "skill3",
               "turn",
-              "defend",
+              "dodge_left",
+              "skill2",
+              "skill3",
+              "skill2",
+              "skill1",
+              "skill2",
+              "move_left",
+              "turn",
+              "move_left",
+              "skill3",
+              "dodge_left",
+              "skill2",
+              "skill1",
               "turn"
             ],
-            "fitness": 0.76875
+            "fitness": 0.82375
           },
           {
             "genes": [
-              "dodge_right",
-              "skill2",
-              "defend",
               "skill3",
+              "turn",
               "dodge_left",
+              "skill2",
+              "skill3",
+              "skill2",
               "skill1",
+              "skill2",
+              "move_left",
+              "turn",
+              "skill3",
+              "skill3",
+              "dodge_left",
+              "skill2",
               "skill1",
-              "dodge_left",
-              "skill2",
-              "defend",
-              "dodge_left",
-              "skill2",
-              "skill3",
-              "skill3",
-              "defend",
               "turn"
             ],
-            "fitness": 0.75625
+            "fitness": 0.81625
           }
         ]
       }
