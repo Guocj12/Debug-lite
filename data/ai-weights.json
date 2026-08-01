@@ -1,0 +1,510 @@
+{
+  "warrior": {
+    "name": "战士",
+    "fitness": 1,
+    "skillIds": [
+      "warrior_whirlwind",
+      "warrior_heavy",
+      "warrior_shieldbash"
+    ],
+    "topGenes": [
+      {
+        "genes": [
+          "dodge_right",
+          "skill1",
+          "skill2",
+          "skill3",
+          "skill3",
+          "wait",
+          "dodge_right",
+          "wait",
+          "skill2",
+          "defend",
+          "skill1",
+          "dodge_left",
+          "move_left",
+          "skill2",
+          "skill3",
+          "turn"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill3",
+          "skill2",
+          "turn",
+          "skill1",
+          "dodge_right",
+          "dodge_right",
+          "defend",
+          "skill2",
+          "wait",
+          "wait",
+          "skill1",
+          "dodge_left",
+          "skill2",
+          "turn",
+          "move_left",
+          "turn"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill1",
+          "skill3",
+          "skill2",
+          "skill1",
+          "skill1",
+          "skill1",
+          "turn",
+          "wait",
+          "dodge_right",
+          "turn",
+          "skill1",
+          "dodge_left",
+          "skill1",
+          "wait",
+          "move_right",
+          "skill3"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_right",
+          "skill3",
+          "skill2",
+          "skill1",
+          "move_left",
+          "dodge_right",
+          "turn",
+          "wait",
+          "skill2",
+          "defend",
+          "skill1",
+          "dodge_left",
+          "skill1",
+          "skill2",
+          "skill3",
+          "skill1"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_right",
+          "skill3",
+          "skill3",
+          "skill1",
+          "wait",
+          "move_left",
+          "dodge_left",
+          "skill2",
+          "skill1",
+          "move_left",
+          "skill1",
+          "dodge_right",
+          "wait",
+          "defend",
+          "move_right",
+          "turn"
+        ],
+        "fitness": 1
+      }
+    ],
+    "trainedAt": "2026-08-01T07:45:44.421Z",
+    "config": {
+      "POP_SIZE": 100,
+      "GENERATIONS": 50,
+      "ELITE": 15,
+      "MATCHES_PER_EVAL": 10,
+      "MUTATION_RATE": 0.08,
+      "CROSSOVER_RATE": 0.7,
+      "MAX_ROUNDS": 3,
+      "TARGET_CHAR": null
+    }
+  },
+  "archer": {
+    "name": "射手",
+    "fitness": 1,
+    "skillIds": [
+      "archer_precise",
+      "archer_rapid",
+      "archer_rain"
+    ],
+    "topGenes": [
+      {
+        "genes": [
+          "dodge_left",
+          "skill1",
+          "skill3",
+          "defend",
+          "skill3",
+          "skill1",
+          "move_left",
+          "dodge_right",
+          "dodge_right",
+          "move_left",
+          "skill1",
+          "move_right",
+          "move_right",
+          "skill2",
+          "wait",
+          "skill1"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill3",
+          "skill3",
+          "defend",
+          "dodge_left",
+          "dodge_right",
+          "skill2",
+          "turn",
+          "move_right",
+          "skill3",
+          "wait",
+          "dodge_right",
+          "defend",
+          "defend",
+          "skill3",
+          "skill1",
+          "dodge_right"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "move_right",
+          "skill1",
+          "dodge_left",
+          "skill1",
+          "skill3",
+          "skill1",
+          "move_left",
+          "dodge_right",
+          "dodge_left",
+          "move_left",
+          "skill1",
+          "move_right",
+          "move_right",
+          "skill2",
+          "wait",
+          "skill1"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_left",
+          "skill3",
+          "defend",
+          "dodge_left",
+          "skill1",
+          "wait",
+          "skill3",
+          "move_right",
+          "move_right",
+          "skill3",
+          "dodge_left",
+          "move_right",
+          "wait",
+          "dodge_left",
+          "skill1",
+          "skill3"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_right",
+          "dodge_left",
+          "skill1",
+          "skill3",
+          "skill2",
+          "dodge_left",
+          "skill1",
+          "dodge_left",
+          "dodge_right",
+          "move_right",
+          "dodge_left",
+          "defend",
+          "skill2",
+          "skill2",
+          "skill1",
+          "move_left"
+        ],
+        "fitness": 1
+      }
+    ],
+    "trainedAt": "2026-08-01T07:45:44.421Z",
+    "config": {
+      "POP_SIZE": 100,
+      "GENERATIONS": 50,
+      "ELITE": 15,
+      "MATCHES_PER_EVAL": 10,
+      "MUTATION_RATE": 0.08,
+      "CROSSOVER_RATE": 0.7,
+      "MAX_ROUNDS": 3,
+      "TARGET_CHAR": null
+    }
+  },
+  "mage": {
+    "name": "法师",
+    "fitness": 1,
+    "skillIds": [
+      "mage_ice",
+      "mage_fireball",
+      "mage_shield"
+    ],
+    "topGenes": [
+      {
+        "genes": [
+          "skill3",
+          "skill1",
+          "defend",
+          "skill2",
+          "skill2",
+          "defend",
+          "skill1",
+          "turn",
+          "dodge_left",
+          "skill2",
+          "defend",
+          "wait",
+          "skill2",
+          "skill3",
+          "dodge_right",
+          "skill2"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_right",
+          "dodge_left",
+          "defend",
+          "skill1",
+          "defend",
+          "dodge_left",
+          "move_right",
+          "dodge_right",
+          "dodge_right",
+          "move_left",
+          "dodge_right",
+          "defend",
+          "skill2",
+          "defend",
+          "skill1",
+          "move_left"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill2",
+          "skill1",
+          "skill2",
+          "skill2",
+          "move_right",
+          "skill2",
+          "defend",
+          "dodge_right",
+          "move_left",
+          "move_left",
+          "skill2",
+          "skill1",
+          "move_left",
+          "defend",
+          "dodge_left",
+          "turn"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill2",
+          "move_left",
+          "skill2",
+          "move_right",
+          "move_right",
+          "skill2",
+          "wait",
+          "dodge_right",
+          "skill3",
+          "move_right",
+          "skill2",
+          "skill1",
+          "turn",
+          "wait",
+          "skill3",
+          "move_right"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_right",
+          "wait",
+          "skill3",
+          "skill1",
+          "defend",
+          "skill2",
+          "move_right",
+          "dodge_right",
+          "move_left",
+          "dodge_left",
+          "skill2",
+          "skill1",
+          "move_left",
+          "dodge_left",
+          "wait",
+          "move_right"
+        ],
+        "fitness": 1
+      }
+    ],
+    "trainedAt": "2026-08-01T07:45:44.421Z",
+    "config": {
+      "POP_SIZE": 100,
+      "GENERATIONS": 50,
+      "ELITE": 15,
+      "MATCHES_PER_EVAL": 10,
+      "MUTATION_RATE": 0.08,
+      "CROSSOVER_RATE": 0.7,
+      "MAX_ROUNDS": 3,
+      "TARGET_CHAR": null
+    }
+  },
+  "assassin": {
+    "name": "刺客",
+    "fitness": 1,
+    "skillIds": [
+      "assassin_shadowstep",
+      "assassin_dagger",
+      "assassin_poison"
+    ],
+    "topGenes": [
+      {
+        "genes": [
+          "skill2",
+          "skill3",
+          "dodge_left",
+          "skill2",
+          "skill2",
+          "dodge_left",
+          "defend",
+          "dodge_right",
+          "move_right",
+          "skill3",
+          "dodge_left",
+          "dodge_left",
+          "skill2",
+          "wait",
+          "skill1",
+          "skill2"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill3",
+          "wait",
+          "move_left",
+          "skill1",
+          "skill1",
+          "dodge_left",
+          "skill2",
+          "defend",
+          "dodge_right",
+          "turn",
+          "skill2",
+          "turn",
+          "dodge_right",
+          "skill1",
+          "skill3",
+          "skill3"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill3",
+          "move_right",
+          "dodge_right",
+          "skill2",
+          "skill1",
+          "skill1",
+          "skill2",
+          "dodge_left",
+          "move_right",
+          "skill1",
+          "dodge_left",
+          "dodge_left",
+          "skill2",
+          "wait",
+          "skill1",
+          "skill2"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "skill1",
+          "skill2",
+          "skill1",
+          "defend",
+          "skill2",
+          "defend",
+          "dodge_left",
+          "skill2",
+          "skill1",
+          "skill3",
+          "dodge_right",
+          "dodge_left",
+          "skill2",
+          "skill1",
+          "wait",
+          "skill2"
+        ],
+        "fitness": 1
+      },
+      {
+        "genes": [
+          "dodge_left",
+          "dodge_left",
+          "skill3",
+          "skill3",
+          "move_right",
+          "skill2",
+          "dodge_left",
+          "skill2",
+          "defend",
+          "dodge_right",
+          "dodge_right",
+          "skill1",
+          "skill2",
+          "skill1",
+          "skill3",
+          "skill3"
+        ],
+        "fitness": 1
+      }
+    ],
+    "trainedAt": "2026-08-01T07:45:44.421Z",
+    "config": {
+      "POP_SIZE": 100,
+      "GENERATIONS": 50,
+      "ELITE": 15,
+      "MATCHES_PER_EVAL": 10,
+      "MUTATION_RATE": 0.08,
+      "CROSSOVER_RATE": 0.7,
+      "MAX_ROUNDS": 3,
+      "TARGET_CHAR": null
+    }
+  }
+}

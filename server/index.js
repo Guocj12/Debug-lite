@@ -296,18 +296,32 @@ function generateAIActionsSmart(engine, charId) {
   const skillPool = skillIds.map((_, i) => 'skill' + (i + 1));
   const allPool = [...genericPool, ...skillPool];
   
-  // 获取该角色的训练基因模板
+  // ★ 获取该角色的 Top 5 基因池，随机抽取一条
   const charWeights = weights ? weights[charId] : null;
-  const trainedGenes = charWeights ? charWeights.genes : null;
-  const geneFitness = charWeights ? charWeights.fitness : 0;
+  const topGenes = charWeights ? (charWeights.topGenes || []) : [];
   
-  // 如果基因胜率太低，不如用纯随机
-  const useTrained = trainedGenes && trainedGenes.length === TICKS && geneFitness > 0.3;
+  let trainedGenes = null;
+  if (topGenes.length > 0) {
+    // 按适应度加权随机抽取：适应度越高越容易被选中
+    const totalFit = topGenes.reduce((s, g) => s + (g.fitness || 0), 0);
+    if (totalFit > 0) {
+      let r = Math.random() * totalFit;
+      for (const g of topGenes) {
+        r -= (g.fitness || 0);
+        if (r <= 0) { trainedGenes = g.genes || g.actions; break; }
+      }
+      if (!trainedGenes) trainedGenes = topGenes[topGenes.length - 1].genes || topGenes[topGenes.length - 1].actions;
+    } else {
+      trainedGenes = topGenes[Math.floor(Math.random() * topGenes.length)].genes || topGenes[0].actions;
+    }
+  }
+  
+  const useTrained = trainedGenes && trainedGenes.length === TICKS;
   
   // 引入随机扰动：随机选几个 tick 无视基因，用随机替代
   const perturbTicks = new Set();
   if (useTrained) {
-    const perturbCount = Math.floor(Math.random() * 5); // 0-4 个扰动
+    const perturbCount = Math.floor(Math.random() * 4); // 0-3 个扰动
     for (let i = 0; i < perturbCount; i++) {
       perturbTicks.add(Math.floor(Math.random() * TICKS));
     }
@@ -1016,6 +1030,7 @@ function runSoloBattle(room) {
     room.engine = new BattleEngine();
     const chars = require('../data/characters.json').characters;
     room.engine.init({
+      _inheritBases: { p1: prevState.bases?.p1 || {}, p2: prevState.bases?.p2 || {} },
       p1: {
         id: 'P1', charId: s.p1.charId, x: prevState.p1.x, facing: prevState.p1.facing,
         hp: prevState.p1.hp, maxHp: s.p1.maxHp, mp: prevState.p1.mp, maxMp: s.p1.maxMp,
@@ -1040,7 +1055,10 @@ io.on('connection', (socket) => {
     const rid = 'AI-' + Math.random().toString(36).substring(2, 6);
     const chars = require('../data/characters.json').characters;
     const pChar = chars.find(c => c.id === d.charId) || chars[0];
-    const aiChar = chars.find(c => c.id === d.aiCharId) || chars[1];
+    
+    // ★ 随机选一个非玩家的对手职业
+    const otherChars = chars.filter(c => c.id !== d.charId);
+    const aiChar = otherChars[Math.floor(Math.random() * otherChars.length)] || chars[1];
 
     const engine = new BattleEngine();
     engine.init({

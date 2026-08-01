@@ -3176,8 +3176,8 @@ function startGame() {
   if (_selMode === 'ai') {
     bindSoloBattleEvents(); // 绑定 AI/训练事件
     G.mode = 'ai';
-    const aiChar = _charsData.characters.find(c => c.id !== _selChar) || _charsData.characters[0];
-    G.socket.emit('startAI', { name:'Player', charId:_selChar, skillIds:_selSkills, aiCharId:aiChar.id, aiSkillIds:[...aiChar.defaultSkills] });
+    // 对手由服务端随机选择（非玩家职业）
+    G.socket.emit('startAI', { name:'Player', charId:_selChar, skillIds:_selSkills });
   } else if (_selMode === 'train') {
     bindSoloBattleEvents(); // 绑定 AI/训练事件
     G.mode = 'train';

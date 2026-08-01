@@ -30,6 +30,22 @@
  *   node server/train-ai.js --quick               # 快速模式（少模拟）
  */
 
+// 训练模式下静默 BattleEngine 的战斗日志，避免终端输出溢出
+const _origConsoleLog = console.log;
+console.log = function(...args) {
+  const msg = args.join(' ');
+  // 过滤战斗引擎的每帧日志
+  if (msg.includes('[FRAME]') || msg.includes('[EXECUTE_ALL]') ||
+      msg.includes('[BULLET_') || msg.includes('[BASE_HIT]') ||
+      msg.includes('[EFFECTS]') || msg.includes('[STUN]') ||
+      msg.includes('[DASH_') || msg.includes('[KNOCKBACK]') ||
+      msg.includes('[TRAIL_') || msg.includes('[BULLET_') ||
+      msg.includes('[VERIFY]') || msg.includes('[REPORT]')) {
+    return;
+  }
+  _origConsoleLog.apply(console, args);
+};
+
 const BattleEngine = require('./battle');
 const charsData = require('../data/characters.json');
 const skillsData = require('../data/skills.json');
@@ -52,7 +68,7 @@ const CONFIG = {
   POP_SIZE: parseInt(args.pop) || 60,          // 种群大小
   GENERATIONS: parseInt(args.gens) || 100,     // 迭代代数
   ELITE: Math.floor((parseInt(args.pop) || 60) * 0.15), // 精英保留数
-  MATCHES_PER_EVAL: args.quick ? 10 : 30,      // 每个个体评估时的对战场次
+  MATCHES_PER_EVAL: args.quick ? 10 : (parseInt(args.matches) || 200), // 每个个体评估时的对战场次
   MUTATION_RATE: 0.08,                          // 变异率（每个 tick 独立判定）
   CROSSOVER_RATE: 0.7,                          // 交叉率
   MAX_ROUNDS: 3,                                // 最大回合数
@@ -567,6 +583,9 @@ function trainCharacter(charDef, skillIds, startGen) {
   let bestEverFit = 0;
   let noImproveCount = 0;
   const NO_IMPROVE_LIMIT = 15;
+  
+  // ★ 历史最佳 Top 5 基因池
+  const topGenes = [];  // { genes, fitness }
 
   for (let gen = 1; gen <= CONFIG.GENERATIONS; gen++) {
     const genStart = Date.now();
@@ -581,6 +600,19 @@ function trainCharacter(charDef, skillIds, startGen) {
       noImproveCount = 0;
     } else {
       noImproveCount++;
+    }
+
+    // ★ 维护 Top 5 基因池：每代按适应度去重收集
+    for (const ind of sorted) {
+      if (ind.fitness <= 0) continue;
+      const geneKey = ind.genes.join(',');
+      const exists = topGenes.find(g => g.genes.join(',') === geneKey);
+      if (!exists) {
+        topGenes.push({ genes: [...ind.genes], fitness: ind.fitness });
+        // 按适应度降序排列，保留前 5
+        topGenes.sort((a, b) => b.fitness - a.fitness);
+        if (topGenes.length > 5) topGenes.length = 5;
+      }
     }
 
     const genTime = ((Date.now() - genStart) / 1000).toFixed(1);
@@ -616,12 +648,14 @@ function trainCharacter(charDef, skillIds, startGen) {
   const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
   console.log('─'.repeat(60));
   console.log(`✅ ${charName} 训练完成! 总耗时: ${totalTime}s | 最佳胜率: ${(bestEverFit * 100).toFixed(1)}%`);
+  console.log(`   Top 5 基因池胜率范围: ${(topGenes[topGenes.length-1]?.fitness * 100 || 0).toFixed(1)}% ~ ${(topGenes[0]?.fitness * 100 || 0).toFixed(1)}%`);
 
   return {
     charId: charDef.id,
     charName: charName,
     bestFitness: bestEverFit,
     bestGenes: bestEver ? bestEver.genes : [],
+    topGenes: topGenes.map(g => ({ genes: g.genes, fitness: g.fitness })),
     skillIds: skillIds,
     config: { ...CONFIG },
   };
@@ -632,14 +666,21 @@ function trainCharacter(charDef, skillIds, startGen) {
 function saveResults(allResults) {
   const outputPath = path.join(__dirname, '..', 'data', 'ai-weights.json');
   
-  // 简化格式：每个角色一个最佳基因序列
-  const weights = {};
+  // ★ 加载已有权重，合并而非覆盖
+  let weights = {};
+  try {
+    if (fs.existsSync(outputPath)) {
+      weights = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+    }
+  } catch (e) { /* ignore */ }
+
+  // 合并新结果
   allResults.forEach(r => {
     weights[r.charId] = {
       name: r.charName,
       fitness: r.bestFitness,
       skillIds: r.skillIds,
-      genes: r.bestGenes,
+      topGenes: r.topGenes || [{ genes: r.bestGenes, fitness: r.bestFitness }],
       trainedAt: new Date().toISOString(),
       config: r.config,
     };
@@ -647,18 +688,17 @@ function saveResults(allResults) {
 
   // 同时生成可直接用于 AI 的行动序列模板
   const aiTemplates = {};
-  allResults.forEach(r => {
-    aiTemplates[r.charId] = {
-      name: r.charName,
-      actions: r.bestGenes,
-      description: `遗传算法训练的最佳行动序列，胜率 ${(r.bestFitness * 100).toFixed(1)}%`,
+  Object.entries(weights).forEach(([charId, w]) => {
+    aiTemplates[charId] = {
+      name: w.name,
+      genes: w.topGenes || [{ actions: w.genes, fitness: w.fitness }],
+      description: `遗传算法训练的 Top 5 行动序列，最高胜率 ${(w.fitness * 100).toFixed(1)}%`,
     };
   });
 
   fs.writeFileSync(outputPath, JSON.stringify(weights, null, 2), 'utf-8');
   console.log(`\n💾 权重已保存到: ${outputPath}`);
   
-  // 也保存一份简洁模板
   const templatePath = path.join(__dirname, '..', 'data', 'ai-templates.json');
   fs.writeFileSync(templatePath, JSON.stringify(aiTemplates, null, 2), 'utf-8');
   console.log(`💾 模板已保存到: ${templatePath}`);
