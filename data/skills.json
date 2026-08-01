@@ -141,25 +141,36 @@
         "# ##### #",
         "# ##### #",
         "# ##### #",
-        "#   #   #",
+        "##  #  ##",
         "  ## ##  ",
         "    #    "
       ]
     },
     "dash_trail": {
-      "w": 9,
-      "h": 9,
+      "w": 1,
+      "h": 1,
       "color": "#00ddff",
       "pixels": [
-        "#########",
-        "#########",
-        "#########",
-        "#########",
-        "#########",
-        "#########",
-        "#########",
-        "#########",
-        "#########"
+        " "
+      ]
+    },
+    "dash_charge": {
+      "w": 9,
+      "h": 11,
+      "color": "#ffcc00",
+      "pixels": [
+        " ####### ",
+        "#       #",
+        "# ##### #",
+        "# ##### #",
+        "# ##### #",
+        "# ##### #",
+        "# ##### #",
+        "# ##### #",
+        "# ##### #",
+        "#       #",
+        " ####### ",
+        "         "
       ]
     },
     "default": {
@@ -345,6 +356,12 @@
       "segments": 10,
       "fadeTime": 450
     },
+    "dashChargeAura": {
+      "type": "charge_aura",
+      "sprite": "dash_charge",
+      "color": "#ffcc00",
+      "fadeTime": 600
+    },
     "dodgeTrail": {
       "type": "trail",
       "color": "#8888ff",
@@ -370,6 +387,12 @@
       "particles": 6,
       "particleSpread": 3,
       "particleColor": "#4488ff"
+    },
+    "shieldBullet": {
+      "type": "projectile_bullet",
+      "sprite": "shield",
+      "speedStart": 6,
+      "speedEnd": 3
     },
     "baseHit": {
       "type": "hit_ring",
@@ -601,7 +624,7 @@
       "bulletRange": 1,
       "desc": "身前1格护盾,弹幕Lv2",
       "color": "#4488ff",
-      "anim_bullet": "shieldWall",
+      "anim_bullet": "shieldBullet",
       "anim_hit": "shieldWall",
       "sfx_cast": "block",
       "sfx_hit": "block"

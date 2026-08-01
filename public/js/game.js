@@ -543,6 +543,31 @@ const FX = {
         break;
       }
 
+      // === 突击盾金色冲锋光环（跟随角色移动的像素画特效） ===
+      case 'dash_charge': {
+        const chargeFrom = Renderer.gridToPixelX(ev.bullet_from ?? ev.x ?? 0);
+        const chargeTo = Renderer.gridToPixelX(ev.bullet_to ?? ev.to ?? 0);
+        const y = Renderer.baseY;
+        const chargeKey = ev.actor;
+        const getPos = {
+          getX: () => {
+            const rp = chargeKey === 'p1' ? G._renderP1 : G._renderP2;
+            const p = chargeKey === 'p1' ? G.p1 : G.p2;
+            if (rp) return rp.x;
+            if (p) return Renderer.gridToPixelX(p.x);
+            return chargeTo;
+          },
+          getFacing: () => {
+            const p = chargeKey === 'p1' ? G.p1 : G.p2;
+            return p ? p.facing : 1;
+          }
+        };
+        const spriteName = ev.bullet_anim || 'dash_charge';
+        this.active.push(new DashChargeFX(spriteName, ev.bullet_color || '#ffcc00',
+          chargeFrom, chargeTo, y, frameDuration * 0.7, getPos));
+        break;
+      }
+
       // === 闪避 ===
       case 'dodged': {
         const dx = Renderer.gridToPixelX(ev.x ?? 0);
@@ -1205,6 +1230,90 @@ class AfterimageFX {
   }
 }
 
+// ==================== 突击盾金色冲锋光环 FX ====================
+// 角色 dash 时始终跟随的金色像素画光环
+class DashChargeFX {
+  /**
+   * @param {string} spriteName - bulletSprites 中的精灵名
+   * @param {string} color      - 覆盖颜色
+   * @param {number} fromX      - 起始像素 X
+   * @param {number} toX        - 终点像素 X
+   * @param {number} y          - Y 坐标
+   * @param {number} duration   - 持续时间 ms
+   * @param {object} getActorPos - { getX: () => pixelX, getFacing: () => ±1 }
+   */
+  constructor(spriteName, color, fromX, toX, y, duration, getActorPos) {
+    this.sprite = getBulletSprite(spriteName);
+    this.color = color || '#ffcc00';
+    this.fromX = fromX;
+    this.toX = toX;
+    this.y = y;
+    this.duration = duration;
+    this.getActorPos = getActorPos;
+    this.elapsed = 0;
+    this.done = false;
+    // 闪烁脉冲
+    this._pulsePhase = 0;
+  }
+
+  update(dt) {
+    this.elapsed += dt;
+    this._pulsePhase += dt * 0.01;
+    if (this.elapsed > this.duration + 400) {
+      this.done = true;
+    }
+  }
+
+  render(ctx, R) {
+    if (!this.sprite || this.elapsed > this.duration + 300) return;
+
+    // 获取角色实时位置
+    let currentX = this.toX;
+    let facing = 1;
+    if (this.getActorPos) {
+      currentX = this.getActorPos.getX() ?? currentX;
+      facing = this.getActorPos.getFacing() ?? facing;
+    }
+
+    // 闪烁脉冲 alpha：0.35 ~ 0.85
+    const pulse = 0.6 + 0.25 * Math.sin(this._pulsePhase);
+    // 开始和结束时淡入淡出
+    let fadeAlpha = 1;
+    const fadeIn = 80, fadeOut = 250;
+    if (this.elapsed < fadeIn) fadeAlpha = this.elapsed / fadeIn;
+    else if (this.elapsed > this.duration - fadeOut) {
+      fadeAlpha = Math.max(0, (this.duration - this.elapsed) / fadeOut);
+    }
+    const alpha = pulse * fadeAlpha;
+
+    const size = this.sprite.w * 2.5; // 像素画放大到合适大小
+    const offsetX = currentX - (this.sprite.w * 1.25);
+    const offsetY = this.y - size * 0.75;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // 绘制像素画
+    for (let row = 0; row < this.sprite.h; row++) {
+      for (let col = 0; col < this.sprite.w; col++) {
+        const ch = this.sprite.pixels[row][col];
+        if (ch !== ' ' && ch !== '.') {
+          const px = offsetX + col * 2.5;
+          const py = offsetY + row * 2.5;
+          // 水平翻转跟随 facing
+          const drawX = facing === -1
+            ? currentX + (this.sprite.w * 1.25) - (col + 1) * 2.5
+            : px;
+          ctx.fillStyle = this.color;
+          ctx.fillRect(drawX, py, 2.5, 2.5);
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+}
+
 // ==================== Buff 像素粒子发射器 FX ====================
 // 角色身上源源不断的像素粒子效果
 class BuffEmitterFX {
@@ -1751,8 +1860,9 @@ const LocalStep = {
         const startX = Math.min(oldX, dest), endX = Math.max(oldX, dest);
         if (target.x >= startX && target.x <= endX) {
           const dmg = Math.max(1, Math.floor((p1.atk || 10) * (sk.damageRatio || 1) - (target.def || 0)));
+          const hitX = target.x; // 保存命中位置
           if (!isEditStep) target.hp = Math.max(0, target.hp - dmg);
-          events.push({ type: 'dash_hit', actor: 'p1', target: 'p2', dmg, skillId: sid,
+          events.push({ type: 'dash_hit', actor: 'p1', target: 'p2', dmg, x: hitX, skillId: sid,
             bullet_anim: sk.anim_bullet || 'dashTrail', hit_anim: sk.anim_hit || 'hitSlash',
             bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
           DBG.log(`[HIT] dash dmg=${dmg} from=${oldX} to=${dest}`);
@@ -1774,6 +1884,10 @@ const LocalStep = {
         p1.x = dest;
         events.push({ type: 'dash', actor: 'p1', to: dest, skillId: sid,
           bullet_anim: sk.anim_bullet || 'dashTrail', bullet_color: sk.color, bullet_from: oldX, bullet_to: dest });
+        // 金色冲锋特效：编辑阶段也需要播放
+        events.push({ type: 'dash_charge', actor: 'p1', skillId: sid,
+          bullet_from: oldX, bullet_to: dest, facing: dir,
+          bullet_anim: 'dash_charge', bullet_color: '#ffcc00' });
         DBG.log(`[MOVE] dash from=${oldX} to=${dest}`);
         break;
       }
@@ -1959,13 +2073,13 @@ function addActionToQueue(actionId, skillSid) {
         // 闪避：保留拖尾动画但去掉音效（spawnFromEvent 的 isEdit 会跳过音效）
         filteredEvents.push(ev);
       } else {
-        // 其他事件保留（melee_slash, bullet_trail, bullet_trail_cut, aoe_cast, dash, teleport, move, turn, defend 等）
+        // 其他事件保留（melee_slash, bullet_trail, bullet_trail_cut, aoe_cast, dash, dash_charge, teleport, move, turn, defend 等）
         filteredEvents.push(ev);
       }
     }
 
     // 为弹幕/施法事件添加 stagger 错时（箭雨多箭、连射等）
-    const staggerTypes = ['bullet_trail','bullet_trail_cut','aoe_cast','melee_slash','dash','teleport'];
+    const staggerTypes = ['bullet_trail','bullet_trail_cut','aoe_cast','melee_slash','dash','dash_charge','teleport'];
     const staggerEvents = filteredEvents.filter(ev => staggerTypes.includes(ev.type));
     const nonStaggerEvents = filteredEvents.filter(ev => !staggerTypes.includes(ev.type));
 

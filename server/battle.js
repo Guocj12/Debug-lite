@@ -169,7 +169,7 @@ class BattleEngine {
 
   getAnimData(events) {
     const anims = require('../data/skills.json').animations || {};
-    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', bullet_trail_cut: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall', base_hit: 'baseHit', burn_tick: 'burn', poison_tick: 'poison', melee_clash: 'bullet_clash' };
+    const map = { collision: 'collision', melee_hit: 'melee_hit', bullet_hit: 'bullet_hit', bullet_clash: 'bullet_clash', bullet_trail: 'bullet_fly', bullet_trail_cut: 'bullet_fly', dash: 'dash', dash_hit: 'dash', dash_charge: 'dash_charge', dodged: 'dodge', teleport: 'teleport', aoe_hit: 'aoe', aoe_cast: 'aoe', stun_hit: 'stun', freeze_hit: 'freeze', burn_hit: 'burn', poison_hit: 'poison', knockback: 'knockback', backstab_hit: 'backstab', shield_wall: 'shield_wall', base_hit: 'baseHit', burn_tick: 'burn', poison_tick: 'poison', melee_clash: 'bullet_clash' };
     return events.map(ev => ({ ...ev, anim: anims[map[ev.type]] || null }));
   }
 
@@ -441,14 +441,16 @@ class BattleEngine {
       }
       case 'dash': {
         const dDist = sk.range || 3;
+        const dashFromX = caster.x; // 保存冲刺起点
         let dest = caster.x + dir * dDist;
         dest = Math.max(0, Math.min(15, dest));
         const startX = Math.min(caster.x, dest), endX = Math.max(caster.x, dest);
         if (target.x >= startX && target.x <= endX && !target._dodging) {
           const defBuff = target._defBuff || 0;
           const dmg = this.calcDmg(caster.atk, sk.damageRatio || 1, target.def, sk.effect, defBuff);
+          const hitTargetX = target.x; // 保存命中位置
           target.hp = Math.max(0, target.hp - dmg);
-          events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest, facing: dir });
+          events.push({ type: 'dash_hit', actor: cKey, target: tKey, dmg, x: hitTargetX, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', hit_anim: sk.anim_hit||'hitSlash', bullet_color: sk.color, bullet_from: dashFromX, bullet_to: dest, facing: dir });
           if (sk.knockback) {
             const kbDir = dir; // 始终向技能释放方向击退
             const oldTargetX = target.x;
@@ -464,17 +466,25 @@ class BattleEngine {
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
           dest = Math.max(0, Math.min(15, dest));
         } else if (target._dodging && target.x === dest) {
-          // 目标闪避到了 dash 终点，施法者停在终点前一格，避免重合
-          dest = dest + (dir > 0 ? -1 : 1);
-          dest = Math.max(0, Math.min(15, dest));
-          // 如果调整后仍然重合（边界情况），再推一次
-          if (dest === target.x) dest = dest + (dir > 0 ? -1 : 1);
-          dest = Math.max(0, Math.min(15, dest));
-          console.log(`[DASH_DODGE] ${cKey} dash dest adjusted from ${caster.x + dir * dDist} to ${dest}, ${tKey} dodged to ${target.x}`);
+          // 目标闪避到了 dash 终点，把目标再推一格（推到 dash 施法者身后）
+          const dodgePushDir = (target.x > (enemyFromX !== undefined ? enemyFromX : caster.x)) ? 1 : -1;
+          const oldTargetX = target.x;
+          let newTargetX = target.x + dodgePushDir;
+          newTargetX = Math.max(0, Math.min(15, newTargetX));
+          // 如果推到边界外或推到施法者身上，反向推
+          if (newTargetX === oldTargetX || newTargetX === caster.x) {
+            newTargetX = target.x - dodgePushDir;
+            newTargetX = Math.max(0, Math.min(15, newTargetX));
+          }
+          target.x = newTargetX;
+          console.log(`[DASH_DODGE] ${cKey} dash to ${dest}, ${tKey} dodged to ${dest} → pushed to ${target.x} (behind caster)`);
         }
         if (sk.defBuff) caster._defDash = Math.floor(caster.def * sk.defBuff);
         caster.x = dest;
-        events.push({ type: 'dash', actor: cKey, to: dest, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', bullet_color: sk.color, bullet_from: caster.x, bullet_to: dest, facing: dir });
+        events.push({ type: 'dash', actor: cKey, to: dest, skillId: sid, bullet_anim: sk.anim_bullet||'dashTrail', bullet_color: sk.color, bullet_from: dashFromX, bullet_to: dest, facing: dir });
+        // 金色冲锋特效：跟随角色移动的像素画光效
+        events.push({ type: 'dash_charge', actor: cKey, skillId: sid, bullet_from: dashFromX, bullet_to: dest, facing: dir,
+          bullet_anim: 'dash_charge', bullet_color: '#ffcc00' });
         break;
       }
       case 'teleport_backstab': {
