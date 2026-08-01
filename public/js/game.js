@@ -1554,6 +1554,7 @@ function setupSocket() {
     console.log('[SOCKET] connected');
     if (G._pendingCreate) { G.socket.emit('createRoom', G._pendingCreate); G._pendingCreate = null; }
     if (G._pendingJoin) { G.socket.emit('joinRoom', G._pendingJoin); G._pendingJoin = null; }
+    if (G._pendingLobbyRefresh) { G.socket.emit('getRoomList'); G._pendingLobbyRefresh = false; }
   });
 
   // 联机战斗事件（在 enterRoomUI / toggleReady 触发开始后激活）
@@ -2778,8 +2779,12 @@ async function enterLobby() {
   _selChar = null; _selSkills = [];
   setupSocket();
   UI.showScreen('lobby');
+  // socket 可能还没连接好，等 connect 后再请求房间列表
   if (G.socket && G.socket.connected) {
     G.socket.emit('getRoomList');
+  } else {
+    // 标记：连接后立即请求
+    G._pendingLobbyRefresh = true;
   }
 }
 
