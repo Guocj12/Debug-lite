@@ -2145,10 +2145,11 @@ function onOnlinePrepareStart(d) {
  */
 function onOnlineBattleResult(d) {
   console.log('[ONLINE:BATTLE] received result, round=' + d.round +
-    ', opponent=' + d.opponentName + ', frames=' + d.frames.length);
+    ', opponent=' + d.opponentName + ', frames=' + d.frames.length + ', gameOver=' + d.gameOver);
 
   G._mode = 'battle';
-  G._battleGameOver = false;
+  G._battleGameOver = d.gameOver || false;
+  G._onlineResult = d; // 保存结算信息
   G.round = d.round;
   G.p1 = d.final.p1;
   G.p2 = d.final.p2;
@@ -2165,8 +2166,22 @@ function onOnlineBattleResult(d) {
   UI.updateBaseHUD(G.bases);
   UI.log('对战 ' + d.opponentName + ' | Round ' + d.round);
 
-  // 播放结束后，把本端看到的状态回传给服务端
+  // 播放结束后的回调
   G._onBattleEnd = (final) => {
+    if (G._battleGameOver) {
+      // 游戏结束，直接显示结算结果
+      G._mode = 'result';
+      FX.clear();
+      if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+      UI.showScreen('result');
+      const w = d.winner;
+      document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : (w === 'P1' ? '你获胜了!' : '你落败了');
+      document.getElementById('rdetail').textContent = d.reason;
+      G._onBattleEnd = null;
+      G._onlineResult = null;
+      return;
+    }
+    // 未结束，回传状态给服务端
     if (G.socket) {
       G.socket.emit('reportBattleState', {
         roomId: G.roomId,
@@ -2263,30 +2278,49 @@ function playBattleAnim(frames, final) {
         DBG.log('[BATTLE] 播放完毕');
         G._battleStep = null;
 
-        // 所有帧+特效播完后才判断胜负
+        // 16tick 全部播完 + FX 清空后才结算
         if (G._battleGameOver) {
-          let w, reason;
-          if (final.p1.hp <= 0) { w = 'P2'; reason = 'death'; }
-          else if (final.p2.hp <= 0) { w = 'P1'; reason = 'death'; }
-          else if (final.bases && final.bases.p1.hp <= 0) { w = 'P2'; reason = 'baseDestroyed'; }
-          else if (final.bases && final.bases.p2.hp <= 0) { w = 'P1'; reason = 'baseDestroyed'; }
-          else if (G.round >= 30) { w = final.p1.hp > final.p2.hp ? 'P1' : 'draw'; reason = 'maxRounds'; }
-          else { w = final.p1.hp > final.p2.hp ? 'P1' : 'draw'; reason = 'maxRounds'; }
-          G._mode = 'result';
-          FX.clear();
-          UI.showScreen('result');
-          document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : `${w} 获胜!`;
-          document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'baseDestroyed' ? '基地被摧毁' : (reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
-          DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
+          const d = G._pendingGameOverData;
+          if (d) {
+            // 服务端发来的结算数据，优先使用（AI/训练模式）
+            G._mode = 'result';
+            FX.clear();
+            if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+            UI.showScreen('result');
+            document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
+            document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+            DBG.log('[BATTLE] 游戏结束, winner=' + d.winner + ' reason=' + d.reason);
+            G._pendingGameOverData = null;
+          } else {
+            // 本地备用结算
+            const b1hp = final.bases?.p1?.hp ?? 100, b2hp = final.bases?.p2?.hp ?? 100;
+            const p1Dead = final.p1.hp <= 0, p2Dead = final.p2.hp <= 0;
+            const b1Dead = b1hp <= 0, b2Dead = b2hp <= 0;
+            let w, reason;
+            if (b1Dead && b2Dead) { w = 'draw'; reason = '双方基地均被摧毁'; }
+            else if (b1Dead) { w = 'P2'; reason = 'P1基地被摧毁'; }
+            else if (b2Dead) { w = 'P1'; reason = 'P2基地被摧毁'; }
+            else if (p1Dead && p2Dead) { w = 'draw'; reason = '双方同时阵亡'; }
+            else if (p1Dead) { w = 'P2'; reason = 'P1被击杀'; }
+            else if (p2Dead) { w = 'P1'; reason = 'P2被击杀'; }
+            else { w = final.p1.hp > final.p2.hp ? 'P1' : final.p2.hp > final.p1.hp ? 'P2' : 'draw'; reason = '达到最大回合数'; }
+            G._mode = 'result';
+            FX.clear();
+            UI.showScreen('result');
+            document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : w + ' 获胜!';
+            document.getElementById('rdetail').textContent = 'P1 HP: ' + final.p1.hp + ' | P2 HP: ' + final.p2.hp + ' | ' + reason;
+            DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
+          }
           G._onBattleEnd = null;
         } else if (G._onBattleEnd) {
-          // 联机模式：播放结束，调用回调回传状态
           G._onBattleEnd(final);
           G._onBattleEnd = null;
-          // 联机模式在等确认时显示提示
-          document.getElementById('actionQueuePanel').classList.remove('hidden');
-          document.getElementById('actionQueuePanel').querySelector('h3').textContent = '等待对方确认...';
-          document.getElementById('rdyBtn').disabled = true;
+          // 只有联机模式且非gameOver时才显示等待确认
+          if (!G._battleGameOver) {
+            document.getElementById('actionQueuePanel').classList.remove('hidden');
+            document.getElementById('actionQueuePanel').querySelector('h3').textContent = '等待对方确认...';
+            document.getElementById('rdyBtn').disabled = true;
+          }
         }
       }
       return;
@@ -3067,6 +3101,8 @@ function bindSoloBattleEvents() {
   G.socket.on('battleFrames', (d) => {
     G._mode = 'battle';
     G._battleGameOver = d.gameOver;
+    // 保存结算信息，等播放完再用
+    G._pendingGameOver = d.gameOver ? { gameOver: true } : null;
     document.getElementById('actionQueuePanel').classList.add('hidden');
     document.getElementById('battleQueuePanel').classList.remove('hidden');
     document.getElementById('rdyBtn').disabled = true;
@@ -3074,12 +3110,10 @@ function bindSoloBattleEvents() {
   });
 
   G.socket.on('gameOver', (d) => {
-    G._mode = 'result';
-    FX.clear();
-    if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
-    UI.showScreen('result');
-    document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
-    document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+    // 不立即显示结算，等 battleFrames 播放完
+    // 存储结算数据供 playBattleAnim 结束时使用
+    G._pendingGameOverData = d;
+    G._battleGameOver = true;
   });
 }
 

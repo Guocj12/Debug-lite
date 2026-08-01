@@ -286,17 +286,36 @@ function startOnlineBattle(lobby) {
   lobby._p1State = s1;
   lobby._p2State = s2;
 
+  // 用 P1 视角结算（两个视角的胜负应该一致，取 s1 判断）
+  const judge = BattleEngine.judge(s1, lobby.maxRounds, lobby.round + 1);
+
   // 分别发给两个玩家
   io.to(p1Slot.sid).emit('onlineBattleResult', {
     frames: frames1, final: s1, round: lobby.round + 1,
     myCharId: p1Char.id, opponentCharId: p2Char.id, opponentName: p2Slot.name,
+    gameOver: judge !== null,
+    winner: judge ? judge.winner : null,
+    reason: judge ? judge.reason : null,
   });
   io.to(p2Slot.sid).emit('onlineBattleResult', {
     frames: frames2, final: s2, round: lobby.round + 1,
     myCharId: p2Char.id, opponentCharId: p1Char.id, opponentName: p1Slot.name,
+    gameOver: judge !== null,
+    winner: judge ? (judge.winner === 'P1' ? 'P1' : judge.winner === 'P2' ? 'P2' : 'draw') : null,
+    reason: judge ? judge.reason : null,
   });
 
-  // 重置准备状态，保存战斗结果，等待双方回传确认
+  // 如果游戏结束，直接结算不进入下一轮
+  if (judge) {
+    lobby.state = 'waiting';
+    p1Slot.ready = false; p2Slot.ready = false;
+    lobby.round++;
+    lobby._p1State = null; lobby._p2State = null;
+    io.to(lobby.id).emit('slotsUpdated', { slots: lobby.getSlotSummary(), hostId: lobby.hostId });
+    return;
+  }
+
+  // 游戏未结束，保存状态等待双方回传后进入下一轮
   lobby.state = 'waiting';
   p1Slot.ready = false; p2Slot.ready = false;
   p1Slot.battleReady = false; p2Slot.battleReady = false;
@@ -755,21 +774,15 @@ function runSoloBattle(room) {
   const frames = room.engine.executeAll();
   const s = room.engine.getState();
 
-  const gameOver = s.p1.hp <= 0 || s.p2.hp <= 0 ||
-    (s.bases && (s.bases.p1.hp <= 0 || s.bases.p2.hp <= 0)) || room.round >= 30;
+  const judge = BattleEngine.judge(s, 30, room.round);
+  const gameOver = judge !== null;
 
   io.to(playerSid).emit('battleFrames', { frames, final: s, round: room.round, gameOver });
 
   if (gameOver) {
-    let winner, p1Hp = s.p1.hp, p2Hp = s.p2.hp, reason;
-    if (s.p1.hp <= 0) { winner = 'P2'; reason = '对方被击杀'; }
-    else if (s.p2.hp <= 0) { winner = 'P1'; reason = '对方被击杀'; }
-    else if (s.bases && s.bases.p1.hp <= 0) { winner = 'P2'; reason = 'P1基地被摧毁'; }
-    else if (s.bases && s.bases.p2.hp <= 0) { winner = 'P1'; reason = 'P2基地被摧毁'; }
-    else if (s.p1.hp > s.p2.hp) { winner = 'P1'; reason = 'HP领先'; }
-    else if (s.p2.hp > s.p1.hp) { winner = 'P2'; reason = 'HP领先'; }
-    else { winner = 'draw'; reason = '平局'; }
-    io.to(playerSid).emit('gameOver', { winner, p1Hp, p2Hp, reason });
+    io.to(playerSid).emit('gameOver', {
+      winner: judge.winner, p1Hp: s.p1.hp, p2Hp: s.p2.hp, reason: judge.reason,
+    });
     soloRooms.delete(room.id);
   } else {
     // 保存状态继承，等待下一轮

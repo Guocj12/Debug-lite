@@ -38,21 +38,68 @@ class BattleEngine {
     return def / (def + 40);
   }
 
+  /** 
+   * 统一结算规则（16tick 全部播完后调用）：
+   *   优先级：基地摧毁 > 角色死亡
+   *   1. 双方基地都为0 → 平局
+   *   2. 一方基地为0 → 基地未归零的获胜
+   *   3. 双方基地都正常 → 检查角色：
+   *      双方角色同时死亡 → 平局
+   *      一方死亡 → 存活方获胜
+   *      都存活 → null (继续下一轮)
+   *   特殊情况：一方基地为0且另一方角色血量为0 → 基地为0的优先判负
+   * 返回：{ winner: 'P1'|'P2'|'draw'|null, reason: string }
+   */
+  static judge(s, maxRounds, round) {
+    const b1hp = s.bases?.p1?.hp ?? 100, b2hp = s.bases?.p2?.hp ?? 100;
+    const p1Dead = s.p1.hp <= 0, p2Dead = s.p2.hp <= 0;
+    const b1Dead = b1hp <= 0, b2Dead = b2hp <= 0;
+
+    // 双基地都无 → 平局
+    if (b1Dead && b2Dead) return { winner: 'draw', reason: '双方基地均被摧毁' };
+    // 单方基地无 → 另一人胜（即使他角色也死了）
+    if (b1Dead) return { winner: 'P2', reason: 'P1基地被摧毁' };
+    if (b2Dead) return { winner: 'P1', reason: 'P2基地被摧毁' };
+    // 基地都健在，看角色
+    if (p1Dead && p2Dead) return { winner: 'draw', reason: '双方同时阵亡' };
+    if (p1Dead) return { winner: 'P2', reason: '对方被击杀' };
+    if (p2Dead) return { winner: 'P1', reason: '对方被击杀' };
+    // 达到最大回合数
+    if (round >= maxRounds) {
+      if (s.p1.hp > s.p2.hp) return { winner: 'P1', reason: 'HP领先' };
+      if (s.p2.hp > s.p1.hp) return { winner: 'P2', reason: 'HP领先' };
+      return { winner: 'draw', reason: '达到最大回合数，平局' };
+    }
+    return null; // 继续
+  }
+
   executeAll() {
     const frames = [], s = this.state;
     console.log(`[EXECUTE_ALL] START p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp})`);
+    let dead = false;
     for (let tick = 0; tick < 16; tick++) {
       const preHp1 = s.p1.hp, preHp2 = s.p2.hp;
       s._bullets = [];
-      const frame = this.executeTick(tick);
-      frames.push(frame);
-      console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')}`);
-      if (s.p1.hp <= 0 || s.p2.hp <= 0) {
-        console.log(`[EXECUTE_ALL] BREAK! tick=${tick} p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp})`);
-        break;
+      if (dead) {
+        const saved1 = this.p1Actions[tick], saved2 = this.p2Actions[tick];
+        this.p1Actions[tick] = 'wait';
+        this.p2Actions[tick] = 'wait';
+        const frame = this.executeTick(tick);
+        this.p1Actions[tick] = saved1;
+        this.p2Actions[tick] = saved2;
+        frame._dead = true;
+        frames.push(frame);
+        console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')} dead=true`);
+      } else {
+        const frame = this.executeTick(tick);
+        frames.push(frame);
+        console.log(`[FRAME] tick=${tick} p1(hp:${preHp1}->${s.p1.hp}) p2(hp:${preHp2}->${s.p2.hp}) events=${(frame.events||[]).map(e=>e.type).join(',')} dead=false`);
+      }
+      if (!dead && (s.p1.hp <= 0 || s.p2.hp <= 0 || (s.bases && (s.bases.p1.hp <= 0 || s.bases.p2.hp <= 0)))) {
+        dead = true;
       }
     }
-    console.log(`[EXECUTE_ALL] END frames=${frames.length} p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp})`);
+    console.log(`[EXECUTE_ALL] END frames=${frames.length} p1(hp=${s.p1.hp}) p2(hp=${s.p2.hp}) bases(p1hp=${s.bases?.p1?.hp},p2hp=${s.bases?.p2?.hp})`);
     return frames;
   }
 
