@@ -296,26 +296,36 @@ function generateAIActionsSmart(engine, charId) {
   const skillPool = skillIds.map((_, i) => 'skill' + (i + 1));
   const allPool = [...genericPool, ...skillPool];
   
-  // ★ 获取该角色的 Top 5 基因池，随机抽取一条
+  // ★ 找出对手（玩家）的角色 id
+  const p1 = simState.p1;
+  const opponentCharId = p1.charId;
+  
+  // ★ 从权重中获取 "AI角色 vs 对手角色" 的 Top 3 基因池
   const charWeights = weights ? weights[charId] : null;
-  const topGenes = charWeights ? (charWeights.topGenes || []) : [];
+  const vsData = charWeights ? (charWeights.vs || {})[opponentCharId] : null;
+  const topGenes = vsData ? (vsData.topGenes || []) : [];
   
   let trainedGenes = null;
+  let pickedGeneIdx = -1;
+  let pickedGeneFit = 0;
   if (topGenes.length > 0) {
-    // 按适应度加权随机抽取：适应度越高越容易被选中
+    // 按适应度加权随机抽取
     const totalFit = topGenes.reduce((s, g) => s + (g.fitness || 0), 0);
     if (totalFit > 0) {
       let r = Math.random() * totalFit;
-      for (const g of topGenes) {
-        r -= (g.fitness || 0);
-        if (r <= 0) { trainedGenes = g.genes || g.actions; break; }
+      for (let gi = 0; gi < topGenes.length; gi++) {
+        r -= (topGenes[gi].fitness || 0);
+        if (r <= 0) { trainedGenes = topGenes[gi].genes; pickedGeneIdx = gi; pickedGeneFit = topGenes[gi].fitness; break; }
       }
-      if (!trainedGenes) trainedGenes = topGenes[topGenes.length - 1].genes || topGenes[topGenes.length - 1].actions;
+      if (!trainedGenes) { trainedGenes = topGenes[topGenes.length - 1].genes; pickedGeneIdx = topGenes.length - 1; pickedGeneFit = topGenes[topGenes.length - 1].fitness; }
     } else {
-      trainedGenes = topGenes[Math.floor(Math.random() * topGenes.length)].genes || topGenes[0].actions;
+      const gi = Math.floor(Math.random() * topGenes.length);
+      trainedGenes = topGenes[gi].genes;
+      pickedGeneIdx = gi; pickedGeneFit = topGenes[gi].fitness;
     }
   }
   
+  // ★ 如果没有针对该对手的训练数据，回退到通用 random
   const useTrained = trainedGenes && trainedGenes.length === TICKS;
   
   // 引入随机扰动：随机选几个 tick 无视基因，用随机替代
@@ -371,6 +381,15 @@ function generateAIActionsSmart(engine, charId) {
     
     applyActionCost(simState, 'p2', picked);
     actions.push(picked);
+  }
+  
+  // ★ 输出本场 AI 策略日志
+  const charName = charWeights?.name || charId;
+  const oppName = (loadAIWeights()?.[opponentCharId] || {}).name || opponentCharId;
+  if (useTrained) {
+    console.log(`[AI_STRATEGY] ${charName}(AI) vs ${oppName}(玩家) | 基因#${pickedGeneIdx+1}/${topGenes.length} | 胜率:${(pickedGeneFit*100).toFixed(1)}% | 基因:[${trainedGenes.slice(0,6).join(',')}...]`);
+  } else {
+    console.log(`[AI_STRATEGY] ${charName}(AI) vs ${oppName}(玩家) | 无训练数据，使用随机策略`);
   }
   
   return actions;
