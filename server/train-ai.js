@@ -80,7 +80,7 @@ const CONFIG = {
 };
 
 // ==================== 行动池 ====================
-const GENERIC_ACTIONS = ['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'wait'];
+const GENERIC_ACTIONS = ['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn'];  // wait 仅在 fallback 时使用
 
 function getSkillActionsForChar(charDef) {
   const allSkills = skillsData.skills || {};
@@ -215,7 +215,7 @@ function canUseActionInState(simState, cKey, action, charDef) {
   // 基础行动
   if (action === 'move_left' || action === 'move_right') return true;
   if (action === 'dodge_left' || action === 'dodge_right') return (p.sp || 0) >= 10;
-  if (action === 'defend' || action === 'turn' || action === 'wait') return true;
+  if (action === 'defend' || action === 'turn') return true;
   if (action === 'stunned') return false; // stunned 只能被系统设置
 
   // 技能
@@ -297,7 +297,7 @@ function generateRandomValidSequence(state, cKey, charDef, pool) {
         break;
       }
     }
-    if (!picked) picked = 'wait';
+    if (!picked) picked = 'defend';
 
     applyActionCostInState(simState, cKey, picked);
     actions.push(picked);
@@ -364,7 +364,7 @@ function individualToActions(individual, baseState, cKey, charDef, pool) {
     p.mp = Math.min(p.maxMp, p.mp + (charDef.mpRegen || 4));
 
     // 尝试用基因中的行动
-    let geneAction = individual.genes[tick] || 'wait';
+    let geneAction = individual.genes[tick] || 'defend';
     if (canUseActionInState(simState, cKey, geneAction, charDef)) {
       applyActionCostInState(simState, cKey, geneAction);
       actions.push(geneAction);
@@ -378,7 +378,7 @@ function individualToActions(individual, baseState, cKey, charDef, pool) {
           break;
         }
       }
-      if (!picked) picked = 'wait';
+      if (!picked) picked = 'defend';
       applyActionCostInState(simState, cKey, picked);
       actions.push(picked);
     }
@@ -524,10 +524,10 @@ function geneToActions(gene, baseState, cKey, charDef, pool) {
     p.sp = Math.min(p.maxSp, p.sp + (charDef.spRegen || 5));
     p.mp = Math.min(p.maxMp, p.mp + (charDef.mpRegen || 4));
 
-    let action = gene.genes[tick] || 'wait';
+    let action = gene.genes[tick] || 'defend';
     if (!canUseActionInState(simState, cKey, action, charDef)) {
       const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      action = shuffled.find(a => canUseActionInState(simState, cKey, a, charDef)) || 'wait';
+      action = shuffled.find(a => canUseActionInState(simState, cKey, a, charDef)) || 'defend';
     }
     applyActionCostInState(simState, cKey, action);
     actions.push(action);
