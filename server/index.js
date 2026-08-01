@@ -206,19 +206,53 @@ function startOnlineBattle(lobby) {
   const p2AsOpponent = mirrorActions(p2Actions);
   const p1AsOpponent = mirrorActions(p1Actions);
 
+  // 继承上一轮状态，首轮用默认值
+  const prevS1 = lobby._p1State;
+  const prevS2 = lobby._p2State;
+
+  function inheritOrDefault(prev, which, def) {
+    if (prev && prev[which]) {
+      return {
+        hp: prev[which].hp, mp: prev[which].mp, sp: prev[which].sp,
+        x: prev[which].x, facing: prev[which].facing,
+      };
+    }
+    return def;
+  }
+
+  function inheritBase(prev, which, def) {
+    if (prev && prev.bases && prev.bases[which]) {
+      return { hp: prev.bases[which].hp, maxHp: def.maxHp, def: def.def, atk: def.atk, x: def.x };
+    }
+    return def;
+  }
+
+  const i1p1 = inheritOrDefault(prevS1, 'p1', { hp: p1Char.maxHp, mp: p1Char.maxMp, sp: p1Char.maxSp, x: 5, facing: 1 });
+  const i1p2 = inheritOrDefault(prevS1, 'p2', { hp: p2Char.maxHp, mp: p2Char.maxMp, sp: p2Char.maxSp, x: 10, facing: -1 });
+  const i2p1 = inheritOrDefault(prevS2, 'p1', { hp: p2Char.maxHp, mp: p2Char.maxMp, sp: p2Char.maxSp, x: 5, facing: 1 });
+  const i2p2 = inheritOrDefault(prevS2, 'p2', { hp: p1Char.maxHp, mp: p1Char.maxMp, sp: p1Char.maxSp, x: 10, facing: -1 });
+
+  const baseDef1 = { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 };
+  const baseDef2 = { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 };
+  const b1p1 = inheritBase(prevS1, 'p1', baseDef1);
+  const b1p2 = inheritBase(prevS1, 'p2', baseDef2);
+  const b2p1 = inheritBase(prevS2, 'p1', baseDef1);
+  const b2p2 = inheritBase(prevS2, 'p2', baseDef2);
+
   // ===== Engine1（P1 视角）：P1=自己, P2=对手(镜像序列) =====
   const engine1 = new BattleEngine();
   engine1.init({
+    _inheritBases: { p1: b1p1, p2: b1p2 },
     p1: {
-      id: 'P1', charId: p1Char.id, x: 5, facing: 1,
-      hp: p1Char.maxHp, maxHp: p1Char.maxHp, mp: p1Char.maxMp, maxMp: p1Char.maxMp,
-      sp: p1Char.maxSp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def,
+      id: 'P1', charId: p1Char.id, x: i1p1.x, facing: i1p1.facing,
+      hp: i1p1.hp, maxHp: p1Char.maxHp, mp: i1p1.mp, maxMp: p1Char.maxMp,
+      sp: i1p1.sp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def,
       skills: p1Slot.skillIds || p1Char.defaultSkills, customSkills: p1Slot.customSkills || {},
     },
     p2: {
-      id: 'P2', charId: p2Char.id, x: 10, facing: -1,
-      hp: p2Char.maxHp, maxHp: p2Char.maxHp, mp: p2Char.maxMp, maxMp: p2Char.maxMp,
-      sp: p2Char.maxSp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def,
+      id: 'P2', charId: p2Char.id, x: i1p2.x, facing: i1p2.facing,
+      hp: i1p2.hp, maxHp: p2Char.maxHp, mp: i1p2.mp, maxMp: p2Char.maxMp,
+      sp: i1p2.sp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def,
       skills: p2Slot.skillIds || p2Char.defaultSkills, customSkills: p2Slot.customSkills || {},
     },
   });
@@ -229,16 +263,17 @@ function startOnlineBattle(lobby) {
   // ===== Engine2（P2 视角）：P1=自己(P2角色+原始序列), P2=对手(P1角色+镜像序列) =====
   const engine2 = new BattleEngine();
   engine2.init({
+    _inheritBases: { p1: b2p1, p2: b2p2 },
     p1: {
-      id: 'P1', charId: p2Char.id, x: 5, facing: 1,
-      hp: p2Char.maxHp, maxHp: p2Char.maxHp, mp: p2Char.maxMp, maxMp: p2Char.maxMp,
-      sp: p2Char.maxSp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def,
+      id: 'P1', charId: p2Char.id, x: i2p1.x, facing: i2p1.facing,
+      hp: i2p1.hp, maxHp: p2Char.maxHp, mp: i2p1.mp, maxMp: p2Char.maxMp,
+      sp: i2p1.sp, maxSp: p2Char.maxSp, atk: p2Char.atk, def: p2Char.def,
       skills: p2Slot.skillIds || p2Char.defaultSkills, customSkills: p2Slot.customSkills || {},
     },
     p2: {
-      id: 'P2', charId: p1Char.id, x: 10, facing: -1,
-      hp: p1Char.maxHp, maxHp: p1Char.maxHp, mp: p1Char.maxMp, maxMp: p1Char.maxMp,
-      sp: p1Char.maxSp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def,
+      id: 'P2', charId: p1Char.id, x: i2p2.x, facing: i2p2.facing,
+      hp: i2p2.hp, maxHp: p1Char.maxHp, mp: i2p2.mp, maxMp: p1Char.maxMp,
+      sp: i2p2.sp, maxSp: p1Char.maxSp, atk: p1Char.atk, def: p1Char.def,
       skills: p1Slot.skillIds || p1Char.defaultSkills, customSkills: p1Slot.customSkills || {},
     },
   });
@@ -268,6 +303,9 @@ function startOnlineBattle(lobby) {
   delete lobby.pActions[p1Slot.sid];
   delete lobby.pActions[p2Slot.sid];
   lobby.round++;
+  console.log('[BATTLE_SAVE] room=' + lobby.id + ' round=' + lobby.round +
+    ' s1.p1(hp='+s1.p1.hp+',x='+s1.p1.x+') s1.p2(hp='+s1.p2.hp+',x='+s1.p2.x+') ' +
+    's2.p1(hp='+s2.p1.hp+',x='+s2.p1.x+') s2.p2(hp='+s2.p2.hp+',x='+s2.p2.x+')');
   // 保存双方各自看到的状态，等待客户端回传后校对
   lobby._p1Reported = false;
   lobby._p2Reported = false;
@@ -346,6 +384,12 @@ function sendNextRound(lobby) {
   const s1 = lobby._p1State;
   const s2 = lobby._p2State;
 
+  console.log('[NEXT_ROUND] room=' + lobby.id + ' round=' + (lobby.round+1));
+  console.log('[NEXT_ROUND] s1.p1 hp='+s1.p1.hp+' x='+s1.p1.x+' f='+s1.p1.facing+' s1.p2 hp='+s1.p2.hp+' x='+s1.p2.x+' f='+s1.p2.facing);
+  console.log('[NEXT_ROUND] s2.p1 hp='+s2.p1.hp+' x='+s2.p1.x+' f='+s2.p1.facing+' s2.p2 hp='+s2.p2.hp+' x='+s2.p2.x+' f='+s2.p2.facing);
+  if (s1.bases) console.log('[NEXT_ROUND] s1.bases p1hp='+s1.bases.p1.hp+' p2hp='+s1.bases.p2.hp);
+  if (s2.bases) console.log('[NEXT_ROUND] s2.bases p1hp='+s2.bases.p1.hp+' p2hp='+s2.bases.p2.hp);
+
   lobby.state = 'playing';
   lobby.pActions = {};
 
@@ -365,8 +409,8 @@ function sendNextRound(lobby) {
     bases: s2.bases || { p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 }, p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 } },
   });
 
-  lobby._p1State = null;
-  lobby._p2State = null;
+  // 只清理回传标记，保留 _p1State/_p2State 给下一轮 startOnlineBattle 继承
+  // _p1State/_p2State 会在下一轮 startOnlineBattle 中被覆盖
   lobby._p1Reported = false;
   lobby._p2Reported = false;
   lobby._p1ClientState = null;

@@ -12,12 +12,14 @@ class BattleEngine {
     // 缓存角色定义
     s._charDef_p1 = charsData.characters.find(c => c.id === s.p1.charId) || charsData.characters[0];
     s._charDef_p2 = charsData.characters.find(c => c.id === s.p2.charId) || charsData.characters[0];
-    // 基地数据
+    // 基地数据：优先从传入的 _inheritBases 继承 hp，其他字段从 config 读取
     const baseCfg = configData.base;
+    const inherit = s._inheritBases || {};
     s.bases = {
-      p1: { hp: baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p1 },
-      p2: { hp: baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p2 }
+      p1: { hp: inherit.p1?.hp ?? baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p1 },
+      p2: { hp: inherit.p2?.hp ?? baseCfg.hp, maxHp: baseCfg.hp, def: baseCfg.def, atk: baseCfg.atk, x: baseCfg.positions.p2 }
     };
+    delete s._inheritBases; // 清理，避免污染状态
   }
   setActions(a1, a2) { this.p1Actions = a1; this.p2Actions = a2; }
   getState() {

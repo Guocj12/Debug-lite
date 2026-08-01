@@ -2154,7 +2154,7 @@ function onOnlinePrepareStart(d) {
   document.getElementById('tm').textContent = G.timeLeft;
   document.getElementById('rnd').textContent = 'ROUND ' + d.round + ' (联机)';
 
-  console.log('[ONLINE:PREPARE] round=' + d.round);
+  console.log('[ONLINE:PREPARE] round=' + d.round + ' p1(x='+d.p1.x+',hp='+d.p1.hp+') p2(x='+d.p2.x+',hp='+d.p2.hp+') bases(p1hp='+(d.bases?.p1?.hp??'?')+',p2hp='+(d.bases?.p2?.hp??'?')+')');
   UI.log('Round ' + d.round + ' — 编排你的序列 (' + G.timeLeft + 's)');
 
   startRenderLoop();
