@@ -463,6 +463,14 @@ class BattleEngine {
           }
           if (dest === target.x) dest = target.x + (dir > 0 ? -1 : 1);
           dest = Math.max(0, Math.min(15, dest));
+        } else if (target._dodging && target.x === dest) {
+          // 目标闪避到了 dash 终点，施法者停在终点前一格，避免重合
+          dest = dest + (dir > 0 ? -1 : 1);
+          dest = Math.max(0, Math.min(15, dest));
+          // 如果调整后仍然重合（边界情况），再推一次
+          if (dest === target.x) dest = dest + (dir > 0 ? -1 : 1);
+          dest = Math.max(0, Math.min(15, dest));
+          console.log(`[DASH_DODGE] ${cKey} dash dest adjusted from ${caster.x + dir * dDist} to ${dest}, ${tKey} dodged to ${target.x}`);
         }
         if (sk.defBuff) caster._defDash = Math.floor(caster.def * sk.defBuff);
         caster.x = dest;
