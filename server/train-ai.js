@@ -1,33 +1,34 @@
 /**
  * ============================================================
- * Debug-Lite AI 训练器 — 遗传算法 + 蒙特卡洛模拟
+ * Debug-Lite AI 训练器 v2 — 双向对抗迭代训练
  * ============================================================
  * 
  * 原理说明：
  * 
- * 【遗传算法】
- *   1. 初始种群：随机生成 POP_SIZE 个"个体"（每个个体是一个策略）
- *   2. 适应度评估：个体之间两两对战（或对抗随机基线），统计胜率
- *   3. 精英选择：保留胜率最高的 ELITE 个
- *   4. 交叉繁殖：随机选两个高胜率个体，交换片段产生后代
- *   5. 变异：以 MUTATION_RATE 概率随机修改后代中的某些 tick 行动
- *   6. 重复 2-5，直到收敛或达到最大代数
+ * 【训练流程】
+ *   被训练角色为 P2，陪训角色为 P1。
+ *   双方各自独立产出胜率高的行动序列。
  *
- * 【蒙特卡洛方法】
- *   在评估适应度时，因为对战的随机性（对手也是随机策略），
- *   我们对每个个体打 N 场对局，用胜率作为适应度。
- *   这本质上是蒙特卡洛积分：通过大量随机抽样来估计期望胜率。
- *   
- * 【蒙特卡洛树搜索 (MCTS) 的区别】
- *   MCTS 是"在线"的：在每一步决策时实时模拟到终局。
- *   遗传算法是"离线"的：先训练出一个好的静态策略。
- *   对 16-tick 回合制来说，遗传算法更适合，因为行动序列是整回合一次性提交的。
+ * 【第 1 轮 — 纯随机基础训练】
+ *   1a. P2 vs 随机P1：P2 用随机序列，P1 用随机序列，统计 P2 每种序列胜率
+ *   1b. P1 vs 随机P2：P1 用随机序列，P2 用随机序列，统计 P1 每种序列胜率
+ *   分别取 P2、P1 各自胜率前 10 的序列进入下一轮。
+ *
+ * 【第 2~N 轮 — 变异对抗训练】
+ *   每一轮：
+ *     - 从上一轮 P2 胜率前10 + P1 胜率前10 各变异出 POP 个新序列
+ *     - P2 变异序列 vs P1 变异序列，两两对抗
+ *     - 统计双方各自胜率，取前10 进入下一轮
+ *
+ * 【最终输出】
+ *   达到训练轮次上限后，将 P2 胜率前三的序列写入 JSON 作为训练结果。
  * 
  * 用法：
- *   node server/train-ai.js                      # 全部角色互训
- *   node server/train-ai.js --char warrior        # 仅训练战士
- *   node server/train-ai.js --gens 200 --pop 80  # 自定义代数和种群
- *   node server/train-ai.js --quick               # 快速模式（少模拟）
+ *   node server/train-ai.js                              # 全部角色互训
+ *   node server/train-ai.js --p2 warrior --p1 archer     # 指定双方角色
+ *   node server/train-ai.js --p2 warrior                 # 训练战士 vs 所有其他
+ *   node server/train-ai.js --rounds 20 --pop 80         # 自定义轮次和种群
+ *   node server/train-ai.js --quick                      # 快速模式
  */
 
 // 训练模式下静默 BattleEngine 的战斗日志，避免终端输出溢出
@@ -67,12 +68,15 @@ const TICKS = 16;
 const CONFIG = {
   POP_SIZE: parseInt(args.pop) || 60,          // 种群大小
   GENERATIONS: parseInt(args.gens) || 100,     // 迭代代数
-  ELITE: Math.floor((parseInt(args.pop) || 60) * 0.15), // 精英保留数
-  MATCHES_PER_EVAL: args.quick ? 10 : (parseInt(args.matches) || 200), // 每个个体评估时的对战场次
-  MUTATION_RATE: 0.08,                          // 变异率（每个 tick 独立判定）
-  CROSSOVER_RATE: 0.7,                          // 交叉率
-  MAX_ROUNDS: 3,                                // 最大回合数
-  TARGET_CHAR: args.char || null,               // 目标训练角色（null=全部）
+  ELITE: Math.floor((parseInt(args.pop) || 60) * 0.15),
+  MATCHES_PER_EVAL: args.quick ? 10 : (parseInt(args.matches) || 200),
+  MATCHES_PER_PAIR: args.quick ? 5 : (parseInt(args.matches) || 20),
+  MUTATION_RATE: 0.05,                           // 变异率
+  MAX_ROUNDS: 3,
+  ITER_ROUNDS: parseInt(args.rounds) || 5,       // 迭代轮数
+  TOP_K: 10,                                      // 每轮保留前K条序列
+  TARGET_P2: args.p2 || null,                    // 被训练角色 P2
+  TARGET_P1: args.p1 || null,                    // 陪训角色 P1（不指定则对所有角色）
 };
 
 // ==================== 行动池 ====================
@@ -470,192 +474,184 @@ function nextGeneration(population, pool) {
 // ==================== 评估：蒙特卡洛模拟 ====================
 
 /**
- * 评估种群适应度（对抗指定对手）
- * 
- * 蒙特卡洛方法：对每个个体，跑 MATCHES_PER_EVAL 场对局。
- * 对手是"指定角色的随机合法序列"。
- * 用胜率作为适应度。
- * 
- * @param {string} opponentCharId - 对手角色 id，用于构建对手状态
+ * 基因序列（简化版，不用 Individual 类）
+ * { genes: string[16], wins: number, total: number }
  */
-function evaluatePopulation(population, charDef, pool, skillIds, generation, opponentCharDef) {
-  const total = population.length;
-  const charDefObj = makeCharDef(charDef, skillIds);
-  const oppDef = makeCharDef(opponentCharDef, opponentCharDef.defaultSkills);
-  const { pool: oppPool } = getActionPool(opponentCharDef);
-  
-  // 重置
-  population.forEach(ind => { ind.wins = 0; ind.totalMatches = 0; });
 
-  // === 阶段 1：对抗指定对手的随机合法序列（蒙特卡洛） ===
-  const oppName = opponentCharDef.name;
-  console.log(`  ├─ 蒙特卡洛评估 (vs ${oppName}, ${CONFIG.MATCHES_PER_EVAL}场/个体)...`);
-
-  for (let i = 0; i < total; i++) {
-    const ind = population[i];
-    for (let m = 0; m < CONFIG.MATCHES_PER_EVAL; m++) {
-      const state = makeBattleState(charDefObj, oppDef);
-      const oppActions = generateRandomValidSequence(state, 'p2', opponentCharDef, oppPool);
-      
-      const p1ActionGen = (s, ck) => individualToActions(ind, s, ck, charDef, pool);
-      const p2ActionGen = (s, ck) => {
-        if (ck === 'p2') return [...oppActions];
-        return generateRandomValidSequence(s, ck, opponentCharDef, oppPool);
-      };
-
-      const result = runFullGame(charDefObj, oppDef, p1ActionGen, p2ActionGen, CONFIG.MAX_ROUNDS);
-      ind.totalMatches++;
-      if (result.winner === 'P1') ind.wins++;
-    }
-
-    if ((i + 1) % 10 === 0 || i === total - 1) {
-      const avgFit = population.slice(0, i + 1).reduce((s, x) => s + x.wins / Math.max(1, x.totalMatches), 0) / (i + 1);
-      process.stdout.write(`\r  │  已评估 ${i + 1}/${total} 个体, 平均胜率=${(avgFit * 100).toFixed(1)}%`);
-    }
-  }
-  console.log('');
-
-  // === 阶段 2：精英互相对战（交叉验证） ===
-  const sorted = [...population].sort((a, b) => (b.wins / Math.max(1, b.totalMatches)) - (a.wins / Math.max(1, a.totalMatches)));
-  const topN = Math.min(10, sorted.length);
-  console.log(`  ├─ 精英互相对战 (Top ${topN} 个体)...`);
-  
-  for (let i = 0; i < topN; i++) {
-    for (let j = i + 1; j < topN; j++) {
-      const indA = sorted[i];
-      const indB = sorted[j];
-      const state = makeBattleState(charDefObj, oppDef);
-
-      const p1ActionGen = (s, ck) => individualToActions(indA, s, ck, charDef, pool);
-      const p2ActionGen = (s, ck) => individualToActions(indB, s, ck, charDef, pool);
-
-      const result = runFullGame(charDefObj, oppDef, p1ActionGen, p2ActionGen, CONFIG.MAX_ROUNDS);
-      indA.totalMatches++;
-      indB.totalMatches++;
-      if (result.winner === 'P1') indA.wins++;
-      else if (result.winner === 'P2') indB.wins++;
-    }
-  }
-
-  population.forEach(ind => {
-    ind.fitness = ind.totalMatches > 0 ? ind.wins / ind.totalMatches : 0;
-  });
-
-  const fitnesses = population.map(ind => ind.fitness);
-  const avgFit = fitnesses.reduce((a, b) => a + b, 0) / fitnesses.length;
-  const maxFit = Math.max(...fitnesses);
-  const minFit = Math.min(...fitnesses);
-
-  return { avgFit, maxFit, minFit, sorted };
+/** 生成随机基因 */
+function randomGene(pool) {
+  const genes = [];
+  for (let i = 0; i < TICKS; i++) genes.push(pool[Math.floor(Math.random() * pool.length)]);
+  return { genes, wins: 0, total: 0 };
 }
 
-// ==================== 主训练流程 ====================
+/** 基于种子基因变异出 count 条新基因 */
+function mutateFromSeeds(seeds, pool, count) {
+  const result = [];
+  for (let i = 0; i < count; i++) {
+    const seed = seeds[Math.floor(Math.random() * seeds.length)];
+    const genes = [...seed.genes];
+    for (let j = 0; j < genes.length; j++) {
+      if (Math.random() < CONFIG.MUTATION_RATE) {
+        genes[j] = pool[Math.floor(Math.random() * pool.length)];
+      }
+    }
+    // 随机打乱两个位置
+    if (Math.random() < 0.03) {
+      const a = Math.floor(Math.random() * TICKS);
+      const b = Math.floor(Math.random() * TICKS);
+      [genes[a], genes[b]] = [genes[b], genes[a]];
+    }
+    result.push({ genes, wins: 0, total: 0 });
+  }
+  return result;
+}
+
+/** 基因 → 实际行动序列 */
+function geneToActions(gene, baseState, cKey, charDef, pool) {
+  const simState = {
+    ...JSON.parse(JSON.stringify(baseState)),
+    _cooldowns_p1: JSON.parse(JSON.stringify(baseState._cooldowns_p1 || {})),
+    _cooldowns_p2: JSON.parse(JSON.stringify(baseState._cooldowns_p2 || {})),
+  };
+  const p = simState[cKey];
+  const actions = [];
+  for (let tick = 0; tick < TICKS; tick++) {
+    for (const k of ['p1', 'p2']) {
+      const cd = simState['_cooldowns_' + k] || {};
+      for (const sk in cd) { if (cd[sk] > 0) cd[sk]--; }
+    }
+    p.sp = Math.min(p.maxSp, p.sp + (charDef.spRegen || 5));
+    p.mp = Math.min(p.maxMp, p.mp + (charDef.mpRegen || 4));
+
+    let action = gene.genes[tick] || 'wait';
+    if (!canUseActionInState(simState, cKey, action, charDef)) {
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      action = shuffled.find(a => canUseActionInState(simState, cKey, a, charDef)) || 'wait';
+    }
+    applyActionCostInState(simState, cKey, action);
+    actions.push(action);
+  }
+  return actions;
+}
+
+// ==================== 核心：双向对抗训练 ====================
 
 /**
- * 训练单个角色对抗指定对手
- * @param {object} charDef - 我方角色定义
- * @param {object} opponentCharDef - 对手角色定义
- * @param {number[]} skillIds - 我方技能列表
+ * 对一组基因进行双向对抗评估。
+ * popA 作为 P2，popB 作为 P1。
+ * 每对组合打 MATCHES_PER_PAIR 场（多回合），统计双方各自胜场。
  */
-function trainCharacterVs(charDef, skillIds, opponentCharDef) {
-  const charName = charDef.name;
-  const oppName = opponentCharDef.name;
-  const { pool } = getActionPool(charDef);
-  const totalStart = Date.now();
+function runBidirectionalBattle(popA, charA, poolA, popB, charB, poolB) {
+  // 重置
+  popA.forEach(g => { g.wins = 0; g.total = 0; });
+  popB.forEach(g => { g.wins = 0; g.total = 0; });
 
-  console.log('');
-  console.log('─'.repeat(50));
-  console.log(`🎯 ${charName} vs ${oppName}`);
-  console.log(`   种群: ${CONFIG.POP_SIZE} | 代数: ${CONFIG.GENERATIONS} | 变异率: ${CONFIG.MUTATION_RATE}`);
-  console.log('─'.repeat(50));
+  const defA = makeCharDef(charA, charA.defaultSkills);
+  const defB = makeCharDef(charB, charB.defaultSkills);
 
-  let population = [];
-  for (let i = 0; i < CONFIG.POP_SIZE; i++) {
-    population.push(randomIndividual(pool));
-  }
+  for (let ai = 0; ai < popA.length; ai++) {
+    for (let bi = 0; bi < popB.length; bi++) {
+      const aGene = popA[ai];
+      const bGene = popB[bi];
 
-  let bestEverFit = 0;
-  let noImproveCount = 0;
-  const NO_IMPROVE_LIMIT = 15;
-  const topGenes = [];
+      for (let m = 0; m < CONFIG.MATCHES_PER_PAIR; m++) {
+        // popA 作为 P2（被训练方），popB 作为 P1（陪训方）
+        const state = makeBattleState(defB, defA); // P1=popB, P2=popA
 
-  for (let gen = 1; gen <= CONFIG.GENERATIONS; gen++) {
-    const genStart = Date.now();
+        const p1Gen = (s, ck) => geneToActions(bGene, s, ck, charB, poolB);
+        const p2Gen = (s, ck) => geneToActions(aGene, s, ck, charA, poolA);
 
-    const { avgFit, maxFit, minFit, sorted } = evaluatePopulation(
-      population, charDef, pool, skillIds, gen, opponentCharDef
-    );
-
-    if (maxFit > bestEverFit) {
-      bestEverFit = maxFit;
-      noImproveCount = 0;
-    } else {
-      noImproveCount++;
-    }
-
-    // ★ 维护 Top 3 基因池
-    for (const ind of sorted) {
-      if (ind.fitness <= 0) continue;
-      const geneKey = ind.genes.join(',');
-      const exists = topGenes.find(g => g.genes.join(',') === geneKey);
-      if (!exists) {
-        topGenes.push({ genes: [...ind.genes], fitness: ind.fitness });
-        topGenes.sort((a, b) => b.fitness - a.fitness);
-        if (topGenes.length > 3) topGenes.length = 3;
+        const result = runFullGame(defB, defA, p1Gen, p2Gen, CONFIG.MAX_ROUNDS);
+        aGene.total++;
+        bGene.total++;
+        if (result.winner === 'P2') aGene.wins++;          // popA 作为 P2 赢了
+        else if (result.winner === 'P1') bGene.wins++;     // popB 作为 P1 赢了
       }
     }
 
-    const genTime = ((Date.now() - genStart) / 1000).toFixed(1);
-    const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
-
-    if (gen % 5 === 0 || gen === 1 || maxFit >= bestEverFit) {
-      console.log(`  Gen ${String(gen).padStart(3)}/${CONFIG.GENERATIONS} | ` +
-        `平均: ${(avgFit * 100).toFixed(1)}% | 最高: ${(maxFit * 100).toFixed(1)}% | ` +
-        `🏆: ${(bestEverFit * 100).toFixed(1)}% | ⏱ 本轮: ${genTime}s | 总: ${totalTime}s`);
-    }
-
-    if (noImproveCount >= NO_IMPROVE_LIMIT && gen > 25) {
-      console.log(`  ⚠ 连续 ${NO_IMPROVE_LIMIT} 代无提升，提前终止`);
-      break;
-    }
-
-    if (gen < CONFIG.GENERATIONS) {
-      population = nextGeneration(population, pool);
+    if ((ai + 1) % 10 === 0 || ai === popA.length - 1) {
+      const aAvg = popA.slice(0, ai + 1).reduce((s, g) => s + (g.total > 0 ? g.wins / g.total : 0), 0) / (ai + 1);
+      process.stdout.write(`\r  │  评估中 ${ai+1}/${popA.length} | P2均胜率=${(aAvg*100).toFixed(1)}%`);
     }
   }
-
-  const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
-  console.log(`✅ ${charName} vs ${oppName} 完成! ${totalTime}s | 最佳: ${(bestEverFit * 100).toFixed(1)}% | Top3范围: ${(topGenes[topGenes.length-1]?.fitness*100||0).toFixed(1)}~${(topGenes[0]?.fitness*100||0).toFixed(1)}%`);
-
-  return {
-    vsCharId: opponentCharDef.id,
-    bestFitness: bestEverFit,
-    topGenes: topGenes.map(g => ({ genes: g.genes, fitness: g.fitness })),
-  };
+  console.log('');
 }
 
 /**
- * 训练单个角色（对所有其他角色分别训练）
+ * 取 topK
  */
-function trainCharacter(charDef, skillIds) {
-  const chars = charsData.characters || [];
-  const vsResults = [];
+function topK(pop, k) {
+  return [...pop]
+    .map(g => ({ genes: [...g.genes], fitness: g.total > 0 ? g.wins / g.total : 0 }))
+    .sort((a, b) => b.fitness - a.fitness)
+    .slice(0, k);
+}
 
-  for (const oppChar of chars) {
-    // 对每个对手角色分别训练（包括同职业内战）
-    const result = trainCharacterVs(charDef, skillIds, oppChar);
-    vsResults.push(result);
+/**
+ * 训练 P2 vs P1（多轮迭代）
+ * 
+ * 第1轮：P2 随机 vs P1 随机 → 各取 Top10
+ * 第2~N轮：P2 Top10变异 vs P1 Top10变异 → 各取 Top10
+ * 最终：返回 P2 Top3
+ */
+function trainPair(p2Char, p1Char) {
+  const p2Name = p2Char.name, p1Name = p1Char.name;
+  const { pool: poolP2 } = getActionPool(p2Char);
+  const { pool: poolP1 } = getActionPool(p1Char);
+  const totalStart = Date.now();
+
+  console.log('');
+  console.log('═'.repeat(55));
+  console.log(`🎯 P2=${p2Name}(被训练) vs P1=${p1Name}(陪训) | 轮次:${CONFIG.ITER_ROUNDS} | 种群:${CONFIG.POP_SIZE} | 每对:${CONFIG.MATCHES_PER_PAIR}场`);
+  console.log('═'.repeat(55));
+
+  let p2Seeds = []; // P2 上一轮 Top10 基因 { genes, fitness }
+  let p1Seeds = []; // P1 上一轮 Top10 基因
+
+  for (let iter = 1; iter <= CONFIG.ITER_ROUNDS; iter++) {
+    const iterStart = Date.now();
+
+    // 生成当前轮的种群
+    let popP2, popP1;
+    if (iter === 1) {
+      // 第1轮：纯随机
+      popP2 = Array.from({ length: CONFIG.POP_SIZE }, () => randomGene(poolP2));
+      popP1 = Array.from({ length: CONFIG.POP_SIZE }, () => randomGene(poolP1));
+    } else {
+      // 第2+轮：从种子变异
+      popP2 = mutateFromSeeds(p2Seeds, poolP2, CONFIG.POP_SIZE);
+      popP1 = mutateFromSeeds(p1Seeds, poolP1, CONFIG.POP_SIZE);
+    }
+
+    const seedLabel = iter === 1 ? '随机' : `种子(${p2Seeds.length}条)变异`;
+    console.log(`\n  ── 第 ${iter}/${CONFIG.ITER_ROUNDS} 轮 [${seedLabel}] ──`);
+    console.log(`  P2:${p2Name}(POP=${CONFIG.POP_SIZE}) vs P1:${p1Name}(POP=${CONFIG.POP_SIZE})`);
+
+    runBidirectionalBattle(popP2, p2Char, poolP2, popP1, p1Char, poolP1);
+
+    // 取双方 TopK
+    const newP2Top = topK(popP2, CONFIG.TOP_K);
+    const newP1Top = topK(popP1, CONFIG.TOP_K);
+
+    // ★ 每轮只用本轮 TopK 作为下一轮种子，不跨轮累积
+    // 这样双方在同一个起跑线上竞争，胜率更真实
+    p2Seeds = newP2Top;
+    p1Seeds = newP1Top;
+
+    const iterTime = ((Date.now() - iterStart) / 1000).toFixed(1);
+    const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
+    console.log(`  ✅ P2 Top3: ${p2Seeds.slice(0,3).map(g=>(g.fitness*100).toFixed(1)+'%').join(', ')} | P1 Top3: ${p1Seeds.slice(0,3).map(g=>(g.fitness*100).toFixed(1)+'%').join(', ')} | ⏱${iterTime}s|总${totalTime}s`);
   }
 
-  const totalTime = '';
-  console.log(`\n🏁 ${charDef.name} 全部对阵训练完成!`);
+  const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
+  const finalTop3 = p2Seeds.slice(0, 3);
+  console.log(`\n🏁 ${p2Name} vs ${p1Name} 完成! ${totalTime}s | P2最终Top3: ${finalTop3.map(g=>(g.fitness*100).toFixed(1)+'%').join(', ')}`);
 
   return {
-    charId: charDef.id,
-    charName: charDef.name,
-    skillIds: skillIds,
-    vsResults: vsResults,  // [{ vsCharId, bestFitness, topGenes }]
-    config: { ...CONFIG },
+    vsCharId: p1Char.id,
+    bestFitness: finalTop3.length > 0 ? finalTop3[0].fitness : 0,
+    topGenes: finalTop3,
   };
 }
 
@@ -664,7 +660,6 @@ function trainCharacter(charDef, skillIds) {
 function saveResults(allResults) {
   const outputPath = path.join(__dirname, '..', 'data', 'ai-weights.json');
   
-  // ★ 加载已有权重，合并而非覆盖
   let weights = {};
   try {
     if (fs.existsSync(outputPath)) {
@@ -672,7 +667,7 @@ function saveResults(allResults) {
     }
   } catch (e) { /* ignore */ }
 
-  // ★ 新格式: weights[charId].vs[oppCharId] = { topGenes, fitness }
+  // allResults: [{ charId, charName, vsResults: [{ vsCharId, topGenes }] }]
   allResults.forEach(r => {
     if (!weights[r.charId]) {
       weights[r.charId] = { name: r.charName, skillIds: r.skillIds, vs: {} };
@@ -685,18 +680,14 @@ function saveResults(allResults) {
       };
     });
     weights[r.charId].trainedAt = new Date().toISOString();
-    weights[r.charId].config = r.config;
+    weights[r.charId].config = { rounds: CONFIG.ITER_ROUNDS, pop: CONFIG.POP_SIZE };
   });
 
-  // 简洁模板
   const aiTemplates = {};
   Object.entries(weights).forEach(([charId, w]) => {
     aiTemplates[charId] = { name: w.name, vs: {} };
     Object.entries(w.vs || {}).forEach(([vsId, v]) => {
-      aiTemplates[charId].vs[vsId] = {
-        fitness: v.fitness,
-        genes: v.topGenes,
-      };
+      aiTemplates[charId].vs[vsId] = { fitness: v.fitness, genes: v.topGenes };
     });
   });
 
@@ -706,76 +697,79 @@ function saveResults(allResults) {
   const templatePath = path.join(__dirname, '..', 'data', 'ai-templates.json');
   fs.writeFileSync(templatePath, JSON.stringify(aiTemplates, null, 2), 'utf-8');
   console.log(`💾 模板已保存到: ${templatePath}`);
-
-  return weights;
 }
 
 // ==================== 入口 ====================
 
 function main() {
   console.log('╔══════════════════════════════════════════════════════╗');
-  console.log('║   Debug-Lite AI 训练器 — 遗传算法 + 蒙特卡洛模拟   ║');
+  console.log('║  Debug-Lite AI 训练器 v2 — 双向对抗迭代训练       ║');
   console.log('╚══════════════════════════════════════════════════════╝');
   console.log('');
-  console.log('【蒙特卡洛方法】通过大量随机模拟对局来估计每个策略的期望胜率。');
-  console.log('【遗传算法】  模拟自然选择：评估→精英保留→交叉→变异→迭代优化。');
-  console.log('');
-  console.log(`配置: 种群=${CONFIG.POP_SIZE} 代数=${CONFIG.GENERATIONS} 变异率=${CONFIG.MUTATION_RATE} 每体评估场次=${CONFIG.MATCHES_PER_EVAL}`);
+  console.log(`配置: 种群=${CONFIG.POP_SIZE} | 轮次=${CONFIG.ITER_ROUNDS} | 每对=${CONFIG.MATCHES_PER_PAIR}场 | 变异率=${CONFIG.MUTATION_RATE}`);
   console.log('');
 
   const allChars = charsData.characters || [];
-  
-  // 确定训练目标
-  let targetChars;
-  if (CONFIG.TARGET_CHAR) {
-    const found = allChars.find(c => c.id === CONFIG.TARGET_CHAR || c.name === CONFIG.TARGET_CHAR);
-    if (!found) {
-      console.error(`❌ 未找到角色: ${CONFIG.TARGET_CHAR}`);
-      console.error(`   可用角色: ${allChars.map(c => c.id + '(' + c.name + ')').join(', ')}`);
-      process.exit(1);
-    }
-    targetChars = [found];
+
+  // 确定 P2 角色列表
+  let p2Chars;
+  if (CONFIG.TARGET_P2) {
+    const found = allChars.find(c => c.id === CONFIG.TARGET_P2 || c.name === CONFIG.TARGET_P2);
+    if (!found) { console.error(`❌ 未找到P2角色: ${CONFIG.TARGET_P2}`); process.exit(1); }
+    p2Chars = [found];
   } else {
-    targetChars = allChars;
+    p2Chars = allChars;
   }
 
-  console.log(`将训练 ${targetChars.length} 个角色，每个角色对 4 个对手分别训练（共 ${targetChars.length * 4} 组对战）`);
-  
+  // 确定 P1 角色列表
+  let p1Chars;
+  if (CONFIG.TARGET_P1) {
+    const found = allChars.find(c => c.id === CONFIG.TARGET_P1 || c.name === CONFIG.TARGET_P1);
+    if (!found) { console.error(`❌ 未找到P1角色: ${CONFIG.TARGET_P1}`); process.exit(1); }
+    p1Chars = [found];
+  } else {
+    p1Chars = allChars;
+  }
+
+  const totalPairs = p2Chars.length * p1Chars.length;
+  console.log(`P2(被训练): ${p2Chars.map(c=>c.name).join(', ')}`);
+  console.log(`P1(陪训):   ${p1Chars.map(c=>c.name).join(', ')}`);
+  console.log(`共 ${totalPairs} 组对战\n`);
+
   const globalStart = Date.now();
   const allResults = [];
-  let totalPairs = 0;
 
-  for (const charDef of targetChars) {
-    const skillIds = [...charDef.defaultSkills];
-    const result = trainCharacter(charDef, skillIds);
-    allResults.push(result);
-    totalPairs += result.vsResults.length;
+  for (const p2Char of p2Chars) {
+    const vsResults = [];
+    for (const p1Char of p1Chars) {
+      const result = trainPair(p2Char, p1Char);
+      vsResults.push(result);
+    }
+    allResults.push({
+      charId: p2Char.id,
+      charName: p2Char.name,
+      skillIds: p2Char.defaultSkills,
+      vsResults,
+    });
   }
 
-  // 保存结果
   saveResults(allResults);
 
   const globalTime = ((Date.now() - globalStart) / 1000).toFixed(1);
-  const perPairGames = CONFIG.POP_SIZE * 40 * CONFIG.MATCHES_PER_EVAL; // 约40代收敛 × 种群 × 评估场次
-  const totalGames = totalPairs * perPairGames;
-
   console.log('');
   console.log('╔══════════════════════════════════════════════════════╗');
   console.log('║               🎉 全部训练完成!                      ║');
   console.log('╚══════════════════════════════════════════════════════╝');
-  console.log(`  总耗时: ${globalTime}s | 对战组合: ${totalPairs} 组 | 模拟对局约: ${totalGames.toLocaleString()} 场`);
+  console.log(`  总耗时: ${globalTime}s | 对战组合: ${totalPairs} 组`);
   console.log('');
-  console.log('  训练结果摘要:');
   allResults.forEach(r => {
     console.log(`  ${r.charName}:`);
     (r.vsResults || []).forEach(vr => {
-      const oppName = charsData.characters.find(c => c.id === vr.vsCharId)?.name || vr.vsCharId;
-      console.log(`    vs ${oppName.padEnd(6)} | ${(vr.bestFitness*100).toFixed(1)}% | Top3基因: ${vr.topGenes.length}条`);
+      const oppName = allChars.find(c => c.id === vr.vsCharId)?.name || vr.vsCharId;
+      const fits = vr.topGenes.map(g => (g.fitness*100).toFixed(1)+'%').join(', ');
+      console.log(`    vs ${oppName.padEnd(6)} | ${fits}`);
     });
   });
-
-  console.log('');
-  console.log('  权重格式: charId.vs[oppCharId].topGenes[0~2]');
 }
 
 main();

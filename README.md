@@ -85,49 +85,53 @@ npm start
 
 ## AI 训练
 
-游戏内置了一个基于**遗传算法 + 蒙特卡洛模拟**的 AI 训练脚本，可以让 AI 学会智能对战（替代默认的纯随机行动）。
+游戏内置了一个基于**双向对抗迭代训练**的 AI 训练脚本，可以让 AI 学会智能对战（替代默认的纯随机行动）。
 
 ### 原理
 
-- **遗传算法**：模拟自然选择 —— 随机生成一批"策略个体" → 每代互相对战评估胜率 → 精英保留 → 交叉繁殖 → 随机变异 → 重复迭代
-- **蒙特卡洛模拟**：每个策略个体打 200 场随机对手，用胜率估计其真实强度
+- **双向对抗**：被训练角色(P2)与陪训角色(P1)各自独立产出行动序列，两两对战
+- **多轮迭代**：第1轮纯随机 → 各取胜率Top10 → 下一轮Top10变异出种群 → 继续互殴
+- **完全对等**：P1和P2的种子各自独立，不会被对方污染
+- **蒙特卡洛评估**：每对序列打 N 场多回合对局，用胜率衡量强度
 
 ### 训练命令
 
 ```bash
-# 训练全部 4 个角色（推荐）
-node server/train-ai.js --gens 50 --pop 100
+# 全部角色互训（16组对战，推荐）
+node server/train-ai.js --pop 80 --rounds 5
 
-# 只训练一个角色
-node server/train-ai.js --gens 50 --pop 100 --char warrior
+# 指定P2被训练角色 vs 指定P1陪训角色
+node server/train-ai.js --p2 warrior --p1 archer --pop 80 --rounds 5
 
-# 快速验证（低精度，仅用于测试脚本是否正常）
-node server/train-ai.js --quick --gens 10 --pop 20
+# 训练战士 vs 所有其他角色
+node server/train-ai.js --p2 warrior --pop 80 --rounds 5
+
+# 快速验证（低精度）
+node server/train-ai.js --quick --p2 warrior --p1 warrior --pop 20 --rounds 3
 ```
 
 ### 参数说明
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--gens` | 100 | 遗传算法迭代代数，40~100 代通常足够收敛 |
-| `--pop` | 60 | 每代种群大小（个体数），越大探索越充分但更慢 |
-| `--char` | 全部 | 指定训练角色：`warrior` / `archer` / `mage` / `assassin` |
-| `--quick` | false | 快速模式（每体仅评估 10 场，误差大，仅用于验证） |
-| `--matches` | 200 | 每个个体的蒙特卡洛评估场次（越大越精确） |
+| `--p2` | 全部 | 被训练角色（最终产出的AI）：`warrior` / `archer` / `mage` / `assassin` |
+| `--p1` | 全部 | 陪训角色（对手）：`warrior` / `archer` / `mage` / `assassin` |
+| `--pop` | 60 | 每轮双方各生成的序列数 |
+| `--rounds` | 5 | 迭代轮数，越多对手越强 AI 也越强 |
+| `--matches` | 20 | 每对序列的对战场次（越大越精确） |
+| `--quick` | false | 快速模式（仅5场/对，误差大，仅用于验证） |
 
 ### 训练产物
 
-训练完成后会生成两个文件：
-
-- `data/ai-weights.json` — 完整权重（供服务端读取）
+- `data/ai-weights.json` — 格式 `weights[P2角色].vs[P1角色].topGenes[0~2]`
 - `data/ai-templates.json` — 简洁行动模板（人类可读）
 
-启动 `npm start` 后服务端会自动加载权重。如果文件不存在则回退到随机 AI。
+启动 `npm start` 后服务端根据 AI 角色和玩家角色自动匹配最优序列。权重文件不存在则回退到随机 AI。
 
 ### 推荐配置
 
 | 场景 | 命令 | 预估耗时 |
 |------|------|---------|
-| 日常训练 | `--gens 50 --pop 100` | 2~4 分钟 |
-| 深度训练 | `--gens 100 --pop 200` | 5~10 分钟 |
-| 快速验证 | `--quick --gens 10 --pop 20` | 5~10 秒 |
+| 日常训练 | `--pop 80 --rounds 5` | 5~10 分钟 |
+| 深度训练 | `--pop 120 --rounds 8` | 15~30 分钟 |
+| 快速验证 | `--quick --p2 warrior --p1 warrior --pop 20 --rounds 3` | 5~10 秒 |
