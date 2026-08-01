@@ -230,8 +230,8 @@ class BattleEngine {
     const events = [];
     if (i1.isTurn) p1.facing *= -1;
     if (i2.isTurn) p2.facing *= -1;
-    if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 0.8);
-    if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 0.8);
+    if (i1.isDefend) p1._defBuff = (p1._defBuff || 0) + Math.floor(p1.def * 2.4);
+    if (i2.isDefend) p2._defBuff = (p2._defBuff || 0) + Math.floor(p2.def * 2.4);
     if (collision) return events;
     if (i1.dx !== 0 && !i1.isTurn) {
       let d = p1.x + i1.dx;
