@@ -1634,23 +1634,44 @@ const UI = {
     const p2El = document.getElementById('bqP2');
     if (!p1El || !p2El) return;
 
-    const renderRow = (el, actions, currentIdx) => {
+    // 构建 skill1/2/3 → 技能名称的映射
+    const p1SkillMap = {};
+    const p1Skills = G.p1?.skills || G.mySkillIds || [];
+    p1Skills.forEach((sid, i) => { p1SkillMap['skill' + (i + 1)] = sid; });
+    const p2SkillMap = {};
+    const p2Skills = G.p2?.skills || [];
+    p2Skills.forEach((sid, i) => { p2SkillMap['skill' + (i + 1)] = sid; });
+
+    const renderRow = (el, actions, currentIdx, skillMap) => {
       el.innerHTML = '';
       for (let i = 0; i < 16; i++) {
         const slot = document.createElement('span');
         slot.className = 'bq-slot' + (i === currentIdx ? ' active' : '');
         const a = actions[i] || 'wait';
-        if (a === 'wait') slot.textContent = '·';
+        if (a === 'wait') { slot.textContent = '·'; }
+        else if (a === 'stunned') { slot.textContent = '⚡'; }
         else {
-          const sk = getSkillById(a);
+          // 尝试 skill1/2/3 → 真实技能ID → 技能名
+          const realId = skillMap[a] || a;
+          const sk = getSkillById(realId);
           const gs = (_skillsData?.genericSkills || []).find(g => g.id === a);
-          slot.textContent = sk?.name || gs?.name || a;
+          const name = sk?.name || gs?.name || null;
+          if (name) {
+            slot.textContent = name;
+          } else {
+            // fallback：显示简短标识
+            const shortMap = {
+              move_left: '←', move_right: '→', dodge_left: '⇐', dodge_right: '⇒',
+              defend: '🛡', turn: '↻', wait: '·', stunned: '⚡'
+            };
+            slot.textContent = shortMap[a] || a;
+          }
         }
         el.appendChild(slot);
       }
     };
-    renderRow(p1El, p1Acts, tick);
-    renderRow(p2El, p2Acts, tick);
+    renderRow(p1El, p1Acts, tick, p1SkillMap);
+    renderRow(p2El, p2Acts, tick, p2SkillMap);
   }
 };
 

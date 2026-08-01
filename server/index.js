@@ -138,7 +138,111 @@ function getOpponentInRoom(room, sid) {
   return null;
 }
 
-/** 生成 AI 的 16 tick 行动序列（简单随机） */
+/**
+ * 逐 tick 模拟生成 AI 行动序列。
+ * 每个 tick 随机选行动 → 模拟执行检查资源/CD → 成功则添加，失败则回退到普攻/移动/wait。
+ * 模拟期间追踪 mp/sp/cooldowns 消耗，确保序列在运行时不会因资源不足而 exhaust。
+ */
+function generateAIActionsSimulated(engine) {
+  const genericSkills = require('../data/skills.json').genericSkills || [];
+  const genericPool = ['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'wait'];
+
+  // 深拷贝一份 state 用于模拟
+  const simState = JSON.parse(JSON.stringify(engine.state));
+  // 重新挂载冷却追踪
+  simState._cooldowns_p1 = {};
+  simState._cooldowns_p2 = {};
+
+  const actions = [];
+  const p2 = simState.p2;
+  const p1 = simState.p1;
+  const skillIds = p2.skills || [];
+  const skillPool = skillIds.map((_, i) => 'skill' + (i + 1));
+  const allPool = [...genericPool, ...skillPool];
+
+  for (let tick = 0; tick < TICKS; tick++) {
+    // tick 冷却递减
+    for (const k of ['p1', 'p2']) {
+      const cd = simState['_cooldowns_' + k];
+      for (const sk in cd) { if (cd[sk] > 0) cd[sk]--; }
+    }
+
+    // 资源恢复
+    const cd2 = simState._charDef_p2;
+    p2.sp = Math.min(p2.maxSp, p2.sp + (cd2.spRegen || 2));
+    p2.mp = Math.min(p2.maxMp, p2.mp + (cd2.mpRegen || 1));
+
+    let picked = null;
+    // 最多尝试 20 次随机选一个能用的
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const candidate = allPool[Math.floor(Math.random() * allPool.length)];
+      if (canUseAction(simState, 'p2', candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    // 回退：优先 wait（总是可用）
+    if (!picked) picked = 'wait';
+
+    // 模拟消耗
+    applyActionCost(simState, 'p2', picked);
+    actions.push(picked);
+  }
+  return actions;
+}
+
+/** 检查 AI 在模拟 state 中能否使用某行动 */
+function canUseAction(simState, cKey, action) {
+  const p = simState[cKey];
+  // 基础行动总是可用
+  if (['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'wait'].includes(action)) {
+    // dodge 需要 SP
+    if (action === 'dodge_left' || action === 'dodge_right') {
+      return (p.sp || 0) >= 10;
+    }
+    return true;
+  }
+  // 技能
+  const idxMap = { skill1: 0, skill2: 1, skill3: 2 };
+  const idx = idxMap[action];
+  if (idx === undefined) return false;
+  const sid = p.skills?.[idx];
+  if (!sid) return false;
+
+  const skillsData = require('../data/skills.json');
+  const allSk = { ...skillsData.skills, ...(p.customSkills || {}) };
+  const sk = allSk[sid];
+  if (!sk) return false;
+
+  const cdKey = '_cooldowns_' + cKey;
+  if (simState[cdKey]?.[sid] > 0) return false;
+  if ((p.mp || 0) < (sk.mpCost || 0)) return false;
+  if ((p.sp || 0) < (sk.spCost || 0)) return false;
+  return true;
+}
+
+/** 模拟扣除行动消耗 */
+function applyActionCost(simState, cKey, action) {
+  const p = simState[cKey];
+  if (action === 'dodge_left' || action === 'dodge_right') {
+    p.sp = Math.max(0, p.sp - 10);
+    return;
+  }
+  const idxMap = { skill1: 0, skill2: 1, skill3: 2 };
+  const idx = idxMap[action];
+  if (idx === undefined) return;
+  const sid = p.skills?.[idx];
+  if (!sid) return;
+  const skillsData = require('../data/skills.json');
+  const allSk = { ...skillsData.skills, ...(p.customSkills || {}) };
+  const sk = allSk[sid];
+  if (!sk) return;
+  p.mp -= (sk.mpCost || 0);
+  p.sp -= (sk.spCost || 0);
+  if (sk.cooldown) simState['_cooldowns_' + cKey][sid] = sk.cooldown;
+}
+
+/** 生成 AI 的 16 tick 行动序列（简单随机，保留给旧 API 兼容） */
 function generateAIActions(charId, skillIds) {
   const genericActions = ['move_left','move_right','dodge_left','dodge_right','defend','turn','wait'];
   const skillActions = (skillIds || []).map((_, i) => 'skill' + (i + 1));
@@ -768,6 +872,13 @@ function runSoloBattle(room) {
   clearInterval(room.timer);
   const playerSid = room.playerSid;
   const aiSid = room.aiSid;
+
+  // ★ 每次战斗前重新生成 AI 行动序列（模拟逐 tick 资源/CD 检查）
+  if (!room.training) {
+    room.pActions[aiSid] = generateAIActionsSimulated(room.engine);
+    console.log('[AI] generated actions: ' + room.pActions[aiSid].join(','));
+  }
+
   const pActions = (room.pActions[playerSid] || []).slice(0, TICKS);
   while (pActions.length < TICKS) pActions.push('wait');
   room.engine.setActions(pActions, room.pActions[aiSid] || []);
@@ -829,30 +940,6 @@ io.on('connection', (socket) => {
     };
     soloRooms.set(rid, room);
     startSoloPrepare(room);
-  });
-
-  // AI ready
-  socket.on('aiReady', (d) => {
-    const room = soloRooms.get(d.roomId);
-    if (!room) return;
-    if (d.actions && d.actions.length > 0) {
-      room.pActions[room.aiSid] = d.actions.slice(0, TICKS);
-    } else {
-      // 随机 AI 序列
-      const s = room.engine.getState();
-      const hpPct = s.p2.hp / s.p2.maxHp;
-      const dist = Math.abs(s.p1.x - s.p2.x);
-      const pool = [];
-      if (dist > 3) pool.push('move_right','move_left','move_left','move_right','skill1','skill2');
-      else if (dist > 1) pool.push('skill1','skill2','defend','move_right','move_left');
-      else pool.push('skill1','skill2','skill3','defend','dodge_left','dodge_right','move_left','move_right');
-      if (hpPct < 0.3) pool.push('defend','defend','dodge_left','dodge_right');
-      const actions = [];
-      for (let i = 0; i < TICKS; i++) actions.push(pool[Math.floor(Math.random() * pool.length)]);
-      room.pActions[room.aiSid] = actions;
-    }
-    room.pActions[socket.id] = []; // will be filled by updateActions
-    // 自动设为 ready，等待玩家也 ready
   });
 
   // 训练模式
