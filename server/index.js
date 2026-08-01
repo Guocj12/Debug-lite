@@ -2,6 +2,7 @@
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const BattleEngine = require('./battle');
 
@@ -240,6 +241,125 @@ function applyActionCost(simState, cKey, action) {
   p.mp -= (sk.mpCost || 0);
   p.sp -= (sk.spCost || 0);
   if (sk.cooldown) simState['_cooldowns_' + cKey][sid] = sk.cooldown;
+}
+
+// ==================== AI 权重系统 ====================
+
+/**
+ * 尝试加载训练好的 AI 权重文件。
+ * 如果文件存在，返回权重映射表；否则返回 null。
+ */
+let _aiWeights = null;
+let _aiWeightsLoaded = false;
+
+function loadAIWeights() {
+  if (_aiWeightsLoaded) return _aiWeights;
+  _aiWeightsLoaded = true;
+  try {
+    const fs = require('fs');
+    const p = path.join(__dirname, '..', 'data', 'ai-weights.json');
+    if (fs.existsSync(p)) {
+      _aiWeights = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      console.log('[AI] 已加载训练权重: ' + Object.keys(_aiWeights).join(', '));
+      return _aiWeights;
+    }
+  } catch (e) {
+    console.log('[AI] 权重文件加载失败，使用随机策略: ' + e.message);
+  }
+  console.log('[AI] 未找到权重文件，使用随机策略（运行 node server/train-ai.js 来训练）');
+  return null;
+}
+
+/**
+ * 使用训练权重的 AI 行动序列生成。
+ * 
+ * 策略：
+ *   1. 如果该角色有训练好的基因模板，优先使用模板中的行动
+ *   2. 对每个 tick，先尝试基因中指定的行动
+ *   3. 如果不合法（CD/资源不足），以 60% 概率 fallback 到随机合法行动，
+ *      40% 概率坚持用 wait（更多样化的行为）
+ *   4. 同时加入少量随机扰动（30% 概率随机变一个 tick），避免完全可预测
+ */
+function generateAIActionsSmart(engine, charId) {
+  // 确保权重已加载
+  const weights = loadAIWeights();
+  
+  const genericPool = ['move_left', 'move_right', 'dodge_left', 'dodge_right', 'defend', 'turn', 'wait'];
+  
+  const simState = JSON.parse(JSON.stringify(engine.state));
+  simState._cooldowns_p1 = {};
+  simState._cooldowns_p2 = {};
+  
+  const actions = [];
+  const p2 = simState.p2;
+  const skillIds = p2.skills || [];
+  const skillPool = skillIds.map((_, i) => 'skill' + (i + 1));
+  const allPool = [...genericPool, ...skillPool];
+  
+  // 获取该角色的训练基因模板
+  const charWeights = weights ? weights[charId] : null;
+  const trainedGenes = charWeights ? charWeights.genes : null;
+  const geneFitness = charWeights ? charWeights.fitness : 0;
+  
+  // 如果基因胜率太低，不如用纯随机
+  const useTrained = trainedGenes && trainedGenes.length === TICKS && geneFitness > 0.3;
+  
+  // 引入随机扰动：随机选几个 tick 无视基因，用随机替代
+  const perturbTicks = new Set();
+  if (useTrained) {
+    const perturbCount = Math.floor(Math.random() * 5); // 0-4 个扰动
+    for (let i = 0; i < perturbCount; i++) {
+      perturbTicks.add(Math.floor(Math.random() * TICKS));
+    }
+  }
+  
+  for (let tick = 0; tick < TICKS; tick++) {
+    // tick 冷却递减
+    for (const k of ['p1', 'p2']) {
+      const cd = simState['_cooldowns_' + k];
+      for (const sk in cd) { if (cd[sk] > 0) cd[sk]--; }
+    }
+    
+    // 资源恢复
+    const cd2 = simState._charDef_p2;
+    p2.sp = Math.min(p2.maxSp, p2.sp + (cd2.spRegen || 2));
+    p2.mp = Math.min(p2.maxMp, p2.mp + (cd2.mpRegen || 1));
+    
+    let picked = null;
+    
+    // 确定本 tick 的候选行动
+    let candidates = [];
+    
+    if (useTrained && !perturbTicks.has(tick)) {
+      // 优先尝试训练基因
+      const geneAction = trainedGenes[tick];
+      // 如果基因行动在当前动作池中，优先尝试；否则标记为不可用
+      if (allPool.includes(geneAction)) {
+        candidates.push(geneAction);
+      }
+      // 再补充一些随机候选
+      const shuffled = [...allPool].sort(() => Math.random() - 0.5);
+      candidates.push(...shuffled.filter(a => !candidates.includes(a)));
+    } else {
+      // 纯随机模式（扰动 tick 或无训练基因）
+      candidates = [...allPool].sort(() => Math.random() - 0.5);
+    }
+    
+    // 尝试候选行动
+    for (const candidate of candidates) {
+      if (canUseAction(simState, 'p2', candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    
+    if (!picked) picked = 'wait';
+    
+    applyActionCost(simState, 'p2', picked);
+    actions.push(picked);
+  }
+  
+  return actions;
 }
 
 /** 生成 AI 的 16 tick 行动序列（简单随机，保留给旧 API 兼容） */
@@ -572,7 +692,8 @@ io.on('connection', (socket) => {
       atk: aiChar.atk, def: aiChar.def, skillIds: d.aiSkillIds, customSkills: {},
     };
 
-    const aiActions = generateAIActions(aiChar.id, d.aiSkillIds);
+    // 预加载 AI 权重（如果有）
+    loadAIWeights();
     const playerActions = []; // 玩家在编排阶段填写，发到服务端时为空，由客户端本地模拟
     // AI 对战：玩家在前端编排序列后发给后端计算
     // 这里先返回准备数据，实际战斗在玩家提交序列后计算
@@ -604,7 +725,25 @@ io.on('connection', (socket) => {
 
     const playerActions = (d.actions || []).slice(0, TICKS);
     while (playerActions.length < TICKS) playerActions.push('wait');
-    const aiActions = generateAIActions(aiChar.id, d.aiSkillIds);
+    
+    // 使用智能 AI 生成（优先用训练权重，fallback 到随机）
+    // 构建一个临时 engine 来生成智能序列
+    const tmpEngine = new BattleEngine();
+    tmpEngine.init({
+      p1: {
+        id: 'P1', charId: p1Def.charId, x: 5, facing: 1,
+        hp: p1Def.maxHp, maxHp: p1Def.maxHp, mp: p1Def.maxMp, maxMp: p1Def.maxMp,
+        sp: p1Def.maxSp, maxSp: p1Def.maxSp, atk: p1Def.atk, def: p1Def.def,
+        skills: p1Def.skillIds, customSkills: {},
+      },
+      p2: {
+        id: 'P2', charId: p2Def.charId, x: 10, facing: -1,
+        hp: p2Def.maxHp, maxHp: p2Def.maxHp, mp: p2Def.maxMp, maxMp: p2Def.maxMp,
+        sp: p2Def.maxSp, maxSp: p2Def.maxSp, atk: p2Def.atk, def: p2Def.def,
+        skills: p2Def.skillIds, customSkills: {},
+      },
+    });
+    const aiActions = generateAIActionsSmart(tmpEngine, aiChar.id);
 
     const { frames, state } = runSingleBattle(p1Def, p2Def, playerActions, aiActions);
     socket.emit('aiBattleResult', {
@@ -873,10 +1012,11 @@ function runSoloBattle(room) {
   const playerSid = room.playerSid;
   const aiSid = room.aiSid;
 
-  // ★ 每次战斗前重新生成 AI 行动序列（模拟逐 tick 资源/CD 检查）
+  // ★ 每次战斗前重新生成 AI 行动序列
   if (!room.training) {
-    room.pActions[aiSid] = generateAIActionsSimulated(room.engine);
-    console.log('[AI] generated actions: ' + room.pActions[aiSid].join(','));
+    const aiCharId = room.engine.state.p2.charId;
+    room.pActions[aiSid] = generateAIActionsSmart(room.engine, aiCharId);
+    console.log('[AI] generated actions (smart): ' + room.pActions[aiSid].join(','));
   }
 
   const pActions = (room.pActions[playerSid] || []).slice(0, TICKS);
