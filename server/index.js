@@ -639,6 +639,10 @@ io.on('connection', (socket) => {
     for (const [rid, r] of lobbyRooms) {
       if (r.getPlayerSlot(socket.id)) { r.pActions[socket.id] = d.actions; break; }
     }
+    // 单人房间
+    for (const [rid, room] of soloRooms) {
+      if (room.playerSid === socket.id) { room.pActions[socket.id] = d.actions; break; }
+    }
   });
 
   socket.on('reportBattleState', (d) => {
@@ -676,27 +680,6 @@ io.on('connection', (socket) => {
           console.log('[VERIFY] FAIL room=' + rid);
           forceCloseRoom(r, '战斗状态不一致，房间已关闭');
         }
-      }
-      break;
-    }
-  });
-
-  socket.on('ready', () => {
-    for (const [rid, r] of lobbyRooms) {
-      const slot = r.getPlayerSlot(socket.id);
-      if (!slot || slot.type !== 'player') break;
-      // 标记此玩家已提交序列
-      slot.battleReady = true;
-      io.to(rid).emit('slotsUpdated', { slots: r.getSlotSummary(), hostId: r.hostId });
-
-      // 两个玩家都提交了序列 → 开始联机战斗运算
-      if (r.state === 'playing' &&
-          r.bothPlayerSlotsFilled() &&
-          r.slots[0].battleReady && r.slots[1].battleReady &&
-          r.pActions[r.slots[0].sid] && r.pActions[r.slots[1].sid]) {
-        r.slots[0].battleReady = false;
-        r.slots[1].battleReady = false;
-        startOnlineBattle(r);
       }
       break;
     }
@@ -740,6 +723,179 @@ io.on('connection', (socket) => {
           }
         }
         break;
+      }
+    }
+  });
+});
+
+// ==================== AI/训练模式（单人房间，不入大厅） ====================
+const soloRooms = new Map(); // solo room: { id, engine, round, timer, pActions, char, slot }
+
+function startSoloPrepare(room) {
+  room.round++;
+  const s = room.engine.getState();
+  io.to(room.playerSid).emit('prepareStart', {
+    round: room.round, time: 60,
+    p1: s.p1, p2: s.p2,
+    p1Char: s.p1.charId, p2Char: s.p2.charId,
+    bases: s.bases,
+  });
+  room.timer = setInterval(() => {
+    // 倒计时由客户端自己处理，这里只是保底
+  }, 1000);
+}
+
+function runSoloBattle(room) {
+  clearInterval(room.timer);
+  const playerSid = room.playerSid;
+  const aiSid = room.aiSid;
+  const pActions = (room.pActions[playerSid] || []).slice(0, TICKS);
+  while (pActions.length < TICKS) pActions.push('wait');
+  room.engine.setActions(pActions, room.pActions[aiSid] || []);
+  const frames = room.engine.executeAll();
+  const s = room.engine.getState();
+
+  const gameOver = s.p1.hp <= 0 || s.p2.hp <= 0 ||
+    (s.bases && (s.bases.p1.hp <= 0 || s.bases.p2.hp <= 0)) || room.round >= 30;
+
+  io.to(playerSid).emit('battleFrames', { frames, final: s, round: room.round, gameOver });
+
+  if (gameOver) {
+    let winner, p1Hp = s.p1.hp, p2Hp = s.p2.hp, reason;
+    if (s.p1.hp <= 0) { winner = 'P2'; reason = '对方被击杀'; }
+    else if (s.p2.hp <= 0) { winner = 'P1'; reason = '对方被击杀'; }
+    else if (s.bases && s.bases.p1.hp <= 0) { winner = 'P2'; reason = 'P1基地被摧毁'; }
+    else if (s.bases && s.bases.p2.hp <= 0) { winner = 'P1'; reason = 'P2基地被摧毁'; }
+    else if (s.p1.hp > s.p2.hp) { winner = 'P1'; reason = 'HP领先'; }
+    else if (s.p2.hp > s.p1.hp) { winner = 'P2'; reason = 'HP领先'; }
+    else { winner = 'draw'; reason = '平局'; }
+    io.to(playerSid).emit('gameOver', { winner, p1Hp, p2Hp, reason });
+    soloRooms.delete(room.id);
+  } else {
+    // 保存状态继承，等待下一轮
+    const prevState = room.engine.getState();
+    room.engine = new BattleEngine();
+    const chars = require('../data/characters.json').characters;
+    room.engine.init({
+      p1: {
+        id: 'P1', charId: s.p1.charId, x: prevState.p1.x, facing: prevState.p1.facing,
+        hp: prevState.p1.hp, maxHp: s.p1.maxHp, mp: prevState.p1.mp, maxMp: s.p1.maxMp,
+        sp: prevState.p1.sp, maxSp: s.p1.maxSp, atk: s.p1.atk, def: s.p1.def,
+        skills: s.p1.skills, customSkills: s.p1.customSkills || {},
+      },
+      p2: {
+        id: 'P2', charId: s.p2.charId, x: prevState.p2.x, facing: prevState.p2.facing,
+        hp: prevState.p2.hp, maxHp: s.p2.maxHp, mp: prevState.p2.mp, maxMp: s.p2.maxMp,
+        sp: prevState.p2.sp, maxSp: s.p2.maxSp, atk: s.p2.atk, def: s.p2.def,
+        skills: s.p2.skills, customSkills: s.p2.customSkills || {},
+      },
+    });
+    setTimeout(() => startSoloPrepare(room), 11000);
+  }
+}
+
+io.on('connection', (socket) => {
+
+  // AI 对战
+  socket.on('startAI', (d) => {
+    const rid = 'AI-' + Math.random().toString(36).substring(2, 6);
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+    const aiChar = chars.find(c => c.id === d.aiCharId) || chars[1];
+
+    const engine = new BattleEngine();
+    engine.init({
+      p1: { id: 'P1', charId: pChar.id, x: 5, facing: 1, hp: pChar.maxHp, maxHp: pChar.maxHp, mp: pChar.maxMp, maxMp: pChar.maxMp, sp: pChar.maxSp, maxSp: pChar.maxSp, atk: pChar.atk, def: pChar.def, skills: d.skillIds || pChar.defaultSkills },
+      p2: { id: 'P2', charId: aiChar.id, x: 10, facing: -1, hp: aiChar.maxHp, maxHp: aiChar.maxHp, mp: aiChar.maxMp, maxMp: aiChar.maxMp, sp: aiChar.maxSp, maxSp: aiChar.maxSp, atk: aiChar.atk, def: aiChar.def, skills: d.aiSkillIds || aiChar.defaultSkills },
+    });
+
+    const room = {
+      id: rid, engine, round: 0, timer: null,
+      playerSid: socket.id, aiSid: 'AI-' + rid,
+      pActions: {}, char: d.charId,
+    };
+    soloRooms.set(rid, room);
+    startSoloPrepare(room);
+  });
+
+  // AI ready
+  socket.on('aiReady', (d) => {
+    const room = soloRooms.get(d.roomId);
+    if (!room) return;
+    if (d.actions && d.actions.length > 0) {
+      room.pActions[room.aiSid] = d.actions.slice(0, TICKS);
+    } else {
+      // 随机 AI 序列
+      const s = room.engine.getState();
+      const hpPct = s.p2.hp / s.p2.maxHp;
+      const dist = Math.abs(s.p1.x - s.p2.x);
+      const pool = [];
+      if (dist > 3) pool.push('move_right','move_left','move_left','move_right','skill1','skill2');
+      else if (dist > 1) pool.push('skill1','skill2','defend','move_right','move_left');
+      else pool.push('skill1','skill2','skill3','defend','dodge_left','dodge_right','move_left','move_right');
+      if (hpPct < 0.3) pool.push('defend','defend','dodge_left','dodge_right');
+      const actions = [];
+      for (let i = 0; i < TICKS; i++) actions.push(pool[Math.floor(Math.random() * pool.length)]);
+      room.pActions[room.aiSid] = actions;
+    }
+    room.pActions[socket.id] = []; // will be filled by updateActions
+    // 自动设为 ready，等待玩家也 ready
+  });
+
+  // 训练模式
+  socket.on('startTrain', (d) => {
+    const rid = 'TR-' + Math.random().toString(36).substring(2, 6);
+    const chars = require('../data/characters.json').characters;
+    const pChar = chars.find(c => c.id === d.charId) || chars[0];
+
+    const engine = new BattleEngine();
+    engine.init({
+      _training: true,
+      p1: { id: 'P1', charId: pChar.id, x: 5, facing: 1, hp: pChar.maxHp, maxHp: pChar.maxHp, mp: pChar.maxMp, maxMp: pChar.maxMp, sp: pChar.maxSp, maxSp: pChar.maxSp, atk: pChar.atk, def: pChar.def, skills: d.skillIds || pChar.defaultSkills },
+      p2: { id: 'P2', charId: 'warrior', x: 10, facing: -1, hp: 2147483647, maxHp: 2147483647, mp: 999, maxMp: 999, sp: 999, maxSp: 999, atk: 0, def: 0, skills: ['warrior_whirlwind','warrior_heavy','warrior_shieldbash'] },
+    });
+
+    const room = {
+      id: rid, engine, round: 0, timer: null,
+      playerSid: socket.id, aiSid: 'TRAIN-' + rid,
+      pActions: {}, char: d.charId, training: true,
+    };
+    // pupppet does nothing
+    room.pActions[room.aiSid] = new Array(TICKS).fill('wait');
+    soloRooms.set(rid, room);
+    startSoloPrepare(room);
+  });
+
+  // 训练 ready
+  socket.on('trainReady', (d) => {
+    const room = soloRooms.get(d.roomId);
+    if (!room) return;
+    room.pActions[socket.id] = [];
+  });
+
+  // 战斗阶段提交序列后 ready
+  socket.on('ready', () => {
+    // 先检查是否在大厅房间
+    for (const [rid, r] of lobbyRooms) {
+      const slot = r.getPlayerSlot(socket.id);
+      if (slot && slot.type === 'player') {
+        slot.battleReady = true;
+        io.to(rid).emit('slotsUpdated', { slots: r.getSlotSummary(), hostId: r.hostId });
+        if (r.state === 'playing' && r.bothPlayerSlotsFilled() &&
+            r.slots[0].battleReady && r.slots[1].battleReady &&
+            r.pActions[r.slots[0].sid] && r.pActions[r.slots[1].sid]) {
+          r.slots[0].battleReady = false;
+          r.slots[1].battleReady = false;
+          startOnlineBattle(r);
+        }
+        return;
+      }
+    }
+    // 检查单人房间
+    for (const [rid, room] of soloRooms) {
+      if (room.playerSid === socket.id) {
+        runSoloBattle(room);
+        return;
       }
     }
   });

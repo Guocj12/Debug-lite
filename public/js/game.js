@@ -1605,15 +1605,6 @@ function setupSocket() {
   });
 
   G.socket.on('err', (d) => { alert(d.msg); });
-
-  // === AI/训练场事件（服务端运算结果） ===
-  G.socket.on('aiPrepareStart', (d) => {
-    onOnlinePrepareStart(d);
-  });
-
-  G.socket.on('aiBattleResult', (d) => {
-    onOnlineBattleResult(d);
-  });
 }
 
 // ==================== 本地步进引擎 ====================
@@ -2056,22 +2047,11 @@ function randomFill() {
 
 function readyBattle() {
   DBG.log('[READY] 完成，发送队列 ' + G.actions.length + '个行动');
-  if (G.mode === 'ai') {
-    // AI 对战：发送序列到服务端运算
+  if (G.mode === 'ai' || G.mode === 'train') {
+    // AI/训练模式：发送 updateActions + ready 到服务端，服务端自动运算
     if (G.socket) {
-      G.socket.emit('aiSubmitActions', {
-        charId: G.myCharId, skillIds: G.mySkillIds,
-        aiCharId: G.p2?.charId, aiSkillIds: [],
-        actions: G.actions,
-      });
-    }
-  } else if (G.mode === 'train') {
-    // 训练场：发送序列到服务端运算
-    if (G.socket) {
-      G.socket.emit('trainSubmitActions', {
-        charId: G.myCharId, skillIds: G.mySkillIds,
-        actions: G.actions,
-      });
+      G.socket.emit('updateActions', { actions: G.actions });
+      G.socket.emit('ready');
     }
   } else if (G.socket && G.roomId) {
     // 联机对战
@@ -2298,10 +2278,15 @@ function playBattleAnim(frames, final) {
           document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : `${w} 获胜!`;
           document.getElementById('rdetail').textContent = `P1 HP: ${final.p1.hp} | P2 HP: ${final.p2.hp} | ${reason === 'baseDestroyed' ? '基地被摧毁' : (reason === 'maxRounds' ? '达到最大回合数' : '击杀获胜')}`;
           DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
+          G._onBattleEnd = null;
         } else if (G._onBattleEnd) {
           // 联机模式：播放结束，调用回调回传状态
           G._onBattleEnd(final);
           G._onBattleEnd = null;
+          // 联机模式在等确认时显示提示
+          document.getElementById('actionQueuePanel').classList.remove('hidden');
+          document.getElementById('actionQueuePanel').querySelector('h3').textContent = '等待对方确认...';
+          document.getElementById('rdyBtn').disabled = true;
         }
       }
       return;
@@ -3057,13 +3042,45 @@ function startGame() {
   setupSocket();
 
   if (_selMode === 'ai') {
+    bindSoloBattleEvents(); // 绑定 AI/训练事件
+    G.mode = 'ai';
     const aiChar = _charsData.characters.find(c => c.id !== _selChar) || _charsData.characters[0];
     G.socket.emit('startAI', { name:'Player', charId:_selChar, skillIds:_selSkills, aiCharId:aiChar.id, aiSkillIds:[...aiChar.defaultSkills] });
-    G.mode = 'ai';
   } else if (_selMode === 'train') {
-    G.socket.emit('startTrain', { name:'Player', charId:_selChar, skillIds:_selSkills });
+    bindSoloBattleEvents(); // 绑定 AI/训练事件
     G.mode = 'train';
+    G.socket.emit('startTrain', { name:'Player', charId:_selChar, skillIds:_selSkills });
   }
+}
+
+/** 绑定 AI/训练模式的战斗事件 */
+function bindSoloBattleEvents() {
+  if (!G.socket) return;
+  G.socket.off('prepareStart');
+  G.socket.off('battleFrames');
+  G.socket.off('gameOver');
+
+  G.socket.on('prepareStart', (d) => {
+    onOnlinePrepareStart(d);
+  });
+
+  G.socket.on('battleFrames', (d) => {
+    G._mode = 'battle';
+    G._battleGameOver = d.gameOver;
+    document.getElementById('actionQueuePanel').classList.add('hidden');
+    document.getElementById('battleQueuePanel').classList.remove('hidden');
+    document.getElementById('rdyBtn').disabled = true;
+    playBattleAnim(d.frames, d.final);
+  });
+
+  G.socket.on('gameOver', (d) => {
+    G._mode = 'result';
+    FX.clear();
+    if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+    UI.showScreen('result');
+    document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
+    document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+  });
 }
 
 // ==================== 图鉴系统 Wiki ====================
