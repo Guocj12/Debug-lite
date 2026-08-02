@@ -2,6 +2,7 @@
   "field": { "width": 16, "groundY": 0.7 },
   "battle": { "ticksPerRound": 16, "tickIntervalMs": 1000 },
   "prepare": { "maxActions": 16, "timeSeconds": 60 },
+  "music": { "bpm": 120, "beatsPerBar": 4, "barsPerLoop": 4, "swing": 0, "enabled": true },
   "base": {
     "hp": 100,
     "def": 25,

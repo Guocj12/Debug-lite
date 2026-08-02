@@ -1425,6 +1425,14 @@ const G = {
   _roomSlots: [],    // 房间槽位列表
   _roomHostId: null, // 房主sid
 
+  // ---- 音乐引擎关联 ----
+  _musicReady: false,       // 音乐引擎是否已初始化
+  _musicLoopSync: false,    // 是否在等待循环结束再进入战斗
+  _musicPendingBattle: false, // 是否有待处理的战斗开始（等音乐循环）
+  _musicBeatDriven: false,  // 是否使用节拍驱动步进（替代独立计时器）
+  _musicReadyForFrames: false, // 音乐循环已结束，等待 battleFrames
+  _pendingOnlineResult: null, // 联机模式暂存的战斗结果
+
   reset() {
     this.p1 = null; this.p2 = null; this.bases = null; this.actions = [];
     this.round = 0; this.timeLeft = 60; this.tick = 0;
@@ -1441,6 +1449,16 @@ const G = {
     this._roomHostId = null;
     this.mySlotIndex = null;
     this._onBattleEnd = null; // 联机模式战斗播放结束回调
+
+    // 音乐状态重置
+    this._musicLoopSync = false;
+    this._musicPendingBattle = false;
+    this._musicBeatDriven = false;
+    this._musicReadyForFrames = false;
+    this._pendingOnlineResult = null;
+    this._tickIdx = 0;
+    this._beatAccum = 0;
+
     if (this._renderLoop) { cancelAnimationFrame(this._renderLoop); this._renderLoop = null; }
     FX.clear(); Tween.clear();
   },
@@ -1956,8 +1974,13 @@ function startRenderLoop() {
     G._renderLastTime = now;
     if (dt > 200) dt = 16;
 
-    // 战斗阶段专用步进（必须在 FX.update 之前调用，以便新产生的 FX 在当帧就能渲染）
-    if (G._mode === 'battle' && G._battleStep) G._battleStep();
+    // 战斗阶段：不再由渲染循环驱动步进
+    // 步进由 MusicEngine.onBeat 回调触发（如果音乐引擎启用）
+    // 如果音乐引擎未启用，回退到原来的独立计时器模式
+    if (G._mode === 'battle' && G._battleStep && !G._musicBeatDriven) {
+      // 回退模式：使用性能计时器（FRAME_DURATION）
+      G._battleStep();
+    }
 
     FX.update(dt);
     Tween.update();
@@ -2157,21 +2180,30 @@ function randomFill() {
 function readyBattle() {
   DBG.log('[READY] 完成，发送队列 ' + G.actions.length + '个行动');
   if (G.mode === 'ai' || G.mode === 'train') {
-    // AI/训练模式：发送 updateActions + ready 到服务端，服务端自动运算
     if (G.socket) {
       G.socket.emit('updateActions', { actions: G.actions });
       G.socket.emit('ready');
     }
   } else if (G.socket && G.roomId) {
-    // 联机对战
     G.socket.emit('updateActions', { actions: G.actions });
     G.socket.emit('ready');
   }
   document.getElementById('rdyBtn').disabled = true;
-  UI.log('已准备，等待对手...');
+
+  // 如果音乐引擎正在运行，标记等待循环完成后进入战斗
+  if (G._musicReady && MusicEngine.isRunning) {
+    G._musicLoopSync = true;
+    G._musicPendingBattle = true;
+    UI.log('已准备，等待音乐循环结束...');
+  } else {
+    UI.log('已准备，等待对手...');
+  }
 }
 
 function quitBattle() {
+  if (G._musicReady && MusicEngine.isRunning) {
+    MusicEngine.stop();
+  }
   if (G.socket) G.socket.emit('leaveRoom');
   G.reset();
   nav('menu');
@@ -2210,10 +2242,7 @@ function bindOnlineBattleEvents() {
   });
 }
 
-/**
- * 【联机】进入准备阶段，编排序列
- * 由服务端双方准备后 emit('prepareStart') 触发
- */
+/** 联机模式/单人模式的 prepareStart 处理（含音乐启动） */
 function onOnlinePrepareStart(d) {
   G._mode = 'prepare';
   G.round = d.round;
@@ -2230,7 +2259,16 @@ function onOnlinePrepareStart(d) {
   G.p1Actions = [];
   G.p2Actions = [];
   G.tick = 0;
+  G._musicLoopSync = false;
+  G._musicPendingBattle = false;
+  G._musicBeatDriven = false;
   FX.clear();
+
+  // 启动编辑阶段音乐（bass + hi-hat）
+  if (G._musicReady && !MusicEngine.isRunning) {
+    MusicEngine.start('edit');
+    console.log('[MUSIC] 编辑阶段音乐启动');
+  }
 
   updatePrepareUI();
   UI.showScreen('battle');
@@ -2241,7 +2279,7 @@ function onOnlinePrepareStart(d) {
   document.getElementById('battleQueuePanel').classList.add('hidden');
   document.getElementById('rdyBtn').disabled = false;
   document.getElementById('tm').textContent = G.timeLeft;
-  document.getElementById('rnd').textContent = 'ROUND ' + d.round + ' (联机)';
+  document.getElementById('rnd').textContent = 'ROUND ' + d.round + (G.mode === 'online' ? ' (联机)' : '');
 
   UI.log('Round ' + d.round + ' — 编排你的序列 (' + G.timeLeft + 's)');
 
@@ -2249,12 +2287,33 @@ function onOnlinePrepareStart(d) {
 }
 
 /**
- * 【联机】收到服务端战斗结果 → 直接播放帧回放
+ * 【联机/单人】收到服务端战斗结果 → 播放帧回放
+ * 如果音乐引擎启用且处于编辑阶段，等待循环完成后再播放；
+ * 如果音乐引擎未启用，直接播放（回退模式）
  */
 function onOnlineBattleResult(d) {
+  // 如果音乐引擎正在运行且我们在编辑阶段，标记等待同步
+  if (G._musicReady && MusicEngine.isRunning && G._mode === 'prepare') {
+    // 数据先存起来，等 handleMusicLoopComplete 触发后使用
+    G._pendingOnlineResult = d;
+    // readyBattle 已经设置了 _musicLoopSync 和 _musicPendingBattle
+    // 如果还没设置（比如联机模式对方先准备好了），现在设置
+    if (!G._musicLoopSync) {
+      G._musicLoopSync = true;
+      G._musicPendingBattle = true;
+      UI.log('战斗结果已到达，等待音乐循环结束...');
+    }
+    return;
+  }
+
+  // 回退模式：直接播放
+  startOnlineBattlePlayback(d);
+}
+
+function startOnlineBattlePlayback(d) {
   G._mode = 'battle';
   G._battleGameOver = d.gameOver || false;
-  G._onlineResult = d; // 保存结算信息
+  G._onlineResult = d;
   G.round = d.round;
   G.p1 = d.final.p1;
   G.p2 = d.final.p2;
@@ -2309,6 +2368,7 @@ function onOnlineBattleResult(d) {
  * 【联机】对手断线 → 我方直接胜利
  */
 function onOpponentDisconnected(d) {
+  if (G._musicReady) MusicEngine.stop();
   if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
   FX.clear();
   UI.showScreen('result');
@@ -2320,6 +2380,7 @@ function onOpponentDisconnected(d) {
  * 【联机】房间被强制关闭（状态不一致等异常）
  */
 function onRoomForceClosed(d) {
+  if (G._musicReady) MusicEngine.stop();
   if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
   FX.clear();
   G.reset();
@@ -2327,27 +2388,34 @@ function onRoomForceClosed(d) {
   nav('menu');
 }
 
-// ==================== 战斗动画播放（服务端发来的帧序列） ====================
-const FRAME_DURATION = 600;
+// ==================== 战斗动画播放（音乐节拍驱动版） ====================
+// FRAME_DURATION 现在从音乐引擎获取（若不可用则回退到 600ms）
+function getBeatDuration() {
+  if (G._musicReady && MusicEngine.beatDuration) {
+    return MusicEngine.beatDuration * 1000; // 转毫秒
+  }
+  return 600; // 回退
+}
 
 function playBattleAnim(frames, final) {
   G._battleFrames = frames;
   G._battleFinal = final;
   FX.clear();
   G.tick = 0;
-  G._renderP1 = null; G._renderP2 = null; // 清除缓动渲染位置
+  G._renderP1 = null; G._renderP2 = null;
 
-  // ★ 恢复双方为本回合初始状态
+  // 恢复双方为本回合初始状态
   if (G._originP1) G.p1 = JSON.parse(JSON.stringify(G._originP1));
   if (G._originP2) G.p2 = JSON.parse(JSON.stringify(G._originP2));
   if (G._originBases) G.bases = JSON.parse(JSON.stringify(G._originBases));
   G._cooldowns = {};
 
-  DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, p1(x='+G.p1.x+',hp='+G.p1.hp+') p2(x='+G.p2.x+',hp='+G.p2.hp+')');
+  const beatDur = getBeatDuration();
+  DBG.log('[BATTLE] 开始播放 ' + frames.length + ' 帧, beatDur=' + beatDur + 'ms, musicDriven=' + G._musicBeatDriven);
 
   let tickIdx = 0;
+  // 回退模式专用：独立计时器
   let battleAccum = 0;
-  // 战斗步进专用时间戳，不和渲染循环共享
   let battleLastTime = performance.now();
 
   // 初始化第一帧 UI
@@ -2360,276 +2428,227 @@ function playBattleAnim(frames, final) {
   G._battleStep = () => {
     if (G._mode !== 'battle') return;
 
-    const now = performance.now();
-    let dt = now - battleLastTime;
-    battleLastTime = now;
-    if (dt > 500) dt = 16; // 防止大跳帧
-
-    battleAccum += dt;
+    // 回退模式：独立计时器驱动（音乐引擎不可用时）
+    if (!G._musicBeatDriven) {
+      const now = performance.now();
+      let dt = now - battleLastTime;
+      battleLastTime = now;
+      if (dt > 500) dt = 16;
+      battleAccum += dt;
+      if (battleAccum < beatDur) {
+        FX.update(Math.min(100, dt));
+        Tween.update();
+        return;
+      }
+      battleAccum -= beatDur;
+    }
 
     if (tickIdx >= frames.length) {
-      // 所有帧播完，等 FX 也播完
-      if (FX.active.length === 0) {
-        G.p1 = final.p1; G.p2 = final.p2;
-        if (final.bases) G.bases = final.bases;
-        UI.updateBaseHUD(G.bases);
-        G._renderP1 = null; G._renderP2 = null;
-        UI.updateHUD(G.p1, 'p1'); UI.updateHUD(G.p2, 'p2');
-        UI.log(`回合结束 — P1 HP:${final.p1.hp} P2 HP:${final.p2.hp}` + (final.bases ? ` BASE1:${final.bases.p1.hp} BASE2:${final.bases.p2.hp}` : ''));
-        G.tick = frames.length;
-        UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
-        DBG.log('[BATTLE] 播放完毕');
-        G._battleStep = null;
+      // 所有帧播完
+      G.p1 = final.p1; G.p2 = final.p2;
+      if (final.bases) G.bases = final.bases;
+      UI.updateBaseHUD(G.bases);
+      G._renderP1 = null; G._renderP2 = null;
+      UI.updateHUD(G.p1, 'p1'); UI.updateHUD(G.p2, 'p2');
+      UI.log('回合结束 — P1 HP:' + final.p1.hp + ' P2 HP:' + final.p2.hp + (final.bases ? ' BASE1:' + final.bases.p1.hp + ' BASE2:' + final.bases.p2.hp : ''));
+      G.tick = frames.length;
+      UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
+      DBG.log('[BATTLE] 播放完毕');
+      G._battleStep = null;
 
-        // 16tick 全部播完 + FX 清空后才结算
-        if (G._battleGameOver) {
-          const d = G._pendingGameOverData;
-          if (d) {
-            // 服务端发来的结算数据，优先使用（AI/训练模式）
-            G._mode = 'result';
-            FX.clear();
-            if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
-            UI.showScreen('result');
-            document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
-            document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
-            DBG.log('[BATTLE] 游戏结束, winner=' + d.winner + ' reason=' + d.reason);
-            G._pendingGameOverData = null;
-          } else {
-            // 本地备用结算
-            const b1hp = final.bases?.p1?.hp ?? 100, b2hp = final.bases?.p2?.hp ?? 100;
-            const p1Dead = final.p1.hp <= 0, p2Dead = final.p2.hp <= 0;
-            const b1Dead = b1hp <= 0, b2Dead = b2hp <= 0;
-            let w, reason;
-            if (b1Dead && b2Dead) { w = 'draw'; reason = '双方基地均被摧毁'; }
-            else if (b1Dead) { w = 'P2'; reason = 'P1基地被摧毁'; }
-            else if (b2Dead) { w = 'P1'; reason = 'P2基地被摧毁'; }
-            else if (p1Dead && p2Dead) { w = 'draw'; reason = '双方同时阵亡'; }
-            else if (p1Dead) { w = 'P2'; reason = 'P1被击杀'; }
-            else if (p2Dead) { w = 'P1'; reason = 'P2被击杀'; }
-            else { w = final.p1.hp > final.p2.hp ? 'P1' : final.p2.hp > final.p1.hp ? 'P2' : 'draw'; reason = '达到最大回合数'; }
-            G._mode = 'result';
-            FX.clear();
-            UI.showScreen('result');
-            document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : w + ' 获胜!';
-            document.getElementById('rdetail').textContent = 'P1 HP: ' + final.p1.hp + ' | P2 HP: ' + final.p2.hp + ' | ' + reason;
-            DBG.log('[BATTLE] 游戏结束, winner=' + w + ' reason=' + reason);
-          }
-          G._onBattleEnd = null;
-        } else if (G._onBattleEnd) {
-          G._onBattleEnd(final);
-          G._onBattleEnd = null;
-          // 只有联机模式且非gameOver时才显示等待确认
-          if (!G._battleGameOver) {
-            document.getElementById('actionQueuePanel').classList.remove('hidden');
-            document.getElementById('actionQueuePanel').querySelector('h3').textContent = '等待对方确认...';
-            document.getElementById('rdyBtn').disabled = true;
-          }
+      if (G._battleGameOver) {
+        finishGameOver(final);
+      } else if (G._musicBeatDriven) {
+        // 音乐驱动模式：等待循环结束回到编辑
+        G._mode = 'battle-waiting-edit';
+        UI.log('等待音乐循环结束...');
+      } else if (G._onBattleEnd) {
+        // 回退模式：直接回调
+        G._onBattleEnd(final);
+        G._onBattleEnd = null;
+        if (!G._battleGameOver) {
+          document.getElementById('actionQueuePanel').classList.remove('hidden');
+          document.getElementById('actionQueuePanel').querySelector('h3').textContent = '等待对方确认...';
+          document.getElementById('rdyBtn').disabled = true;
         }
       }
       return;
     }
 
-    if (battleAccum >= FRAME_DURATION) {
-      battleAccum -= FRAME_DURATION;
+    // ---- 处理当前 tick 帧 ----
+    const prevP1 = G.p1 ? { x: G.p1.x, facing: G.p1.facing } : null;
+    const prevP2 = G.p2 ? { x: G.p2.x, facing: G.p2.facing } : null;
+    const frame = frames[tickIdx];
+    G.p1 = frame.p1; G.p2 = frame.p2;
+    if (frame.bases) G.bases = frame.bases;
+    UI.updateBaseHUD(G.bases);
+    G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
+    G.tick = tickIdx;
 
-      const prevP1 = G.p1 ? { x: G.p1.x, facing: G.p1.facing } : null;
-      const prevP2 = G.p2 ? { x: G.p2.x, facing: G.p2.facing } : null;
+    executeTickFrame(frame, tickIdx, prevP1, prevP2, beatDur);
 
-      const frame = frames[tickIdx];
-      G.p1 = frame.p1; G.p2 = frame.p2;
-      if (frame.bases) G.bases = frame.bases;
-      UI.updateBaseHUD(G.bases);
-      G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
-      G.tick = tickIdx;
+    FX.ensureBuffEmitter(frame.p1, 'p1');
+    FX.ensureBuffEmitter(frame.p2, 'p2');
+    UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
 
-      // ★ 碰撞事件：先让双方移动到碰撞格中点，再弹回最终位置
-      // ★ 基地攻击事件：攻击方先向前微移，然后弹回
-      const hasCollision = (frame.events || []).some(e => e.type === 'collision');
-      const hasBaseHit = (frame.events || []).some(e => e.type === 'base_hit');
-
-      if (hasBaseHit && prevP1 && prevP2 && G.p1 && G.p2) {
-        const baseEv = (frame.events || []).find(e => e.type === 'base_hit');
-        const actorKey = baseEv.actor;
-        const actorPrev = actorKey === 'p1' ? prevP1 : prevP2;
-        const actorNow = actorKey === 'p1' ? G.p1 : G.p2;
-        const actorFromGrid = actorKey === 'p1' ? (frame.p1FromX ?? actorPrev.x) : (frame.p2FromX ?? actorPrev.x);
-
-        const fromPX = Renderer.gridToPixelX(actorFromGrid);
-        const dir = actorKey === 'p1' ? 1 : -1;
-        const bumpPX = fromPX + dir * Renderer.cellW * 0.5;
-        const finalPX = Renderer.gridToPixelX(actorNow.x);
-
-        // 残影跟随整个动画过程
-        const renderRef = actorKey === 'p1' ? G._renderP1 : G._renderP2;
-
-        if (actorKey === 'p1') {
-          G._renderP1 = { x: fromPX, facing: G.p1.facing };
-          Tween.add(G._renderP1, { x: bumpPX }, FRAME_DURATION * 0.25, 'easeInQuad');
-        } else {
-          G._renderP2 = { x: fromPX, facing: G.p2.facing };
-          Tween.add(G._renderP2, { x: bumpPX }, FRAME_DURATION * 0.25, 'easeInQuad');
-        }
-        // 残影
-        const baseCharId = actorKey === 'p1' ? G.p1.charId : G.p2.charId;
-        const baseGetPos = {
-          getX: () => {
-            const r = actorKey === 'p1' ? G._renderP1 : G._renderP2;
-            if (r) return r.x;
-            return finalPX;
-          },
-          getFacing: () => actorNow.facing
-        };
-        FX.active.push(new AfterimageFX(baseCharId, fromPX, finalPX, Renderer.baseY, FRAME_DURATION * 0.55, baseGetPos));
-
-        setTimeout(() => {
-          const renderObj = actorKey === 'p1' ? G._renderP1 : G._renderP2;
-          if (renderObj) {
-            renderObj.x = bumpPX;
-            Tween.add(renderObj, { x: finalPX }, FRAME_DURATION * 0.3, 'easeOutQuad');
-          }
-          for (const ev of (frame.events || [])) {
-            if (ev.type === 'base_hit') {
-              FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
-            }
-          }
-        }, FRAME_DURATION * 0.22);
-
-        DBG.log('[BASE_HIT] 基地攻击动画 actor='+actorKey+' from='+actorFromGrid+'->'+actorNow.x);
-
-      } else if (hasCollision && prevP1 && prevP2 && G.p1 && G.p2) {
-        const colEv = (frame.events || []).find(e => e.type === 'collision');
-        const colGrid = colEv ? colEv.x : Math.round((prevP1.x + prevP2.x) / 2);
-        const colPX = Renderer.gridToPixelX(colGrid);
-
-        const p1FromGrid = frame.p1FromX ?? prevP1.x;
-        const p2FromGrid = frame.p2FromX ?? prevP2.x;
-
-        const p1Moved = p1FromGrid !== colGrid;
-        const p2Moved = p2FromGrid !== colGrid;
-
-        const p1FromPX = Renderer.gridToPixelX(p1FromGrid);
-        const p2FromPX = Renderer.gridToPixelX(p2FromGrid);
-        const p1FinalPX = Renderer.gridToPixelX(G.p1.x);
-        const p2FinalPX = Renderer.gridToPixelX(G.p2.x);
-
-        if (p1Moved) {
-          G._renderP1 = { x: p1FromPX, facing: G.p1.facing };
-          Tween.add(G._renderP1, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
-          // 残影
-          const getPos1 = { getX: () => G._renderP1 ? G._renderP1.x : p1FinalPX, getFacing: () => G.p1.facing };
-          FX.active.push(new AfterimageFX(G.p1.charId, p1FromPX, p1FinalPX, Renderer.baseY, FRAME_DURATION * 0.65, getPos1));
-        }
-        if (p2Moved) {
-          G._renderP2 = { x: p2FromPX, facing: G.p2.facing };
-          Tween.add(G._renderP2, { x: colPX }, FRAME_DURATION * 0.3, 'easeInQuad');
-          const getPos2 = { getX: () => G._renderP2 ? G._renderP2.x : p2FinalPX, getFacing: () => G.p2.facing };
-          FX.active.push(new AfterimageFX(G.p2.charId, p2FromPX, p2FinalPX, Renderer.baseY, FRAME_DURATION * 0.65, getPos2));
-        }
-
-        setTimeout(() => {
-          if (p1Moved && G._renderP1) {
-            G._renderP1.x = colPX;
-            Tween.add(G._renderP1, { x: p1FinalPX }, FRAME_DURATION * 0.35, 'easeOutQuad');
-          }
-          if (p2Moved && G._renderP2) {
-            G._renderP2.x = colPX;
-            Tween.add(G._renderP2, { x: p2FinalPX }, FRAME_DURATION * 0.35, 'easeOutQuad');
-          }
-        }, FRAME_DURATION * 0.3);
-
-        setTimeout(() => {
-          for (const ev of (frame.events || [])) {
-            if (ev.type === 'collision') {
-              FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
-            }
-          }
-        }, FRAME_DURATION * 0.28);
-
-        DBG.log('[COLLISION] 碰撞动画 p1='+p1FromGrid+'->'+colGrid+'->'+G.p1.x+' p2='+p2FromGrid+'->'+colGrid+'->'+G.p2.x+' p1Moved='+p1Moved+' p2Moved='+p2Moved);
-      } else if (prevP1 && G.p1) {
-        if (prevP1.x !== G.p1.x) {
-          const fromPX = Renderer.gridToPixelX(prevP1.x);
-          const toPX = Renderer.gridToPixelX(G.p1.x);
-          G._renderP1 = { x: fromPX, facing: G.p1.facing };
-          Tween.add(G._renderP1, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
-          // 普通位移残影
-          const getPos1 = { getX: () => G._renderP1 ? G._renderP1.x : toPX, getFacing: () => G.p1.facing };
-          FX.active.push(new AfterimageFX(G.p1.charId, fromPX, toPX, Renderer.baseY, FRAME_DURATION * 0.7, getPos1));
-          DBG.log('[TWEEN] P1 位移缓动 grid='+prevP1.x+'->'+G.p1.x);
-        } else {
-          G._renderP1 = null;
-        }
-      }
-      if (!hasCollision && !hasBaseHit && prevP2 && G.p2) {
-        if (prevP2.x !== G.p2.x) {
-          const fromPX = Renderer.gridToPixelX(prevP2.x);
-          const toPX = Renderer.gridToPixelX(G.p2.x);
-          G._renderP2 = { x: fromPX, facing: G.p2.facing };
-          Tween.add(G._renderP2, { x: toPX }, FRAME_DURATION * 0.7, 'easeOutQuad');
-          const getPos2 = { getX: () => G._renderP2 ? G._renderP2.x : toPX, getFacing: () => G.p2.facing };
-          FX.active.push(new AfterimageFX(G.p2.charId, fromPX, toPX, Renderer.baseY, FRAME_DURATION * 0.7, getPos2));
-          DBG.log('[TWEEN] P2 位移缓动 grid='+prevP2.x+'->'+G.p2.x);
-        } else {
-          G._renderP2 = null;
-        }
-      }
-
-      const events = frame.events || [];
-      // 计算错时发射的 stagger 间隔
-      // 找出此帧中需要错时的弹幕类型 (projectile/vertical 多段)
-      const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','bullet_trail_cut','aoe_cast','burn_hit','aoe_hit','melee_slash']; // bullet_trail_cut goes through same stagger as bullet_trail
-      let staggerCount = 0;
-      const sortedEvents = [];
-      const staggerEvents = [];
-      for (const ev of events) {
-        if (staggerTypes.includes(ev.type)) {
-          staggerEvents.push(ev);
-        } else {
-          sortedEvents.push(ev);
-        }
-      }
-      // 弹幕类事件按 stagger 错时
-      for (const ev of staggerEvents) {
-        const animName = ev.bullet_anim || ev.hit_anim;
-        const anim = getAnim(animName);
-        const interval = anim?.stagger || 0;
-        if (interval > 0 && staggerEvents.length > 1) {
-          ev._stagger = staggerCount * interval;
-          staggerCount++;
-        } else {
-          ev._stagger = 0;
-        }
-        sortedEvents.push(ev);
-      }
-      // 按 stagger 排序（先发射的在前）
-      sortedEvents.sort((a, b) => (a._stagger || 0) - (b._stagger || 0));
-
-      // 碰撞/基地帧：碰撞和基地事件已通过 setTimeout 延迟播放，这里只播其他事件
-      const skipTypes = ['collision', 'base_hit'];
-      const nonColEvents = sortedEvents.filter(ev => !skipTypes.includes(ev.type));
-      for (const ev of nonColEvents) {
-        FX.spawnFromEvent(ev, FRAME_DURATION, frame.p1, frame.p2);
-      }
-      FX.ensureBuffEmitter(frame.p1, 'p1');
-      FX.ensureBuffEmitter(frame.p2, 'p2');
-      UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
-      if (nonColEvents.length > 0) AE.play('tick');
-
-      tickIdx++;
-    }
-
-    // 战斗阶段也需要持续更新 FX（每帧）
-    FX.update(Math.min(100, dt));
-    Tween.update();
+    tickIdx++;
   };
 
   DBG.log('[BATTLE] step函数已挂载');
+}
+
+/** 处理一个 tick 帧的所有动画（从 playBattleAnim 提取） */
+function executeTickFrame(frame, tickIdx, prevP1, prevP2, beatDur) {
+  const hasCollision = (frame.events || []).some(e => e.type === 'collision');
+  const hasBaseHit = (frame.events || []).some(e => e.type === 'base_hit');
+
+  if (hasBaseHit && prevP1 && prevP2 && G.p1 && G.p2) {
+    const baseEv = (frame.events || []).find(e => e.type === 'base_hit');
+    const actorKey = baseEv.actor;
+    const actorPrev = actorKey === 'p1' ? prevP1 : prevP2;
+    const actorNow = actorKey === 'p1' ? G.p1 : G.p2;
+    const actorFromGrid = actorKey === 'p1' ? (frame.p1FromX ?? actorPrev.x) : (frame.p2FromX ?? actorPrev.x);
+
+    const fromPX = Renderer.gridToPixelX(actorFromGrid);
+    const dir = actorKey === 'p1' ? 1 : -1;
+    const bumpPX = fromPX + dir * Renderer.cellW * 0.5;
+    const finalPX = Renderer.gridToPixelX(actorNow.x);
+
+    if (actorKey === 'p1') {
+      G._renderP1 = { x: fromPX, facing: G.p1.facing };
+      Tween.add(G._renderP1, { x: bumpPX }, beatDur * 0.25, 'easeInQuad');
+    } else {
+      G._renderP2 = { x: fromPX, facing: G.p2.facing };
+      Tween.add(G._renderP2, { x: bumpPX }, beatDur * 0.25, 'easeInQuad');
+    }
+
+    const baseCharId = actorKey === 'p1' ? G.p1.charId : G.p2.charId;
+    const baseGetPos = {
+      getX: () => { const r = actorKey === 'p1' ? G._renderP1 : G._renderP2; return r ? r.x : finalPX; },
+      getFacing: () => actorNow.facing
+    };
+    FX.active.push(new AfterimageFX(baseCharId, fromPX, finalPX, Renderer.baseY, beatDur * 0.55, baseGetPos));
+
+    setTimeout(() => {
+      const renderObj = actorKey === 'p1' ? G._renderP1 : G._renderP2;
+      if (renderObj) { renderObj.x = bumpPX; Tween.add(renderObj, { x: finalPX }, beatDur * 0.3, 'easeOutQuad'); }
+      for (const ev of (frame.events || [])) {
+        if (ev.type === 'base_hit') FX.spawnFromEvent(ev, beatDur, frame.p1, frame.p2);
+      }
+    }, beatDur * 0.22);
+
+  } else if (hasCollision && prevP1 && prevP2 && G.p1 && G.p2) {
+    const colEv = (frame.events || []).find(e => e.type === 'collision');
+    const colGrid = colEv ? colEv.x : Math.round((prevP1.x + prevP2.x) / 2);
+    const colPX = Renderer.gridToPixelX(colGrid);
+    const p1FromGrid = frame.p1FromX ?? prevP1.x;
+    const p2FromGrid = frame.p2FromX ?? prevP2.x;
+    const p1Moved = p1FromGrid !== colGrid;
+    const p2Moved = p2FromGrid !== colGrid;
+    const p1FromPX = Renderer.gridToPixelX(p1FromGrid);
+    const p2FromPX = Renderer.gridToPixelX(p2FromGrid);
+    const p1FinalPX = Renderer.gridToPixelX(G.p1.x);
+    const p2FinalPX = Renderer.gridToPixelX(G.p2.x);
+
+    if (p1Moved) {
+      G._renderP1 = { x: p1FromPX, facing: G.p1.facing };
+      Tween.add(G._renderP1, { x: colPX }, beatDur * 0.3, 'easeInQuad');
+      FX.active.push(new AfterimageFX(G.p1.charId, p1FromPX, p1FinalPX, Renderer.baseY, beatDur * 0.65, { getX: () => G._renderP1 ? G._renderP1.x : p1FinalPX, getFacing: () => G.p1.facing }));
+    }
+    if (p2Moved) {
+      G._renderP2 = { x: p2FromPX, facing: G.p2.facing };
+      Tween.add(G._renderP2, { x: colPX }, beatDur * 0.3, 'easeInQuad');
+      FX.active.push(new AfterimageFX(G.p2.charId, p2FromPX, p2FinalPX, Renderer.baseY, beatDur * 0.65, { getX: () => G._renderP2 ? G._renderP2.x : p2FinalPX, getFacing: () => G.p2.facing }));
+    }
+
+    setTimeout(() => {
+      if (p1Moved && G._renderP1) { G._renderP1.x = colPX; Tween.add(G._renderP1, { x: p1FinalPX }, beatDur * 0.35, 'easeOutQuad'); }
+      if (p2Moved && G._renderP2) { G._renderP2.x = colPX; Tween.add(G._renderP2, { x: p2FinalPX }, beatDur * 0.35, 'easeOutQuad'); }
+    }, beatDur * 0.3);
+    setTimeout(() => {
+      for (const ev of (frame.events || [])) { if (ev.type === 'collision') FX.spawnFromEvent(ev, beatDur, frame.p1, frame.p2); }
+    }, beatDur * 0.28);
+
+  } else {
+    if (prevP1 && G.p1 && prevP1.x !== G.p1.x) {
+      const fromPX = Renderer.gridToPixelX(prevP1.x), toPX = Renderer.gridToPixelX(G.p1.x);
+      G._renderP1 = { x: fromPX, facing: G.p1.facing };
+      Tween.add(G._renderP1, { x: toPX }, beatDur * 0.7, 'easeOutQuad');
+      FX.active.push(new AfterimageFX(G.p1.charId, fromPX, toPX, Renderer.baseY, beatDur * 0.7, { getX: () => G._renderP1 ? G._renderP1.x : toPX, getFacing: () => G.p1.facing }));
+    } else { G._renderP1 = null; }
+
+    if (!hasCollision && !hasBaseHit && prevP2 && G.p2 && prevP2.x !== G.p2.x) {
+      const fromPX = Renderer.gridToPixelX(prevP2.x), toPX = Renderer.gridToPixelX(G.p2.x);
+      G._renderP2 = { x: fromPX, facing: G.p2.facing };
+      Tween.add(G._renderP2, { x: toPX }, beatDur * 0.7, 'easeOutQuad');
+      FX.active.push(new AfterimageFX(G.p2.charId, fromPX, toPX, Renderer.baseY, beatDur * 0.7, { getX: () => G._renderP2 ? G._renderP2.x : toPX, getFacing: () => G.p2.facing }));
+    } else if (!hasBaseHit) { G._renderP2 = null; }
+  }
+
+  // 处理事件
+  const events = frame.events || [];
+  const staggerTypes = ['bullet_hit','freeze_hit','poison_hit','bullet_trail','bullet_trail_cut','aoe_cast','burn_hit','aoe_hit','melee_slash'];
+  let staggerCount = 0;
+  const sortedEvents = [];
+  const staggerEvents = [];
+  for (const ev of events) {
+    if (staggerTypes.includes(ev.type)) staggerEvents.push(ev);
+    else sortedEvents.push(ev);
+  }
+  for (const ev of staggerEvents) {
+    const anim = getAnim(ev.bullet_anim || ev.hit_anim);
+    const interval = anim?.stagger || 0;
+    ev._stagger = (interval > 0 && staggerEvents.length > 1) ? staggerCount++ * interval : 0;
+    sortedEvents.push(ev);
+  }
+  sortedEvents.sort((a, b) => (a._stagger || 0) - (b._stagger || 0));
+
+  const skipTypes = ['collision', 'base_hit'];
+  const nonColEvents = sortedEvents.filter(ev => !skipTypes.includes(ev.type));
+  for (const ev of nonColEvents) {
+    FX.spawnFromEvent(ev, beatDur, frame.p1, frame.p2);
+  }
+  if (nonColEvents.length > 0) AE.play('tick');
+}
+
+/** 游戏结束结算 */
+function finishGameOver(final) {
+  if (G._musicReady) MusicEngine.stop();
+  const d = G._pendingGameOverData;
+  if (d) {
+    G._mode = 'result';
+    FX.clear();
+    if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
+    UI.showScreen('result');
+    document.getElementById('rtitle').textContent = d.winner === 'draw' ? '平局!' : d.winner + ' 获胜!';
+    document.getElementById('rdetail').textContent = 'P1 HP: ' + d.p1Hp + ' | P2 HP: ' + d.p2Hp + ' | ' + d.reason;
+    G._pendingGameOverData = null;
+  } else {
+    const b1hp = final.bases?.p1?.hp ?? 100, b2hp = final.bases?.p2?.hp ?? 100;
+    const p1Dead = final.p1.hp <= 0, p2Dead = final.p2.hp <= 0;
+    const b1Dead = b1hp <= 0, b2Dead = b2hp <= 0;
+    let w, reason;
+    if (b1Dead && b2Dead) { w = 'draw'; reason = '双方基地均被摧毁'; }
+    else if (b1Dead) { w = 'P2'; reason = 'P1基地被摧毁'; }
+    else if (b2Dead) { w = 'P1'; reason = 'P2基地被摧毁'; }
+    else if (p1Dead && p2Dead) { w = 'draw'; reason = '双方同时阵亡'; }
+    else if (p1Dead) { w = 'P2'; reason = 'P1被击杀'; }
+    else if (p2Dead) { w = 'P1'; reason = 'P2被击杀'; }
+    else { w = final.p1.hp > final.p2.hp ? 'P1' : final.p2.hp > final.p1.hp ? 'P2' : 'draw'; reason = '达到最大回合数'; }
+    G._mode = 'result';
+    FX.clear();
+    UI.showScreen('result');
+    document.getElementById('rtitle').textContent = w === 'draw' ? '平局!' : w + ' 获胜!';
+    document.getElementById('rdetail').textContent = 'P1 HP: ' + final.p1.hp + ' | P2 HP: ' + final.p2.hp + ' | ' + reason;
+  }
+  G._onBattleEnd = null;
 }
 
 // ==================== DOM 导航 ====================
 function nav(screen) {
   if (screen === 'menu') {
     G.reset();
+    if (G._musicReady) MusicEngine.stop();
     if (G.socket) { G.socket.emit('leaveRoom'); G.socket.removeAllListeners(); G.socket.disconnect(); G.socket = null; }
   }
   UI.showScreen(screen);
@@ -3199,11 +3218,17 @@ function bindSoloBattleEvents() {
   G.socket.on('battleFrames', (d) => {
     G._mode = 'battle';
     G._battleGameOver = d.gameOver;
-    // 保存结算信息，等播放完再用
     G._pendingGameOver = d.gameOver ? { gameOver: true } : null;
     document.getElementById('actionQueuePanel').classList.add('hidden');
     document.getElementById('battleQueuePanel').classList.remove('hidden');
     document.getElementById('rdyBtn').disabled = true;
+
+    // 如果是音乐驱动模式且刚进入战斗，注册节拍步进
+    if (G._musicReadyForFrames) {
+      G._musicReadyForFrames = false;
+      startMusicDrivenBattle();
+    }
+
     playBattleAnim(d.frames, d.final);
   });
 
@@ -3314,12 +3339,149 @@ function renderWikiSkills() {
 async function init() {
   await loadData();
   AE.init();
+
+  // 初始化音乐引擎
+  initMusic();
+
   const canvas = document.getElementById('fc');
   if (canvas) Renderer.init(canvas);
   window.addEventListener('resize', () => Renderer.resize());
 
   // 默认显示菜单
   UI.showScreen('menu');
+}
+
+// ==================== 音乐引擎初始化与生命周期 ====================
+
+/** 初始化背景音乐模块 */
+async function initMusic() {
+  // 检查配置中音乐是否启用
+  try {
+    const cfgResp = await fetch('/data/config.json');
+    const cfg = await cfgResp.json();
+    if (!cfg.music?.enabled) {
+      console.log('[MUSIC] 音乐已禁用');
+      return;
+    }
+  } catch (e) {
+    // config 加载失败，仍尝试初始化
+  }
+
+  // 初始化引擎
+  if (!MusicEngine.init()) {
+    console.warn('[MUSIC] 引擎初始化失败，使用无音乐模式');
+    return;
+  }
+
+  // 加载乐谱
+  const loaded = await MusicConfig.load();
+  if (!loaded) {
+    console.warn('[MUSIC] 乐谱加载失败');
+    return;
+  }
+
+  G._musicReady = true;
+
+  // 注册循环完成回调
+  MusicEngine.onLoopComplete(() => {
+    handleMusicLoopComplete();
+  });
+
+  console.log('[MUSIC] 音乐引擎就绪 BPM=' + (60 / MusicEngine.beatDuration));
+}
+
+/** 音乐循环完成时的处理 */
+function handleMusicLoopComplete() {
+  // 如果正在等待音乐循环结束以进入战斗阶段
+  if (G._musicLoopSync && G._musicPendingBattle) {
+    G._musicLoopSync = false;
+    G._musicPendingBattle = false;
+
+    // 通知音乐引擎进入战斗模式
+    MusicEngine.enterBattleMode();
+
+    // 使用 pending data 开始战斗
+    if (G._pendingOnlineResult) {
+      const d = G._pendingOnlineResult;
+      G._pendingOnlineResult = null;
+      startOnlineBattlePlayback(d);
+      // 注册音乐驱动的战斗步进
+      startMusicDrivenBattle();
+    } else {
+      // AI/训练模式：由 battleFrames 事件触发，startMusicDrivenBattle 也需要发挥作用
+      // 设置标记等待 battleFrames 到来
+      G._musicReadyForFrames = true;
+    }
+    return;
+  }
+
+  // 战斗阶段中，16 tick 已播完——等待循环结束回到编辑
+  if (G._mode === 'battle-waiting-edit' && G._musicBeatDriven) {
+    G._mode = 'prepare';
+    G._musicBeatDriven = false;
+    MusicEngine.enterEditMode();
+    onBattleToEditTransition();
+    return;
+  }
+}
+
+/** 在音乐节拍驱动下开始战斗播放 */
+function startMusicDrivenBattle() {
+  G._musicBeatDriven = true;
+  G._tickIdx = 0;
+
+  // 注册节拍回调：每拍步进 1 tick
+  MusicEngine.onBeat((beatNumber, ctxTime) => {
+    if (!G._musicBeatDriven) return;
+    if (G._mode !== 'battle') return;
+
+    // 步进 1 tick
+    if (G._battleStep && G._tickIdx < 16) {
+      G._battleStep();
+      G._tickIdx++;
+    }
+  });
+
+  // 立即执行第 0 tick（当前拍）
+  if (G._battleStep) {
+    G._battleStep();
+    G._tickIdx = 1;
+  }
+
+  UI.log('战斗开始 — 音乐同步驱动');
+}
+
+/** 战斗结束后回到编辑阶段的过渡 */
+function onBattleToEditTransition() {
+  if (G._onBattleEnd) {
+    G._onBattleEnd(G._battleFinal || { p1: G.p1, p2: G.p2, bases: G.bases });
+    G._onBattleEnd = null;
+  }
+
+  // 回到编辑 UI
+  document.getElementById('actionQueuePanel').classList.remove('hidden');
+  document.getElementById('battleQueuePanel').classList.add('hidden');
+  document.getElementById('rdyBtn').disabled = false;
+
+  // 重置编辑状态
+  G.actions = [];
+  G.tick = 0;
+  G._cooldowns = {};
+  G._snapshots = [];
+  if (G._originP1) { G.p1 = JSON.parse(JSON.stringify(G._originP1)); }
+  if (G._originP2) { G.p2 = JSON.parse(JSON.stringify(G._originP2)); }
+  if (G._originBases) { G.bases = JSON.parse(JSON.stringify(G._originBases)); }
+  G._renderP1 = null;
+  G._renderP2 = null;
+  FX.clear();
+
+  UI.renderActionSlots();
+  UI.renderActionButtons();
+  UI.updateHUD(G.p1, 'p1');
+  UI.updateHUD(G.p2, 'p2');
+  if (G.bases) UI.updateBaseHUD(G.bases);
+
+  UI.log('等待编排下一回合...');
 }
 
 document.addEventListener('DOMContentLoaded', init);
