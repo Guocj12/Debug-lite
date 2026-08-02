@@ -408,6 +408,7 @@ const MusicEngine = (() => {
     if (currentBeat !== _lastBeatInLoop) {
       _lastBeatInLoop = currentBeat;
       if (_onBeatCallback && currentBeat >= 0 && currentBeat < _beatsPerLoop) {
+        console.log('[MUSIC] Beat ' + currentBeat + '/' + (_beatsPerLoop-1) + ' | loop=' + _loopCount + ' | slot=' + Math.floor(currentSlotFloat) + '/' + (_score?.total16th-1 || 63) + ' | ctxTime=' + _ctx.currentTime.toFixed(3));
         _onBeatCallback(currentBeat, _ctx.currentTime);
       }
     }

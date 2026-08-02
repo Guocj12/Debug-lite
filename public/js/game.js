@@ -2246,6 +2246,39 @@ function bindOnlineBattleEvents() {
 
 /** 联机模式/单人模式的 prepareStart 处理（含音乐启动） */
 function onOnlinePrepareStart(d) {
+  // ★ 铁律：战斗中或等待循环结束时，禁止立即切换编辑阶段
+  // 暂存数据，等 handleMusicLoopComplete 在循环边界强制结算
+  if (G._musicReady && MusicEngine.isRunning && (G._mode === 'battle' || G._mode === 'battle-waiting-edit')) {
+    G._pendingPrepareStart = d;
+    console.log('[MUSIC] prepareStart 暂存（当前mode=' + G._mode + '），等待循环结束强制结算...');
+    return;
+  }
+
+  // ★ 已经在编辑阶段（handleMusicLoopComplete 强制结算后）→ 只更新 round 数据，不重启渲染循环
+  if (G._mode === 'prepare' && G._musicReady && MusicEngine.isRunning && !MusicEngine.isBattleMode) {
+    G.round = d.round;
+    G.timeLeft = d.time || 60;
+    G.p1 = d.p1;
+    G.p2 = d.p2;
+    G.bases = d.bases || null;
+    G._originP1 = JSON.parse(JSON.stringify(d.p1));
+    G._originP2 = JSON.parse(JSON.stringify(d.p2));
+    G._originBases = d.bases ? JSON.parse(JSON.stringify(d.bases)) : null;
+    document.getElementById('tm').textContent = G.timeLeft;
+    document.getElementById('rnd').textContent = 'ROUND ' + d.round + (G.mode === 'online' ? ' (联机)' : '');
+    UI.updateHUD(G.p1, 'p1');
+    UI.updateHUD(G.p2, 'p2');
+    if (G.bases) UI.updateBaseHUD(G.bases);
+    UI.log('Round ' + d.round + ' — 编排你的序列 (' + G.timeLeft + 's)');
+    console.log('[MUSIC] prepareStart 已合并（编辑阶段已在运行，仅更新round数据）');
+    return;
+  }
+
+  applyPrepareStart(d);
+}
+
+/** 实际执行 prepareStart 的状态切换 */
+function applyPrepareStart(d) {
   G._mode = 'prepare';
   G.round = d.round;
   G.timeLeft = d.time || 60;
@@ -2264,6 +2297,7 @@ function onOnlinePrepareStart(d) {
   G._musicLoopSync = false;
   G._musicPendingBattle = false;
   G._musicBeatDriven = false;
+  G._pendingPrepareStart = null;
   FX.clear();
 
   // 确保编辑阶段音乐（bass + hi-hat）
@@ -2398,12 +2432,12 @@ function onRoomForceClosed(d) {
 }
 
 // ==================== 战斗动画播放（音乐节拍驱动版） ====================
-// FRAME_DURATION 现在从音乐引擎获取（若不可用则回退到 600ms）
+// FRAME_DURATION 现在从音乐引擎获取（若不可用则回退到 500ms）
 function getBeatDuration() {
   if (G._musicReady && MusicEngine.beatDuration) {
     return MusicEngine.beatDuration * 1000; // 转毫秒
   }
-  return 600; // 回退
+  return 500; // 回退
 }
 
 function playBattleAnim(frames, final) {
@@ -2452,6 +2486,28 @@ function playBattleAnim(frames, final) {
       battleAccum -= beatDur;
     }
 
+    // ---- 处理当前 tick 帧（仅当未播完时） ----
+    if (tickIdx < frames.length) {
+      console.log('[FRAME] 处理 tick=' + tickIdx + '/' + (frames.length-1) + ' | _musicBeatDriven=' + G._musicBeatDriven + ' | _tickIdx=' + (G._tickIdx || '?'));
+      const prevP1 = G.p1 ? { x: G.p1.x, facing: G.p1.facing } : null;
+      const prevP2 = G.p2 ? { x: G.p2.x, facing: G.p2.facing } : null;
+      const frame = frames[tickIdx];
+      G.p1 = frame.p1; G.p2 = frame.p2;
+      if (frame.bases) G.bases = frame.bases;
+      UI.updateBaseHUD(G.bases);
+      G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
+      G.tick = tickIdx;
+
+      executeTickFrame(frame, tickIdx, prevP1, prevP2, beatDur);
+
+      FX.ensureBuffEmitter(frame.p1, 'p1');
+      FX.ensureBuffEmitter(frame.p2, 'p2');
+      UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
+
+      tickIdx++;
+    }
+
+    // ---- 处理完（或已播完）检查是否所有帧已结束 ----
     if (tickIdx >= frames.length) {
       // 所有帧播完
       G.p1 = final.p1; G.p2 = final.p2;
@@ -2462,6 +2518,7 @@ function playBattleAnim(frames, final) {
       UI.log('回合结束 — P1 HP:' + final.p1.hp + ' P2 HP:' + final.p2.hp + (final.bases ? ' BASE1:' + final.bases.p1.hp + ' BASE2:' + final.bases.p2.hp : ''));
       G.tick = frames.length;
       UI.renderBattleQueue(G.tick, G.p1Actions, G.p2Actions);
+      console.log('[FRAME] 全部帧播放完毕 total=' + frames.length + ' | _musicBeatDriven=' + G._musicBeatDriven + ' | mode=' + G._mode);
       DBG.log('[BATTLE] 播放完毕');
       G._battleStep = null;
 
@@ -2483,24 +2540,6 @@ function playBattleAnim(frames, final) {
       }
       return;
     }
-
-    // ---- 处理当前 tick 帧 ----
-    const prevP1 = G.p1 ? { x: G.p1.x, facing: G.p1.facing } : null;
-    const prevP2 = G.p2 ? { x: G.p2.x, facing: G.p2.facing } : null;
-    const frame = frames[tickIdx];
-    G.p1 = frame.p1; G.p2 = frame.p2;
-    if (frame.bases) G.bases = frame.bases;
-    UI.updateBaseHUD(G.bases);
-    G.p1Actions = frame.p1Actions || []; G.p2Actions = frame.p2Actions || [];
-    G.tick = tickIdx;
-
-    executeTickFrame(frame, tickIdx, prevP1, prevP2, beatDur);
-
-    FX.ensureBuffEmitter(frame.p1, 'p1');
-    FX.ensureBuffEmitter(frame.p2, 'p2');
-    UI.renderBattleQueue(tickIdx, G.p1Actions, G.p2Actions);
-
-    tickIdx++;
   };
 
   DBG.log('[BATTLE] step函数已挂载');
@@ -3442,11 +3481,25 @@ function handleMusicLoopComplete() {
     return;
   }
 
-  // 战斗阶段中，16 tick 已播完——等待循环结束回到编辑
+  // 战斗阶段中，16 tick 已播完——强制在循环边界回到编辑
   if (G._mode === 'battle-waiting-edit' && G._musicBeatDriven) {
-    G._mode = 'prepare';
     G._musicBeatDriven = false;
+
+    // 有暂存的 prepareStart → 直接用它初始化下一轮
+    if (G._pendingPrepareStart) {
+      const d = G._pendingPrepareStart;
+      G._pendingPrepareStart = null;
+      G._mode = 'prepare';
+      MusicEngine.enterEditMode();
+      console.log('[MUSIC] 循环结束强制结算 → 用暂存数据进入下一轮');
+      applyPrepareStart(d);
+      return;
+    }
+
+    // 无暂存数据 → 正常回到编辑
+    G._mode = 'prepare';
     MusicEngine.enterEditMode();
+    console.log('[MUSIC] 循环结束强制结算 → 回到编辑阶段');
     onBattleToEditTransition();
     return;
   }
@@ -3464,6 +3517,7 @@ function startMusicDrivenBattle() {
 
     // 步进 1 tick
     if (G._battleStep && G._tickIdx < 16) {
+      console.log('[TICK] onBeat触发步进 | beat=' + beatNumber + ' | tickIdx=' + G._tickIdx + ' → ' + (G._tickIdx + 1) + ' | _musicBeatDriven=' + G._musicBeatDriven + ' | mode=' + G._mode + ' | ctxTime=' + ctxTime.toFixed(3));
       G._battleStep();
       G._tickIdx++;
     }
@@ -3471,6 +3525,7 @@ function startMusicDrivenBattle() {
 
   // 立即执行第 0 tick（当前拍）
   if (G._battleStep) {
+    console.log('[TICK] 立即触发步进 | tickIdx=0 → 1（初始拍） | _musicBeatDriven=' + G._musicBeatDriven + ' | mode=' + G._mode);
     G._battleStep();
     G._tickIdx = 1;
   }
