@@ -1432,6 +1432,7 @@ const G = {
   _musicBeatDriven: false,  // 是否使用节拍驱动步进（替代独立计时器）
   _musicReadyForFrames: false, // 音乐循环已结束，等待 battleFrames
   _pendingOnlineResult: null, // 联机模式暂存的战斗结果
+  _pendingBattleFrames: null, // AI/训练模式暂存的 battleFrames 数据
 
   reset() {
     this.p1 = null; this.p2 = null; this.bases = null; this.actions = [];
@@ -1456,6 +1457,7 @@ const G = {
     this._musicBeatDriven = false;
     this._musicReadyForFrames = false;
     this._pendingOnlineResult = null;
+    this._pendingBattleFrames = null;
     this._tickIdx = 0;
     this._beatAccum = 0;
 
@@ -2264,10 +2266,16 @@ function onOnlinePrepareStart(d) {
   G._musicBeatDriven = false;
   FX.clear();
 
-  // 启动编辑阶段音乐（bass + hi-hat）
-  if (G._musicReady && !MusicEngine.isRunning) {
-    MusicEngine.start('edit');
-    console.log('[MUSIC] 编辑阶段音乐启动');
+  // 确保编辑阶段音乐（bass + hi-hat）
+  if (G._musicReady) {
+    if (!MusicEngine.isRunning) {
+      MusicEngine.start('edit');
+      console.log('[MUSIC] 编辑阶段音乐启动');
+    } else if (MusicEngine.isBattleMode) {
+      // 从战斗模式切回编辑模式（旋律淡出）
+      MusicEngine.enterEditMode();
+      console.log('[MUSIC] 切回编辑阶段音乐');
+    }
   }
 
   updatePrepareUI();
@@ -2330,10 +2338,11 @@ function startOnlineBattlePlayback(d) {
   UI.updateBaseHUD(G.bases);
   UI.log('对战 ' + d.opponentName + ' | Round ' + d.round);
 
-  // 播放结束后的回调
+  // 播放结束后的回调（仅在回退模式/联机非音乐驱动时使用）
+  // 音乐驱动模式下，战斗结束由 handleMusicLoopComplete → onBattleToEditTransition 处理
   G._onBattleEnd = (final) => {
     if (G._battleGameOver) {
-      // 游戏结束，直接显示结算结果
+      if (G._musicReady) MusicEngine.stop();
       G._mode = 'result';
       FX.clear();
       if (G._renderLoop) { cancelAnimationFrame(G._renderLoop); G._renderLoop = null; }
@@ -3216,6 +3225,14 @@ function bindSoloBattleEvents() {
   });
 
   G.socket.on('battleFrames', (d) => {
+    // ★ 音乐同步检查：如果正在等待循环结束，暂存数据
+    if (G._musicReady && MusicEngine.isRunning && G._musicLoopSync) {
+      // 战斗帧数据先存起来，等 handleMusicLoopComplete 触发后处理
+      G._pendingBattleFrames = d;
+      UI.log('战斗帧已到达，等待音乐循环结束...');
+      return;
+    }
+
     G._mode = 'battle';
     G._battleGameOver = d.gameOver;
     G._pendingGameOver = d.gameOver ? { gameOver: true } : null;
@@ -3405,11 +3422,21 @@ function handleMusicLoopComplete() {
       const d = G._pendingOnlineResult;
       G._pendingOnlineResult = null;
       startOnlineBattlePlayback(d);
-      // 注册音乐驱动的战斗步进
       startMusicDrivenBattle();
+    } else if (G._pendingBattleFrames) {
+      // AI/训练模式：暂存的 battleFrames 数据
+      const d = G._pendingBattleFrames;
+      G._pendingBattleFrames = null;
+      G._mode = 'battle';
+      G._battleGameOver = d.gameOver;
+      G._pendingGameOver = d.gameOver ? { gameOver: true } : null;
+      document.getElementById('actionQueuePanel').classList.add('hidden');
+      document.getElementById('battleQueuePanel').classList.remove('hidden');
+      document.getElementById('rdyBtn').disabled = true;
+      startMusicDrivenBattle();
+      playBattleAnim(d.frames, d.final);
     } else {
-      // AI/训练模式：由 battleFrames 事件触发，startMusicDrivenBattle 也需要发挥作用
-      // 设置标记等待 battleFrames 到来
+      // 设置标记等待 battleFrames 到来（理论上不应走这里，因为有 pendingBattleFrames 检查）
       G._musicReadyForFrames = true;
     }
     return;
