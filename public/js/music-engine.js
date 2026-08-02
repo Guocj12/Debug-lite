@@ -4,17 +4,18 @@
 // 作为"主时钟"驱动战斗步进，实现音画完全同步
 // ============================================================
 //
-// 架构：
+// 架构（v2 多段落支持）：
 //   - look-ahead 调度器 (每50ms唤醒，提前100ms调度音符)
 //   - 三条独立音轨：bass / melody / drums
-//   - 节拍回调系统：onBeat(每拍) / onLoopComplete(每循环)
-//   - 编辑阶段：bass + hi-hat only
-//   - 战斗阶段：bass + melody + full drums
+//   - 节拍回调系统：onBeat(每拍) / onLoopComplete(每4小节段落)
+//   - 4个4小节段落循环播放 (A→B→C→D→A...)
+//   - 编辑阶段：bass + hi-hat only（bass按段落切换）
+//   - 战斗阶段：bass + melody + full drums（旋律自动匹配当前段落）
 //
 // 使用 AudioContext.currentTime 作为绝对时钟源
 // 这是 Web Audio 的最高精度时钟，优于 performance.now()
 //
-// 乐谱格式见 data/music.json
+// 乐谱格式见 data/music.json（sections 数组）
 // ============================================================
 
 const MusicEngine = (() => {
@@ -26,10 +27,11 @@ const MusicEngine = (() => {
   let _bpm = 120;
   let _beatDuration = 0.5;        // 每拍秒数 = 60/BPM
   let _sixteenthDuration = 0;     // 16分音符秒数
-  let _beatsPerLoop = 16;         // 4小节×4拍 = 16拍/循环
+  let _beatsPerSection = 16;      // 每个段落的拍数（4小节×4拍 = 16拍）
+  let _totalSections = 4;         // 总段落数
 
-  let _score = null;              // 乐谱数据（已展开为16分音符槽位查找表）
-  let _editDrums = null;          // 编辑阶段专用鼓组
+  let _sections = [];             // 4个段落的乐谱（每个已展开为16分音符槽位查找表）
+  let _editDrums = null;          // 编辑阶段专用鼓组（共享，不随段落变化）
 
   let _isRunning = false;
   let _isBattleMode = false;      // 当前是否战斗阶段（决定哪些轨静音）
@@ -37,15 +39,16 @@ const MusicEngine = (() => {
   let _schedulerTimer = null;     // setTimeout ID for look-ahead
   let _next16thSlot = 0;          // 下一个要调度的 16分音符槽位 (0-63)
   let _current16thSlot = 0;       // 当前正在播放的槽位
-  let _loopStartTime = 0;         // 当前循环开始的 AudioContext 时间
-  let _loopCount = 0;
+  let _sectionIndex = 0;          // 当前段落索引 (0-3)
+  let _loopStartTime = 0;         // 当前段落开始的 AudioContext 时间
+  let _loopCount = 0;             // 总段落播放次数（跨所有section）
 
   let _lastBeatInLoop = -1;       // 上一循环内拍号 (0-15)，用于 onBeat 触发
 
   // ---- 回调 ----
   let _onBeatCallback = null;     // (beatNumber, contextTime) => void
   let _onLoopCompleteCallback = null; // () => void
-  let _loopCompletePending = false;   // 当前循环是否已发送过回调
+  let _loopCompletePending = false;   // 当前段落是否已发送过回调
 
   // ---- MIDI 音高 → 频率 ----
   function midiToFreq(midi) {
@@ -333,17 +336,18 @@ const MusicEngine = (() => {
 
     // 计算当前时间对应的16分音符槽位
     const elapsedInLoop = now - _loopStartTime;
-    const totalLoopDuration = _beatsPerLoop * _beatDuration;
+    const totalSectionDuration = _beatsPerSection * _beatDuration;
 
-    // 如果当前循环已结束，进入下一循环
-    if (elapsedInLoop >= totalLoopDuration) {
-      _loopStartTime += totalLoopDuration;
+    // 如果当前段落已结束，进入下一段落
+    if (elapsedInLoop >= totalSectionDuration) {
+      _loopStartTime += totalSectionDuration;
       _loopCount++;
+      _sectionIndex = (_sectionIndex + 1) % _totalSections;
       _next16thSlot = 0;
       _lastBeatInLoop = -1;
       _loopCompletePending = false;
 
-      // 发送循环完成回调
+      // 发送段落完成回调
       if (_onLoopCompleteCallback) {
         _onLoopCompleteCallback();
       }
@@ -355,14 +359,16 @@ const MusicEngine = (() => {
     }
 
     // 当前槽位
-    const currentSlotFloat = (elapsedInLoop / totalLoopDuration) * _score.total16th;
+    const currentSection = _sections[_sectionIndex];
+    if (!currentSection) { _schedulerTimer = setTimeout(scheduleLoop, 50); return; }
+    const currentSlotFloat = (elapsedInLoop / totalSectionDuration) * currentSection.total16th;
     _current16thSlot = Math.floor(currentSlotFloat);
 
     // 向前调度直到 lookAhead 结束
     const lookAheadEnd = now + lookAhead;
     let slotToSchedule = _next16thSlot;
 
-    while (slotToSchedule < _score.total16th) {
+    while (slotToSchedule < currentSection.total16th) {
       const slotTime = _loopStartTime + slotToSchedule * _sixteenthDuration;
       if (slotTime > lookAheadEnd) break;
 
@@ -382,19 +388,22 @@ const MusicEngine = (() => {
 
   /** 调度某个16分音符槽位的所有音符 */
   function scheduleSlot(slot, time) {
-    // Bass
-    for (const ev of _score.bassSlots[slot]) {
+    const section = _sections[_sectionIndex];
+    if (!section) return;
+
+    // Bass（所有阶段）
+    for (const ev of section.bassSlots[slot]) {
       createBassVoice(ev.note, ev.vel, time, ev.duration);
     }
-    // Melody（仅在战斗阶段）
+    // Melody（仅在战斗阶段，自动匹配当前段落的旋律）
     if (_isBattleMode) {
-      for (const ev of _score.melodySlots[slot]) {
+      for (const ev of section.melodySlots[slot]) {
         createMelodyVoice(ev.note, ev.vel, time, ev.duration);
       }
     }
     // Drums（战斗阶段全鼓，编辑阶段仅 hi-hat）
     const drumEvents = _isBattleMode
-      ? _score.drumsSlots[slot]
+      ? section.drumsSlots[slot]
       : (_editDrums ? _editDrums[slot] : []);
     for (const ev of drumEvents) {
       playDrum(ev.drumType, ev.vel, time);
@@ -407,8 +416,10 @@ const MusicEngine = (() => {
     const currentBeat = Math.floor(currentSlotFloat / 4);
     if (currentBeat !== _lastBeatInLoop) {
       _lastBeatInLoop = currentBeat;
-      if (_onBeatCallback && currentBeat >= 0 && currentBeat < _beatsPerLoop) {
-        console.log('[MUSIC] Beat ' + currentBeat + '/' + (_beatsPerLoop-1) + ' | loop=' + _loopCount + ' | slot=' + Math.floor(currentSlotFloat) + '/' + (_score?.total16th-1 || 63) + ' | ctxTime=' + _ctx.currentTime.toFixed(3));
+      const section = _sections[_sectionIndex];
+      const totalSlots = section ? (section.total16th - 1) : 63;
+      if (_onBeatCallback && currentBeat >= 0 && currentBeat < _beatsPerSection) {
+        console.log('[MUSIC] Beat ' + currentBeat + '/' + (_beatsPerSection-1) + ' | section=' + _sectionIndex + '/' + (_totalSections-1) + ' | loop=' + _loopCount + ' | slot=' + Math.floor(currentSlotFloat) + '/' + totalSlots + ' | ctxTime=' + _ctx.currentTime.toFixed(3));
         _onBeatCallback(currentBeat, _ctx.currentTime);
       }
     }
@@ -419,19 +430,23 @@ const MusicEngine = (() => {
   const api = {
     /** 获取每拍时长（秒） */
     get beatDuration() { return _beatDuration; },
-    /** 每循环拍数 */
-    get beatsPerLoop() { return _beatsPerLoop; },
-    /** 循环总时长（秒） */
-    get loopDuration() { return _beatsPerLoop * _beatDuration; },
+    /** 每个段落的拍数 */
+    get beatsPerLoop() { return _beatsPerSection; },
+    /** 段落总时长（秒） */
+    get loopDuration() { return _beatsPerSection * _beatDuration; },
     /** 是否正在播放 */
     get isRunning() { return _isRunning; },
     /** 是否战斗模式 */
     get isBattleMode() { return _isBattleMode; },
     /** AudioContext */
     get ctx() { return _ctx; },
-    /** 当前循环数 */
+    /** 总段落播放次数 */
     get loopCount() { return _loopCount; },
-    /** 当前循环内拍号 (0-15) */
+    /** 当前段落索引 (0-3) */
+    get sectionIndex() { return _sectionIndex; },
+    /** 总段落数 */
+    get totalSections() { return _totalSections; },
+    /** 当前段落内拍号 (0-15) */
     get currentBeatInLoop() { return _lastBeatInLoop; },
 
     /**
@@ -471,25 +486,29 @@ const MusicEngine = (() => {
     },
 
     /**
-     * 加载乐谱配置
+     * 加载乐谱配置（支持多段落 sections 格式）
      * @param {object} scoreData - music.json 的数据
      */
     loadScore(scoreData) {
       _bpm = scoreData._meta?.bpm || 120;
       _beatDuration = 60 / _bpm;
       _sixteenthDuration = _beatDuration / 4;
-      _beatsPerLoop = scoreData._meta?.totalBeats || 16;
+      _beatsPerSection = scoreData._meta?.totalBeatsPerSection || 16;
+      _totalSections = scoreData._meta?.totalSections || 1;
 
-      const total16th = scoreData._meta?.total16thNotes || 64;
+      const total16th = scoreData._meta?.total16thPerSection || 64;
 
-      _score = {
+      // 支持新旧两种格式：sections 数组（新）或顶层 bass/melody/drums（旧）
+      const rawSections = scoreData.sections || [scoreData];
+      _sections = rawSections.map((sec, idx) => ({
+        _label: sec._label || ('Section ' + idx),
         total16th,
-        bassSlots: buildSlotTable(scoreData.bass || [], total16th, false),
-        melodySlots: buildSlotTable(scoreData.melody || [], total16th, false),
-        drumsSlots: buildSlotTable(scoreData.drums || [], total16th, true),
-      };
+        bassSlots: buildSlotTable(sec.bass || [], total16th, false),
+        melodySlots: buildSlotTable(sec.melody || [], total16th, false),
+        drumsSlots: buildSlotTable(sec.drums || [], total16th, true),
+      }));
 
-      // 编辑阶段的轻量鼓组（仅 hi-hat）
+      // 编辑阶段的轻量鼓组（仅 hi-hat，共享，不随段落变化）
       if (scoreData.editOnlyDrums) {
         _editDrums = buildSlotTable(scoreData.editOnlyDrums, total16th, true);
       }
@@ -526,6 +545,7 @@ const MusicEngine = (() => {
 
       _isRunning = true;
       _isBattleMode = (mode === 'battle');
+      _sectionIndex = 0;         // 从第0段落开始
       _next16thSlot = 0;
       _current16thSlot = 0;
       _loopStartTime = _ctx.currentTime + 0.05; // 延迟5ms开始，避免初始卡顿
@@ -632,7 +652,7 @@ const MusicEngine = (() => {
       }
       _masterGain = null;
       _trackGains = {};
-      _score = null;
+      _sections = [];
       _editDrums = null;
       _onBeatCallback = null;
       _onLoopCompleteCallback = null;
