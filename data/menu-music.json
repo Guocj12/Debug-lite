@@ -1,0 +1,861 @@
+{
+  "_meta": {
+    "bpm": 100,
+    "beatsPerBar": 4,
+    "barsPerLoop": 16,
+    "subdivision": 16,
+    "totalBeats": 64,
+    "total16thNotes": 256,
+    "description": "环境配乐 — A利底亚调式(#4)，Amaj7铺底，旋律3-#4-5游动，避免V-I解决，100BPM悬浮平和科幻风格"
+  },
+  "bass": [
+    {
+      "beat": 0,
+      "note": 33,
+      "dur16": 32,
+      "vel": 0.55
+    },
+    {
+      "beat": 8,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 12,
+      "note": 37,
+      "dur16": 8,
+      "vel": 0.5
+    },
+    {
+      "beat": 14,
+      "note": 44,
+      "dur16": 8,
+      "vel": 0.45
+    },
+    {
+      "beat": 16,
+      "note": 39,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 20,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 24,
+      "note": 45,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 28,
+      "note": 37,
+      "dur16": 16,
+      "vel": 0.45
+    },
+    {
+      "beat": 32,
+      "note": 42,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 36,
+      "note": 37,
+      "dur16": 16,
+      "vel": 0.45
+    },
+    {
+      "beat": 40,
+      "note": 39,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 44,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 48,
+      "note": 33,
+      "dur16": 32,
+      "vel": 0.55
+    },
+    {
+      "beat": 56,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.5
+    },
+    {
+      "beat": 60,
+      "note": 45,
+      "dur16": 8,
+      "vel": 0.45
+    },
+    {
+      "beat": 62,
+      "note": 49,
+      "dur16": 8,
+      "vel": 0.4
+    }
+  ],
+  "melody": [
+    {
+      "beat": 2,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.4
+    },
+    {
+      "beat": 3,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 4,
+      "note": 73,
+      "dur16": 8,
+      "vel": 0.42
+    },
+    {
+      "beat": 6,
+      "note": 71,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 7,
+      "note": 73,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 8,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 9,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.4
+    },
+    {
+      "beat": 10,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 11,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 12,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 13,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 14,
+      "note": 75,
+      "dur16": 8,
+      "vel": 0.4
+    },
+    {
+      "beat": 16,
+      "note": 73,
+      "dur16": 8,
+      "vel": 0.42
+    },
+    {
+      "beat": 18,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 19,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 20,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 21,
+      "note": 83,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 22,
+      "note": 81,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 23,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 24,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 25,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 26,
+      "note": 75,
+      "dur16": 8,
+      "vel": 0.4
+    },
+    {
+      "beat": 28,
+      "note": 73,
+      "dur16": 8,
+      "vel": 0.42
+    },
+    {
+      "beat": 30,
+      "note": 71,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 31,
+      "note": 73,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 32,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 33,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 34,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 35,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 36,
+      "note": 73,
+      "dur16": 8,
+      "vel": 0.42
+    },
+    {
+      "beat": 38,
+      "note": 71,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 39,
+      "note": 73,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 40,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 41,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.38
+    },
+    {
+      "beat": 42,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 43,
+      "note": 75,
+      "dur16": 8,
+      "vel": 0.38
+    },
+    {
+      "beat": 45,
+      "note": 73,
+      "dur16": 8,
+      "vel": 0.4
+    },
+    {
+      "beat": 47,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 48,
+      "note": 75,
+      "dur16": 8,
+      "vel": 0.4
+    },
+    {
+      "beat": 50,
+      "note": 73,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 51,
+      "note": 71,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 52,
+      "note": 73,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 53,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 54,
+      "note": 76,
+      "dur16": 8,
+      "vel": 0.4
+    },
+    {
+      "beat": 56,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 57,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 58,
+      "note": 83,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 59,
+      "note": 81,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 60,
+      "note": 80,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 61,
+      "note": 78,
+      "dur16": 4,
+      "vel": 0.32
+    },
+    {
+      "beat": 62,
+      "note": 76,
+      "dur16": 4,
+      "vel": 0.35
+    },
+    {
+      "beat": 63,
+      "note": 75,
+      "dur16": 4,
+      "vel": 0.35
+    }
+  ],
+  "pad": [
+    {
+      "beat": 0,
+      "note": 45,
+      "dur16": 64,
+      "vel": 0.25
+    },
+    {
+      "beat": 0,
+      "note": 52,
+      "dur16": 64,
+      "vel": 0.2
+    },
+    {
+      "beat": 0,
+      "note": 61,
+      "dur16": 64,
+      "vel": 0.15
+    },
+    {
+      "beat": 16,
+      "note": 39,
+      "dur16": 32,
+      "vel": 0.22
+    },
+    {
+      "beat": 16,
+      "note": 47,
+      "dur16": 32,
+      "vel": 0.18
+    },
+    {
+      "beat": 16,
+      "note": 52,
+      "dur16": 32,
+      "vel": 0.14
+    },
+    {
+      "beat": 24,
+      "note": 45,
+      "dur16": 16,
+      "vel": 0.22
+    },
+    {
+      "beat": 24,
+      "note": 49,
+      "dur16": 16,
+      "vel": 0.18
+    },
+    {
+      "beat": 24,
+      "note": 56,
+      "dur16": 16,
+      "vel": 0.14
+    },
+    {
+      "beat": 28,
+      "note": 37,
+      "dur16": 16,
+      "vel": 0.2
+    },
+    {
+      "beat": 28,
+      "note": 44,
+      "dur16": 16,
+      "vel": 0.16
+    },
+    {
+      "beat": 28,
+      "note": 49,
+      "dur16": 16,
+      "vel": 0.12
+    },
+    {
+      "beat": 32,
+      "note": 42,
+      "dur16": 16,
+      "vel": 0.22
+    },
+    {
+      "beat": 32,
+      "note": 49,
+      "dur16": 16,
+      "vel": 0.18
+    },
+    {
+      "beat": 32,
+      "note": 54,
+      "dur16": 16,
+      "vel": 0.14
+    },
+    {
+      "beat": 36,
+      "note": 37,
+      "dur16": 8,
+      "vel": 0.2
+    },
+    {
+      "beat": 36,
+      "note": 44,
+      "dur16": 8,
+      "vel": 0.16
+    },
+    {
+      "beat": 36,
+      "note": 49,
+      "dur16": 8,
+      "vel": 0.12
+    },
+    {
+      "beat": 38,
+      "note": 39,
+      "dur16": 8,
+      "vel": 0.2
+    },
+    {
+      "beat": 38,
+      "note": 44,
+      "dur16": 8,
+      "vel": 0.16
+    },
+    {
+      "beat": 38,
+      "note": 51,
+      "dur16": 8,
+      "vel": 0.12
+    },
+    {
+      "beat": 40,
+      "note": 39,
+      "dur16": 16,
+      "vel": 0.22
+    },
+    {
+      "beat": 40,
+      "note": 46,
+      "dur16": 16,
+      "vel": 0.18
+    },
+    {
+      "beat": 40,
+      "note": 51,
+      "dur16": 16,
+      "vel": 0.14
+    },
+    {
+      "beat": 44,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.2
+    },
+    {
+      "beat": 44,
+      "note": 47,
+      "dur16": 16,
+      "vel": 0.16
+    },
+    {
+      "beat": 44,
+      "note": 52,
+      "dur16": 16,
+      "vel": 0.12
+    },
+    {
+      "beat": 48,
+      "note": 45,
+      "dur16": 32,
+      "vel": 0.25
+    },
+    {
+      "beat": 48,
+      "note": 52,
+      "dur16": 32,
+      "vel": 0.2
+    },
+    {
+      "beat": 48,
+      "note": 61,
+      "dur16": 32,
+      "vel": 0.15
+    },
+    {
+      "beat": 56,
+      "note": 40,
+      "dur16": 16,
+      "vel": 0.2
+    },
+    {
+      "beat": 56,
+      "note": 47,
+      "dur16": 16,
+      "vel": 0.16
+    },
+    {
+      "beat": 56,
+      "note": 52,
+      "dur16": 16,
+      "vel": 0.12
+    },
+    {
+      "beat": 60,
+      "note": 45,
+      "dur16": 8,
+      "vel": 0.18
+    },
+    {
+      "beat": 60,
+      "note": 49,
+      "dur16": 8,
+      "vel": 0.14
+    },
+    {
+      "beat": 60,
+      "note": 56,
+      "dur16": 8,
+      "vel": 0.1
+    },
+    {
+      "beat": 62,
+      "note": 49,
+      "dur16": 8,
+      "vel": 0.15
+    },
+    {
+      "beat": 62,
+      "note": 53,
+      "dur16": 8,
+      "vel": 0.12
+    },
+    {
+      "beat": 62,
+      "note": 61,
+      "dur16": 8,
+      "vel": 0.1
+    }
+  ],
+  "drums": [
+    {
+      "beat": 0,
+      "type": "kick",
+      "vel": 0.25
+    },
+    {
+      "beat": 0,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 2,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 4,
+      "type": "kick",
+      "vel": 0.22
+    },
+    {
+      "beat": 4,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 6,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 8,
+      "type": "kick",
+      "vel": 0.25
+    },
+    {
+      "beat": 8,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 10,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 12,
+      "type": "hihat_open",
+      "vel": 0.18
+    },
+    {
+      "beat": 14,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 16,
+      "type": "kick",
+      "vel": 0.22
+    },
+    {
+      "beat": 16,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 18,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 20,
+      "type": "kick",
+      "vel": 0.22
+    },
+    {
+      "beat": 20,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 22,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 24,
+      "type": "kick",
+      "vel": 0.25
+    },
+    {
+      "beat": 24,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 26,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 28,
+      "type": "hihat_open",
+      "vel": 0.18
+    },
+    {
+      "beat": 30,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 32,
+      "type": "kick",
+      "vel": 0.2
+    },
+    {
+      "beat": 32,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 36,
+      "type": "hihat_closed",
+      "vel": 0.1
+    },
+    {
+      "beat": 40,
+      "type": "kick",
+      "vel": 0.22
+    },
+    {
+      "beat": 40,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 44,
+      "type": "hihat_open",
+      "vel": 0.15
+    },
+    {
+      "beat": 46,
+      "type": "hihat_closed",
+      "vel": 0.1
+    },
+    {
+      "beat": 48,
+      "type": "kick",
+      "vel": 0.25
+    },
+    {
+      "beat": 48,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 50,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 52,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 54,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 56,
+      "type": "kick",
+      "vel": 0.22
+    },
+    {
+      "beat": 56,
+      "type": "hihat_closed",
+      "vel": 0.15
+    },
+    {
+      "beat": 58,
+      "type": "hihat_closed",
+      "vel": 0.12
+    },
+    {
+      "beat": 60,
+      "type": "hihat_open",
+      "vel": 0.18
+    },
+    {
+      "beat": 62,
+      "type": "kick",
+      "vel": 0.18
+    },
+    {
+      "beat": 63,
+      "type": "hihat_closed",
+      "vel": 0.12
+    }
+  ]
+}

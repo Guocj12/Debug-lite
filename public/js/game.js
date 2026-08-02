@@ -2302,6 +2302,8 @@ function applyPrepareStart(d) {
 
   // 确保编辑阶段音乐（bass + hi-hat）
   if (G._musicReady) {
+    // 进入战斗/编辑阶段 → 停止环境配乐
+    stopAmbientMusic();
     if (!MusicEngine.isRunning) {
       MusicEngine.start('edit');
       console.log('[MUSIC] 编辑阶段音乐启动');
@@ -2700,6 +2702,10 @@ function nav(screen) {
     if (G.socket) { G.socket.emit('leaveRoom'); G.socket.removeAllListeners(); G.socket.disconnect(); G.socket = null; }
   }
   UI.showScreen(screen);
+  // 切换场景不中断环境配乐（战斗场景除外）
+  if (screen !== 'battle') {
+    startAmbientMusic();
+  }
   if (screen === 'battle') {
     const canvas = document.getElementById('fc');
     if (canvas) Renderer.init(canvas);
@@ -3397,7 +3403,10 @@ async function init() {
   AE.init();
 
   // 初始化音乐引擎
-  initMusic();
+  await initMusic();
+
+  // 初始化环境配乐
+  initAmbientMusic();
 
   const canvas = document.getElementById('fc');
   if (canvas) Renderer.init(canvas);
@@ -3444,6 +3453,40 @@ async function initMusic() {
   });
 
   console.log('[MUSIC] 音乐引擎就绪 BPM=' + (60 / MusicEngine.beatDuration));
+}
+
+// ==================== 环境配乐引擎 ====================
+
+/** 初始化并启动环境配乐 */
+async function initAmbientMusic() {
+  if (!AmbientMusic.init()) {
+    console.warn('[AMBIENT] 引擎初始化失败');
+    return;
+  }
+  const loaded = await AmbientMusic.loadScore();
+  if (!loaded) {
+    console.warn('[AMBIENT] 乐谱加载失败');
+    return;
+  }
+  G._ambientReady = true;
+  startAmbientMusic();
+  console.log('[AMBIENT] 环境配乐就绪 BPM=100');
+}
+
+/** 启动环境配乐（非战斗场景） */
+function startAmbientMusic() {
+  if (!G._ambientReady) return;
+  if (AmbientMusic.isRunning) return;
+  AmbientMusic.start();
+  console.log('[AMBIENT] 环境配乐开始');
+}
+
+/** 停止环境配乐（进入战斗时） */
+function stopAmbientMusic() {
+  if (!G._ambientReady) return;
+  if (!AmbientMusic.isRunning) return;
+  AmbientMusic.stop(400); // 400ms 淡出
+  console.log('[AMBIENT] 环境配乐停止（淡出）');
 }
 
 /** 音乐循环完成时的处理 */
