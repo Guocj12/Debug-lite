@@ -599,7 +599,7 @@
       "charId": "mage",
       "type": "targeted_aoe",
       "effect": "burn_debuff",
-      "damageRatio": 0.7,
+      "damageRatio": 0.8,
       "burnRatio": 0.1,
       "direction": "target",
       "mpCost": 26,

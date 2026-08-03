@@ -6,7 +6,7 @@
       "maxHp":115,
       "maxMp":42,
       "maxSp":85,
-      "atk":14,
+      "atk":10,
       "def":14,
       "mpRegen":2,
       "spRegen":2,
@@ -35,7 +35,7 @@
     {
       "id":"mage",
       "name":"法师",
-      "maxHp":75,
+      "maxHp":80,
       "maxMp":110,
       "maxSp":50,
       "atk":19,
