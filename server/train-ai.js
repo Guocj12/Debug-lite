@@ -1,27 +1,35 @@
 /**
  * ============================================================
- * Debug-Lite AI 训练器 v2 — 双向对抗迭代训练
+ * Debug-Lite AI 训练器 v2 — 双向对抗迭代训练（得分制）
  * ============================================================
  * 
  * 原理说明：
  * 
  * 【训练流程】
  *   被训练角色为 P2，陪训角色为 P1。
- *   双方各自独立产出胜率高的行动序列。
+ *   双方各自独立产出"得分高"的行动序列。
+ *
+ * 【适应度：得分制（零和）】
+ *   不再只按输赢评判基因，而是按每回合战况累计得分：
+ *     - 角色血量净优势（打人 − 挨打）→ 攻击敌人 + 保护自己
+ *     - 基地血量净优势（拆塔 − 被拆）→ 攻击/防守基地
+ *     - 整局胜负加分（击杀/拆塔=敌方血量清零，已计入血量项，不重复计分）
+ *   得分零和（P2得分 = -P1得分），维持对抗压力。
+ *   基因优劣 = 平均每局得分（fitness = score / total）。
  *
  * 【第 1 轮 — 纯随机基础训练】
- *   1a. P2 vs 随机P1：P2 用随机序列，P1 用随机序列，统计 P2 每种序列胜率
- *   1b. P1 vs 随机P2：P1 用随机序列，P2 用随机序列，统计 P1 每种序列胜率
- *   分别取 P2、P1 各自胜率前 10 的序列进入下一轮。
+ *   1a. P2 vs 随机P1：P2 用随机序列，P1 用随机序列，统计 P2 每种序列得分
+ *   1b. P1 vs 随机P2：P1 用随机序列，P2 用随机序列，统计 P1 每种序列得分
+ *   分别取 P2、P1 各自得分前 10 的序列进入下一轮。
  *
- * 【第 2~N 轮 — 变异对抗训练】
+ * 【第 2~N 轮 — 变异对抗训练（8:2 混合）】
  *   每一轮：
- *     - 从上一轮 P2 胜率前10 + P1 胜率前10 各变异出 POP 个新序列
- *     - P2 变异序列 vs P1 变异序列，两两对抗
- *     - 统计双方各自胜率，取前10 进入下一轮
+ *     - 80%：从上一轮 P2/P1 得分前10 各变异出新序列
+ *     - 20%：全新随机序列，防止第一轮基因局限导致之后变异不出好基因
+ *     - P2 序列 vs P1 序列，两两对抗，统计得分，取前10 进入下一轮
  *
  * 【最终输出】
- *   达到训练轮次上限后，将 P2 胜率前三的序列写入 JSON 作为训练结果。
+ *   达到训练轮次上限后，将 P2 得分前三的序列写入 JSON 作为训练结果。
  * 
  * 用法：
  *   node server/train-ai.js                              # 全部角色互训
@@ -29,6 +37,9 @@
  *   node server/train-ai.js --p2 warrior                 # 训练战士 vs 所有其他
  *   node server/train-ai.js --rounds 20 --pop 80         # 自定义轮次和种群
  *   node server/train-ai.js --quick                      # 快速模式
+ *   node server/train-ai.js --mix 0.3                    # 第2+轮混入30%随机基因
+ *   node server/train-ai.js --topk 30                    # 每轮保留30条种子基因（默认20）
+ *   node server/train-ai.js --w-base 2.0 --w-win 3.0     # 自定义奖励权重
  */
 
 // 训练模式下静默 BattleEngine 的战斗日志，避免终端输出溢出
@@ -50,8 +61,10 @@ console.log = function(...args) {
 const BattleEngine = require('./battle');
 const charsData = require('../data/characters.json');
 const skillsData = require('../data/skills.json');
+const configData = require('../data/config.json');
 const fs = require('fs');
 const path = require('path');
+const { normalizeWeights, computeRoundReward, computeGameReward } = require('./reward');
 
 // ==================== 命令行参数 ====================
 const args = {};
@@ -69,23 +82,21 @@ const CONFIG = {
   POP_SIZE: parseInt(args.pop) || 60,          // 种群大小
   GENERATIONS: parseInt(args.gens) || 100,     // 迭代代数
   ELITE: Math.floor((parseInt(args.pop) || 60) * 0.15),
-  MATCHES_PER_EVAL: args.quick ? 10 : (parseInt(args.matches) || 200),
-  MATCHES_PER_PAIR: args.quick ? 5 : (parseInt(args.matches) || 20),
+  MATCHES_PER_PAIR: args.quick ? 1 : (parseInt(args.matches) || 2),  // 每对序列场数：得分制密集奖励下 2 场已够（每基因≈120场）；quick=1
   MUTATION_RATE: 0.05,                           // 变异率
   MAX_ROUNDS: 3,
   ITER_ROUNDS: parseInt(args.rounds) || 5,       // 迭代轮数
-  TOP_K: 10,                                      // 每轮保留前K条序列
+  TOP_K: Math.min(parseInt(args.topk) || 20, parseInt(args.pop) || 60), // 每轮保留种子基因数（评估噪声大时多保留对冲误杀）
+  MIX_RANDOM_RATIO: parseFloat(args.mix) || 0.2, // 第2+轮混入全新随机基因的比例（8:2 → 0.2）
   TARGET_P2: args.p2 || null,                    // 被训练角色 P2
   TARGET_P1: args.p1 || null,                    // 陪训角色 P1（不指定则对所有角色）
-
-  // ===== 奖励塑形权重 =====
-  // 适应度 = WIN_WEIGHT × 胜率 + BASE_DMG_WEIGHT × 基地伤害率 + POS_WEIGHT × 位置得分
-  WIN_WEIGHT: 0.55,           // 胜利权重
-  BASE_DMG_WEIGHT: 0.30,      // 对敌方基地造成的伤害权重（这是核心战略目标）
-  POS_WEIGHT: 0.15,           // 位置权重（越靠近敌方基地越好）
-
-  // ===== 启发式种子 =====
-  HEURISTIC_SEED_RATIO: 0.25, // 首轮 25% 的个体用启发式策略生成
+  // 得分制奖励权重（零和：P2得分 = -P1得分；胜负仅作一个加权加分项。
+  // 击杀/拆塔不单独计分：等价于把敌方血量/基地血量打到0，已计入 HP/基地 项）
+  REWARD_WEIGHTS: normalizeWeights({
+    w_hp: args['w-hp'],
+    w_base: args['w-base'],
+    w_win: args['w-win'],
+  }),
 };
 
 // ==================== 行动池 ====================
@@ -102,217 +113,6 @@ function getActionPool(charDef) {
   const skills = getSkillActionsForChar(charDef);
   skills.forEach((_, i) => pool.push('skill' + (i + 1)));
   return { pool, skillIds: skills };
-}
-
-// ==================== 智能行动选择 ====================
-
-/**
- * 获取角色面向敌方基地的方向
- * P1 基地在 x=0（左），P2 基地在 x=15（右）
- * 所以 P1 的敌方基地在右边，P2 的敌方基地在左边
- */
-function getEnemyBaseDirection(cKey) {
-  return cKey === 'p1' ? 'right' : 'left';
-}
-
-/**
- * 获取敌方基地的 x 坐标
- */
-function getEnemyBaseX(cKey) {
-  return cKey === 'p1' ? 15 : 0;
-}
-
-/**
- * 获取己方基地边界格（攻击敌方基地需要站在这格）
- */
-function getOwnBoundaryX(cKey) {
-  return cKey === 'p1' ? 15 : 0;
-}
-
-/**
- * 在敌方基地方向上的移动/闪避行动
- */
-function getMoveTowardEnemy(cKey, isDodge) {
-  const dir = getEnemyBaseDirection(cKey);
-  if (isDodge) return dir === 'right' ? 'dodge_right' : 'dodge_left';
-  return dir === 'right' ? 'move_right' : 'move_left';
-}
-
-/**
- * 智能行动选择：给定模拟状态，按策略优先级选择一个行动
- * 
- * 优先级：
- *   1. 如果站在己方边界且面朝敌方基地 → 攻击基地（move toward enemy = 攻击基地）
- *   2. 如果离敌方基地 > 3 格且有 SP → 闪避突进
- *   3. 如果离敌方基地 > 0 格 → 普通移动
- *   4. 如果靠近敌方（距离 ≤ 2）且有技能 → 使用技能
- *   5. fallback: 随机合法行动
- */
-function smartPickAction(simState, cKey, charDef, pool) {
-  const p = simState[cKey];
-  const enemyBaseX = getEnemyBaseX(cKey);
-  const ownBoundary = getOwnBoundaryX(cKey);
-  const distToEnemyBase = Math.abs(p.x - enemyBaseX);
-  const towardEnemy = getMoveTowardEnemy(cKey, false);
-  const dodgeToward = getMoveTowardEnemy(cKey, true);
-  const neededFacing = cKey === 'p1' ? 1 : -1; // P1面朝右打P2基地，P2面朝左打P1基地
-
-  // ★ 优先级1：站在边界格、面朝正确方向 → 攻击基地！
-  if (p.x === ownBoundary && p.facing === neededFacing) {
-    if (canUseActionInState(simState, cKey, towardEnemy, charDef)) {
-      return towardEnemy; // move toward enemy base = 攻击基地
-    }
-  }
-
-  // 如果站在边界但面朝反方向，先转身
-  if (p.x === ownBoundary && p.facing !== neededFacing) {
-    if (canUseActionInState(simState, cKey, 'turn', charDef)) {
-      return 'turn';
-    }
-  }
-
-  // ★ 优先级2：离敌方基地还远 → 闪避突进（最快接近）
-  if (distToEnemyBase > 3 && canUseActionInState(simState, cKey, dodgeToward, charDef)) {
-    return dodgeToward;
-  }
-
-  // ★ 优先级3：普通移动接近
-  if (distToEnemyBase > 0 && canUseActionInState(simState, cKey, towardEnemy, charDef)) {
-    return towardEnemy;
-  }
-
-  // ★ 优先级4：靠近敌人时用技能
-  const idxMap = { skill1: 0, skill2: 1, skill3: 2 };
-  const skillActions = ['skill1', 'skill2', 'skill3'];
-  const shuffledSkills = [...skillActions].sort(() => Math.random() - 0.5);
-  for (const sa of shuffledSkills) {
-    if (canUseActionInState(simState, cKey, sa, charDef)) {
-      const idx = idxMap[sa];
-      const sid = p.skills?.[idx];
-      if (sid) {
-        const allSk = skillsData.skills || {};
-        const sk = allSk[sid];
-        // 优先用近战技能（range小的），因为敌人可能在附近
-        if (sk && (sk.type === 'melee' || sk.type === 'projectile')) {
-          return sa;
-        }
-      }
-    }
-  }
-
-  // ★ 优先级5：随机合法行动
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  for (const candidate of shuffled) {
-    if (canUseActionInState(simState, cKey, candidate, charDef)) {
-      return candidate;
-    }
-  }
-
-  return 'defend';
-}
-
-// ==================== 启发式种子基因生成 ====================
-
-/**
- * 生成"速攻基地"风格的启发式基因
- * 策略：前几个 tick 闪避/移动接近敌方基地，到达边界后持续攻击基地
- */
-function generateRushBaseGene(pool, cKey) {
-  const genes = [];
-  const enemyBaseX = getEnemyBaseX(cKey);
-  const ownBoundary = getOwnBoundaryX(cKey);
-  const towardEnemy = getMoveTowardEnemy(cKey, false);
-  const dodgeToward = getMoveTowardEnemy(cKey, true);
-  const awayFromEnemy = getMoveTowardEnemy(cKey, false) === 'move_right' ? 'move_left' : 'move_right';
-  const neededFacing = cKey === 'p1' ? 1 : -1;
-
-  // 计算需要多少格才能到边界（从起始位置算，P1 起始 x=5, P2 起始 x=10）
-  const startX = cKey === 'p1' ? 5 : 10;
-  const distToBoundary = Math.abs(ownBoundary - startX);
-
-  // 前段：闪避+移动混合接近敌方基地
-  // 每 tick 闪避走2格，SP不够就普通移动
-  let dodgeCount = 0;
-  for (let i = 0; i < TICKS; i++) {
-    // 粗略估算：前 distToBoundary/2 个 tick 用于接近，之后用于攻击
-    const phase = i / TICKS;
-    const approachPhaseEnd = Math.min(0.65, (distToBoundary / 2) / TICKS + 0.15);
-
-    if (phase < approachPhaseEnd) {
-      // 接近阶段：交替闪避和普通移动
-      if (i % 3 === 0 && dodgeCount < 5) {
-        genes.push(dodgeToward);
-        dodgeCount++;
-      } else if (i % 3 === 1) {
-        genes.push(towardEnemy);
-      } else {
-        // 穿插转身确保面朝正确方向
-        genes.push('turn');
-      }
-    } else {
-      // 攻击阶段：在边界攻击基地
-      if (i % 4 === 0) {
-        genes.push('turn'); // 确保面朝正确方向
-      } else if (i % 4 === 1) {
-        // 尝试用技能
-        const skillPool = pool.filter(a => a.startsWith('skill'));
-        genes.push(skillPool.length > 0 ? skillPool[Math.floor(Math.random() * skillPool.length)] : towardEnemy);
-      } else {
-        genes.push(towardEnemy); // 攻击基地
-      }
-    }
-  }
-
-  return { genes, wins: 0, total: 0 };
-}
-
-/**
- * 生成"防守反击"风格的启发式基因
- * 策略：先 buff/防御，等敌人靠近后反击
- */
-function generateDefensiveGene(pool, cKey) {
-  const genes = [];
-  const towardEnemy = getMoveTowardEnemy(cKey, false);
-  const dodgeToward = getMoveTowardEnemy(cKey, true);
-
-  for (let i = 0; i < TICKS; i++) {
-    if (i < 3) {
-      // 开局 buff：防御叠加
-      genes.push('defend');
-    } else if (i < 6) {
-      // 缓慢接近
-      genes.push(i % 2 === 0 ? towardEnemy : 'defend');
-    } else {
-      // 后期：技能+闪避
-      const skillPool = pool.filter(a => a.startsWith('skill'));
-      if (i % 3 === 0 && skillPool.length > 0) {
-        genes.push(skillPool[Math.floor(Math.random() * skillPool.length)]);
-      } else {
-        genes.push(i % 2 === 0 ? dodgeToward : towardEnemy);
-      }
-    }
-  }
-
-  return { genes, wins: 0, total: 0 };
-}
-
-/**
- * 生成混合启发式种群
- */
-function generateHeuristicGenes(pool, cKey, count) {
-  const result = [];
-  for (let i = 0; i < count; i++) {
-    // 70% 速攻基地，20% 防守反击，10% 纯随机
-    const r = Math.random();
-    if (r < 0.7) {
-      result.push(generateRushBaseGene(pool, cKey));
-    } else if (r < 0.9) {
-      result.push(generateDefensiveGene(pool, cKey));
-    } else {
-      result.push(randomGene(pool));
-    }
-  }
-  return result;
 }
 
 // ==================== 战斗模拟 ====================
@@ -336,8 +136,10 @@ function makeCharDef(charDef, skillIds) {
 
 /**
  * 创建初始战斗状态
+ * 基地数值取自 config（与 battle.js::init 一致），保证跨回合继承时 def/atk 不漂移
  */
 function makeBattleState(p1Def, p2Def) {
+  const b = configData.base;
   return {
     p1: {
       id: 'P1', charId: p1Def.charId,
@@ -358,8 +160,8 @@ function makeBattleState(p1Def, p2Def) {
       skills: p2Def.skillIds, customSkills: {},
     },
     bases: {
-      p1: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 0 },
-      p2: { hp: 100, maxHp: 100, def: 10, atk: 0, x: 15 },
+      p1: { hp: b.hp, maxHp: b.hp, def: b.def, atk: b.atk, x: b.positions.p1 },
+      p2: { hp: b.hp, maxHp: b.hp, def: b.def, atk: b.atk, x: b.positions.p2 },
     },
   };
 }
@@ -372,30 +174,47 @@ function cloneBattleState(state) {
 }
 
 /**
- * 运行完整一局（多回合），返回 winner 和统计数据
+ * 运行完整一局（多回合），返回 winner、得分与统计数据。
+ * 得分制：每回合按战况（双方角色/基地血量、击杀/拆塔）累计零和得分，整局再加胜负加分。
+ * 同时修复基地跨回合持久化（对齐真实游戏的 _inheritBases 用法）。
  */
 function runFullGame(p1Def, p2Def, p1GenActions, p2GenActions, maxRounds = CONFIG.MAX_ROUNDS) {
   let state = makeBattleState(p1Def, p2Def);
   let totalFrames = 0;
+  const roundResults = [];
 
   for (let round = 1; round <= maxRounds; round++) {
+    // 记录回合开始状态（用于计算本回合血量变化）
+    const before = cloneBattleState(state);
+
     // 生成当回合行动
     const p1Actions = p1GenActions(state, 'p1');
     const p2Actions = p2GenActions(state, 'p2');
 
+    // 修复基地持久化：跨回合继承基地血量（与 index.js 一致），避免每回合重置为满血
+    const initState = cloneBattleState(state);
+    if (state.bases) {
+      initState._inheritBases = {
+        p1: { ...state.bases.p1 },
+        p2: { ...state.bases.p2 },
+      };
+    }
+
     const engine = new BattleEngine();
-    engine.init(cloneBattleState(state));
+    engine.init(initState);
     engine.setActions(p1Actions, p2Actions);
     engine.executeAll();
     const finalState = engine.getState();
+
+    // 本回合零和得分（P2 视角），累计到 roundResults
+    roundResults.push(computeRoundReward(before, finalState, CONFIG.REWARD_WEIGHTS));
 
     totalFrames += 16;
 
     // 结算
     const judge = BattleEngine.judge(finalState, maxRounds, round);
     if (judge) {
-      const finalB1hp = finalState.bases?.p1?.hp ?? 100;
-      const finalB2hp = finalState.bases?.p2?.hp ?? 100;
+      const game = computeGameReward(roundResults, judge.winner, CONFIG.REWARD_WEIGHTS);
       return {
         winner: judge.winner,
         reason: judge.reason,
@@ -403,14 +222,11 @@ function runFullGame(p1Def, p2Def, p1GenActions, p2GenActions, maxRounds = CONFI
         totalFrames,
         p1hp: finalState.p1.hp,
         p2hp: finalState.p2.hp,
-        b1hp: finalB1hp,
-        b2hp: finalB2hp,
-        // ★ 奖励塑形用：各方对敌方基地造成的伤害
-        p1BaseDmg: 100 - finalB2hp,  // P1 对 P2 基地造成的伤害
-        p2BaseDmg: 100 - finalB1hp,  // P2 对 P1 基地造成的伤害
-        // ★ 位置得分用：最终位置
-        _p1FinalX: finalState.p1.x,
-        _p2FinalX: finalState.p2.x,
+        b1hp: finalState.bases?.p1?.hp ?? 100,
+        b2hp: finalState.bases?.p2?.hp ?? 100,
+        p1Score: game.p1,
+        p2Score: game.p2,
+        rounds: game.rounds,
       };
     }
 
@@ -421,21 +237,20 @@ function runFullGame(p1Def, p2Def, p1GenActions, p2GenActions, maxRounds = CONFI
   }
 
   // 达到最大回合数，HP 高者胜
-  const finalB1hp = state.bases?.p1?.hp ?? 100;
-  const finalB2hp = state.bases?.p2?.hp ?? 100;
+  const winner = state.p1.hp > state.p2.hp ? 'P1' : state.p2.hp > state.p1.hp ? 'P2' : 'draw';
+  const game = computeGameReward(roundResults, winner, CONFIG.REWARD_WEIGHTS);
   return {
-    winner: state.p1.hp > state.p2.hp ? 'P1' : state.p2.hp > state.p1.hp ? 'P2' : 'draw',
+    winner,
     reason: '达到最大回合数',
     round: maxRounds,
     totalFrames,
     p1hp: state.p1.hp,
     p2hp: state.p2.hp,
-    b1hp: finalB1hp,
-    b2hp: finalB2hp,
-    p1BaseDmg: 100 - finalB2hp,
-    p2BaseDmg: 100 - finalB1hp,
-    _p1FinalX: state.p1.x,
-    _p2FinalX: state.p2.x,
+    b1hp: state.bases?.p1?.hp ?? 100,
+    b2hp: state.bases?.p2?.hp ?? 100,
+    p1Score: game.p1,
+    p2Score: game.p2,
+    rounds: game.rounds,
   };
 }
 
@@ -741,7 +556,20 @@ function mutateFromSeeds(seeds, pool, count) {
   return result;
 }
 
-/** 基因 → 实际行动序列（智能 fallback 版） */
+/**
+ * 构建第2+轮种群：按 randomRatio 混入全新随机基因，其余从种子变异。
+ * 防止第一轮精英基因的局限导致后续变异陷入局部最优（8:2 → randomRatio=0.2）。
+ */
+function buildMixedPopulation(seeds, pool, size, randomRatio = 0.2) {
+  const pop = [];
+  const mutatedCount = Math.max(0, Math.round(size * (1 - randomRatio)));
+  const randomCount = Math.max(0, size - mutatedCount);
+  pop.push(...mutateFromSeeds(seeds, pool, mutatedCount));
+  for (let i = 0; i < randomCount; i++) pop.push(randomGene(pool));
+  return pop;
+}
+
+/** 基因 → 实际行动序列 */
 function geneToActions(gene, baseState, cKey, charDef, pool) {
   const simState = {
     ...JSON.parse(JSON.stringify(baseState)),
@@ -760,8 +588,8 @@ function geneToActions(gene, baseState, cKey, charDef, pool) {
 
     let action = gene.genes[tick] || 'defend';
     if (!canUseActionInState(simState, cKey, action, charDef)) {
-      // ★ 智能 fallback：不再随机选，而是按策略优先级选择
-      action = smartPickAction(simState, cKey, charDef, pool);
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      action = shuffled.find(a => canUseActionInState(simState, cKey, a, charDef)) || 'defend';
     }
     applyActionCostInState(simState, cKey, action);
     actions.push(action);
@@ -772,14 +600,12 @@ function geneToActions(gene, baseState, cKey, charDef, pool) {
 // ==================== 核心：双向对抗训练 ====================
 
 /**
- * 对一组基因进行双向对抗评估（奖励塑形版）。
+ * 对一组基因进行双向对抗评估。
  * popA 作为 P2，popB 作为 P1。
- * 每对组合打 MATCHES_PER_PAIR 场（多回合），统计双方各自得分。
- * 
- * ★ 适应度 = WIN_WEIGHT × 胜率 + BASE_DMG_WEIGHT × 基地伤害率 + POS_WEIGHT × 位置得分
+ * 每对组合打 MATCHES_PER_PAIR 场（多回合），统计双方各自胜场。
  */
 function runBidirectionalBattle(popA, charA, poolA, popB, charB, poolB) {
-  // 重置：用 score 累积奖励塑形得分，wins 记录纯胜场（用于展示）
+  // 重置
   popA.forEach(g => { g.wins = 0; g.total = 0; g.score = 0; });
   popB.forEach(g => { g.wins = 0; g.total = 0; g.score = 0; });
 
@@ -801,60 +627,34 @@ function runBidirectionalBattle(popA, charA, poolA, popB, charB, poolB) {
         const result = runFullGame(defB, defA, p1Gen, p2Gen, CONFIG.MAX_ROUNDS);
         aGene.total++;
         bGene.total++;
-
-        // ★ 奖励塑形：不再只看输赢
-        // P2 (popA) 的得分
-        const p2WinBonus = result.winner === 'P2' ? 1.0 : (result.winner === 'draw' ? 0.5 : 0.0);
-        const p2BaseDmgRate = Math.min(1.0, (result.p2BaseDmg || 0) / 100); // 对敌方基地伤害比例
-        // 位置得分：P2 初始在 x=10，敌方基地在 x=0，越接近 0 越好
-        const p2StartX = 10, p2EnemyBaseX = 0;
-        const p2FinalDist = result.round >= CONFIG.MAX_ROUNDS ? 
-          Math.abs((result._p2FinalX ?? p2StartX) - p2EnemyBaseX) : 
-          Math.abs((result._p2FinalX ?? p2StartX) - p2EnemyBaseX);
-        const p2PosScore = Math.max(0, 1.0 - p2FinalDist / 10); // 距离0→得分1, 距离10→得分0
-
-        const p2ShapedScore = CONFIG.WIN_WEIGHT * p2WinBonus 
-                            + CONFIG.BASE_DMG_WEIGHT * p2BaseDmgRate 
-                            + CONFIG.POS_WEIGHT * p2PosScore;
-
-        // P1 (popB) 的得分
-        const p1WinBonus = result.winner === 'P1' ? 1.0 : (result.winner === 'draw' ? 0.5 : 0.0);
-        const p1BaseDmgRate = Math.min(1.0, (result.p1BaseDmg || 0) / 100);
-        const p1StartX = 5, p1EnemyBaseX = 15;
-        const p1FinalDist = Math.abs((result._p1FinalX ?? p1StartX) - p1EnemyBaseX);
-        const p1PosScore = Math.max(0, 1.0 - p1FinalDist / 10);
-
-        const p1ShapedScore = CONFIG.WIN_WEIGHT * p1WinBonus 
-                            + CONFIG.BASE_DMG_WEIGHT * p1BaseDmgRate 
-                            + CONFIG.POS_WEIGHT * p1PosScore;
-
-        aGene.score += p2ShapedScore;
-        bGene.score += p1ShapedScore;
-
-        // 保留纯胜场统计（用于展示）
+        // 得分制：累计各自视角的零和得分
+        aGene.score += result.p2Score;
+        bGene.score += result.p1Score;
+        // 胜率仅作诊断展示，不再作为选择依据
         if (result.winner === 'P2') aGene.wins++;
         else if (result.winner === 'P1') bGene.wins++;
       }
     }
 
     if ((ai + 1) % 10 === 0 || ai === popA.length - 1) {
-      const aAvgScore = popA.slice(0, ai + 1).reduce((s, g) => s + (g.total > 0 ? g.score / g.total : 0), 0) / (ai + 1);
-      const aAvgWin = popA.slice(0, ai + 1).reduce((s, g) => s + (g.total > 0 ? g.wins / g.total : 0), 0) / (ai + 1);
-      process.stdout.write(`\r  │  评估中 ${ai+1}/${popA.length} | P2均分=${(aAvgScore*100).toFixed(1)} 胜率=${(aAvgWin*100).toFixed(1)}%`);
+      const aAvg = popA.slice(0, ai + 1).reduce((s, g) => s + (g.total > 0 ? g.wins / g.total : 0), 0) / (ai + 1);
+      const aScore = popA.slice(0, ai + 1).reduce((s, g) => s + (g.total > 0 ? g.score / g.total : 0), 0) / (ai + 1);
+      process.stdout.write(`\r  │  评估中 ${ai+1}/${popA.length} | P2均胜率=${(aAvg*100).toFixed(1)}% | P2均得分=${aScore.toFixed(3)}`);
     }
   }
   console.log('');
 }
 
 /**
- * 取 topK（按奖励塑形得分排序）
+ * 取 topK（按得分制适应度排序）
  */
 function topK(pop, k) {
   return [...pop]
-    .map(g => ({ 
-      genes: [...g.genes], 
-      fitness: g.total > 0 ? g.score / g.total : 0,  // ★ 使用奖励塑形得分
-      winRate: g.total > 0 ? g.wins / g.total : 0,    // 保留纯胜率用于展示
+    .map(g => ({
+      genes: [...g.genes],
+      fitness: g.total > 0 ? g.score / g.total : 0,  // 适应度 = 平均每局得分
+      winRate: g.total > 0 ? g.wins / g.total : 0,   // 胜率，仅作诊断展示
+      avgScore: g.total > 0 ? g.score / g.total : 0,
     }))
     .sort((a, b) => b.fitness - a.fitness)
     .slice(0, k);
@@ -875,11 +675,11 @@ function trainPair(p2Char, p1Char) {
 
   console.log('');
   console.log('═'.repeat(55));
-  console.log(`🎯 P2=${p2Name}(被训练) vs P1=${p1Name}(陪训) | 轮次:${CONFIG.ITER_ROUNDS} | 种群:${CONFIG.POP_SIZE} | 每对:${CONFIG.MATCHES_PER_PAIR}场`);
+  console.log(`🎯 P2=${p2Name}(被训练) vs P1=${p1Name}(陪训) | 轮次:${CONFIG.ITER_ROUNDS} | 种群:${CONFIG.POP_SIZE} | 每对:${CONFIG.MATCHES_PER_PAIR}场 | 种子:${CONFIG.TOP_K} | 随机混入:${(CONFIG.MIX_RANDOM_RATIO*100).toFixed(0)}%`);
   console.log('═'.repeat(55));
 
-  let p2Seeds = []; // P2 上一轮 Top10 基因 { genes, fitness }
-  let p1Seeds = []; // P1 上一轮 Top10 基因
+  let p2Seeds = []; // P2 上一轮 TopK 基因 { genes, fitness, winRate }
+  let p1Seeds = []; // P1 上一轮 TopK 基因
 
   for (let iter = 1; iter <= CONFIG.ITER_ROUNDS; iter++) {
     const iterStart = Date.now();
@@ -887,55 +687,46 @@ function trainPair(p2Char, p1Char) {
     // 生成当前轮的种群
     let popP2, popP1;
     if (iter === 1) {
-      // 第1轮：启发式种子 + 随机混合
-      const heuristicCountP2 = Math.floor(CONFIG.POP_SIZE * CONFIG.HEURISTIC_SEED_RATIO);
-      const randomCountP2 = CONFIG.POP_SIZE - heuristicCountP2;
-      const heuristicCountP1 = Math.floor(CONFIG.POP_SIZE * CONFIG.HEURISTIC_SEED_RATIO);
-      const randomCountP1 = CONFIG.POP_SIZE - heuristicCountP1;
-
-      popP2 = [
-        ...generateHeuristicGenes(poolP2, 'p2', heuristicCountP2),
-        ...Array.from({ length: randomCountP2 }, () => randomGene(poolP2)),
-      ];
-      popP1 = [
-        ...generateHeuristicGenes(poolP1, 'p1', heuristicCountP1),
-        ...Array.from({ length: randomCountP1 }, () => randomGene(poolP1)),
-      ];
+      // 第1轮：纯随机
+      popP2 = Array.from({ length: CONFIG.POP_SIZE }, () => randomGene(poolP2));
+      popP1 = Array.from({ length: CONFIG.POP_SIZE }, () => randomGene(poolP1));
     } else {
-      // 第2+轮：从种子变异
-      popP2 = mutateFromSeeds(p2Seeds, poolP2, CONFIG.POP_SIZE);
-      popP1 = mutateFromSeeds(p1Seeds, poolP1, CONFIG.POP_SIZE);
+      // 第2+轮：80% 从上一轮精英变异 + 20% 全新随机，防止基因池过早固化
+      popP2 = buildMixedPopulation(p2Seeds, poolP2, CONFIG.POP_SIZE, CONFIG.MIX_RANDOM_RATIO);
+      popP1 = buildMixedPopulation(p1Seeds, poolP1, CONFIG.POP_SIZE, CONFIG.MIX_RANDOM_RATIO);
     }
 
-    const seedLabel = iter === 1 ? `随机+启发式(${Math.floor(CONFIG.POP_SIZE*CONFIG.HEURISTIC_SEED_RATIO)}条)` : `种子(${p2Seeds.length}条)变异`;
+    const seedLabel = iter === 1 ? '随机' : `种子(${p2Seeds.length}条)变异+随机${(CONFIG.MIX_RANDOM_RATIO*100).toFixed(0)}%`;
     console.log(`\n  ── 第 ${iter}/${CONFIG.ITER_ROUNDS} 轮 [${seedLabel}] ──`);
     console.log(`  P2:${p2Name}(POP=${CONFIG.POP_SIZE}) vs P1:${p1Name}(POP=${CONFIG.POP_SIZE})`);
 
     runBidirectionalBattle(popP2, p2Char, poolP2, popP1, p1Char, poolP1);
 
-    // 取双方 TopK
+    // 取双方 TopK（按得分制适应度）
     const newP2Top = topK(popP2, CONFIG.TOP_K);
     const newP1Top = topK(popP1, CONFIG.TOP_K);
 
     // ★ 每轮只用本轮 TopK 作为下一轮种子，不跨轮累积
-    // 这样双方在同一个起跑线上竞争，胜率更真实
+    // 这样双方在同一个起跑线上竞争，得分更真实
     p2Seeds = newP2Top;
     p1Seeds = newP1Top;
 
     const iterTime = ((Date.now() - iterStart) / 1000).toFixed(1);
     const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
-    const p2TopInfo = p2Seeds.slice(0,3).map(g=>`${(g.fitness*100).toFixed(1)}%(胜${(g.winRate*100).toFixed(0)}%)`).join(', ');
-    const p1TopInfo = p1Seeds.slice(0,3).map(g=>`${(g.fitness*100).toFixed(1)}%(胜${(g.winRate*100).toFixed(0)}%)`).join(', ');
-    console.log(`  ✅ P2 Top3: ${p2TopInfo} | P1 Top3: ${p1TopInfo} | ⏱${iterTime}s|总${totalTime}s`);
+    const fmt = g => `得分${g.fitness.toFixed(3)}/胜${(g.winRate*100).toFixed(1)}%`;
+    console.log(`  ✅ P2 Top3: ${p2Seeds.slice(0,3).map(fmt).join(', ')}`);
+    console.log(`  ✅ P1 Top3: ${p1Seeds.slice(0,3).map(fmt).join(', ')} | ${iterTime}s|总${totalTime}s`);
   }
 
   const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
   const finalTop3 = p2Seeds.slice(0, 3);
-  console.log(`\n🏁 ${p2Name} vs ${p1Name} 完成! ${totalTime}s | P2最终Top3: ${finalTop3.map(g=>(g.fitness*100).toFixed(1)+'%').join(', ')}`);
+  const fmt = g => `得分${g.fitness.toFixed(3)}/胜${(g.winRate*100).toFixed(1)}%`;
+  console.log(`\n🏁 ${p2Name} vs ${p1Name} 完成! ${totalTime}s | P2最终Top3: ${finalTop3.map(fmt).join(', ')}`);
 
   return {
     vsCharId: p1Char.id,
     bestFitness: finalTop3.length > 0 ? finalTop3[0].fitness : 0,
+    bestWinRate: finalTop3.length > 0 ? finalTop3[0].winRate : 0,
     topGenes: finalTop3,
   };
 }
@@ -959,7 +750,8 @@ function saveResults(allResults) {
     }
     (r.vsResults || []).forEach(vr => {
       weights[r.charId].vs[vr.vsCharId] = {
-        fitness: vr.bestFitness,
+        fitness: vr.bestFitness,       // 得分制适应度（平均每局得分）
+        winRate: vr.bestWinRate || 0,  // 对应胜率（诊断用）
         topGenes: vr.topGenes,
         trainedAt: new Date().toISOString(),
       };
@@ -991,7 +783,9 @@ function main() {
   console.log('║  Debug-Lite AI 训练器 v2 — 双向对抗迭代训练       ║');
   console.log('╚══════════════════════════════════════════════════════╝');
   console.log('');
-  console.log(`配置: 种群=${CONFIG.POP_SIZE} | 轮次=${CONFIG.ITER_ROUNDS} | 每对=${CONFIG.MATCHES_PER_PAIR}场 | 变异率=${CONFIG.MUTATION_RATE}`);
+  console.log(`配置: 种群=${CONFIG.POP_SIZE} | 轮次=${CONFIG.ITER_ROUNDS} | 每对=${CONFIG.MATCHES_PER_PAIR}场 | 种子=${CONFIG.TOP_K} | 变异率=${CONFIG.MUTATION_RATE} | 随机混入=${(CONFIG.MIX_RANDOM_RATIO*100).toFixed(0)}%`);
+  const w = CONFIG.REWARD_WEIGHTS;
+  console.log(`奖励权重: HP=${w.w_hp} | 基地=${w.w_base} | 胜负=${w.w_win}`);
   console.log('');
 
   const allChars = charsData.characters || [];
@@ -1051,7 +845,7 @@ function main() {
     console.log(`  ${r.charName}:`);
     (r.vsResults || []).forEach(vr => {
       const oppName = allChars.find(c => c.id === vr.vsCharId)?.name || vr.vsCharId;
-      const fits = vr.topGenes.map(g => (g.fitness*100).toFixed(1)+'%').join(', ');
+      const fits = vr.topGenes.map(g => `得分${g.fitness.toFixed(2)}/${(g.winRate*100).toFixed(0)}%`).join(', ');
       console.log(`    vs ${oppName.padEnd(6)} | ${fits}`);
     });
   });

@@ -90,9 +90,14 @@ npm start
 ### 原理
 
 - **双向对抗**：被训练角色(P2)与陪训角色(P1)各自独立产出行动序列，两两对战
-- **多轮迭代**：第1轮纯随机 → 各取胜率Top10 → 下一轮Top10变异出种群 → 继续互殴
-- **完全对等**：P1和P2的种子各自独立，不会被对方污染
-- **蒙特卡洛评估**：每对序列打 N 场多回合对局，用胜率衡量强度
+- **得分制适应度（零和）**：不再只用胜负评判基因，而是每回合按战况累计得分：
+  - 角色血量净优势（打人 − 挨打）→ 攻击敌人 + 保护自己
+  - 基地血量净优势（拆塔 − 被拆）→ 攻击/防守基地
+  - 整局胜负加分（击杀/拆塔 = 敌方血量清零，已计入血量项，不重复计分）
+  - 得分零和（P2得分 = −P1得分），维持对抗压力；基因优劣 = 平均每局得分
+- **多轮迭代（8:2 混合）**：第1轮纯随机 → 各取得分 Top10 → 第2+轮 80% 从精英变异 + 20% 全新随机，防止第一轮基因局限导致之后变异不出好基因
+- **完全对等**：P1 和 P2 的种子各自独立，不会被对方污染
+- **蒙特卡洛评估**：每对序列打 N 场多回合对局，用累计得分衡量强度
 
 ### 训练命令
 
@@ -108,6 +113,15 @@ node server/train-ai.js --p2 warrior --pop 80 --rounds 5
 
 # 快速验证（低精度）
 node server/train-ai.js --quick --p2 warrior --p1 warrior --pop 20 --rounds 3
+
+# 第2+轮混入30%全新随机基因（默认20%）
+node server/train-ai.js --p2 warrior --p1 archer --mix 0.3
+
+# 每轮保留30条种子基因（默认20）
+node server/train-ai.js --p2 warrior --p1 archer --topk 30
+
+# 调整奖励权重（提高拆塔倾向 / 提高获胜导向）
+node server/train-ai.js --p2 warrior --p1 archer --w-base 2.0 --w-win 3.0
 ```
 
 ### 参数说明
@@ -118,12 +132,17 @@ node server/train-ai.js --quick --p2 warrior --p1 warrior --pop 20 --rounds 3
 | `--p1` | 全部 | 陪训角色（对手）：`warrior` / `archer` / `mage` / `assassin` |
 | `--pop` | 60 | 每轮双方各生成的序列数 |
 | `--rounds` | 5 | 迭代轮数，越多对手越强 AI 也越强 |
-| `--matches` | 20 | 每对序列的对战场次（越大越精确） |
-| `--quick` | false | 快速模式（仅5场/对，误差大，仅用于验证） |
+| `--matches` | 2 | 每对序列的对战场次（得分制下 2 场已够，每基因约 120 场；越大越精确但更慢） |
+| `--quick` | false | 快速模式（每对仅 1 场，误差大，仅用于验证） |
+| `--topk` | 20 | 每轮保留的种子基因数（评估噪声大时调大对冲误杀，勿超过种群一半） |
+| `--mix` | 0.2 | 第2+轮混入全新随机基因的比例（8:2 → 0.2，防止基因池过早固化） |
+| `--w-hp` | 1.0 | 角色血量净优势权重（打人 − 挨打） |
+| `--w-base` | 1.5 | 基地血量净优势权重（略高，鼓励拆塔） |
+| `--w-win` | 3.0 | 整局胜负加分权重 |
 
 ### 训练产物
 
-- `data/ai-weights.json` — 格式 `weights[P2角色].vs[P1角色].topGenes[0~2]`
+- `data/ai-weights.json` — 格式 `weights[P2角色].vs[P1角色].topGenes[0~2]`，每个 `vs` 条目含 `fitness`（得分制适应度 = 平均每局得分）与 `winRate`（对应胜率，诊断用）
 - `data/ai-templates.json` — 简洁行动模板（人类可读）
 
 启动 `npm start` 后服务端根据 AI 角色和玩家角色自动匹配最优序列。权重文件不存在则回退到随机 AI。
@@ -132,6 +151,6 @@ node server/train-ai.js --quick --p2 warrior --p1 warrior --pop 20 --rounds 3
 
 | 场景 | 命令 | 预估耗时 |
 |------|------|---------|
-| 日常训练 | `--pop 80 --rounds 5` | 5~10 分钟 |
-| 深度训练 | `--pop 120 --rounds 8` | 15~30 分钟 |
-| 快速验证 | `--quick --p2 warrior --p1 warrior --pop 20 --rounds 3` | 5~10 秒 |
+| 日常训练 | `--pop 80 --rounds 5` | 约 1 分钟 |
+| 深度训练 | `--pop 150 --rounds 8 --topk 30` | 约 3~5 分钟 |
+| 快速验证 | `--quick --p2 warrior --p1 warrior --pop 20 --rounds 3` | 约 1~2 秒 |
