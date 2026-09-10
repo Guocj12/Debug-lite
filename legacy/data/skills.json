@@ -509,7 +509,7 @@
       "charId": "archer",
       "type": "projectile",
       "effect": "normal_damage",
-      "damageRatio": 0.8,
+      "damageRatio": 0.9,
       "range": 8,
       "direction": "forward",
       "mpCost": 0,

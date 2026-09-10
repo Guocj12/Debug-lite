@@ -1,0 +1,1278 @@
+{
+  "warrior": {
+    "name": "战士",
+    "skillIds": [
+      "warrior_whirlwind",
+      "warrior_heavy",
+      "warrior_shieldbash"
+    ],
+    "vs": {
+      "warrior": {
+        "fitness": 1.0998260869565208,
+        "winRate": 0.38974358974358975,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_right",
+              "turn",
+              "dodge_right",
+              "move_left",
+              "dodge_right",
+              "turn",
+              "defend",
+              "skill1",
+              "move_right",
+              "skill2",
+              "defend",
+              "move_left",
+              "move_left",
+              "move_left",
+              "skill1",
+              "dodge_left"
+            ],
+            "fitness": 1.0998260869565208,
+            "winRate": 0.38974358974358975,
+            "avgScore": 1.0998260869565208
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "turn",
+              "turn",
+              "skill1",
+              "skill3",
+              "skill1",
+              "dodge_right",
+              "move_left",
+              "move_right",
+              "dodge_right",
+              "move_left",
+              "dodge_left",
+              "defend",
+              "dodge_right",
+              "dodge_right",
+              "defend"
+            ],
+            "fitness": 1.0837079152731313,
+            "winRate": 0.6512820512820513,
+            "avgScore": 1.0837079152731313
+          },
+          {
+            "genes": [
+              "dodge_right",
+              "turn",
+              "dodge_right",
+              "move_left",
+              "dodge_right",
+              "turn",
+              "defend",
+              "skill1",
+              "move_right",
+              "skill2",
+              "defend",
+              "move_left",
+              "move_left",
+              "move_left",
+              "skill1",
+              "dodge_left"
+            ],
+            "fitness": 1.0759899665551835,
+            "winRate": 0.3923076923076923,
+            "avgScore": 1.0759899665551835
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.461Z"
+      },
+      "archer": {
+        "fitness": 2.1728281992606933,
+        "winRate": 0.8512820512820513,
+        "topGenes": [
+          {
+            "genes": [
+              "skill1",
+              "move_left",
+              "dodge_left",
+              "skill3",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "defend",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "dodge_left",
+              "skill1",
+              "turn",
+              "dodge_right",
+              "skill2"
+            ],
+            "fitness": 2.1728281992606933,
+            "winRate": 0.8512820512820513,
+            "avgScore": 2.1728281992606933
+          },
+          {
+            "genes": [
+              "skill1",
+              "move_left",
+              "dodge_left",
+              "skill3",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "defend",
+              "dodge_right",
+              "skill1",
+              "skill3",
+              "dodge_left",
+              "skill1",
+              "turn",
+              "dodge_right",
+              "skill2"
+            ],
+            "fitness": 2.0041084609517097,
+            "winRate": 0.8256410256410256,
+            "avgScore": 2.0041084609517097
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "skill1",
+              "move_left",
+              "defend",
+              "defend",
+              "turn",
+              "defend",
+              "move_left",
+              "dodge_left",
+              "defend",
+              "skill1",
+              "skill2",
+              "skill1"
+            ],
+            "fitness": 2.002616792818166,
+            "winRate": 0.8128205128205128,
+            "avgScore": 2.002616792818166
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "mage": {
+        "fitness": 2.339921962095878,
+        "winRate": 0.9205128205128205,
+        "topGenes": [
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "defend",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "move_right",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "defend",
+              "defend",
+              "skill1",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 2.339921962095878,
+            "winRate": 0.9205128205128205,
+            "avgScore": 2.339921962095878
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "defend",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "move_right",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "defend",
+              "defend",
+              "skill1",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 2.3211677814938696,
+            "winRate": 0.9179487179487179,
+            "avgScore": 2.3211677814938696
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "defend",
+              "skill1",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "move_right",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "defend",
+              "defend",
+              "skill1",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 2.305929487179491,
+            "winRate": 0.9153846153846154,
+            "avgScore": 2.305929487179491
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "assassin": {
+        "fitness": 1.987564102564101,
+        "winRate": 0.8153846153846154,
+        "topGenes": [
+          {
+            "genes": [
+              "turn",
+              "dodge_right",
+              "skill1",
+              "dodge_right",
+              "turn",
+              "defend",
+              "dodge_left",
+              "move_left",
+              "move_left",
+              "skill2",
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "move_left",
+              "move_right",
+              "dodge_left"
+            ],
+            "fitness": 1.987564102564101,
+            "winRate": 0.8153846153846154,
+            "avgScore": 1.987564102564101
+          },
+          {
+            "genes": [
+              "turn",
+              "skill2",
+              "skill1",
+              "dodge_right",
+              "turn",
+              "dodge_left",
+              "dodge_right",
+              "move_left",
+              "move_left",
+              "skill2",
+              "dodge_left",
+              "move_right",
+              "skill3",
+              "move_left",
+              "move_right",
+              "dodge_left"
+            ],
+            "fitness": 1.8202021553325884,
+            "winRate": 0.7769230769230769,
+            "avgScore": 1.8202021553325884
+          },
+          {
+            "genes": [
+              "dodge_right",
+              "defend",
+              "dodge_left",
+              "dodge_left",
+              "defend",
+              "dodge_left",
+              "dodge_left",
+              "defend",
+              "skill1",
+              "dodge_left",
+              "dodge_right",
+              "turn",
+              "dodge_right",
+              "dodge_right",
+              "dodge_right",
+              "skill2"
+            ],
+            "fitness": 1.7897730087947485,
+            "winRate": 0.8102564102564103,
+            "avgScore": 1.7897730087947485
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      }
+    },
+    "trainedAt": "2026-08-05T14:34:19.464Z",
+    "config": {
+      "rounds": 20,
+      "pop": 130
+    }
+  },
+  "archer": {
+    "name": "射手",
+    "skillIds": [
+      "archer_precise",
+      "archer_rapid",
+      "archer_rain"
+    ],
+    "vs": {
+      "warrior": {
+        "fitness": 0.5772074165346481,
+        "winRate": 0.5538461538461539,
+        "topGenes": [
+          {
+            "genes": [
+              "defend",
+              "skill3",
+              "move_right",
+              "defend",
+              "defend",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "move_left",
+              "skill2",
+              "defend",
+              "skill3",
+              "dodge_right"
+            ],
+            "fitness": 0.5772074165346481,
+            "winRate": 0.5538461538461539,
+            "avgScore": 0.5772074165346481
+          },
+          {
+            "genes": [
+              "defend",
+              "skill3",
+              "move_right",
+              "defend",
+              "defend",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "move_left",
+              "skill2",
+              "defend",
+              "skill3",
+              "dodge_right"
+            ],
+            "fitness": 0.5395503139118697,
+            "winRate": 0.5487179487179488,
+            "avgScore": 0.5395503139118697
+          },
+          {
+            "genes": [
+              "defend",
+              "skill3",
+              "move_right",
+              "defend",
+              "defend",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "move_left",
+              "skill2",
+              "defend",
+              "skill3",
+              "dodge_right"
+            ],
+            "fitness": 0.5391913395528957,
+            "winRate": 0.541025641025641,
+            "avgScore": 0.5391913395528957
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "archer": {
+        "fitness": 2.004037112010796,
+        "winRate": 0.8025641025641026,
+        "topGenes": [
+          {
+            "genes": [
+              "move_left",
+              "skill3",
+              "dodge_right",
+              "dodge_left",
+              "defend",
+              "skill3",
+              "dodge_left",
+              "turn",
+              "turn",
+              "move_right",
+              "dodge_left",
+              "defend",
+              "turn",
+              "turn",
+              "dodge_right",
+              "skill3"
+            ],
+            "fitness": 2.004037112010796,
+            "winRate": 0.8025641025641026,
+            "avgScore": 2.004037112010796
+          },
+          {
+            "genes": [
+              "move_left",
+              "skill3",
+              "skill3",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_left",
+              "dodge_right",
+              "turn",
+              "move_right",
+              "turn",
+              "dodge_right",
+              "turn",
+              "turn",
+              "dodge_right",
+              "skill3"
+            ],
+            "fitness": 1.933674763832659,
+            "winRate": 0.7846153846153846,
+            "avgScore": 1.933674763832659
+          },
+          {
+            "genes": [
+              "move_left",
+              "skill3",
+              "skill3",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_left",
+              "dodge_right",
+              "turn",
+              "move_right",
+              "turn",
+              "dodge_right",
+              "turn",
+              "turn",
+              "dodge_right",
+              "skill3"
+            ],
+            "fitness": 1.9030263157894731,
+            "winRate": 0.7846153846153846,
+            "avgScore": 1.9030263157894731
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "mage": {
+        "fitness": 1.5051096491228035,
+        "winRate": 0.7384615384615385,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_right",
+              "dodge_left",
+              "turn",
+              "move_right",
+              "dodge_right",
+              "dodge_left",
+              "skill2",
+              "turn",
+              "move_right",
+              "move_left",
+              "turn",
+              "skill3",
+              "dodge_right",
+              "defend",
+              "dodge_left",
+              "skill2"
+            ],
+            "fitness": 1.5051096491228035,
+            "winRate": 0.7384615384615385,
+            "avgScore": 1.5051096491228035
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "dodge_left",
+              "skill1",
+              "skill3",
+              "skill1",
+              "move_right",
+              "move_right",
+              "move_left",
+              "skill1",
+              "dodge_right",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "skill1"
+            ],
+            "fitness": 1.5028559379217301,
+            "winRate": 0.7333333333333333,
+            "avgScore": 1.5028559379217301
+          },
+          {
+            "genes": [
+              "dodge_right",
+              "dodge_left",
+              "skill1",
+              "skill2",
+              "turn",
+              "move_right",
+              "move_right",
+              "skill3",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "defend",
+              "skill3",
+              "skill1",
+              "dodge_left",
+              "move_left"
+            ],
+            "fitness": 1.448785425101215,
+            "winRate": 0.7333333333333333,
+            "avgScore": 1.448785425101215
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "assassin": {
+        "fitness": 1.6232613585245148,
+        "winRate": 0.7384615384615385,
+        "topGenes": [
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "skill3",
+              "turn",
+              "turn",
+              "dodge_right",
+              "turn",
+              "move_left",
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "skill3",
+              "move_left",
+              "turn",
+              "skill2",
+              "turn"
+            ],
+            "fitness": 1.6232613585245148,
+            "winRate": 0.7384615384615385,
+            "avgScore": 1.6232613585245148
+          },
+          {
+            "genes": [
+              "defend",
+              "dodge_right",
+              "skill3",
+              "turn",
+              "turn",
+              "dodge_right",
+              "skill2",
+              "move_left",
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "skill3",
+              "move_left",
+              "turn",
+              "turn",
+              "turn"
+            ],
+            "fitness": 0.6274096566201833,
+            "winRate": 0.6,
+            "avgScore": 0.6274096566201833
+          },
+          {
+            "genes": [
+              "move_left",
+              "dodge_left",
+              "skill3",
+              "skill2",
+              "defend",
+              "skill3",
+              "skill3",
+              "dodge_right",
+              "skill1",
+              "dodge_left",
+              "move_left",
+              "move_left",
+              "dodge_right",
+              "skill2",
+              "dodge_right",
+              "move_left"
+            ],
+            "fitness": 0.543139001349528,
+            "winRate": 0.5666666666666667,
+            "avgScore": 0.543139001349528
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      }
+    },
+    "trainedAt": "2026-08-05T14:34:19.464Z",
+    "config": {
+      "rounds": 20,
+      "pop": 130
+    }
+  },
+  "mage": {
+    "name": "法师",
+    "skillIds": [
+      "mage_ice",
+      "mage_fireball",
+      "mage_shield"
+    ],
+    "vs": {
+      "warrior": {
+        "fitness": 2.443048216276475,
+        "winRate": 0.841025641025641,
+        "topGenes": [
+          {
+            "genes": [
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "turn",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "skill3",
+              "dodge_left"
+            ],
+            "fitness": 2.443048216276475,
+            "winRate": 0.841025641025641,
+            "avgScore": 2.443048216276475
+          },
+          {
+            "genes": [
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "turn",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "skill3",
+              "dodge_left"
+            ],
+            "fitness": 2.4394286510590857,
+            "winRate": 0.8384615384615385,
+            "avgScore": 2.4394286510590857
+          },
+          {
+            "genes": [
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "move_left",
+              "defend",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "turn",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "skill3",
+              "dodge_left"
+            ],
+            "fitness": 2.40293032329989,
+            "winRate": 0.8307692307692308,
+            "avgScore": 2.40293032329989
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "archer": {
+        "fitness": 2.801938259109311,
+        "winRate": 0.8846153846153846,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "move_right",
+              "dodge_right",
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "dodge_left",
+              "skill1",
+              "defend",
+              "skill2",
+              "dodge_left",
+              "dodge_left",
+              "turn"
+            ],
+            "fitness": 2.801938259109311,
+            "winRate": 0.8846153846153846,
+            "avgScore": 2.801938259109311
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "move_right",
+              "dodge_right",
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "dodge_left",
+              "dodge_right",
+              "defend",
+              "skill2",
+              "dodge_left",
+              "dodge_left",
+              "turn"
+            ],
+            "fitness": 2.597885964912279,
+            "winRate": 0.8666666666666667,
+            "avgScore": 2.597885964912279
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "move_right",
+              "dodge_right",
+              "turn",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "dodge_left",
+              "skill1",
+              "defend",
+              "skill2",
+              "dodge_left",
+              "skill1",
+              "turn"
+            ],
+            "fitness": 2.589179149797571,
+            "winRate": 0.8564102564102564,
+            "avgScore": 2.589179149797571
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "mage": {
+        "fitness": 1.8465064102564126,
+        "winRate": 0.7564102564102564,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_left",
+              "move_left",
+              "dodge_right",
+              "move_left",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "dodge_left",
+              "skill1",
+              "dodge_right",
+              "defend",
+              "dodge_left",
+              "turn",
+              "skill2",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 1.8465064102564126,
+            "winRate": 0.7564102564102564,
+            "avgScore": 1.8465064102564126
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "move_left",
+              "dodge_right",
+              "move_left",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "dodge_left",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "dodge_left",
+              "turn",
+              "skill2",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 1.2965064102564106,
+            "winRate": 0.6487179487179487,
+            "avgScore": 1.2965064102564106
+          },
+          {
+            "genes": [
+              "skill1",
+              "move_left",
+              "dodge_right",
+              "move_left",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "skill3",
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "dodge_left",
+              "turn",
+              "skill2",
+              "turn",
+              "dodge_left"
+            ],
+            "fitness": 1.284166666666667,
+            "winRate": 0.6743589743589744,
+            "avgScore": 1.284166666666667
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "assassin": {
+        "fitness": 2.296093304843305,
+        "winRate": 0.8179487179487179,
+        "topGenes": [
+          {
+            "genes": [
+              "skill1",
+              "skill3",
+              "dodge_right",
+              "move_left",
+              "skill1",
+              "defend",
+              "move_left",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "dodge_right",
+              "turn",
+              "move_left"
+            ],
+            "fitness": 2.296093304843305,
+            "winRate": 0.8179487179487179,
+            "avgScore": 2.296093304843305
+          },
+          {
+            "genes": [
+              "skill1",
+              "skill3",
+              "dodge_right",
+              "move_left",
+              "skill1",
+              "defend",
+              "move_left",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "dodge_right",
+              "skill2",
+              "dodge_right",
+              "turn",
+              "move_left"
+            ],
+            "fitness": 2.048767806267809,
+            "winRate": 0.7794871794871795,
+            "avgScore": 2.048767806267809
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "move_right",
+              "defend",
+              "skill1",
+              "dodge_left",
+              "move_right",
+              "skill2",
+              "dodge_right",
+              "move_right",
+              "dodge_left",
+              "dodge_left",
+              "turn",
+              "move_left",
+              "dodge_right",
+              "skill2",
+              "skill1"
+            ],
+            "fitness": 1.9679772079772093,
+            "winRate": 0.7692307692307693,
+            "avgScore": 1.9679772079772093
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      }
+    },
+    "trainedAt": "2026-08-05T14:34:19.464Z",
+    "config": {
+      "rounds": 20,
+      "pop": 130
+    }
+  },
+  "assassin": {
+    "name": "刺客",
+    "skillIds": [
+      "assassin_shadowstep",
+      "assassin_dagger",
+      "assassin_poison"
+    ],
+    "vs": {
+      "warrior": {
+        "fitness": 0.8348042239563983,
+        "winRate": 0.5897435897435898,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_left",
+              "turn",
+              "defend",
+              "skill2",
+              "dodge_right",
+              "defend",
+              "move_left",
+              "turn",
+              "skill3",
+              "dodge_left",
+              "defend",
+              "move_left",
+              "skill2",
+              "skill1",
+              "skill3",
+              "skill2"
+            ],
+            "fitness": 0.8348042239563983,
+            "winRate": 0.5897435897435898,
+            "avgScore": 0.8348042239563983
+          },
+          {
+            "genes": [
+              "skill1",
+              "skill2",
+              "skill1",
+              "skill3",
+              "move_left",
+              "turn",
+              "move_left",
+              "move_left",
+              "defend",
+              "dodge_left",
+              "turn",
+              "dodge_left",
+              "skill1",
+              "skill2",
+              "move_right",
+              "move_right"
+            ],
+            "fitness": 0.812026941657376,
+            "winRate": 0.5794871794871795,
+            "avgScore": 0.812026941657376
+          },
+          {
+            "genes": [
+              "skill2",
+              "skill3",
+              "skill1",
+              "skill2",
+              "move_left",
+              "turn",
+              "move_left",
+              "move_left",
+              "move_right",
+              "dodge_left",
+              "turn",
+              "skill1",
+              "move_right",
+              "skill2",
+              "dodge_right",
+              "move_right"
+            ],
+            "fitness": 0.7538042239563978,
+            "winRate": 0.5717948717948718,
+            "avgScore": 0.7538042239563978
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "archer": {
+        "fitness": 2.6729086819613137,
+        "winRate": 0.8717948717948718,
+        "topGenes": [
+          {
+            "genes": [
+              "skill2",
+              "dodge_right",
+              "move_right",
+              "move_right",
+              "skill3",
+              "defend",
+              "turn",
+              "turn",
+              "move_right",
+              "skill1",
+              "skill2",
+              "dodge_left",
+              "move_left",
+              "skill2",
+              "skill3",
+              "skill1"
+            ],
+            "fitness": 2.6729086819613137,
+            "winRate": 0.8717948717948718,
+            "avgScore": 2.6729086819613137
+          },
+          {
+            "genes": [
+              "skill2",
+              "dodge_right",
+              "move_right",
+              "move_right",
+              "skill3",
+              "defend",
+              "turn",
+              "turn",
+              "move_right",
+              "skill1",
+              "skill2",
+              "dodge_left",
+              "move_left",
+              "skill2",
+              "skill3",
+              "skill1"
+            ],
+            "fitness": 2.6307613585245155,
+            "winRate": 0.8692307692307693,
+            "avgScore": 2.6307613585245155
+          },
+          {
+            "genes": [
+              "dodge_left",
+              "dodge_right",
+              "dodge_right",
+              "move_left",
+              "move_right",
+              "defend",
+              "turn",
+              "skill3",
+              "skill1",
+              "defend",
+              "skill2",
+              "dodge_left",
+              "skill1",
+              "skill2",
+              "dodge_left",
+              "dodge_right"
+            ],
+            "fitness": 2.4213577747788237,
+            "winRate": 0.8384615384615385,
+            "avgScore": 2.4213577747788237
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "mage": {
+        "fitness": 1.3183333333333347,
+        "winRate": 0.6871794871794872,
+        "topGenes": [
+          {
+            "genes": [
+              "dodge_right",
+              "skill2",
+              "turn",
+              "dodge_right",
+              "move_right",
+              "skill1",
+              "move_left",
+              "skill2",
+              "dodge_left",
+              "move_right",
+              "dodge_left",
+              "turn",
+              "skill1",
+              "defend",
+              "dodge_right",
+              "dodge_right"
+            ],
+            "fitness": 1.3183333333333347,
+            "winRate": 0.6871794871794872,
+            "avgScore": 1.3183333333333347
+          },
+          {
+            "genes": [
+              "dodge_right",
+              "skill2",
+              "skill2",
+              "defend",
+              "defend",
+              "dodge_left",
+              "move_right",
+              "skill2",
+              "dodge_left",
+              "dodge_left",
+              "skill2",
+              "skill3",
+              "defend",
+              "turn",
+              "skill1",
+              "dodge_right"
+            ],
+            "fitness": 1.3105555555555555,
+            "winRate": 0.6820512820512821,
+            "avgScore": 1.3105555555555555
+          },
+          {
+            "genes": [
+              "dodge_right",
+              "dodge_right",
+              "skill1",
+              "skill3",
+              "move_left",
+              "defend",
+              "skill3",
+              "move_right",
+              "turn",
+              "skill2",
+              "dodge_right",
+              "dodge_left",
+              "move_right",
+              "skill1",
+              "dodge_right",
+              "skill1"
+            ],
+            "fitness": 0.328005698005698,
+            "winRate": 0.5230769230769231,
+            "avgScore": 0.328005698005698
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      },
+      "assassin": {
+        "fitness": 2.4995868945868964,
+        "winRate": 0.882051282051282,
+        "topGenes": [
+          {
+            "genes": [
+              "skill3",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "dodge_left",
+              "dodge_left",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "skill2"
+            ],
+            "fitness": 2.4995868945868964,
+            "winRate": 0.882051282051282,
+            "avgScore": 2.4995868945868964
+          },
+          {
+            "genes": [
+              "skill3",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "dodge_left",
+              "skill2",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "skill2"
+            ],
+            "fitness": 2.477713675213677,
+            "winRate": 0.8692307692307693,
+            "avgScore": 2.477713675213677
+          },
+          {
+            "genes": [
+              "skill3",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "move_right",
+              "turn",
+              "dodge_left",
+              "skill2",
+              "dodge_left",
+              "skill3",
+              "dodge_right",
+              "dodge_right",
+              "skill2",
+              "dodge_left",
+              "skill2"
+            ],
+            "fitness": 2.432991452991453,
+            "winRate": 0.8589743589743589,
+            "avgScore": 2.432991452991453
+          }
+        ],
+        "trainedAt": "2026-08-05T14:34:19.464Z"
+      }
+    },
+    "trainedAt": "2026-08-05T14:34:19.464Z",
+    "config": {
+      "rounds": 20,
+      "pop": 130
+    }
+  }
+}
