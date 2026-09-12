@@ -607,7 +607,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B3 `[x]` | `items.js` 数值层（roll/generate/openBox/applyAffixes/validateUnlock）+ 数据表（含 schema 变更） | T-IT-1/2/3/4/5/9 + T-RO-7 + T-DC-1/2 | `items.roll/generate/affix`（审查 `docs/reviews/B3.md`，P1×1 已修） |
 | B4 `[x]` | `validateUnlock` + `unlock.js`（紫段位）+ `GET /api/v1/unlock` 端点 | T-IT-6 + T-UL-1..4 | `unlock.*`（审查 `docs/reviews/B4.md`，P2×3 已修） |
 | B5 `[x]` | `roles.js`（含模板 regen；typeModifiers L9 入表） | T-RO-1..7 | `roles.*`（审查 `docs/reviews/B5.md`，P1×1 已修） |
-| B6 | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围） | T-SK-1..4 | `skills.*` |
+| B6 `[x]` | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围/四类型释放指令/路径弹幕） | T-SK-1..4 | `skills.*`（审查 `docs/reviews/B6.md`，P1×1 已修） |
 | B7 | `bullets.js`（**当 tick 全解算 + 连续碰撞方程 + 等级抵消 + 递归**） | T-BU-1..8 + **T-BT-8/19** | `bullets.*` |
 | B8 | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`）、统一落位、**角色碰撞与碰撞伤害**、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve` |
 | B9 | 伤害链路（§3.5.5）+ 基地（撞基地）+ AOE 基准 + 背击（位移后） | T-EN-5/6/7/8 + T-EF-6 + **T-BT-6/7/12/16/18** | `damage.*` |
