@@ -1,0 +1,4 @@
+{
+  "dropRates": { "common": 0.55, "rare": 0.28, "epic": 0.12, "legendary": 0.04, "mythic": 0.01 },
+  "kindWeights": { "role": 1, "skill": 1, "rolePlugin": 2, "skillPlugin": 2 }
+}

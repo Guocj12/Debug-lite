@@ -178,7 +178,10 @@ function checkNumericHardcode(options) {
   const configValues = new Set();
   const vals = [];
   collectNumbers(config, vals);
-  for (const v of vals) configValues.add(v);
+  // 排除通用常量 {0,1,-1}：计数器/朝向/布尔数值与战斗机制数值无关（P0-6 审查 P2-3）
+  for (const v of vals) {
+    if (v !== 0 && v !== 1 && v !== -1) configValues.add(v);
+  }
 
   const files = scopeFiles(root, STATIC_SCOPE, '.js');
   const numRe = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
@@ -260,11 +263,11 @@ function checkSchema(options) {
   }
   // eslint-disable-next-line global-require
   const schema = require(schemaPath);
-  if (typeof schema.validate !== 'function') {
-    return resultOf('fail', 'schema.js 未导出 validate(dataDir)');
+  if (typeof schema.validateStructure !== 'function') {
+    return resultOf('fail', 'schema.js 未导出 validateStructure(dataDir)');
   }
   try {
-    const res = schema.validate(path.join(root, 'server', 'data'));
+    const res = schema.validateStructure(path.join(root, 'server', 'data'));
     if (res.ok) return resultOf('pass', res.detail || '数据表 schema 校验通过');
     return resultOf('fail', res.detail || '数据表 schema 校验失败');
   } catch (e) {
@@ -272,18 +275,15 @@ function checkSchema(options) {
   }
 }
 
-// ---------- 项 5：文档↔数据一致性 + D 编号落点（T-DC-2/8，P0-6/P0-7 激活） ----------
+// ---------- 项 5 子 A：D 编号落点（T-DC-8，P0-7 激活） ----------
 
-function checkDocData(options) {
+function checkDNumberLocations(options) {
   const root = (options && options.projectRoot) || REPO;
   const interfacesPath = path.join(root, 'docs', 'interfaces.md');
-  // 激活条件：docs/interfaces.md 已建立（P0-7 对齐，审查 P1-2）。
-  // T-DC-2（数据表 ↔ items-data.md 逐条对齐）未在本项实现——见 tasks.md P0-6 行登记，随 P0-6 接线。
   if (!fs.existsSync(interfacesPath)) {
-    return resultOf('pending', 'docs/interfaces.md 缺失（P0-7 落地后激活；T-DC-2 随 P0-6 接线）');
+    return resultOf('pending', 'docs/interfaces.md 缺失（P0-7 落地后激活）');
   }
   const problems = [];
-  // D 编号落点（T-DC-8）：decisions.md 每条 D-xx 须在 interfaces.md 或数据表文件文本中出现
   const decisionsPath = path.join(root, 'docs', 'decisions.md');
   if (fs.existsSync(decisionsPath)) {
     const decisions = fs.readFileSync(decisionsPath, 'utf8');
@@ -291,8 +291,7 @@ function checkDocData(options) {
     const dList = new Set();
     let m;
     while ((m = dRe.exec(decisions)) !== null) dList.add(`D-${m[1]}`);
-    let haystack = '';
-    haystack += fs.readFileSync(interfacesPath, 'utf8');
+    let haystack = fs.readFileSync(interfacesPath, 'utf8');
     const dataDir = path.join(root, 'server', 'data');
     if (fs.existsSync(dataDir)) {
       for (const f of fs.readdirSync(dataDir)) {
@@ -308,6 +307,40 @@ function checkDocData(options) {
   }
   if (problems.length > 0) return resultOf('fail', problems.join('；'));
   return resultOf('pass', 'D 编号落点检查通过（interfaces.md 已建立）');
+}
+
+// ---------- 项 5 子 B：items-data ↔ 数据表一致性（T-DC-2，P0-6 激活） ----------
+
+function checkDocConsistency(options) {
+  const root = (options && options.projectRoot) || REPO;
+  const schemaPath = path.join(root, 'server', 'data', 'schema.js');
+  if (!fs.existsSync(schemaPath)) {
+    return resultOf('pending', 'server/data/schema.js 缺失（T-DC-2 随 P0-6 接线后激活）');
+  }
+  // eslint-disable-next-line global-require
+  const schema = require(schemaPath);
+  if (typeof schema.validateConsistency !== 'function') {
+    return resultOf('fail', 'schema.js 未导出 validateConsistency(dataDir)');
+  }
+  try {
+    const res = schema.validateConsistency(path.join(root, 'server', 'data'));
+    if (res.ok) return resultOf('pass', res.detail || 'items-data ↔ 数据表一致');
+    return resultOf('fail', res.detail || 'items-data ↔ 数据表不一致');
+  } catch (e) {
+    return resultOf('fail', `一致性校验抛错: ${e.message}`);
+  }
+}
+
+// ---------- 项 5：合并（fail > pend > pass） ----------
+
+function checkDocData(options) {
+  const a = checkDNumberLocations(options);
+  const b = checkDocConsistency(options);
+  const worst = (x, y) => (x.status === 'fail' || y.status === 'fail' ? 'fail'
+    : x.status === 'pending' || y.status === 'pending' ? 'pending' : 'pass');
+  const status = worst(a, b);
+  const detail = `T-DC-8(${a.status}): ${a.detail}；T-DC-2(${b.status}): ${b.detail}`;
+  return status === 'pass' ? resultOf('pass', detail) : resultOf(status, detail);
 }
 
 // ---------- 项 7：全量测试 + 覆盖率（进程内 run()） ----------
@@ -456,8 +489,8 @@ async function main(options) {
 
 module.exports = {
   REPO, checkStaticRandEval, checkStaticConsole, checkNumericHardcode,
-  checkLogNaming, checkSchema, checkDocData, checkTests, runSuite, judgeCoverage,
-  validateEvent, runGate, main,
+  checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency,
+  checkTests, runSuite, judgeCoverage, validateEvent, runGate, main,
 };
 
 if (require.main === module) {

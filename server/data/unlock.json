@@ -1,0 +1,19 @@
+{
+  "unlocks": [
+    { "tier": "common", "aiNodes": ["if"],
+      "roleTemplates": ["role_bal"],
+      "skills": ["skill_melee_whirl", "skill_straight_precise"] },
+    { "tier": "rare", "aiNodes": ["loop", "while", "break"],
+      "roleTemplates": ["role_spc_hp", "role_spc_atk", "role_spc_def", "role_spc_sp", "role_spc_mp"],
+      "skills": ["skill_melee_heavy", "skill_straight_rapid", "skill_straight_ice"] },
+    { "tier": "epic", "aiNodes": ["random", "logic", "arith_ext"],
+      "roleTemplates": [],
+      "skills": ["skill_straight_poison", "skill_vert_rain"] },
+    { "tier": "legendary", "aiNodes": [],
+      "roleTemplates": ["role_exp_hp", "role_exp_atk", "role_exp_def", "role_exp_sp", "role_exp_mp"],
+      "skills": ["skill_vert_fireball"] },
+    { "tier": "mythic", "aiNodes": ["function", "call"],
+      "roleTemplates": [],
+      "skills": ["skill_dash_bash", "skill_dash_shadow"] }
+  ]
+}

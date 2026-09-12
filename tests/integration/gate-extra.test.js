@@ -27,61 +27,63 @@ async function runCheck(checkFn, files) {
   }
 }
 
-// ---------- 项 4：checkSchema 全分支 ----------
+// ---------- 项 4：checkSchema（validateStructure）全分支 ----------
 
-test('GX-1 checkSchema：schema.js 存在但无 validate → fail', async () => {
+test('GX-1 checkSchema：schema.js 存在但无 validateStructure → fail', async () => {
   const r = await runCheck(gate.checkSchema, { 'server/data/schema.js': 'module.exports = {};' });
   assert.equal(r.status, 'fail');
-  assert.ok(r.detail.includes('validate'), r.detail);
+  assert.ok(r.detail.includes('validateStructure'), r.detail);
 });
 
-test('GX-2 checkSchema：validate 返回 ok/fail/抛错', async () => {
+test('GX-2 checkSchema：validateStructure 返回 ok/fail/抛错', async () => {
   const ok = await runCheck(gate.checkSchema, {
-    'server/data/schema.js': "module.exports = { validate: () => ({ ok: true, detail: '全过' }) };",
+    'server/data/schema.js': "module.exports = { validateStructure: () => ({ ok: true, detail: '全过' }) };",
   });
   assert.equal(ok.status, 'pass');
   const bad = await runCheck(gate.checkSchema, {
-    'server/data/schema.js': "module.exports = { validate: () => ({ ok: false, detail: 'regen 缺失' }) };",
+    'server/data/schema.js': "module.exports = { validateStructure: () => ({ ok: false, detail: 'regen 缺失' }) };",
   });
   assert.equal(bad.status, 'fail');
   assert.ok(bad.detail.includes('regen 缺失'), bad.detail);
   const boom = await runCheck(gate.checkSchema, {
-    'server/data/schema.js': "module.exports = { validate: () => { throw new Error('boom'); } };",
+    'server/data/schema.js': "module.exports = { validateStructure: () => { throw new Error('boom'); } };",
   });
   assert.equal(boom.status, 'fail');
   assert.ok(boom.detail.includes('boom'), boom.detail);
 });
 
-// ---------- 项 5：checkDocData 全分支 ----------
+// ---------- 项 5 子 A：T-DC-8 D 编号落点（checkDNumberLocations 全分支） ----------
 
-test('GX-3 checkDocData：interfaces.md 存在且含 D 编号 → pass；缺 D → fail', async () => {
-  const ok = await runCheck(gate.checkDocData, {
+test('GX-3 checkDNumberLocations：interfaces.md 存在且含 D 编号 → pass；缺 D → fail；无 interfaces → pending', async () => {
+  const ok = await runCheck(gate.checkDNumberLocations, {
     'docs/interfaces.md': '## D-001 落点：battle-config\n## D-002 落点：rng\n',
     'docs/decisions.md': '# D-001 决策\n# D-002 决策\n',
   });
   assert.equal(ok.status, 'pass', ok.detail);
   assert.ok(ok.detail.includes('interfaces.md 已建立'), ok.detail);
-  const bad = await runCheck(gate.checkDocData, {
+  const bad = await runCheck(gate.checkDNumberLocations, {
     'docs/interfaces.md': '## D-001 落点\n',
     'docs/decisions.md': '# D-001 决策\n# D-999 决策\n',
   });
   assert.equal(bad.status, 'fail', 'D-999 无落点必须 fail');
   assert.ok(bad.detail.includes('D-999'), bad.detail);
+  const pend = await runCheck(gate.checkDNumberLocations, {
+    'docs/decisions.md': '# D-001 决策\n',
+  });
+  assert.equal(pend.status, 'pending', '无 interfaces.md 必须 pending');
 });
 
-test('GX-4 checkDocData：无 interfaces.md → pending；有 interfaces + 数据表文本落点 → pass', async () => {
-  const pend = await runCheck(gate.checkDocData, {
-    'server/data/role-templates.json': '{"note": "D-001 在这里", "x": 1}',
-    'docs/decisions.md': '# D-001 决策\n',
+// ---------- 项 5 子 B：T-DC-2 items-data ↔ 数据表（checkDocConsistency） ----------
+
+test('GX-4 checkDocConsistency：真实仓库 → pass；无 schema.js → pending；validateConsistency 缺失 → fail', async () => {
+  const repo = gate.checkDocConsistency();
+  assert.equal(repo.status, 'pass', `真实仓库一致性应通过: ${repo.detail}`);
+  const pend = await runCheck(gate.checkDocConsistency, { 'server/data/README.md': '#' });
+  assert.equal(pend.status, 'pending', '无 schema.js 必须 pending');
+  const bad = await runCheck(gate.checkDocConsistency, {
+    'server/data/schema.js': "module.exports = { validateConsistency: () => ({ ok: false, detail: '找不到 rp_atk_pct' }) };",
   });
-  assert.equal(pend.status, 'pending', '无 interfaces.md 必须 pending（P0-7 对齐）');
-  const ok = await runCheck(gate.checkDocData, {
-    'docs/interfaces.md': '## D-001 落点\n',
-    'server/data/role-templates.json': '{"note": "D-001", "x": 1}',
-    'docs/decisions.md': '# D-001 决策\n',
-  });
-  assert.equal(ok.status, 'pass', ok.detail);
-  assert.ok(ok.detail.includes('interfaces.md 已建立'), ok.detail);
+  assert.equal(bad.status, 'fail', bad.detail);
 });
 
 // ---------- 项 6②：checkNumericHardcode 全分支 ----------
@@ -97,6 +99,19 @@ test('GX-5 checkNumericHardcode：配置解析失败 → fail；嵌套数组取�
     'server/core/field.js': 'const LO = 0.88;',
   });
   assert.equal(nested.status, 'fail', '嵌套数组内的 0.88 应被认作配置值');
+});
+
+test('GX-5b 通用常量 {0,1,-1} 不判硬编码（P2-3：朝向/计数器与机制数值无关）', async () => {
+  const ok = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': '{"cellPx": 64, "startFacing": {"p1": 1, "p2": -1}, "bases": {"p1": {"hp": 100}}, "overtimeRatio": 0.0625}',
+    'server/core/move.js': 'const dir = 1; const flip = -1; const idx = 0;',
+  });
+  assert.equal(ok.status, 'pass', `1/-1/0 不应误报: ${ok.detail}`);
+  const bad = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': '{"overtimeRatio": 0.0625}',
+    'server/core/move.js': 'const r = 0.0625;',
+  });
+  assert.equal(bad.status, 'fail', '真实机制数值仍必须来自配置');
 });
 
 // ---------- 项 6①：checkLogNaming 通用形坏通道分支 ----------
