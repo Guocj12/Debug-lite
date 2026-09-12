@@ -24,7 +24,7 @@
 
 - 绿 common：条件分支（if/else）、均衡模板、基础技能。
 - 蓝 rare：循环（for/while/break）、特化模板、进阶技能。
-- 紫 epic：概率随机（random）、更多运算符、进阶技能（设计补充，待确认）。
+- 紫 epic：**概率随机（`random`）+ 更多运算符**、进阶技能。（**已确认**，D-120）
 - 橙 legendary：专家模板、高阶技能。
 - 青 mythic：函数（function/call）、顶级技能。
 

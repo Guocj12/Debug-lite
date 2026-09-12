@@ -15,7 +15,7 @@
 
 ## 3. 数据结构
 
-- 模板：`id`、`name`（专有名称）、`type`（balanced / specialized / expert）、`highStat`（特化/专家的最高属性，命名依据）、`baseStats{hp,atk,def,sp,mp}`、`slotWeights`。
+- 模板：`id`、`name`（专有名称）、`type`（balanced / specialized / expert）、`highStat`（特化/专家的最高属性，命名依据）、`baseStats{hp,atk,def,sp,mp}`、**`regen{mp,sp}`（必填，每 tick 自动回复量，D-110）**、`slotWeights`、`pluginPoints`（最大插件点数）、可选 `unlockTier`（D-112）。
 - 角色实例：`charId`、`templateId`、`name`、`type`、`quality`、`stats{hp,atk,def,sp,mp}`、`regen{mp,sp}`、`slots[]`（含已装配插件）、`pluginPoints`（最大点数）、`special{}`（闪避/吸血/暴击汇总）。
 
 ## 4. 核心流程（代码逻辑）
@@ -25,7 +25,7 @@
 1. 取模板 `baseStats` 为基础。
 2. 按 `type` 套类型修饰（见 4.2）。
 3. 每个属性乘以品质系数（品质 `statRange` 内均匀随机），取整。
-4. 计算 `maxHp`（等于最终 hp 值），`regen` 取模板默认。
+4. 计算 `maxHp`（等于最终 hp 值）；**`regen{mp,sp}` 取模板的必填字段**（D-110），并叠加插件词条加成（如 SP/MP 优化的"回复 +1"）。
 
 ### 4.2 类型修饰 `applyTypeModifier(stats, highStat, type, rng)`
 

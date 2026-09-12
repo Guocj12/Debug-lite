@@ -12,13 +12,13 @@
 
 - `engine.js`（离线结算一场）。
 - `unlock.js`（段位品质门控）。
-- `store.js`（存档，延后）。
+- `store.js`（存档，**本轮不实现**：D-123 决定延后到 P6 前端 localStorage）。
 
 ## 3. 数据结构
 
 - 玩家档案：`playerId`、`tier`、`loadout`。
 - `loadout`：`role`（角色模板及插件）、`skills[3]`（三个技能模板及各自插件）、`ai`（AI 程序）。
-- 本地存储：`loadout` 与仓库以 JSON 存于玩家本地（浏览器 localStorage），可读写。
+- **本轮无持久化（D-123）**：`loadout`/仓库/段位均由**请求传入并回带**，服务端不落盘；localStorage 方案留到 P6 与前端一并实现。
 - 快照：出战配置的不可变深拷贝。
 
 ## 4. 核心流程（代码逻辑）
@@ -41,7 +41,7 @@
 
 ### 4.4 晋升判定 `promote(player, wins)`
 
-1. `wins > x` → `tier + 1`（`x` 默认 6）。
+1. `wins > x` → `tier + 1`（**`x = 6`，已确认**，D-122；即 10 场胜 7 场晋升）。
 2. 达到最高段位后不再晋升。
 
 ### 4.5 段位奖励 `tierReward(tier)`

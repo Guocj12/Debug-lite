@@ -27,7 +27,7 @@
 - 词条：`id`、`desc`、`params`（数值）。
 - 插槽：`type`（角色：atk/def/hp/sp/mp/special；技能：basic/special）、`pluginUid`（装配的插件，可空）。
 - 角色模板：`pluginPoints`（最大插件点数）。
-- 插件：`tier`（档位 1/2/3）、`pointCost`（角色插件点数消耗）、`costDeltaByTier`（技能插件消耗增量）。
+- 插件：`id`（**一个变体一个 id**，如 `rp_atk_pct` / `rp_atk_flat`，D-114）、`tier`（档位 1/2/3）、`pointCost`（角色插件点数消耗 = 档位）、`costDeltaByTier`（技能插件**逐档数组**，如 `{mp:[2,4,6]}`；减耗类为 `null`，D-113）。
 - 仓库：按 `kind` 分桶的映射，每桶存物品实例列表；物品带 `equipped` 标记（是否已装配）。
 - 出战配置 `loadout`：`role`（角色模板及插槽）、`skills[3]`（三个技能模板及插槽）、`ai`（AI 程序）。
 
@@ -63,7 +63,7 @@
 2. 随机抽取一个插件定义。
 3. 掷档位：按品质 `statRange` 三等分（或品质 `tiers` 表）确定本插件落在一/二/三档中的哪一档。
 4. 按档位在对应子区间内随机缩放词条数值，写入 `params`；记录 `tier`。
-5. 角色插件：`pointCost = tier`；技能插件：`costDelta = costDeltaByTier[tier]`。
+5. 角色插件：`pointCost = tier`；技能插件：`cost = cost + costDeltaByTier[tier]`（**逐档数组**，各品质基础值递增：绿 `[2,4,6]`，D-113）；减耗类 `costDeltaByTier = null`。
 6. 写入 `category`、`name`、`desc`、`unlockTier`。
 
 ### 4.6 开箱 `openBox(rng)`
