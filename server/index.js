@@ -35,6 +35,21 @@ function okEnvelope(data, logger) {
   return { ok: true, data, log: { level: logger.getLevel(), events: [] } };
 }
 
+// 解析 query string → 对象（unlock?tier=rare 用）
+function parseQuery(url) {
+  const q = (url || '').split('?')[1];
+  if (!q) return {};
+  const out = {};
+  for (const pair of q.split('&')) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const k = decodeURIComponent(pair.slice(0, eq));
+    const v = decodeURIComponent(pair.slice(eq + 1));
+    out[k] = v;
+  }
+  return out;
+}
+
 function errEnvelope(code, message, details) {
   return { ok: false, error: { code, message, details: details || [] } };
 }
@@ -70,6 +85,27 @@ function createHandler(logger, extraRoutes) {
     GET: {
       '/api/v1/health': () => ({ status: 200, payload: okEnvelope({ status: 'ok', version: VERSION }, logger) }),
       '/api/v1/log-level': () => ({ status: 200, payload: okEnvelope({ level: logger.getLevel() }, logger) }),
+      '/api/v1/unlock': (ctx) => {
+        // 该段位可用节点/模板/技能（B4 接入；未知段位 → 400 bad_tier）
+        const unlockApi = require('./core/unlock.js');
+        const tier = ctx.query ? ctx.query.tier : null;
+        if (tier === null || unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier || '(缺省)'}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const roles = require('./data/role-templates.json').roleTemplates;
+        const skills = require('./data/skill-templates.json').skillTemplates;
+        const plugins = require('./data/plugins.json').plugins;
+        return {
+          status: 200,
+          payload: okEnvelope({
+            tier,
+            nodes: unlockApi.availableNodes(tier),
+            roleTemplates: unlockApi.filterByTier(roles, tier).map((x) => x.id),
+            skills: unlockApi.filterByTier(skills, tier).map((x) => x.id),
+            plugins: unlockApi.filterByTier(plugins, tier).map((x) => x.id),
+          }, logger),
+        };
+      },
     },
     POST: {
       '/api/v1/log-level': async (ctx) => {
@@ -152,7 +188,7 @@ function createHandler(logger, extraRoutes) {
             rawBody = await readBody(req);
             if (!rawBody) rawBody = '{}';
           }
-          const ctx = { rawBody, logger };
+          const ctx = { rawBody, logger, query: parseQuery(req.url) };
           const r = await handler(ctx);
           status = r.status;
           payload = r.payload;

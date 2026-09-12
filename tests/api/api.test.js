@@ -141,6 +141,23 @@ test('AP-7 坏表名/边界路径：../ 与目录穿越 → 400 bad_table；精�
   });
 });
 
+test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14）', async () => {
+  await withServer(null, async ({ port }) => {
+    const ok = await request(port, 'GET', '/api/v1/unlock?tier=common');
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.data.nodes.length, 11, 'common 可用节点 11（09-unlock §1）');
+    assert.ok(!ok.body.data.nodes.includes('random'), 'common 无 random');
+    assert.ok(ok.body.data.roleTemplates.includes('role_bal'), '均衡角色可用');
+    assert.ok(!ok.body.data.skills.includes('skill_dash_bash'), '突击盾（mythic）不可用');
+    const bad = await request(port, 'GET', '/api/v1/unlock');
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'bad_tier');
+    const bad2 = await request(port, 'GET', '/api/v1/unlock?tier=nope');
+    assert.equal(bad2.status, 400);
+    assert.equal(bad2.body.error.code, 'bad_tier');
+  });
+});
+
 test('AP-8 请求体超限（>1MB）→ 500 internal_error + api.err', async () => {
   const logger = createLogger({ level: 'debug', ringSize: 500 });
   const s = await serverMod.start({ logger });
