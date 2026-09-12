@@ -44,7 +44,8 @@ docs/progress.md       本文件
 ### 3.1 开发（进行中）
 - [x] **P0-1** `package.json` + `.gitignore` + `README.md`（2026-09-12；7 脚本接线、cov 修 P1、审查 `docs/reviews/P0-1.md`）
 - [x] **P0-2** 目录骨架 + 各目录 README 地图（2026-09-12；含 `tests/helpers/` 解读，审查 `docs/reviews/P0-2.md`）
-- [ ] **P0-3 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **P0-3** 测试基建：runner 契约固化（`tests/README.md`）、`tests/helpers/gen.js`（G-1..12）、覆盖率阈值实测（2026-09-12；审查 `docs/reviews/P0-3.md`）
+- [ ] **P0-4 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
@@ -57,7 +58,7 @@ docs/progress.md       本文件
 ## 4. 关键约定（避免走弯路）
 
 1. **改中文文档禁止用 PowerShell 5.1 的 `Get-Content`/`Set-Content`**（会造成双重编码损坏）；用文件工具或 Node（UTF-8 无 BOM）。
-2. **数值必须机器复算**：示例/走查里的每个数字都要有对应的 `.audit/verify-*.js` 复算过，不靠手算。
+2. **数值必须机器复算**：示例/走查/测试断言里的每个数字都要有独立可复跑的机器计算验证（脚本或测试内的计算），不靠手算；冻结常量注明复算方式。
 3. **机制在代码、数值在表**：所有战斗数值来自 `battle-config.json` 等数据表。
 4. **计算与文档分工**：分支穷举在 `examples/`，端到端串联在 `battle-walkthrough.md`，实现细则在 `systems/`。
 5. **开发提交一律在 `dev` 分支**（2026-09-12 用户指示）；`main` 保持门禁全绿才合并。

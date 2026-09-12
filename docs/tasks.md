@@ -243,6 +243,8 @@ health | data <table>
 | T-DC-7 | 机制数值不在代码里硬编码（战斗数值必须来自 `battle-config.json`） | P0-5 | 失败 |
 | **T-DC-8** | **文档与现实一致**：`decisions.md` 的每条 D 编号都能在 `docs/interfaces.md` 或数据表中找到落点 | P0-7 | 失败 |
 
+> P0 基建批自有的测试点：P0-3 的 `G-1..G-12`（`tests/helpers/gen.js` 契约，见 `tests/README.md`）；P0-4 的 T-LG-1/2/3/6/7；P0-5 的 T-DC-3..7；P0-6 的 T-DC-1/2；P0-8 的 T-CLI-2。
+
 ### 3.3 敷衍测试黑名单（命中即打回）
 
 1. 只断言 `truthy`／只断言"不抛错"／`assert.ok(true)`。
@@ -586,7 +588,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 |---|---|
 | P0-1 `[x]` | `package.json`(start/test/cov/gate/demo/cli/demo:log) + `.gitignore` + `README.md`（2026-09-12 完成；审查 `docs/reviews/P0-1.md`） |
 | P0-2 `[x]` | 目录骨架：`shared/ server/{core,ai,data} cli/ tests/{contract,unit,integration,regression,api,cli,property,log,fixtures} scripts/ assets/`（不建 `public/`；另含 `tests/helpers/`，解读见 `docs/reviews/P0-2.md`） |
-| P0-3 | 测试基建：单进程 runner 固化、`tests/helpers.js`、`tests/helpers/gen.js`、覆盖率阈值 —— 实测 §1.3 全部命令 |
+| P0-3 `[x]` | 测试基建：单进程 runner 固化、`tests/helpers/`（`gen.js` 种子化生成器、`log.js` 录制器——后者随 P0-4）、覆盖率阈值 —— 实测 §1.3 部分命令（start/gate/demo/cli 随 P0-8/P0-5/B11 落地） |
 | P0-4 | **日志子系统**：`shared/log.js` + 注入 + `DL_LOG_*` + `tests/log/*`（T-LG-1/2/3/6/7） |
 | P0-5 | `scripts/gate.js`（9 项）+ `scripts/check-arch.js` + 静态检查（T-DC-3/4/5/6/7） |
 | P0-6 | `server/data/schema.js` + **`battle-config.json`** + 按 D-110~D-116 重建数据表 + `T-DC-1/2` |
