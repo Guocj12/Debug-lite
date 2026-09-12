@@ -53,7 +53,8 @@ docs/progress.md       本文件
 - [x] **P0-9** assets 占位表：sprites/animations 纳入 T-DC-1 + 经 /api/v1/data/:table 提供（DS-11/AP-2 扩展；审查 `docs/reviews/P0-9.md`，P2×4 已修）—— **P0 阶段 9/9 批收口**
 - [x] **B1**（P1 首）`core/rng.js`（D-90/91/92：全局种子 + deriveStream(tick,purpose) + state/restore）+ `core/field.js`（clampX/cellOf/cellRange/touchesBase，数值全来自 battle-config）（R-1..10/F-1..9，153 用例；审查 `docs/reviews/B1.md`，P2×3 已修；修复 checkNumericHardcode 标识符误报）
 - [x] **B2** `core/effects.js`（addEffect/resolveContinuous/resolveControl/resolveControlMove + withLogger；E-1..8 全分支）（EF-1..13，167 用例；审查 `docs/reviews/B2.md`，P1×3 已修——remaining:0 边界/ICD 补全/失败路径）
-- [ ] **B3 起**按 `docs/tasks.md` §6 推进（P1 B3~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **B3** `core/items.js` 数值层（rollQuality/rollSlotCount/tierOf/generate*/openBox/applyAffixes/validateUnlock；T-RO-7 regen 直透；门禁新增 `// cl:` 行级豁免）（IT-1..14，186 用例；审查 `docs/reviews/B3.md`，P1×1 已修——flat 入包即时取整）
+- [ ] **B4 起**按 `docs/tasks.md` §6 推进（P1 B4~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

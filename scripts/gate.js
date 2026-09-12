@@ -186,13 +186,26 @@ function checkNumericHardcode(options) {
   const files = scopeFiles(root, STATIC_SCOPE, '.js');
   // token 边界：前后不得是标识符/小数点字符（避免 mulberry32/uint32/hash32 里的 "32" 误报，B1 实测）
   const numRe = /(?<![\w.])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])/g;
+  // 行级豁免标记（审查可见）：源码行尾 `// cl:100` 标注"该数值为通用精度常量、非战斗数值"——
+  // 先于注释剥离收集，扫描时跳过（P0-5 起登记，B3 实测 round2 精度常量与 baseDef 撞值）。
+  const exemption = [];
   const hits = [];
   for (const f of files) {
-    const src = stripCommentsAndStrings(fs.readFileSync(f, 'utf8'));
+    const raw = fs.readFileSync(f, 'utf8');
+    const exemptNow = new Set();
+    const exRe = /\/\/\s*cl:\s*([^\n]+)/g;
+    let ex;
+    while ((ex = exRe.exec(raw)) !== null) {
+      for (const tok of (ex[1].match(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g) || [])) {
+        const n = Number(tok);
+        if (Number.isFinite(n)) exemptNow.add(n);
+      }
+    }
+    const src = stripCommentsAndStrings(raw);
     let m;
     while ((m = numRe.exec(src)) !== null) {
       const n = Number(m[0]);
-      if (configValues.has(n)) {
+      if (configValues.has(n) && !exemptNow.has(n)) {
         hits.push(`${toPosix(path.relative(root, f))} 硬编码数值 ${m[0]}（应读取 battle-config.json）`);
       }
     }
@@ -203,11 +216,11 @@ function checkNumericHardcode(options) {
 
 // ---------- 项 6①：日志事件命名（T-DC-6，core+ai） ----------
 
-// logger 接收者限定：log/logger/_log/ctx.log 等标识符（启发式，见契约）
+// logger 接收者限定：log/logger/_log/L/ctx.log 等标识符（启发式，见契约；L 为 items/effects 惯用短名，B3 加）
 const LOG_CALL_RE =
-  /(?:(?:this|self|ctx|state|battle)\.)?(?:log(?:ger|Fn)?|logger|_log)\.(fatal|error|warn|info|debug|trace)\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
+  /(?:(?:this|self|ctx|state|battle)\.)?(?:log(?:ger|Fn)?|logger|_log|L)\.(fatal|error|warn|info|debug|trace)\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
 const LOG_GENERIC_RE =
-  /(?:(?:this|self|ctx|state|battle)\.)?(?:log(?:ger|Fn)?|logger|_log)\.log\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
+  /(?:(?:this|self|ctx|state|battle)\.)?(?:log(?:ger|Fn)?|logger|_log|L)\.log\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
 
 function checkLogNaming(options) {
   const root = (options && options.projectRoot) || REPO;

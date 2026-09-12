@@ -128,6 +128,20 @@ test('GX-5c 标识符中的数字不误报（B1：mulberry32/uint32/hash32 的 "
   assert.equal(bad.status, 'fail', '真正的字面量仍抓');
 });
 
+test('GX-5d 行级豁免标记 // cl: 生效（B3：通用精度常量与机制数值撞值时不误报）', async () => {
+  const config = '{"bases": {"p1": {"hp": 100}}}';
+  const exempt = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': config,
+    'server/core/items.js': 'function round2(x) { return Math.round(x * 100) / 100; } // cl:100',
+  });
+  assert.equal(exempt.status, 'pass', `豁免标记应放行: ${exempt.detail}`);
+  const noExempt = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': config,
+    'server/core/items.js': 'const BASE_HP = 100;',
+  });
+  assert.equal(noExempt.status, 'fail', '未标注的 100 仍抓');
+});
+
 // ---------- 项 6①：checkLogNaming 通用形坏通道分支 ----------
 
 test('GX-6 checkLogNaming：通用形 log.log 的未注册通道也抓', async () => {

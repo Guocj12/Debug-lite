@@ -23,7 +23,7 @@
 | 3 | 架构依赖（T-DC-4） | 调 `check-arch.js`（契约附后） | P0-5 ✅ 实时 |
 | 4 | 数据表 schema（T-DC-1） | `server/data/schema.js` 存在则执行 `validateStructure`（结构 + 冻结数值 + 禁 `bulletSpeed`），否则 **PEND** | P0-6 ✅ 实时 |
 | 5 | 文档↔数据一致性（T-DC-2）+ D 编号落点（T-DC-8） | 子 A（T-DC-8）：`docs/interfaces.md` 已建立时逐条 D-xx 落点；子 B（T-DC-2）：`server/data/schema.js` 存在时 `validateConsistency`（items-data 期望表逐条对齐）。状态 = fail > pend > pass | P0-6 激活子 B；P0-7 激活子 A |
-| 6 | 日志事件命名（T-DC-6）+ 战斗数值未硬编码（T-DC-7） | ① 扫描 core/ai 的 logger 调用：通道必须在 `shared/log.js` 注册表、事件名 `^[a-z]+\.[a-z.]+$` 且首段符合通道前缀映射（§4.6 导出）；② 若 `battle-config.json` 存在：core/ai 源码中的数字字面量（剥注释/字符串）与配置数值相等 → FAIL；配置缺失 → 该项 PEND | ① P0-5 ✅ 实时；② P0-6 激活 |
+| 6 | 日志事件命名（T-DC-6）+ 战斗数值未硬编码（T-DC-7） | ① 扫描 core/ai 的 logger 调用：通道必须在 `shared/log.js` 注册表、事件名 `^[a-z]+\.[a-z.]+$` 且首段符合通道前缀映射（§4.6 导出）；② 若 `battle-config.json` 存在：core/ai 源码中的数字字面量（剥注释/字符串）与配置数值相等 → FAIL（**行级豁免**：行尾 `// cl:<值>` 标注"通用精度常量、非战斗数值"，审查可见；token 边界 `(?<![\w.])(?![\w.])` 防标识符误报——B1/B3 实测调优）；配置缺失 → 该项 PEND | ① P0-5 ✅ 实时；② P0-6 激活 |
 | 7 | 全量测试 + 覆盖率（n 个用例归属 §3.2） | 进程内 `run()` 跑 `tests/**/*.test.js`；**用例数 ≥ 1 否则 FAIL**（空匹配静默陷阱兜底）；覆盖率阈值按**每文件**判定，**仅限 `server/core` `server/ai` `shared` `cli` 四目录**：行 ≥90 / 分支 ≥85 / 函数 ≥90，任一低于 → FAIL | P0-5 ✅ 实时 |
 | 8 | 日志冒烟（T-LG-11/T-LG-5） | `trace` 跑一场：关键事件齐备、cid 链路可追、与 `silent` 逐帧一致 | B11 激活（此前 PEND） |
 | 9 | 接口冒烟（T-AP-*/T-CLI-1/T-CLI-2） | 同进程 `listen(0)` → `/api/v1` 关键端点 → CLI 闭环 | P0-8 激活（此前 PEND） |

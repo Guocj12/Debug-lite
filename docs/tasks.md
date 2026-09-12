@@ -604,7 +604,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 |---|---|---|---|
 | B1 `[x]` | `rng.js`（**每 tick 每用途派生流** `deriveStream(tick,purpose)`，seed 绑定于 createRng）+ `field.js`（px 坐标/clamp/基地区域） | T-FD-1/2/3 + rng 确定性 | `rng.*`/`field.*`（审查 `docs/reviews/B1.md`） |
 | B2 `[x]` | `effects.js`（addEffect 下一 tick 起效 / resolveContinuous / resolveControl 复写意图 / resolveControlMove 单方落位） | T-EF-1..5 + T-FD-4（`effects.*`；审查 `docs/reviews/B2.md`，P1×3 已修） |
-| B3 | `items.js` 数值层 + 数据表（含 schema 变更） | T-IT-1/2/3/4/5/9 + T-RO-7 + T-DC-1/2 | `items.roll/generate/affix` |
+| B3 `[x]` | `items.js` 数值层（roll/generate/openBox/applyAffixes/validateUnlock）+ 数据表（含 schema 变更） | T-IT-1/2/3/4/5/9 + T-RO-7 + T-DC-1/2 | `items.roll/generate/affix`（审查 `docs/reviews/B3.md`，P1×1 已修） |
 | B4 | `validateUnlock` + `unlock.js`（紫段位） | T-IT-6 + T-UL-1..4 | `unlock.*` |
 | B5 | `roles.js`（含模板 regen） | T-RO-1..7 | `roles.*` |
 | B6 | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围） | T-SK-1..4 | `skills.*` |
