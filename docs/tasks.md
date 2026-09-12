@@ -606,7 +606,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B2 `[x]` | `effects.js`（addEffect 下一 tick 起效 / resolveContinuous / resolveControl 复写意图 / resolveControlMove 单方落位） | T-EF-1..5 + T-FD-4（`effects.*`；审查 `docs/reviews/B2.md`，P1×3 已修） |
 | B3 `[x]` | `items.js` 数值层（roll/generate/openBox/applyAffixes/validateUnlock）+ 数据表（含 schema 变更） | T-IT-1/2/3/4/5/9 + T-RO-7 + T-DC-1/2 | `items.roll/generate/affix`（审查 `docs/reviews/B3.md`，P1×1 已修） |
 | B4 `[x]` | `validateUnlock` + `unlock.js`（紫段位）+ `GET /api/v1/unlock` 端点 | T-IT-6 + T-UL-1..4 | `unlock.*`（审查 `docs/reviews/B4.md`，P2×3 已修） |
-| B5 | `roles.js`（含模板 regen） | T-RO-1..7 | `roles.*` |
+| B5 `[x]` | `roles.js`（含模板 regen；typeModifiers L9 入表） | T-RO-1..7 | `roles.*`（审查 `docs/reviews/B5.md`，P1×1 已修） |
 | B6 | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围） | T-SK-1..4 | `skills.*` |
 | B7 | `bullets.js`（**当 tick 全解算 + 连续碰撞方程 + 等级抵消 + 递归**） | T-BU-1..8 + **T-BT-8/19** | `bullets.*` |
 | B8 | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`）、统一落位、**角色碰撞与碰撞伤害**、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve` |

@@ -1,4 +1,8 @@
 {
+  "typeModifiers": {
+    "specialized": { "high": 1.15, "low": 0.85 },
+    "expert": { "high": 1.30, "spread": [1.1, 0.7, 0.9, 1.0] }
+  },
   "roleTemplates": [
     { "id": "role_bal", "name": "均衡", "type": "balanced",
       "baseStats": { "hp": 100, "atk": 10, "def": 8, "sp": 60, "mp": 40 },

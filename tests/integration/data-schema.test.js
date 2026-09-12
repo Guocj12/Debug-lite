@@ -266,6 +266,31 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
   }
 });
 
+test('DS-12 typeModifiers 入表（B5 审查 P1）：漂移 → fail；roles.js 读取表值', () => {
+  // 漂移检测（真实表通过由 DS-1 覆盖）
+  withRoot((root) => {
+    const t = readJSON(root, 'role-templates.json');
+    t.typeModifiers.specialized.high = 1.20;
+    writeJSON(root, 'role-templates.json', t);
+  }, (root) => {
+    const res = schema.validateStructure(root, path.join(root, 'assets'));
+    assert.equal(res.ok, false, 'typeModifiers 漂移应 fail');
+    assert.ok(res.detail.includes('typeModifiers'), res.detail);
+  });
+  // roles.js 从表读取（不再硬编码）
+  const rolesMod = require('../../server/core/roles.js');
+  const t = readJSON(REPO_DATA, 'role-templates.json');
+  const base = rolesMod.instantiateRole(
+    JSON.parse(require('node:fs').readFileSync(require('node:path').join(REPO_DATA, 'role-templates.json'), 'utf8')).roleTemplates[0],
+    'rare', { float: () => 1.0, int: () => 0, pick: () => 0 }
+  );
+  assert.equal(base.type, 'balanced');
+  assert.equal(rolesMod.applyTypeModifier(
+    { type: 'specialized', highStat: 'atk', baseStats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 } },
+    { int: () => 3 }
+  ).atk, 11.5, '修饰系数取表值：10×1.15（high 漂移会被 schema 拦）');
+});
+
 test('DS-11 assets 占位表（P0-9）：真实通过；缺条目/描边色漂移/形状枚举/帧非法 → fail', () => {
   // 真实仓库（默认推导 assets 路径）
   assert.equal(schema.validateStructure(REPO_DATA).ok, true, '真实仓库 assets 校验应通过');

@@ -121,7 +121,8 @@ function validateStructure(dataDir, assetsDir) {
     tables.battle = loadJSON(dataDir, 'battle-config.json').data;
   } catch (e) { problems.push(`battle-config.json 缺失或解析失败: ${e.message}`); }
   try {
-    tables.roles = loadJSON(dataDir, 'role-templates.json').data.roleTemplates;
+    tables.roleTable = loadJSON(dataDir, 'role-templates.json').data;
+    tables.roles = tables.roleTable.roleTemplates;
   } catch (e) { problems.push(`role-templates.json 缺失或解析失败: ${e.message}`); }
   try {
     tables.skills = loadJSON(dataDir, 'skill-templates.json').data.skillTemplates;
@@ -161,7 +162,16 @@ function validateStructure(dataDir, assetsDir) {
     if (base.hp !== 100 || base.maxHp !== 100) problems.push(`bases.${owner} hp 应为 100/100`);
   }
 
-  // role-templates（D-110 regen 必填；D-112 unlockTier 可选）
+  // role-templates（D-110 regen 必填；D-112 unlockTier 可选；typeModifiers L9 入表，B5）
+  const tm = tables.roleTable ? tables.roleTable.typeModifiers : null;
+  if (!tm) {
+    problems.push('role-templates.json 缺 typeModifiers（L9：修饰系数必须入表）');
+  } else {
+    // 冻结值核对（02-roles R-2/R-3：特化 +15%/-15%；专家 +30% 与 略高/极低/略低/标准）
+    if (tm.specialized.high !== 1.15 || tm.specialized.low !== 0.85) problems.push('typeModifiers.specialized 应为 {high:1.15, low:0.85}');
+    if (tm.expert.high !== 1.30) problems.push('typeModifiers.expert.high 应为 1.30');
+    if (JSON.stringify(tm.expert.spread) !== JSON.stringify([1.1, 0.7, 0.9, 1.0])) problems.push('typeModifiers.expert.spread 应为 [1.1,0.7,0.9,1.0]');
+  }
   const roleIds = new Set();
   for (const r of tables.roles) {
     if (roleIds.has(r.id)) problems.push(`角色模板 id 重复: ${r.id}`);

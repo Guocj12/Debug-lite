@@ -55,7 +55,8 @@ docs/progress.md       本文件
 - [x] **B2** `core/effects.js`（addEffect/resolveContinuous/resolveControl/resolveControlMove + withLogger；E-1..8 全分支）（EF-1..13，167 用例；审查 `docs/reviews/B2.md`，P1×3 已修——remaining:0 边界/ICD 补全/失败路径）
 - [x] **B3** `core/items.js` 数值层（rollQuality/rollSlotCount/tierOf/generate*/openBox/applyAffixes/validateUnlock；T-RO-7 regen 直透；门禁新增 `// cl:` 行级豁免）（IT-1..14，186 用例；审查 `docs/reviews/B3.md`，P1×1 已修——flat 入包即时取整）
 - [x] **B4** `core/unlock.js`（tierIndex/isUnlocked/filterByTier/validateAi/validateLoadout/availableNodes + `/api/v1/unlock` 端点）（UL-1..10，197 用例；审查 `docs/reviews/B4.md`，P2×3 已修——拒绝日志/防错/L14 端点）
-- [ ] **B5 起**按 `docs/tasks.md` §6 推进（P1 B5~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **B5** `core/roles.js`（instantiateRole/applyTypeModifier/equipPlugins/getFinalStats；typeModifiers L9 入表 + schema 冻结）（RO-1..10，210 用例；审查 `docs/reviews/B5.md`，P1×1 已修——修饰系数硬编码）
+- [ ] **B6 起**按 `docs/tasks.md` §6 推进（P1 B6~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
