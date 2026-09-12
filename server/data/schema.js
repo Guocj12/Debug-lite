@@ -126,7 +126,7 @@ function validateStructure(dataDir) {
   } catch (e) { problems.push(`unlock.json 缺失或解析失败: ${e.message}`); }
   if (problems.length > 0) return problemsOf(problems);
 
-  // battle-config：冻结数值逐值相等（tasks.md §2.5.7 + 06-field §3）
+  // battle-config：冻结数值逐值相等（D-117：tasks.md §2.5.7 + 06-field §3）
   const bc = tables.battle;
   for (const [k, v] of Object.entries(BATTLE_CONFIG_FROZEN)) {
     if (bc[k] !== v) problems.push(`battle-config.${k} = ${bc[k]}，应为 ${v}（§2.5.7 冻结）`);
@@ -168,7 +168,7 @@ function validateStructure(dataDir) {
     const cost = s.baseCost;
     if (!cost || !['hp', 'mp', 'sp'].every((k) => isNum(cost[k]))) problems.push(`${s.id}: baseCost {hp,mp,sp}`);
     if (!isInt(s.cooldown) || s.cooldown < 0) problems.push(`${s.id}: cooldown 非负整数`);
-    if (!isInt(s.bulletLevel) || s.bulletLevel < 1 || s.bulletLevel > 4) problems.push(`${s.id}: bulletLevel 1..4`);
+    if (!isInt(s.bulletLevel) || s.bulletLevel < 1 || s.bulletLevel > 4) problems.push(`${s.id}: bulletLevel 1..4（D-118：位移模板同样携带）`);
     if (!isNum(s.falloff) || s.falloff < 0) problems.push(`${s.id}: falloff ≥0（D-29）`);
     if (!s.slotWeights || !isInt(s.slotWeights.basic) || !isInt(s.slotWeights.special)) problems.push(`${s.id}: slotWeights {basic,special}（D-111）`);
     if (s.type === 'melee' && !(Array.isArray(s.range) && s.range.length === 2 && isInt(s.range[0]) && isInt(s.range[1]) && s.range[0] <= s.range[1])) problems.push(`${s.id}: melee 需 range[lo,hi] 整数`);
@@ -184,7 +184,7 @@ function validateStructure(dataDir) {
   }
   if (tables.skills.length !== 10) problems.push(`技能模板应 10 个，实际 ${tables.skills.length}（items-data §4）`);
 
-  // plugins（D-113/D-114）
+  // plugins（D-113 costDeltaByTier / D-114 一个变体一个 id）
   const pluginIds = new Set();
   let nRole = 0;
   let nSkill = 0;

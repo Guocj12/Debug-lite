@@ -592,7 +592,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | P0-4 | **日志子系统**：`shared/log.js` + 注入 + `DL_LOG_*` + `tests/log/*`（T-LG-1/2/3/6/7） |
 | P0-5 `[x]` | `scripts/gate.js`（9 项）+ `scripts/check-arch.js` + 静态检查（T-DC-3/4/5/6/7；项 4/5/8/9 接线待激活，见 `docs/reviews/P0-5.md`） |
 | P0-6 `[x]` | `server/data/schema.js` + **`battle-config.json`** + 按 D-110~D-116 重建数据表 + `T-DC-1/2`（T-DC-2 已接线进 gate 项 5；审查 `docs/reviews/P0-6.md`） |
-| P0-7 | `docs/interfaces.md`（模块 ICD + API/CLI 契约 v1 + **D 编号落点表** + 日志事件登记）+ 契约测试骨架（T-DC-8） |
+| P0-7 `[x]` | `docs/interfaces.md`（模块 ICD + API/CLI 契约 v1 + **D 编号落点表** + 日志事件登记）+ 契约测试骨架（T-DC-8；审查 `docs/reviews/P0-7.md`；gate 项 5 激活→7 PASS） |
 | P0-8 | HTTP 骨架（`/api/v1` + 统一信封 + `api.*` 日志 + health/data）+ CLI 骨架（子命令、退出码、`cli.*`）+ `tests/api`、`tests/cli` |
 | P0-9 | `assets/sprites.json`/`animations.json`（占位规格，作为数据表经 API 提供） |
 

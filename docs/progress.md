@@ -48,7 +48,8 @@ docs/progress.md       本文件
 - [x] **P0-4** 日志子系统：`shared/log.js`（UMD 零依赖）+ `tests/helpers/log.js` + T-LG-1/2/3/6/7（51 用例绿；审查 `docs/reviews/P0-4.md`；suppressed 取向=每 100 丢弃，B11 可调）
 - [x] **P0-5** 门禁：`scripts/gate.js` 9 项 + `scripts/check-arch.js` + T-DC-3..7（实测 4 PASS/0 FAIL/5 PEND；**4 条 Node 覆盖率机制**已固化进 `scripts/README.md`；审查 `docs/reviews/P0-5.md`，P1×5 已修；T-DC-2 接线为 P0-6 必做）
 - [x] **P0-6** 数据表：`schema.js`（T-DC-1/2）+ 7 张表（battle-config 冻结值/11 角色/10 技能/29 插件/5 品质/unlock）；门禁 6 PASS/0 FAIL/3 PEND（项 4/6② 激活，T-DC-2 接线进项 5；审查 `docs/reviews/P0-6.md`，P2×2 已修）
-- [ ] **P0-7 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **P0-7** 接口冻结：`docs/interfaces.md`（模块 ICD + API/CLI v1 + **D 落点表 78 条** + 日志矩阵）+ IF-1..5 契约测试（审查 `docs/reviews/P0-7.md`，P2×4 已修；**gate 项 5 T-DC-8 激活 → 7 PASS/0 FAIL/2 PEND**）
+- [ ] **P0-8 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
