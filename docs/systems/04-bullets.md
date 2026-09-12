@@ -91,12 +91,13 @@
 - 目标已死亡（`hp ≤ 0`）时不再结算伤害，但**碰撞与抵消照常**（弹幕仍会被打掉）。
 - 射程尽头**含终点**（D-30）：`t*` 恰好在射程末端时仍判定命中。
 
-## 6. 对外接口
+## 6. 对外接口（B7 落地名）
 
-- `spawn(skill, caster)`：技能系统调用。
-- `resolveAll(bullets, actors, config)`：引擎每 tick 步骤 8 调用一次，返回有序事件（spawn/collide/hit/expire）。
-- `collideAt(a, b, tMax)`：连续方程求解原语（角色-弹幕、弹幕-弹幕共用）。
-- `levelCompare(a, b)`：等级比较。
+- `spawnBullets(battle, act)`：技能系统调用（释放指令 → 战场弹幕，补 uid/order/hitSet，记 spawn 事件）。
+- `resolveBullets(battle, ctx)`：引擎每 tick 步骤 8 调用一次，返回 {spawns, collides, hits, expires}（bullet.spawn/collide/hit/expire 事件）。
+- `solveIntersection(x1, v1, x2, v2, tMax, tMin)`：连续方程求解原语（角色-弹幕、弹幕-弹幕共用；闭区间 [tMin, tMax]）。
+- `bulletBattle(a, b)`：等级比较矩阵（'b1'/'b2'/'both'/'none'）。
+- `bulletsOnField(battle)`：场上存活弹幕数（tick 末恒 0，T-BT-19）。
 
 ## 7. 测试要点（对应 `docs/tasks.md` §3.2）
 
