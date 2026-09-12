@@ -18,7 +18,7 @@
 | 模块 | 导出接口 | 依赖（层） | 批次 |
 |---|---|---|---|
 | `shared/log.js` | `createLogger` / `nullLogger` / `LEVELS`；logger：`on` / `log` / `fatal..trace` / `setLevel` / `setChannelLevel` / `reset` / `dump` / `records` / `stats`；`parseLevel` / `parseChannelOverrides` / `CHANNELS` | 零依赖 UMD（L-1） | P0-4 ✅ |
-| `core/rng.js` | `createRng(seed,{logger})`；`float/int/pick/chance(...,purpose)`、`state/restore`；**`deriveStream(seed, tick, purpose)`**（D-91） | L0 | B1 |
+| `core/rng.js` | `createRng(seed,{logger})`；`float/int/pick/chance(...,purpose)`、`state/restore`；**`deriveStream(tick, purpose)`**（seed 于 createRng 绑定，D-90/D-91） | L0 | B1 ✅ |
 | `core/field.js` | `FIELD_PX/CELL_PX/ACTOR_HALF/START_X/START_FACING/BASE_DEF`；`clampX` / `cellOf` / `xCenter` / `cellRange` / `baseOf` / `touchesBase` | L0 + battle-config（D-04/D-05） | B1 |
 | `core/effects.js` | `addEffect` / `resolveContinuous` / `resolveControl` | L1 | B2 |
 | `core/items.js`（数值） | `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf` / `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox` / `applyAffixes` / `validateUnlock` | L1 + 数据表 | B3 |

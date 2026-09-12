@@ -184,7 +184,8 @@ function checkNumericHardcode(options) {
   }
 
   const files = scopeFiles(root, STATIC_SCOPE, '.js');
-  const numRe = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+  // token 边界：前后不得是标识符/小数点字符（避免 mulberry32/uint32/hash32 里的 "32" 误报，B1 实测）
+  const numRe = /(?<![\w.])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])/g;
   const hits = [];
   for (const f of files) {
     const src = stripCommentsAndStrings(fs.readFileSync(f, 'utf8'));

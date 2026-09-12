@@ -114,6 +114,20 @@ test('GX-5b 通用常量 {0,1,-1} 不判硬编码（P2-3：朝向/计数器与�
   assert.equal(bad.status, 'fail', '真实机制数值仍必须来自配置');
 });
 
+test('GX-5c 标识符中的数字不误报（B1：mulberry32/uint32/hash32 的 "32"）', async () => {
+  const config = '{"actorHalfPx": 32, "fieldPx": 1024}';
+  const ok = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': config,
+    'server/core/rng.js': 'function mulberry32(seed){} function hash32(s){} const u = uint32; const x = mulberry32(1);',
+  });
+  assert.equal(ok.status, 'pass', `标识符数字不应误报: ${ok.detail}`);
+  const bad = await runCheck(gate.checkNumericHardcode, {
+    'server/data/battle-config.json': config,
+    'server/core/rng.js': 'const HALF = 32;',
+  });
+  assert.equal(bad.status, 'fail', '真正的字面量仍抓');
+});
+
 // ---------- 项 6①：checkLogNaming 通用形坏通道分支 ----------
 
 test('GX-6 checkLogNaming：通用形 log.log 的未注册通道也抓', async () => {

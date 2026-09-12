@@ -24,7 +24,7 @@
 
 ### 4.1 创建战斗 `createBattle(config, seed)`
 
-1. `createRng(seed)`；各用途流在每 tick 由 `deriveStream(seed, tick, purpose)` 派生（D-91），`purpose ∈ {ai, crit, dodge}`。
+1. `createRng(seed)`；各用途流在每 tick 由 `deriveStream(tick, purpose)` 派生（seed 于 createRng 绑定，D-91 概念式 hash(seed,tick,purpose)），`purpose ∈ {ai, crit, dodge}`。
 2. 实例化双方角色与技能（模板 + 品质 + 插件；含模板 `regen`）。
 3. 建立双方 `AiContext`（隐式主循环入口，见 `08-ai`）。
 4. 设置初始位置 `x = 224 / 800`、朝向 `+1 / -1`、基地血量 `100`。

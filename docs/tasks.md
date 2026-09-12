@@ -602,7 +602,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 接口 | 必绿测试点 | 日志 |
 |---|---|---|---|
-| B1 | `rng.js`（**每 tick 每用途派生流**）+ `field.js`（px 坐标/clamp/基地区域） | T-FD-1/2/3 + rng 确定性 | `rng.*`/`field.*` |
+| B1 `[x]` | `rng.js`（**每 tick 每用途派生流** `deriveStream(tick,purpose)`，seed 绑定于 createRng）+ `field.js`（px 坐标/clamp/基地区域） | T-FD-1/2/3 + rng 确定性 | `rng.*`/`field.*`（审查 `docs/reviews/B1.md`） |
 | B2 | `effects.js` | T-EF-1..5 + T-FD-4 | `effects.*` |
 | B3 | `items.js` 数值层 + 数据表（含 schema 变更） | T-IT-1/2/3/4/5/9 + T-RO-7 + T-DC-1/2 | `items.roll/generate/affix` |
 | B4 | `validateUnlock` + `unlock.js`（紫段位） | T-IT-6 + T-UL-1..4 | `unlock.*` |
