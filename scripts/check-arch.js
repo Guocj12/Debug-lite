@@ -20,7 +20,7 @@ const LAYER_RULES = [
   [/^server\/core\/bullets\.js$/, 2],
   [/^server\/core\/engine\.js$/, 4],
   [/^server\/ai\//, 5],
-  [/^server\/(index|ranked)\.js$/, 6],
+  [/^server\/(index|ranked|runner)\.js$/, 6],
   [/^cli\//, 6],
 ];
 

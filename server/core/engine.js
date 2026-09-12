@@ -242,7 +242,10 @@ function createBattle(cfgIn, options) {
     effects.resolveContinuous({ tick, players });
     stepLog(2, '持续效果');
 
-    // 步骤 3：AI 续执行 / 行动注入（B8：由调用方注入；B15 起 AI 链路替换）
+    // 步骤 3：AI 续执行 / 行动注入（B8：由调用方注入；B16：actions.aiTrace 可选缓冲——AI 驱动器
+    //   每 tick 向该数组推本 tick 增量 trace，步骤 13 输出到 diff.aiTrace（冻结字段名 interfaces §4.3，P2-6 对齐））
+    const aiTraceBuf = actions && Array.isArray(actions.aiTrace) ? actions.aiTrace : null;
+    if (aiTraceBuf) aiTraceBuf.length = 0;
     const rawActions = {
       p1: typeof actions.p1 === 'function' ? actions.p1(state, p1) : actions.p1,
       p2: typeof actions.p2 === 'function' ? actions.p2(state, p2) : actions.p2,
@@ -400,7 +403,7 @@ function createBattle(cfgIn, options) {
       collision: resolved.collision,
       bulletHits: bulletEvents.hits.map((h) => ({ uid: h.uid, target: h.target, atX: h.atX })),
       verdict: state.verdict || null,
-      aiTraces: [],
+      aiTrace: aiTraceBuf ? aiTraceBuf.slice() : [],
     };
     stepLog(13, '帧输出');
 

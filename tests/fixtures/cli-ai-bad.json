@@ -1,0 +1,13 @@
+{
+  "type": "program",
+  "version": 1,
+  "body": {
+    "type": "seq",
+    "statements": [
+      { "type": "loop", "kind": "count", "times": { "type": "literal", "value": 2 },
+        "body": { "type": "seq", "statements": [
+          { "type": "set", "name": "x", "value": { "type": "literal", "value": 1 } }
+        ] } }
+    ]
+  }
+}

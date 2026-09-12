@@ -13,6 +13,67 @@
 const { nullLogger } = require('../../shared/log.js');
 const unlock = require('../core/unlock.js'); // L5 → L1：availableNodes/isUnlocked（段位原语）
 
+// 纯 JS sha256（L5 禁止 node 内建导入——check-arch；与 node:crypto 逐字节对齐，测试用 crypto 锚定）
+function sha256Hex(data) {
+  const bytes = [];
+  for (let i = 0; i < data.length; i++) {
+    const c = data.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < data.length) {
+      const c2 = data.charCodeAt(i + 1);
+      if (c2 >= 0xdc00 && c2 <= 0xdfff) {
+        // 代理对 → UTF-8 4 字节（与 node:crypto UTF-8 一致；P2-1）
+        const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+        bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+        i += 1;
+        continue;
+      }
+    }
+    if (c < 0x80) bytes.push(c);
+    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    else bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+  }
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  for (let i = 56; i >= 0; i -= 8) bytes.push(Math.floor(bitLen / Math.pow(2, i)) % 256);
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+  const w = new Array(64);
+  for (let i = 0; i < bytes.length; i += 64) {
+    for (let t = 0; t < 16; t++) {
+      w[t] = (bytes[i + t * 4] * 0x1000000 + ((bytes[i + t * 4 + 1] * 0x10000) + (bytes[i + t * 4 + 2] * 0x100) + bytes[i + t * 4 + 3])) | 0;
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[t] + w[t]) | 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+  }
+  const hex = (n) => (n >>> 0).toString(16).padStart(8, '0');
+  return hex(h0) + hex(h1) + hex(h2) + hex(h3) + hex(h4) + hex(h5) + hex(h6) + hex(h7);
+}
+
 // 节点白名单（systems/08-ai.md §3；loop 含 count/while 两种 kind）
 const NODE_TYPES = new Set([
   'literal', 'get', 'bullets', 'var', 'set', 'getVar', 'arith', 'cmp', 'logic', 'random',
@@ -28,6 +89,14 @@ const LIMITS = {
   traceLimit: 2000,
   recursionLimit: 64, // cl:64
   analyzeDepth: 16, // cl:16 —— 静态分支分析防爆上限（B13）
+};
+
+// 程序版本（A-10d/e）：版本高于 CURRENT_VERSION → ai_version_unsupported；低于且存在迁移链 → 逐级迁移（记 ai.migrate）
+const CURRENT_VERSION = 2;
+// 迁移表：n → n+1 的迁移函数；v1→v2 为结构无变更的预留迁移（B16 框架演示，A-10e）；
+//   新版本引入结构变更时在此登记并在 examples/08-ai.md A-10e 复算。
+const MIGRATIONS = {
+  1: { to: 2, migrate: (p) => p },
 };
 
 // 子节点字段（含其下路径段命名）：seq.statements → s[i]；if.then/else；random.then/else；loop.body；function.body
@@ -54,6 +123,29 @@ function exprChildren(node) {
 function makeAst(logger) {
   const L = logger || nullLogger;
 
+  // 版本迁移（A-10d/e）：克隆后逐级迁移；返回 {program, error?, migrated?, from?, to?}；每级记 ai.migrate(info)
+  function migrateProgram(program) {
+    if (!program || typeof program !== 'object') return { program, error: null };
+    const v = program.version;
+    if (!Number.isInteger(v) || v < 1) return { program, error: null }; // bad_version 由结构校验报
+    if (v > CURRENT_VERSION) return { program, error: 'ai_version_unsupported' };
+    if (v === CURRENT_VERSION) return { program, migrated: false };
+    let clone;
+    try {
+      clone = JSON.parse(JSON.stringify(program));
+    } catch (e) {
+      return { program, error: null }; // 环/不可克隆：跳过迁移，交由结构校验报 ai_cycle
+    }
+    for (let step = v; step < CURRENT_VERSION; step++) {
+      const m = MIGRATIONS[step];
+      if (!m) return { program, error: 'ai_version_unsupported' };
+      clone = m.migrate(clone);
+      clone.version = m.to;
+      L.info('ai.ast', 'ai.migrate', `migrate v${step} → v${m.to}`, { from: step, to: m.to });
+    }
+    return { program: clone, migrated: true, from: v, to: clone.version };
+  }
+
   // 结构校验（B12）：白名单/字段类型/深度/节点数/字节/危险键/root 契约 → {ok, errors:[{path,code,message}]}
   // 接口名按 interfaces §1 冻结：validateProgram（B13 checkLegality 分离）
   function validateProgram(program) {
@@ -62,6 +154,12 @@ function makeAst(logger) {
     if (!program || program.type !== 'program') {
       return { ok: false, errors: [{ path: '', code: 'not_program', message: '根节点必须是 program' }] };
     }
+    // 版本迁移（A-10d/e）：低版本先迁移（克隆），高版本在此拒绝
+    const mig = migrateProgram(program);
+    if (mig.error) {
+      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }] };
+    }
+    if (mig.migrated) program = mig.program;
     // 根节点自身也要查危险键（visit 从 body 开始，根不经过）
     for (const k of Object.keys(program)) {
       if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
@@ -269,6 +367,12 @@ function makeAst(logger) {
   // 全量校验（B13）：结构 + 合法性 + 段位门控 → {ok, errors:[{path,code,message}]}；拒绝记 ai.validate.reject(warn)
   function validate(program, tier) {
     const errors = [];
+    // 版本迁移先行：后续结构/合法性/门控全用迁移后程序（A-10d/e）
+    const mig = migrateProgram(program);
+    if (mig.error) {
+      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program && program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }] };
+    }
+    if (mig.migrated) program = mig.program;
     const struct = validateProgram(program);
     errors.push(...struct.errors);
     let legality = { ok: true, errors: [] };
@@ -334,7 +438,69 @@ function makeAst(logger) {
     return map;
   }
 
-  return { validateProgram, collectUsedNodeTypes, checkLegality, validate, nodePathOf, NODE_TYPES, limits: LIMITS };
+  // 程序统计（/ai/compile：{nodes, depth, usedNodeTypes}，systems §4.7）
+  function statsOf(program) {
+    const usedNodeTypes = collectUsedNodeTypes(program);
+    let nodes = 0;
+    let depth = 0;
+    (function walk(n, d) {
+      if (!n || typeof n !== 'object' || typeof n.type !== 'string') return;
+      nodes += 1;
+      if (d > depth) depth = d;
+      const ch = childList(n);
+      if (ch.list && Array.isArray(ch.list)) ch.list.forEach((c) => walk(c, d + 1));
+      for (const c of exprChildren(n)) walk(c, d + 1);
+    })(program && program.body, 1);
+    return { nodes, depth, usedNodeTypes: [...usedNodeTypes] };
+  }
+
+  return { validateProgram, collectUsedNodeTypes, checkLegality, validate, nodePathOf, NODE_TYPES, limits: LIMITS, canonicalize, programHash, statsOf, getNodeAtPath, migrateProgram };
+}
+
+// A-10a/b/c 规范化：对象键排序 + 紧凑序列化（去空白）→ 同一程序不同书写/空白 → 相同 canonical 串
+function canonicalize(program) {
+  const canon = (n) => {
+    if (Array.isArray(n)) return n.map(canon);
+    if (n === null || typeof n !== 'object') return n;
+    const out = {};
+    for (const k of Object.keys(n).sort()) {
+      if (n[k] === undefined) continue;
+      out[k] = canon(n[k]);
+    }
+    return out;
+  };
+  return JSON.stringify(canon(program));
+}
+
+// A-10a..c：sha256(programHash)（纯 JS 实现，键序/空白无关；字面量一变即变；与 node:crypto 锚定测试）
+function programHash(program) {
+  return sha256Hex(canonicalize(program));
+}
+
+// path → 节点反查（B16 serializeContext/restoreContext；nodePathOf 的逆；fn: 帧路径 B16 起统一为规范路径，无特例）
+//   .expr 段：在表达式字段（value/left/right/cond/prob/times）中取首个对象（多表达式字段共享 .expr 段是
+//   nodePathOf 的既有登记缺陷；运行时帧从不产生表达式路径，反查仅服务序列化防御/诊断；P2-4）
+function getNodeAtPath(program, path) {
+  if (typeof path !== 'string' || !program || !program.body) return null;
+  if (path === 'body') return program.body;
+  const parts = path.split('.');
+  if (parts[0] !== 'body') return null;
+  let node = program.body;
+  for (let i = 1; i < parts.length && node; i++) {
+    const t = parts[i];
+    const m = /^s\[(\d+)\]$/.exec(t);
+    if (m) node = node && Array.isArray(node.statements) ? node.statements[Number(m[1])] : null;
+    else if (t === 'expr') {
+      let n = null;
+      for (const k of ['value', 'left', 'right', 'cond', 'prob', 'times']) {
+        const v = node && node[k];
+        if (v && typeof v === 'object') { n = v; break; }
+      }
+      node = n;
+    } else if (t === 'then' || t === 'else' || t === 'body') node = node[t] || null;
+    else return null;
+  }
+  return node || null;
 }
 
 // 字段类型表（B12 登记：结构层面；合法性检测（分支 action 规则）B13）
@@ -361,4 +527,6 @@ module.exports = Object.assign(makeAst(), {
   withLogger: (logger) => makeAst(logger),
   NODE_TYPES,
   limits: LIMITS,
+  CURRENT_VERSION,
+  MIGRATIONS,
 });

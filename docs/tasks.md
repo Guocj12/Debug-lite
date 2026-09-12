@@ -74,7 +74,7 @@ L2  roles · skills(实例化/插件) · bullets
 L3  items(仓库/装配层) · skills(释放/canCast)
 L4  engine            ← 唯一编排者
 L5  ai/ast · ai/runtime      ← 只依赖 L0/L1，不依赖 engine
-L6  server/index.js (/api/v1) · cli/
+L6  server/index.js (/api/v1) · server/runner.js (AI 编排) · cli/
 L7  public/**（P6）
 ```
 - `scripts/check-arch.js`：反向依赖、循环依赖、core 引用 `express/fs/http`、`shared/log.js` 之外的跨层共享 → 失败。
@@ -625,7 +625,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B13 `[x]` | 合法性检测（**分支 action 规则** D-101）+ 段位门控 + 错误带 `path`（unlock.validateAi 退役整合） | T-AI-1/3/12 + T-UL-1..4 + **T-AF-5/10** | `ai.validate.reject`（审查 `docs/reviews/B13.md`，P2×4 已修） |
 | B14 `[x]` | `ai/runtime.js` 显式状态机：作用域/循环/函数（独立作用域+调用栈）/break/每 tick 每用途随机流/只读快照 | T-AI-4/5/7/9 + **T-AF-1/2/3/11** | `ai.runtime.*`（审查 `docs/reviews/B14.md`，P0×1 已修） |
 | B15 `[x]` | 限步/递归上限/错误兜底（返回 **`wait`**）+ trace + 病态 fixtures | T-AI-6/8/10 + **T-AF-4/6** | `ai.step.limit`/`ai.node`（审查 `docs/reviews/B15.md`，PASS） |
-| B16 | `canonicalize`/`programHash`/版本迁移 + `/ai/compile`、`/ai/validate`、`/ai/battle` + CLI `ai` 子命令 + 上下文序列化 | T-AP-1..5 + T-CLI-1 + T-LG-8/9 + **T-AF-7** | `ai.compile`/`ai.migrate`/`api.*`/`cli.*` |
+| B16 `[x]` | `canonicalize`/`programHash`/版本迁移 + `/ai/compile`、`/ai/validate`、`/ai/battle` + CLI `ai` 子命令 + 上下文序列化 | T-AP-1..5 + T-CLI-1 + T-LG-8/9 + **T-AF-7** | `ai.compile`/`ai.migrate`/`api.*`/`cli.*`（审查 `docs/reviews/B16.md`，P1×1 已修——函数体内嵌套帧序列化；P2×9 全落实） |
 
 - **出口**：JSON AST 经 `/api/v1/ai/validate` → `/ai/battle` 打完一场；病态程序（含**某分支无 action**）被拒或兜底；T-AF-3/7/9/10 全绿。
 

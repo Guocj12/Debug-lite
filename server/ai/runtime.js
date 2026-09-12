@@ -222,8 +222,8 @@ function makeRuntime(logger) {
         }
         if (st === 'function') continue; // hoisting（B13）；定义不执行
         if (st === 'call') {
-          const fn = findFunction(program, stmt.name);
-          if (fn && fn.body) {
+          const def = findFunctionDef(program, stmt.name);
+          if (def && def.node.body) {
             // 递归深度上限（A-5/A-9b）：挂起函数帧（fnScope 计数）达上限 → 弹栈到入口 + wait（vars 保留，下一 tick 从入口继续）
             let depth = 0;
             for (const f of ctx.frames) if (f.fnScope) depth += 1;
@@ -234,8 +234,8 @@ function makeRuntime(logger) {
             }
             const fnScope = {};
             scopes.push(fnScope);
-            const fnList = fn.body.type === 'seq' ? fn.body.statements : [fn.body];
-            ctx.frames.push({ kind: 'seq', list: fnList, childIndex: 0, path: `fn:${stmt.name}`, fnScope });
+            const fnList = def.node.body.type === 'seq' ? def.node.body.statements : [def.node.body];
+            ctx.frames.push({ kind: 'seq', list: fnList, childIndex: 0, path: `${def.path}.body`, fnScope });
           }
           continue;
         }
@@ -282,26 +282,131 @@ function makeRuntime(logger) {
     return { action, trace: ctx.trace.slice(-ctx.traceLimit) };
   }
 
-  function findFunction(program, name) {
-    let found = null;
-    (function walk(n) {
-      if (found || !n || typeof n !== 'object') return;
-      if (n.type === 'function' && n.name === name) { found = n; return; }
-      if (Array.isArray(n)) { n.forEach(walk); return; }
-      for (const k of Object.keys(n)) {
-        const v = n[k];
-        if (v && typeof v === 'object') walk(v);
-      }
-    })(program.body);
-    return found;
-  }
-
   function getVar(ctx, name) {
     const v = lookupVar([ctx.vars], name);
     return v === undefined ? 0 : v;
   }
 
-  return { createContext, resume, getVar, STEP_LIMIT, TRACE_LIMIT, RECURSION_LIMIT };
+  // B16 序列化契约（AiContext 可序列化，interfaces §4.5）：帧存 path，节点引用不序列化；
+  //  restored 后 resume 行为与未序列化路径一致（T-AF-7）。null/undefined → null（P2-3 防御）。
+  function serializeContext(ctx) {
+    if (!ctx) return null;
+    return {
+      programHash: ctx && ctx.programHash !== undefined ? ctx.programHash : null,
+      entry: ctx.entry,
+      frames: (ctx.frames || []).map((f) => ({
+        kind: f.kind,
+        path: f.path,
+        childIndex: f.childIndex,
+        remaining: f.remaining === undefined ? null : f.remaining,
+        condValue: f.condValue === undefined ? null : f.condValue,
+        fnScope: f.fnScope ? Object.assign({}, f.fnScope) : null,
+      })),
+      vars: Object.assign({}, ctx.vars),
+      halted: !!ctx.halted,
+      stepCount: ctx.stepCount || 0,
+      trace: (ctx.trace || []).map((e) => Object.assign({}, e)),
+      stepLimit: ctx.stepLimit,
+      traceLimit: ctx.traceLimit,
+      recursionLimit: ctx.recursionLimit,
+      traceTruncated: !!ctx.traceTruncated,
+    };
+  }
+
+  // path → 节点反查（restoreContext 帧重建；L5 禁同层 require，反查内联在运行时；
+  //   与 ast.js getNodeAtPath 同规则：'.s[i]'/'then'/'else'/'body'/'expr' 段；函数体内帧为 body.s[i].body... 规范路径）
+  function nodeAtPath(program, path) {
+    if (typeof path !== 'string' || !program || !program.body) return null;
+    if (path === 'body') return program.body;
+    const parts = path.split('.');
+    if (parts[0] !== 'body') return null;
+    let node = program.body;
+    for (let i = 1; i < parts.length && node; i++) {
+      const t = parts[i];
+      const m = /^s\[(\d+)\]$/.exec(t);
+      if (m) node = node && Array.isArray(node.statements) ? node.statements[Number(m[1])] : null;
+      else if (t === 'then' || t === 'else' || t === 'body' || t === 'expr') node = node[t] || null;
+      else return null;
+    }
+    return node || null;
+  }
+
+  // 子节点路径步进（与 ast.nodePathOf 同规则：seq→s[i]、if/random→then/else、loop/function→body、表达式→.expr；
+  //   B16 P1-1 修复：fn 帧路径改用 AST 规范路径，嵌套帧（循环/分支）经 nodeAtPath 统一可反查）
+  function walkChildren(node, path, cb) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'seq') {
+      const list = node.statements;
+      if (Array.isArray(list)) list.forEach((c, i) => { if (c && typeof c === 'object') cb(c, `${path}.s[${i}]`); });
+    } else if (node.type === 'if' || node.type === 'random') {
+      for (const seg of ['then', 'else']) {
+        const v = node[seg];
+        if (v && typeof v === 'object') cb(v, `${path}.${seg}`);
+      }
+    } else if (node.type === 'loop' || node.type === 'function') {
+      const v = node.body;
+      if (v && typeof v === 'object') cb(v, `${path}.body`);
+    }
+    for (const k of ['value', 'left', 'right', 'cond', 'prob', 'times']) {
+      const v = node[k];
+      if (v && typeof v === 'object') cb(v, `${path}.expr`);
+    }
+  }
+
+  // 函数定义查找：返回 {node, path}（path 为 AST 规范路径；call 帧以此为锚）
+  function findFunctionDef(program, name) {
+    let found = null;
+    (function walk(n, path) {
+      if (found || !n || typeof n !== 'object' || typeof n.type !== 'string') return;
+      if (n.type === 'function' && n.name === name) { found = { node: n, path }; return; }
+      walkChildren(n, path, walk);
+    })(program && program.body, 'body');
+    return found;
+  }
+
+  // 反序列化：path → program 节点重建帧（seq 帧取 statements/[node]；loop 帧取节点；全规范路径，无 fn: 特例）
+  function restoreContext(ser, program) {
+    const ctx = createContext(program || { type: 'program', version: 1, body: { type: 'seq', statements: [] } });
+    ctx.entry = ser && ser.entry ? ser.entry : 'body';
+    ctx.vars = Object.assign({}, (ser && ser.vars) || {});
+    ctx.halted = !!(ser && ser.halted);
+    ctx.stepCount = (ser && ser.stepCount) || 0;
+    if (ser && ser.stepLimit !== undefined) ctx.stepLimit = ser.stepLimit;
+    if (ser && ser.traceLimit !== undefined) ctx.traceLimit = ser.traceLimit;
+    if (ser && ser.recursionLimit !== undefined) ctx.recursionLimit = ser.recursionLimit;
+    if (ser && ser.programHash !== undefined) ctx.programHash = ser.programHash;
+    ctx.traceTruncated = !!(ser && ser.traceTruncated);
+    ctx.trace = (ser && Array.isArray(ser.trace)) ? ser.trace.map((e) => Object.assign({}, e)) : [];
+    ctx.frames = ((ser && Array.isArray(ser.frames)) ? ser.frames : []).map((f) => {
+      const fnScope = f && f.fnScope ? Object.assign({}, f.fnScope) : null;
+      if (f && f.kind === 'seq') {
+        // 全规范路径（含函数体 body.s[i].body...）；不可反查的帧丢弃（防御）
+        const node = nodeAtPath(program, f.path);
+        if (!node) return null;
+        const list = node.type === 'seq' ? node.statements || [] : [node];
+        return { kind: 'seq', list, childIndex: f.childIndex || 0, path: f.path, fnScope };
+      }
+      if (f && f.kind === 'loop') {
+        const node = nodeAtPath(program, f.path);
+        if (!node) return null; // 无法反查的帧丢弃（防御）
+        return { kind: 'loop', node, remaining: f.remaining === undefined ? null : f.remaining, condValue: f.condValue === undefined ? null : f.condValue, path: f.path, fnScope: null };
+      }
+      return null;
+    }).filter(Boolean);
+    return ctx;
+  }
+
+  // 释放引用（引擎打完不再需要时调用；AiContext 生命周期收尾）
+  function destroyContext(ctx) {
+    if (!ctx) return;
+    ctx.frames = [];
+    ctx.trace = [];
+    ctx.vars = {};
+    ctx.program = null;
+    ctx.halted = true;
+  }
+
+  return { createContext, resume, getVar, serializeContext, restoreContext, destroyContext, STEP_LIMIT, TRACE_LIMIT, RECURSION_LIMIT };
 }
 
 module.exports = Object.assign(makeRuntime(), { withLogger: (logger) => makeRuntime(logger), STEP_LIMIT, TRACE_LIMIT, RECURSION_LIMIT });

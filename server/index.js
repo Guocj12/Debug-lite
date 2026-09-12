@@ -78,6 +78,16 @@ function readBody(req) {
   });
 }
 
+// POST 请求体 → 对象（解析失败返回 null；B16 ai 端点共用）
+function jsonBody(ctx) {
+  if (!ctx || typeof ctx.rawBody !== 'string') return null;
+  try {
+    return ctx.rawBody ? JSON.parse(ctx.rawBody) : {};
+  } catch (e) {
+    return null;
+  }
+}
+
 // 路由表：GET/POST → path → handler(ctx) → {status, payload}
 // handler 抛异常 → api.err + 500 internal_error（AP-6）
 function createHandler(logger, extraRoutes) {
@@ -139,6 +149,62 @@ function createHandler(logger, extraRoutes) {
         if (levelSet !== null) logger.setLevel(levelSet);
         for (const [ch, lv] of channelSets) logger.setChannelLevel(ch, lv);
         return { status: 200, payload: okEnvelope({ level: logger.getLevel() }, logger) };
+      },
+      '/api/v1/ai/validate': async (ctx) => {
+        // B16：静态校验 + 合法性 + 段位门控；错误带节点路径（interfaces §2/T-AP-1/2）
+        const astApi = require('./ai/ast.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const program = body.program || body.ai;
+        if (!program || typeof program !== 'object') {
+          return { status: 400, payload: errEnvelope('bad_ai', '缺少 program（AI 程序对象）') };
+        }
+        const tier = body.tier === undefined ? 'common' : String(body.tier);
+        const unlockApi = require('./core/unlock.js');
+        if (unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const v = astApi.validate(program, tier);
+        if (!v.ok) {
+          // 信封主码固定 ai_invalid（interfaces §2 行），每条错误的具体 code/path 在 details
+          return { status: 400, payload: errEnvelope('ai_invalid', 'AI 程序不合法', v.errors) };
+        }
+        return { status: 200, payload: okEnvelope({ ok: true }, logger) };
+      },
+      '/api/v1/ai/compile': async (ctx) => {
+        // B16：规范化 + programHash + 统计（结构校验；不查合法性/门控）
+        const runner = require('./runner.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const program = body.program || body.ai;
+        if (!program || typeof program !== 'object') {
+          return { status: 400, payload: errEnvelope('bad_ai', '缺少 program（AI 程序对象）') };
+        }
+        const r = runner.compileAi(program, logger);
+        if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, 'AI 程序不可编译', r.details) };
+        return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
+      '/api/v1/ai/battle': async (ctx) => {
+        // B16：给定 AI 跑一场（服务端重新执行，T-AP-4；seed 显式化回带，T-AP-5）
+        const runner = require('./runner.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const program = body.program || body.ai;
+        if (!program || typeof program !== 'object') {
+          return { status: 400, payload: errEnvelope('bad_ai', '缺少 program（AI 程序对象）') };
+        }
+        const seed = body.seed;
+        const r = runner.runAiBattle({
+          program,
+          seed,
+          tier: body.tier === undefined ? 'mythic' : String(body.tier),
+          opponent: body.opponent === undefined ? 'kiter' : String(body.opponent),
+          logger,
+        });
+        if (r.status !== 200) {
+          return { status: r.status, payload: errEnvelope(r.code, r.code === 'unknown_opponent' ? '未知对手' : 'AI 战斗无法执行', r.details) };
+        }
+        return { status: 200, payload: okEnvelope(r.data, logger) };
       },
     },
   };

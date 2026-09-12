@@ -198,7 +198,7 @@ test('AF-11 日志：ai.validate（debug）记录 ok/版本', () => {
   const evt = logger.records.find((x) => x.event === 'ai.validate');
   assert.ok(evt, '应有 ai.validate');
   assert.equal(evt.data.ok, true);
-  assert.equal(evt.data.version, 1);
+  assert.equal(evt.data.version, 2, 'v1 输入经 B16 版本迁移后记录当前版本');
   // 非法时 detail 记 errors 数
   const bad = prog('a2Breakpoint');
   bad.body.statements.push({ type: 'eval' });
