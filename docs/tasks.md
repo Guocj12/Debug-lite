@@ -243,7 +243,7 @@ health | data <table>
 | T-DC-7 | 机制数值不在代码里硬编码（战斗数值必须来自 `battle-config.json`） | P0-5 | 失败 |
 | **T-DC-8** | **文档与现实一致**：`decisions.md` 的每条 D 编号都能在 `docs/interfaces.md` 或数据表中找到落点 | P0-7 | 失败 |
 
-> P0 基建批自有的测试点：P0-3 的 `G-1..G-12`（`tests/helpers/gen.js` 契约，见 `tests/README.md`）；P0-4 的 T-LG-1/2/3/6/7；P0-5 的 T-DC-3..7；P0-6 的 T-DC-1/2；P0-8 的 T-CLI-2。
+> P0 基建批自有的测试点：P0-3 的 `G-1..G-12`（`tests/helpers/gen.js` 契约）；P0-4 的 T-LG-1/2/3/6/7 与 `H-1..H-4`（`tests/helpers/log.js` 契约，见 `shared/README.md`）、T-LG-2g/2h（UMD 双入口，§4.10）；P0-5 的 T-DC-3..7；P0-6 的 T-DC-1/2；P0-8 的 T-CLI-2。见 `tests/README.md`。
 
 ### 3.3 敷衍测试黑名单（命中即打回）
 
