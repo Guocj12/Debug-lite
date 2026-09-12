@@ -40,7 +40,7 @@ function createBattle(cfgIn, options) {
     const rng = p.critRng || { chance: () => 0 };
     // 步骤 1 闪避判定（§4.4：dodgeChance + 本 tick dodge 行动的 dodgeChanceBonus）
     const dodgeChanceTotal = Math.min(1, ((defender.special && defender.special.dodgeChance) || 0) + (defender.dodging ? cfg.dodgeChanceBonus : 0));
-    if (dodgeChanceTotal > 0 && rng.chance('dodge', dodgeChanceTotal)) {
+    if (dodgeChanceTotal > 0 && rng.chance(dodgeChanceTotal, 'dodge')) {
       logger.debug('damage', 'damage.dodge', `${defender.id} 闪避`, { target: defender.id, chance: dodgeChanceTotal });
       return { dmg: 0, dodged: true, dodgeChanceTotal };
     }
@@ -51,7 +51,7 @@ function createBattle(cfgIn, options) {
     // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击 ×1.5（critChance 消耗 crit 流）
     const backM = p.backstab ? cfg.backstab : 1;
     const critChance = (attacker.special && attacker.special.critChance) || 0;
-    const crit = !!(critChance > 0 && rng.chance('crit', critChance));
+    const crit = !!(critChance > 0 && rng.chance(critChance, 'crit'));
     const critM = crit ? cfg.crit : 1;
     // 步骤 6 倍率相乘后只取整一次（D-41），下限 1
     const raw = attacker.atk * mult * reduction * backM * critM;
@@ -227,7 +227,7 @@ function createBattle(cfgIn, options) {
     state.tick += 1;
     const tick = state.tick;
     logger.info('engine', 'tick.begin', `tick ${tick}`, { tick });
-    const stepLog = (stepNo, msg, data) => logger.debug('engine', 'tick.step', `[${stepNo}] ${msg}`, Object.assign({ step: stepNo }, data || {}));
+    const stepLog = (stepNo, msg, data) => logger.debug('engine', 'tick.step', `[${stepNo}] ${msg}`, Object.assign({ step: stepNo, tick }, data || {}));
 
     // 步骤 1：冷却递减 max(0, cd−1)（D-82）+ 重置临时标记
     for (const p of [p1, p2]) {

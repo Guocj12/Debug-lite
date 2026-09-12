@@ -431,10 +431,85 @@ async function checkTests(options) {
   return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}`);
 }
 
-// ---------- 项 8：待激活（B11） ----------
+// ---------- 项 8：日志冒烟（B11 激活） ----------
+// trace 跑黄金战斗（固定 loadout/AI/seed）→ 关键事件齐备 + cid 链 + 与 silent 同 seed 逐帧一致（T-LG-11/5）。
+// 注意：项 8 在项 7 覆盖率会话后执行——此处 require 均为 lazy（V8 机制见 scripts/README）。
+async function checkLogSmoke(options) {
+  const root = (options && options.projectRoot) || REPO;
+  if (!fs.existsSync(path.join(root, '.audit', 'golden-battle.js'))) {
+    return resultOf('pending', '.audit/golden-battle.js 缺失（B11 落地后激活）');
+  }
+  // eslint-disable-next-line global-require
+  const { createLogger } = require('../shared/log.js');
+  // eslint-disable-next-line global-require
+  const engine = require(path.join(root, 'server', 'core', 'engine.js'));
+  // eslint-disable-next-line global-require
+  const skills = require(path.join(root, 'server', 'core', 'skills.js'));
 
-function pendingUntil(reason) {
-  return () => resultOf('pending', `前置未落地：${reason}`);
+  const mk = (P) => ({
+    id: P === 'p1' ? 'A' : 'B', owner: P,
+    x: P === 'p1' ? 224 : 800, facing: P === 'p1' ? 1 : -1,
+    hp: 100, mp: 40, sp: 60, maxHp: 100, maxMp: 40, maxSp: 60,
+    atk: P === 'p1' ? 12 : 19, def: P === 'p1' ? 8 : 9,
+    regen: { mp: 1, sp: 2 }, special: {}, cooldowns: {}, effects: [],
+  });
+  const sk = (id, ov) => Object.assign(skills.instantiateSkill(id, 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 }), ov || {});
+
+  const battleOf = (logger) => {
+    const p1 = mk('p1');
+    const p2 = mk('p2');
+    p1.skills = { precise: sk('skill_straight_precise', { multiplier: 1.0 }) };
+    p2.skills = { bash: sk('skill_dash_bash', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
+    return engine.createBattle({}, { seed: 20260912, logger, players: { p1, p2 } });
+  };
+  const actions = goldenActions();
+
+  // trace 场
+  const traceLogger = createLogger({ level: 'all', ringSize: 5000 });
+  const traceBattle = battleOf(traceLogger);
+  const traceRes = traceBattle.runFull({ actions });
+
+  // 事件齐备（§4.6 L4 行关键集）
+  const recs = traceLogger.records;
+  const expect = ['battle.create', 'tick.begin', 'tick.step', 'tick.end', 'move.resolve', 'resource.regen', 'battle.judge', 'battle.end'];
+  const missing = expect.filter((e) => !recs.some((r) => r.event === e));
+  if (missing.length) return resultOf('fail', `关键事件缺失：${missing.join('，')}`);
+  // cid 链：事件流顺序 cast → spawn → hit → end（首个 cast 之后的依次首现；tick 归属由 diff 帧承担）
+  const c1 = recs.findIndex((r) => r.event === 'skill.cast');
+  if (c1 === -1) return resultOf('fail', 'cid 链事件缺失：skill.cast');
+  const c2 = recs.findIndex((r, i) => i > c1 && r.event === 'bullet.spawn');
+  const c3 = recs.findIndex((r, i) => i > c2 && r.event === 'bullet.hit');
+  const c4 = recs.findIndex((r, i) => i > c3 && r.event === 'tick.end');
+  if (c2 === -1 || c3 === -1 || c4 === -1) return resultOf('fail', 'cid 链事件缺失（spawn/hit/end）');
+  if (!(c1 < c2 && c2 < c3 && c3 < c4)) return resultOf('fail', 'cid 链顺序异常（cast→spawn→hit→end）');
+
+  // 与 silent 同 seed 逐帧一致（日志不影响确定性）
+  const silentBattle = battleOf(createLogger({ level: 'silent' }));
+  const silentRes = silentBattle.runFull({ actions });
+  if (JSON.stringify(silentRes.diffs) !== JSON.stringify(traceRes.diffs)) {
+    return resultOf('fail', 'trace 与 silent 帧输出不一致（日志影响确定性）');
+  }
+  return resultOf('pass', `黄金战斗 ${traceRes.ticks} tick（winner=${traceRes.winner}）事件齐全 + cid 链 + 与 silent 逐帧一致`);
+}
+
+// 黄金行动序列（与 .audit/golden-battle.js 相同的 40 tick 计划 + wait 兜底）
+function goldenActions() {
+  const plan = {
+    p1: ['dodge_right', 'move_left', 'wait', 'skill:precise', 'move_right', 'skill:precise', 'dodge_left', 'wait',
+      'move_right', 'move_left', 'skill:precise', 'dodge_right', 'wait', 'move_left', 'skill:precise', 'dodge_left',
+      'move_right', 'wait', 'move_left', 'skill:precise', 'dodge_right', 'move_right', 'wait', 'skill:precise',
+      'dodge_left', 'move_left', 'wait', 'dodge_right', 'move_right', 'skill:precise', 'wait', 'move_left',
+      'dodge_left', 'skill:precise', 'wait', 'move_right', 'dodge_right', 'wait', 'move_left', 'skill:precise'],
+    p2: ['move_left', 'wait', 'skill:bash', 'dodge_left', 'move_right', 'wait', 'skill:bash', 'dodge_right',
+      'wait', 'move_left', 'skill:bash', 'wait', 'dodge_right', 'move_left', 'skill:bash', 'wait',
+      'dodge_left', 'move_right', 'skill:bash', 'wait', 'move_left', 'dodge_right', 'skill:bash', 'wait',
+      'move_right', 'wait', 'dodge_left', 'skill:bash', 'wait', 'move_left', 'dodge_right', 'skill:bash',
+      'wait', 'move_right', 'dodge_left', 'skill:bash', 'wait', 'move_left', 'dodge_right', 'wait'],
+  };
+  return {
+    p1: (state) => plan.p1[state.tick - 1] || 'wait',
+    p2: (state) => plan.p2[state.tick - 1] || 'wait',
+  };
 }
 
 // ---------- 项 9：接口冒烟（P0-8 激活） ----------
@@ -525,7 +600,7 @@ async function runGate(options) {
       return resultOf('pass', `${a.detail}；${b.detail}`);
     } },
     { id: 7, name: '全量测试 + 覆盖率（§3.4 第 7 项）', fn: (o) => checkTests({ projectRoot: o.projectRoot, runner }), },
-    { id: 8, name: '日志冒烟：trace 跑一场 + cid 链路 + 与 silent 逐帧一致（T-LG-11/5）', fn: pendingUntil('B11 引擎/走查落地') },
+    { id: 8, name: '日志冒烟：trace 跑一场 + cid 链路 + 与 silent 逐帧一致（T-LG-11/5）', fn: checkLogSmoke },
     { id: 9, name: '接口冒烟：listen(0) → /api/v1 → CLI 闭环（T-AP-*/T-CLI-*）', fn: checkApiSmoke },
   ];
   const results = [];
@@ -563,7 +638,7 @@ async function main(options) {
 module.exports = {
   REPO, checkStaticRandEval, checkStaticConsole, checkNumericHardcode,
   checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency,
-  checkTests, runSuite, judgeCoverage, validateEvent, checkApiSmoke, runGate, main,
+  checkTests, runSuite, judgeCoverage, validateEvent, checkApiSmoke, checkLogSmoke, runGate, main,
 };
 
 if (require.main === module) {

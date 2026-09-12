@@ -255,6 +255,13 @@ test('GX-11 runGate：项 6 的 pending 组合（日志过 + 数值缺配置）'
 
 // ---------- 项 9：接口冒烟（checkApiSmoke） ----------
 
+test('GX-13 checkLogSmoke：真实仓库 pass（B11 激活）；无 golden 文件 → pending', async () => {
+  const real = await gate.checkLogSmoke();
+  assert.equal(real.status, 'pass', real.detail);
+  const pend = await runCheck(gate.checkLogSmoke, { '.audit/README.md': '# 占位' });
+  assert.equal(pend.status, 'pending', '无 golden-battle.js 必须 pending');
+});
+
 test('GX-12 checkApiSmoke：真实仓库 pass（health/data + CLI 闭环）；无服务端文件 → pending', async () => {
   const real = await gate.checkApiSmoke();
   assert.equal(real.status, 'pass', real.detail);

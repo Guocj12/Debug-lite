@@ -15,9 +15,8 @@ const field = require('./field.js');
 
 const CELL = require('../data/battle-config.json').cellPx;
 
-let seq = 0;
-
 function makeBullets(logger) {
+  let seq = 0; // uid 计数器：实例级（B11：模块级共享会导致跨 battle uid 顺延、破坏逐帧一致）
   const L = logger || nullLogger;
 
   // 连续方程求解原语（弹幕-弹幕、弹幕-角色共用）：x1+v1·t = x2+v2·t → t* ∈ [tMin, tMax]
