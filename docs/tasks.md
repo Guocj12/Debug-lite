@@ -584,7 +584,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 交付物 |
 |---|---|
-| P0-1 | `package.json`(start/test/cov/gate/demo/cli/demo:log) + `.gitignore` + `README.md` |
+| P0-1 `[x]` | `package.json`(start/test/cov/gate/demo/cli/demo:log) + `.gitignore` + `README.md`（2026-09-12 完成；审查 `docs/reviews/P0-1.md`） |
 | P0-2 | 目录骨架：`shared/ server/{core,ai,data} cli/ tests/{contract,unit,integration,regression,api,cli,property,log,fixtures} scripts/ assets/`（不建 `public/`） |
 | P0-3 | 测试基建：单进程 runner 固化、`tests/helpers.js`、`tests/helpers/gen.js`、覆盖率阈值 —— 实测 §1.3 全部命令 |
 | P0-4 | **日志子系统**：`shared/log.js` + 注入 + `DL_LOG_*` + `tests/log/*`（T-LG-1/2/3/6/7） |

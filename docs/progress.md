@@ -41,8 +41,9 @@ docs/progress.md       本文件
 
 ## 3. 待办（按优先级）
 
-### 3.1 开发（未开始）
-- [ ] **P0-1 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+### 3.1 开发（进行中）
+- [x] **P0-1** `package.json` + `.gitignore` + `README.md`（2026-09-12；7 脚本接线、cov 修 P1、审查 `docs/reviews/P0-1.md`）
+- [ ] **P0-2 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

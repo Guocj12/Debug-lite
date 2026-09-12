@@ -1,0 +1,19 @@
+{
+  "name": "debug-lite",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Debug-Lite v3：编程式自动对战游戏（后端优先：P0-P5 后端，P6 前端延后）",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test --test-isolation=none tests/**/*.test.js",
+    "cov": "node --test --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=90 --test-isolation=none tests/**/*.test.js",
+    "gate": "node scripts/gate.js",
+    "demo": "node scripts/demo.js",
+    "demo:log": "node scripts/demo.js --log-level trace",
+    "cli": "node cli/index.js"
+  }
+}
