@@ -17,6 +17,7 @@
 
 - 命名 `*.test.js`；`npm test` 用 `tests/**/*.test.js` glob（node 自行展开，勿传目录）
 - 全量必须单进程：`--test-isolation=none`（沙箱 EPERM 约束）
+- **runner 注入特例（登记，P0-5）**：§3.3 只允许注入 rng/logger/只读快照，但门禁测试（`tests/integration/gate*.test.js`）注入**假 runner** 以规避"进程内第二次嵌套 run() 流永不结束"的 Node 缺陷（机制见 `scripts/README.md`）——注入的是 node:test 基建而不是被测模块，真实 `runSuite` 路径由 `npm run gate` 本体自验证
 
 ## 测试 runner 契约（P0-3 固化，已实测）
 
@@ -26,7 +27,7 @@
 | 目录参数 | `node --test <目录>` 报 `ERR_UNSUPPORTED_DIR_IMPORT`，**禁用** | ✅ 已实测 |
 | 失败退出码 | 任一用例失败 → 进程退出码 **1**（不静默通过） | ✅ 已实测 |
 | 空匹配 | 无匹配文件 → 0 用例、退出码 0（**静默通过陷阱**；由 `scripts/gate.js` 第 7 项断言测试数 ≥ 1 兜底，P0-5） | ✅ 已实测 |
-| 覆盖率 | `npm run cov` ≡ 上行 + `--experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=90`；阈值为**每文件**达标，任一文件低于阈值 → 非零退出 | ✅ 已实测 |
+| 覆盖率 | `npm run cov` ≡ 上行 + `--experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=90`；CLI 阈值为**聚合**语义（全文件合计低于阈值 → 非零退出，P0-5 实测修正早前"每文件"表述）；**gate 项 7 为每文件语义**（仅 core/ai/shared/cli 四目录，任一文件低于阈值 → FAIL，更严格） | ✅ 已实测 |
 | 无 spawn | runner 全程单进程，不 spawn 子进程 | ✅ 已实测 |
 | 备用入口 | `node tests/run-all.js`（单进程 require 串联）——暂不实现，`node --test` 可用则不作冗余 | — |
 
