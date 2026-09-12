@@ -33,16 +33,77 @@ function createBattle(cfgIn, options) {
   const fieldApi = field.withLogger(logger);
   const CELL = cfg.cellPx;
 
-  // ---- 基础伤害链路（B8 边界：B9 扩展完整链路）----
+  // ---- 完整伤害链路（systems/07-engine.md §4.4 八步；§4.5 背击；D-40..D-46/D-50/D-51）----
+  // params: {mult, trueDamage, backstab, critRng, affixes, sourceDir}；defender.dodging（dodge 行动叠加 bonus）
   function dealDamage(attacker, defender, params) {
     const p = params || {};
+    const rng = p.critRng || { chance: () => 0 };
+    // 步骤 1 闪避判定（§4.4：dodgeChance + 本 tick dodge 行动的 dodgeChanceBonus）
+    const dodgeChanceTotal = Math.min(1, ((defender.special && defender.special.dodgeChance) || 0) + (defender.dodging ? cfg.dodgeChanceBonus : 0));
+    if (dodgeChanceTotal > 0 && rng.chance('dodge', dodgeChanceTotal)) {
+      logger.debug('damage', 'damage.dodge', `${defender.id} 闪避`, { target: defender.id, chance: dodgeChanceTotal });
+      return { dmg: 0, dodged: true, dodgeChanceTotal };
+    }
+    // 步骤 2-3 攻防属性：defending def×1.6（D-43）；真实伤害不吃护甲（reduction=1）
     const mult = p.mult === undefined ? cfg.baseHitMul : p.mult;
     const def = defender.defending ? defender.def * cfg.defendDefMul : defender.def;
-    const reduction = 1 - def / (def + DEF_K);
-    const raw = attacker.atk * mult * reduction;
+    const reduction = p.trueDamage ? 1 : 1 - def / (def + DEF_K);
+    // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击 ×1.5（critChance 消耗 crit 流）
+    const backM = p.backstab ? cfg.backstab : 1;
+    const critChance = (attacker.special && attacker.special.critChance) || 0;
+    const crit = !!(critChance > 0 && rng.chance('crit', critChance));
+    const critM = crit ? cfg.crit : 1;
+    // 步骤 6 倍率相乘后只取整一次（D-41），下限 1
+    const raw = attacker.atk * mult * reduction * backM * critM;
     const dmg = Math.max(1, Math.floor(raw));
+    // 步骤 7 吸血（角色伤害；基地不吸血由调用方不走本函数）
+    let lifesteal = 0;
+    const ls = (attacker.special && attacker.special.lifesteal) || 0;
+    if (ls > 0) {
+      lifesteal = Math.floor(dmg * ls);
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + lifesteal);
+      logger.trace('damage', 'damage.lifesteal', `${attacker.id} 吸血 +${lifesteal}`, { attacker: attacker.id, lifesteal });
+    }
+    // 步骤 8 应用 + damage.calc（每步中间值）
     defender.hp = Math.max(0, defender.hp - dmg);
-    return { dmg, reduction, raw, mult };
+    logger.debug('damage', 'damage.calc', `${attacker.id} -> ${defender.id} ${dmg}`, {
+      attacker: attacker.id, target: defender.id, mult, reduction, backM, critM,
+      backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, raw, dmg, lifesteal,
+    });
+    // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害）
+    for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
+    return { dmg, reduction, raw, mult, backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, lifesteal, dodged: false, dodgeChanceTotal };
+  }
+
+  // 背击判定（§4.5，2026-09-12 拍板"追尾语义"并统一弹幕来源判定）：
+//   近战 = 攻方本体位于受击方朝向反方向；平射/位移路径弹幕 = 方向与受击方朝向**相同**（追尾；迎面不算）；
+//   垂直 = 永不触发（示例 M4/M5 位移路径弹幕 12 无背击保持一致）
+  function isBackstab(attacker, defender, attackType, dir) {
+    if (attackType === 'vertical' || attackType === 'aoe') return false;
+    if (attackType === 'displacement' || attackType === 'straight') return dir === defender.facing;
+    return defender.facing > 0 ? attacker.attackerX < defender.x : attacker.attackerX > defender.x;
+  }
+
+  // 附加效果入列（§4.4 步骤 9；登记：knockback/pull ±1 格、stun remaining 1、dot 持续 3 tick，B21 校准）
+  function addAffixEffect(attacker, defender, affix, sourceDir) {
+    const dir = sourceDir || attacker.facing || 1;
+    const v = (affix.params && affix.params.v) || 1;
+    if (affix.id === 'stun') {
+      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: 0, remaining: 1, source: attacker.owner });
+    } else if (affix.id === 'knockback') {
+      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: dir * v, remaining: 1, source: attacker.owner });
+    } else if (affix.id === 'pull') {
+      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: -dir * v, remaining: 1, source: attacker.owner });
+    } else if (affix.id === 'dot') {
+      effects.addEffect(battleState, { kind: 'continuous', target: defender.owner, stat: 'hp', delta: -v, remaining: 3, source: attacker.owner });
+    } else if (affix.id === 'true_dmg') {
+      const trueDmg = Math.max(0, Math.floor(v));
+      defender.hp = Math.max(0, defender.hp - trueDmg); // 附加真实伤害（登记：数值直扣，B21 校准）
+      logger.debug('damage', 'damage.calc', `${attacker.id} -> ${defender.id} ${trueDmg}（附加真实伤害）`, {
+        attacker: attacker.id, target: defender.id, trueDamage: true, raw: trueDmg, dmg: trueDmg, lifesteal: 0,
+      });
+    }
+    // cast_buff / crit_chance / lifesteal 词条：buff 结算属 B14 谱系，crit/lifesteal 已并入面板（B5）
   }
 
   // ---- 行动归一化（D-80：白名单 + 非法 → wait）----
@@ -173,6 +234,7 @@ function createBattle(cfgIn, options) {
       for (const k of Object.keys(p.cooldowns)) p.cooldowns[k] = Math.max(0, p.cooldowns[k] - 1);
       p.defending = false;
       p.fullDodgeDuring = false;
+      p.dodging = false;
     }
     stepLog(1, '冷却递减/重置标记');
 
@@ -214,6 +276,7 @@ function createBattle(cfgIn, options) {
         plan.dir = intent.dir === undefined ? p.facing : intent.dir;
         plan.pass = intent.type === 'dodge'; // dodge 可穿（07 §1）
         plan.rawToX = p.x + plan.dir * px;
+        if (intent.type === 'dodge') p.dodging = true; // 本 tick dodge 行动 → 闪避叠加（§4.4 步骤 1）
       } else if (intent.type === 'forced_move') {
         plan.kind = 'forced_move';
         plan.dir = intent.dir;
@@ -268,20 +331,26 @@ function createBattle(cfgIn, options) {
     });
     stepLog(8, '弹幕解算');
 
-    // 步骤 9：伤害结算（B8 基础链路：弹幕命中 + 碰撞 + 基地）
+    // 步骤 9：伤害结算（B9 完整链路：弹幕命中 + 碰撞 + 基地；crit 流每 tick 派生一次共享）
+    const critRng = battleState.rng.deriveStream(tick, 'crit');
     for (const h of bulletEvents.hits) {
       const atk = players[h.owner];
       const def = players[h.target];
       if (def.hp <= 0) continue;
-      dealDamage(atk, def, { mult: h.payload.multiplier * h.falloffFactor });
+      const backstab = isBackstab({ attackerX: atk.x, attackerFacing: atk.facing }, def, h.srcType || 'aoe', h.dir);
+      dealDamage(atk, def, {
+        mult: h.payload.multiplier * h.falloffFactor,
+        critRng, backstab, affixes: h.payload.affixes || [], sourceDir: h.dir,
+      });
     }
     if (resolved.collision) {
-      dealDamage(p1, p2, { mult: cfg.collisionDmgMul }); // 双方各受对方 atk×0.8（D-10）
-      dealDamage(p2, p1, { mult: cfg.collisionDmgMul });
+      // 双方各受对方 atk×0.8（D-10），走完整机制（闪避/暴击/背击/吸血，§4.3）；背击按位移后位置判定
+      dealDamage(p1, p2, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p1.x }, p2, 'melee') });
+      dealDamage(p2, p1, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p2.x }, p1, 'melee') });
     }
     if (resolved.baseHit) {
-      // 撞基地：atk×0.8 走基地 def 减伤（D-34/D-61）
-      const base = state.bases[resolved.baseHit.owner];
+      // 撞基地：atk×0.8 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）
+      const base = battleState.bases[resolved.baseHit.owner];
       const atk = resolved.baseHit.by;
       const reduction = 1 - base.def / (base.def + DEF_K);
       base.hp = Math.max(0, base.hp - Math.max(1, Math.floor(atk.atk * cfg.collisionDmgMul * reduction)));
@@ -352,6 +421,7 @@ function createBattle(cfgIn, options) {
     players[owner].skills = players[owner].skills || {};
     players[owner].defending = false;
     players[owner].fullDodgeDuring = false;
+    players[owner].dodging = false;
   }
   const seed = opts.seed === undefined ? 1 : opts.seed;
   const battleState = {
@@ -376,6 +446,7 @@ function createBattle(cfgIn, options) {
     resolveActorCollision,
     judge: (st) => judge(st || battleState),
     dealDamage,
+    isBackstab,
     runFull: (ro) => {
       let winner;
       for (let i = 0; i < cfg.hardCapTick; i++) {

@@ -46,6 +46,7 @@ function makeBullets(logger) {
         owner: (act && act.owner) || 'p1',
         order: out.length,
         type: spec.type || spec.btype || 'straight',
+        srcType: spec.srcType || (spec.type === 'aoe' ? 'aoe' : 'straight'),
         level: spec.level,
         dir: spec.dir || 0,
         x0: spec.x0,
@@ -154,7 +155,7 @@ function makeBullets(logger) {
     return outcome;
   }
 
-  // 命中登记：附 1px 位置与 falloff 系数（伤害数值 B9 组合）
+  // 命中登记：附 1px 位置、falloff 系数、弹幕方向（背击判定用，B9）与 btype
   function registerHit(b, t, atX, events) {
     const distCells = b.payload.distCells === undefined ? 0 : b.payload.distCells;
     const falloffFactor = Math.max(0, 1 - (b.payload.falloff || 0) * distCells);
@@ -162,6 +163,9 @@ function makeBullets(logger) {
       uid: b.uid, owner: b.owner, target: t.id, atX,
       level: b.level, distCells,
       falloffFactor,
+      dir: b.dir,
+      btype: b.type,
+      srcType: b.srcType,
       payload: { ...b.payload },
     });
     L.debug('bullets', 'bullet.hit', `${b.uid} -> ${t.id} @${atX}`, { uid: b.uid, target: t.id, atX });

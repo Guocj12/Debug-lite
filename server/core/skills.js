@@ -146,14 +146,14 @@ function makeSkills(logger) {
       const originCell = field.cellOf(x);
       for (const c of cells) {
         bullets.push({
-          btype: 'aoe', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
+          btype: 'aoe', srcType: 'melee', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
           level: skill.bulletLevel, payload: { ...payload, distCells: Math.abs(c - originCell) },
         });
       }
     } else if (skill.type === 'straight') {
       for (let i = 0; i < skill.bulletCount; i++) {
         bullets.push({
-          btype: 'straight', x0: x, dir, v: skill.range * CELL, len: skill.range * CELL,
+          btype: 'straight', srcType: 'straight', x0: x, dir, v: skill.range * CELL, len: skill.range * CELL,
           level: skill.bulletLevel, payload: { ...payload }, // 逐枚拷贝（审查 P2-2）
         });
       }
@@ -163,7 +163,7 @@ function makeSkills(logger) {
       const impactCell = field.cellOf(impact);
       for (const c of cells) {
         bullets.push({
-          btype: 'aoe', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
+          btype: 'aoe', srcType: 'vertical', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
           level: skill.bulletLevel, payload: { ...payload, distCells: Math.abs(c - impactCell) },
         });
       }
@@ -175,7 +175,7 @@ function makeSkills(logger) {
         const startCell = field.cellOf(x);
         for (let c = startCell; dir > 0 ? c <= targetCell : c >= targetCell; c += dir) {
           bullets.push({
-            btype: 'aoe', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
+            btype: 'aoe', srcType: 'displacement', x0: field.xCenter(c), v: 0, len: 0, dir,
             level: skill.bulletLevel, payload: { ...payload },
             // 注意（审查 P2-3）：位移路径弹幕无 distCells——falloff 距离基准由 B9 命中结算时定义（当前位移技能 falloff 恒 0）
           });
