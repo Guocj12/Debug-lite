@@ -20,7 +20,7 @@
 | `shared/log.js` | `createLogger` / `nullLogger` / `LEVELS`；logger：`on` / `log` / `fatal..trace` / `setLevel` / `setChannelLevel` / `reset` / `dump` / `records` / `stats`；`parseLevel` / `parseChannelOverrides` / `CHANNELS` | 零依赖 UMD（L-1） | P0-4 ✅ |
 | `core/rng.js` | `createRng(seed,{logger})`；`float/int/pick/chance(...,purpose)`、`state/restore`；**`deriveStream(tick, purpose)`**（seed 于 createRng 绑定，D-90/D-91） | L0 | B1 ✅ |
 | `core/field.js` | `FIELD_PX/CELL_PX/ACTOR_HALF/START_X/START_FACING/BASE_DEF`；`clampX` / `cellOf` / `xCenter` / `cellRange` / `baseOf` / `touchesBase` | L0 + battle-config（D-04/D-05） | B1 |
-| `core/effects.js` | `addEffect` / `resolveContinuous` / `resolveControl` | L1 | B2 |
+| `core/effects.js` | `addEffect(state, effect)`（补 uid + addedTick，下一 tick 起效）/ `resolveContinuous(state)`（clamp/递减/移除，入口先清 remaining≤0）/ `resolveControl(effects, aiAction)` → `{action}`（'wait' 眩晕；`{action:'forced_move',dir,cells}` 位移意图，B8 落位；无控制原样）/ `resolveControlMove(x, otherX, displacement)`（单方落位 gap≥64 + clamp，T-FD-4）/ `withLogger` | L1 | B2 ✅ |
 | `core/items.js`（数值） | `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf` / `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox` / `applyAffixes` / `validateUnlock` | L1 + 数据表 | B3 |
 | `core/items.js`（仓库） | `createWarehouse` / `addItem` / `assemble` / `disassemble` / `buildLoadout` / 序列化往返 | L3（同文件双分层，见 check-arch 契约） | B18 |
 | `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateAi` / `validateLoadout` / `availableNodes` | L1 + unlock.json | B4 |
