@@ -609,7 +609,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B5 `[x]` | `roles.js`（含模板 regen；typeModifiers L9 入表） | T-RO-1..7 | `roles.*`（审查 `docs/reviews/B5.md`，P1×1 已修） |
 | B6 `[x]` | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围/四类型释放指令/路径弹幕） | T-SK-1..4 | `skills.*`（审查 `docs/reviews/B6.md`，P1×1 已修） |
 | B7 `[x]` | `bullets.js`（**当 tick 全解算 + 连续碰撞方程 + 等级抵消 + 递归**） | T-BU-1..8 + **T-BT-8/19** | `bullets.*`（审查 `docs/reviews/B7.md`，P1×2 已修） |
-| B8 | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`）、统一落位、**角色碰撞与碰撞伤害**、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve` |
+| B8 `[x]` | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`）、统一落位、**角色碰撞与碰撞伤害**（基础链路）、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve`（审查 `docs/reviews/B8.md`，P1×1 已修） |
 | B9 | 伤害链路（§3.5.5）+ 基地（撞基地）+ AOE 基准 + 背击（位移后） | T-EN-5/6/7/8 + T-EF-6 + **T-BT-6/7/12/16/18** | `damage.*` |
 | B10 | 结束判定 + 超时扣血 + `runFull` | T-EN-2/3/4 + **T-BT-2/4/11** | `battle.overtime/judge/end` |
 | B11 | diff/events/`cid` + `scripts/demo.js` + `POST /api/v1/battle` + **黄金战斗回归**（重写后的走查场次） | T-EN-9 + **T-BT-5/10/13/14** + T-LG-11 | `engine.tick.step` 全 14 步 |
