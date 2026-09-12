@@ -62,7 +62,8 @@ docs/progress.md       本文件
 - [x] **B9** 完整伤害链路（闪避/背击/暴击/吸血/真实/附加效果 + damage.* 事件；**背击追尾语义用户拍板 2026-09-12**）（DM-1..13，273 用例；审查 `docs/reviews/B9.md`，P2×3 已修）
 - [x] **B10** 结束判定 + 超时扣血 + runFull 回放一致（T-EN-2/3/4 + T-BT-2/4/11；BE-1..8，281 用例；审查 `docs/reviews/B10.md`，P1×1 已修——T-BT-2 边界断言）
 - [x] **B11（P1 收尾）** 黄金战斗（固定 loadout×AI×seed，crit 路径真实消费）+ `.audit/` 复算脚本 + **门禁项 8 激活 → gate 9 PASS/0 FAIL/0 PEND**（285 用例；审查 `docs/reviews/B11.md`，P1×1 已修——T-EN 编号归属）—— **P1 阶段 11/11 批收口**
-- [ ] **P2 起**（AI 阶段：B12 ast → B16；A 组 5 批）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B12（P2 首）** `ai/ast.js`（validateProgram/collectUsedNodeTypes/nodePathOf/limits；random 分支盲区修复 + 自引用环防御）+ 覆盖型 fixtures（AF-1..13，298 用例；审查 `docs/reviews/B12.md`，P1×2 已修——random 盲区/接口名）
+- [ ] **B13 起**（P2：合法性检测 + 段位门控）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

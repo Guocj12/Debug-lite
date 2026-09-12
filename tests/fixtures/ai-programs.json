@@ -1,0 +1,90 @@
+{
+  "coverageProgram": {
+    "description": "覆盖型合法程序：全部 16 节点类型各出现一次（B12 fixtures，B14 runtime 复用）",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "literal", "value": 5 },
+          { "type": "var", "name": "cd1", "value": { "type": "literal", "value": 0 } },
+          { "type": "set", "name": "cd1", "value": { "type": "arith", "op": "+", "left": { "type": "getVar", "name": "cd1" }, "right": { "type": "literal", "value": 1 } } },
+          { "type": "get", "path": "self.hp" },
+          { "type": "bullets" },
+          { "type": "cmp", "op": "<", "left": { "type": "getVar", "name": "cd1" }, "right": { "type": "literal", "value": 3 } },
+          { "type": "logic", "op": "and", "left": { "type": "literal", "value": true }, "right": { "type": "literal", "value": false } },
+          { "type": "random", "prob": { "type": "literal", "value": 0.5 }, "then": { "type": "seq", "statements": [{ "type": "action", "name": "move_right" }] }, "else": { "type": "seq", "statements": [{ "type": "action", "name": "move_left" }] } },
+          { "type": "if", "cond": { "type": "cmp", "op": ">", "left": { "type": "getVar", "name": "cd1" }, "right": { "type": "literal", "value": 0 } }, "then": { "type": "seq", "statements": [{ "type": "action", "name": "dodge_left" }] }, "else": null },
+          { "type": "loop", "kind": "count", "times": { "type": "literal", "value": 2 }, "body": { "type": "seq", "statements": [{ "type": "action", "name": "wait" }] } },
+          { "type": "loop", "kind": "while", "cond": { "type": "literal", "value": true }, "body": { "type": "seq", "statements": [{ "type": "action", "name": "wait" }] } },
+          { "type": "action", "name": "defend" },
+          { "type": "break" },
+          { "type": "function", "name": "helper", "body": { "type": "seq", "statements": [{ "type": "action", "name": "skill1" }] } },
+          { "type": "call", "name": "helper" },
+          { "type": "action", "name": "skill1" }
+        ]
+      }
+    }
+  },
+  "a1Countdown": {
+    "description": "A-1 隐式主循环：变量计数跨 tick（B14 测 T-AF-9）",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "var", "name": "n", "value": { "type": "literal", "value": 0 } },
+          { "type": "if",
+            "cond": { "type": "cmp", "op": "<", "left": { "type": "getVar", "name": "n" }, "right": { "type": "literal", "value": 2 } },
+            "then": { "type": "seq", "statements": [
+              { "type": "set", "name": "n", "value": { "type": "arith", "op": "+", "left": { "type": "getVar", "name": "n" }, "right": { "type": "literal", "value": 1 } } },
+              { "type": "action", "name": "move_right" }
+            ] },
+            "else": { "type": "seq", "statements": [
+              { "type": "set", "name": "n", "value": { "type": "literal", "value": 0 } },
+              { "type": "action", "name": "skill1" }
+            ] } }
+        ]
+      }
+    }
+  },
+  "a2Breakpoint": {
+    "description": "A-2 断点续执行：三个连续 action",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "action", "name": "skill1" },
+          { "type": "action", "name": "defend" },
+          { "type": "action", "name": "move_right" }
+        ]
+      }
+    }
+  },
+  "a5Function": {
+    "description": "A-5 函数作用域与调用栈",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "var", "name": "global", "value": { "type": "literal", "value": 10 } },
+          { "type": "function", "name": "f", "body": { "type": "seq", "statements": [
+            { "type": "var", "name": "local", "value": { "type": "literal", "value": 99 } },
+            { "type": "if",
+              "cond": { "type": "cmp", "op": ">", "left": { "type": "getVar", "name": "global" }, "right": { "type": "literal", "value": 5 } },
+              "then": { "type": "seq", "statements": [{ "type": "action", "name": "skill1" }] },
+              "else": { "type": "seq", "statements": [{ "type": "action", "name": "defend" }] } }
+          ] } },
+          { "type": "call", "name": "f" },
+          { "type": "action", "name": "move_right" }
+        ]
+      }
+    }
+  }
+}

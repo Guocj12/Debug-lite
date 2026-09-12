@@ -621,7 +621,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 交付物 | 必绿测试点 | 日志 |
 |---|---|---|---|
-| B12 | `ai/ast.js` 白名单 + 结构/深度/大小校验 + 稳定路径 id + **隐式主循环语义** + 覆盖型 fixtures | T-AI-2/11 + **T-AF-8/9** | `ai.ast.validate` |
+| B12 `[x]` | `ai/ast.js` 白名单 + 结构/深度/大小校验 + 稳定路径 id + **隐式主循环语义**（body=seq 契约）+ 覆盖型 fixtures | T-AI-2/11 + **T-AF-8/9** | `ai.validate`（审查 `docs/reviews/B12.md`，P1×2 已修） |
 | B13 | 合法性检测（**分支 action 规则**）+ 段位门控 + 错误带 `path` | T-AI-1/3/12 + T-UL-1..4 + **T-AF-5/10** | `ai.validate.reject` |
 | B14 | `ai/runtime.js` 显式状态机：作用域/循环/函数（独立作用域+调用栈）/break/每 tick 每用途随机流/只读快照 | T-AI-4/5/7/9 + **T-AF-1/2/3/11** | `ai.runtime.*` |
 | B15 | 限步/递归上限/错误兜底（返回 **`wait`**）+ trace + 病态 fixtures | T-AI-6/8/10 + **T-AF-4/6** | `ai.step.limit`/`ai.node` |
