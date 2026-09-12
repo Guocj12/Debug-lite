@@ -448,12 +448,14 @@ function createBattle(cfgIn, options) {
     dealDamage,
     isBackstab,
     runFull: (ro) => {
+      // §4.7 快进：循环 step 直到判定；返回完整 tick 序列（T-EN-2 与逐 tick 回放逐帧一致）
       let winner;
+      const diffs = [];
       for (let i = 0; i < cfg.hardCapTick; i++) {
-        battle.step(ro);
+        diffs.push(battle.step(ro));
         if (battleState.verdict) { winner = battleState.verdict.winner; break; }
       }
-      return { winner, ticks: battleState.tick };
+      return { winner, ticks: battleState.tick, diffs };
     },
   };
   return battle;

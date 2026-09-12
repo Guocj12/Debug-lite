@@ -60,7 +60,8 @@ docs/progress.md       本文件
 - [x] **B7** `core/bullets.js`（当 tick 全解算：连续方程命中/互撞等级矩阵/两阶段递归/C9 双变体；falloff 系数）（BU-1..10，234 用例；审查 `docs/reviews/B7.md`，P1×2 已修——事件名/ICD 接口名）
 - [x] **B8** `core/engine.js`（14 步管线/统一落位五步/碰撞伤害基础链路/judge/runFull；M/N/O/P 全矩阵）（EN-1..20，259 用例；审查 `docs/reviews/B8.md`，P1×1 已修——撞基地 owner 规则）
 - [x] **B9** 完整伤害链路（闪避/背击/暴击/吸血/真实/附加效果 + damage.* 事件；**背击追尾语义用户拍板 2026-09-12**）（DM-1..13，273 用例；审查 `docs/reviews/B9.md`，P2×3 已修）
-- [ ] **B10 起**按 `docs/tasks.md` §6 推进（P1 B10~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **B10** 结束判定 + 超时扣血 + runFull 回放一致（T-EN-2/3/4 + T-BT-2/4/11；BE-1..8，281 用例；审查 `docs/reviews/B10.md`，P1×1 已修——T-BT-2 边界断言）
+- [ ] **B11 起**（P1 收尾：黄金战斗 + 走查复算）→ P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
