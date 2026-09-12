@@ -67,7 +67,8 @@ docs/progress.md       本文件
 - [x] **B14** `ai/runtime.js` 显式状态机（隐式主循环/作用域链/循环计数/函数独立作用域+调用栈/break/每 tick 每用途随机流/只读快照/防御兜底全谱）（RT-12..17，323 用例；审查 `docs/reviews/B14.md`，P0×1 已修——函数作用域链跨 resume 重建）
 - [x] **B15** `ai/runtime.js` 兜底与轨迹（步数统一兜底 wait+重置入口 / 递归上限 64 弹栈 / ai.node trace 事件 + 2000 截断 / ai.error 内部异常捕获；病态 fixtures pBurnSteps/pDeepRec）（RT-18..23 → runtime-limit 6 测试，329 用例；审查 `docs/reviews/B15.md`，PASS，P2×5 登记）
 - [x] **B16（P2 收尾）** AI 全链路：canonicalize/programHash（纯 JS sha256）/版本迁移 v2 + serialize/restore/destroyContext + /api/v1/ai/validate|compile|battle + CLI ai + 引擎 aiTrace 接线（P1×1 已修——函数体内嵌套帧序列化帧路径规范化，P2×9 全落实；355 用例；审查 `docs/reviews/B16.md`）—— **P2 阶段 5/5 批收口**
-- [ ] **B17 起**（P3：开箱 + 掉落池门控 + `POST /api/v1/box`）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B17（P3 首）** 开箱 + 掉落池门控 + `POST /api/v1/box` + CLI `box`（**D-122 段位品质上限 + 截断后重归一**，P1×1 已修；unit/api/cli 共 12 用例，367 用例；审查 `docs/reviews/B17.md`）
+- [ ] **B18 起**（P3：仓库 + 装配/拆卸 API）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

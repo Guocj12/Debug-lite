@@ -14,6 +14,7 @@ commands:
   log [--level <l>] [--channel ch=lv]  # 日志总控（GET/POST /api/v1/log-level）
   ai <validate|compile|battle> --file ai.json [--tier <t>] [--opponent <o>] [--seed <n>]
                                   # AI 程序校验/编译/对战（B16）
+  box [--seed <n>] [--tier <t>] [--times <k>]  # 开箱（B17）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -155,6 +156,42 @@ async function main(argv, options) {
               code = 1;
             }
           }
+        }
+      }
+    } else if (cmd === 'box') {
+      // box [--seed <n>] [--tier <t>] [--times <k>]
+      let seed = null;
+      let tier = null;
+      let times = null;
+      let valid = true;
+      for (let i = 1; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--seed') seed = args[++i];
+        else if (a === '--tier') tier = args[++i];
+        else if (a === '--times') times = args[++i];
+        else { valid = false; }
+      }
+      if (!valid) {
+        console.error(`box 参数非法\n${USAGE}`);
+        code = 2;
+      } else {
+        const body = {};
+        if (seed !== null) {
+          const n = Number(seed);
+          body.seed = Number.isInteger(n) && n >= 1 ? n : seed; // 非法 → 服务端 400 bad_seed
+        }
+        if (tier !== null) body.tier = tier;
+        if (times !== null) {
+          const k = Number(times);
+          body.times = Number.isInteger(k) && k >= 1 ? k : times; // 非法 → 服务端 400 bad_times
+        }
+        const r = await httpJson(baseUrl, 'POST', '/api/v1/box', body);
+        if (r.status === 200) {
+          console.log(JSON.stringify(r.body.data, null, 2));
+          code = 0;
+        } else {
+          console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+          code = 1;
         }
       }
     } else {

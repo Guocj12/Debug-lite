@@ -31,6 +31,8 @@
 | `ai/ast.js` | `validateProgram` / `checkLegality`（含分支 action 规则 D-101）/ `collectUsedNodeTypes` / **`validate(program, tier)`（结构+合法性+门控三段合一，B13）** / `canonicalize` / `programHash`（纯 JS sha256） / `statsOf` / `getNodeAtPath` / `migrateProgram` / `nodePathOf` / `limits` / `CURRENT_VERSION` / `MIGRATIONS` | L5（只依赖 L0/L1） | B12~B16 ✅ |
 | `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `getVar` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` / `TRACE_LIMIT` / `RECURSION_LIMIT` | L5 | B14~B16 ✅ |
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
+| `server/runner.js` | `compileAi(program, logger)` / `runAiBattle({program,seed,tier,opponent,logger})` / `projectSnapshot(state,owner)` / `OPPONENTS` / `baselinePlayer` | L6 | B16 ✅ |
+| `server/box.js` | `openBoxes({seed,tier,times,items?,logger})`（校验 + 每箱独立 rng 流 + 409 映射）/ `BOX_TIMES_MAX` | L6 | B17 ✅ |
 | `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（D-123：不持久化） | L6 | P5 |
 | `cli/index.js` | 子命令（§3）；**只走 HTTP 不 require core**（L14） | L6 | P0-8 |
 | `server/data/schema.js` | `validateStructure(dataDir, assetsDir?)`（T-DC-1，assets 占位表经可选 assetsDir 校验，缺省推导 `<repo>/assets`）/ `validateConsistency(dataDir)`（T-DC-2）/ `validate` | 数据层 | P0-6 ✅（P0-9 扩展） |
@@ -44,7 +46,7 @@
 | GET | `/api/v1/health` | 存活与版本 | — | P0-8 |
 | GET | `/api/v1/data/:table` | 数据表（含 battle-config） | 404 `unknown_table` | P0-8 |
 | GET | `/api/v1/unlock?tier=` | 该段位可用节点/模板/技能 | 400 `bad_tier` | B4 接 |
-| POST | `/api/v1/box` | 开箱（seed/tier/次数） | 400 / 409 `tier_locked` | B17 |
+| POST | `/api/v1/box` | 开箱（seed/tier/次数；tier **缺省 common**；段位序号即品质上限 D-122 且截断后按剩余池重归一；409 `tier_locked` = 门控后掉落池为空——当前数据防御路径；seed 缺省生成并回带） | 400 / 409 `tier_locked` | B17 ✅ |
 | GET | `/api/v1/warehouse` | 仓库（分桶 + 装配状态） | — | B18 |
 | POST | `/api/v1/warehouse/assemble` | 装配 | 409 `slot_type_mismatch`/`points_exceeded`/`slot_occupied`/`tier_locked` | B18 |
 | POST | `/api/v1/warehouse/disassemble` | 拆卸 | 404 `slot_empty`/`plugin_missing` | B18 |
@@ -83,7 +85,7 @@ health | data <table>
 1. **BattleState**：`tick/seed/players{p1,p2}/bases/events[]/rngStreams`。
 2. **玩家运行时**：`x`（px，1px 精度）/`facing`/`hp,mp,sp`/`maxHp,maxMp,maxSp`/`atk,def`/`regen{mp,sp}`/`special`/`cooldowns{}`/`effects[]`/`aiContext`/`defending`。
 3. **回放帧 `frame`**：`tick` + `diff{players[],bullets[],bases[],events[],aiTrace[]}`；位置、碰撞位置、命中位置均 **1px**；事件带 `cid`（D-17/D-23）。
-4. **物品/技能实例/loadout/AI AST**：`decisions.md` 与 `v3-design` §4.4/§6.3/§12.2/§11.5 冻结；`loadout = {role, skills[3], ai}`（T-RK-6）。
+4. **物品/技能实例/loadout/AI AST**：`decisions.md` 与 `v3-design` §4.4/§6.3/§12.2/§11.5 冻结；`loadout = {role, skills[3], ai}`（T-RK-6）。**物品 `uid` 语义（B17 登记）**：进程内单调唯一（服务重启后重新计数），不参与内容级比较——「同 seed 复现」均为**内容级**（B18 仓库以 uid 区分同 seed 双开的同内容物品）。
 5. **AiContext**：`programHash/frames[]/vars/halted/stepCount/trace/entry`（**可序列化**）。
 6. **LogRecord**：`seq/ts/cid/tick/level/levelValue/channel/event/msg/data`（§6 登记）。
 7. **battle-config.json**（D-117）：§2.5.7 冻结值逐值校验（T-DC-1，schema.js）。

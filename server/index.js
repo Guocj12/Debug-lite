@@ -206,6 +206,17 @@ function createHandler(logger, extraRoutes) {
         }
         return { status: 200, payload: okEnvelope(r.data, logger) };
       },
+      '/api/v1/box': async (ctx) => {
+        // B17：开箱（seed/tier/次数；D-122 段位品质上限 + I-9 掉落池门控；seed 回带 T-AP-5）
+        const boxApi = require('./box.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const r = boxApi.openBoxes({ seed: body.seed, tier: body.tier, times: body.times, logger });
+        if (r.status !== 200) {
+          return { status: r.status, payload: errEnvelope(r.code, r.message || '开箱请求被拒绝') };
+        }
+        return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
     },
   };
   if (extraRoutes) {

@@ -40,20 +40,26 @@ function makeItems(logger) {
     return q;
   }
 
-  // 品质抽取（I-1）：dropRates 加权
-  function rollQuality(rng) {
+  // 品质抽取（I-1）：dropRates 加权；tier 提供时按 D-122/RK-5 截断品质池（段位序号即品质上限，B17 掉落池门控）
+  // P1-1 修复（审查 docs/reviews/B17.md）：截断后按剩余池 dropRates **重归一**（acc/total），残量不再落入兜底；
+  //   无 tier 时 pool=全池 total=1.0，与 B3 行为逐字节一致。
+  function rollQuality(rng, tier) {
     const rates = ITEMS_CONFIG.dropRates;
+    const capIdx = tier === undefined || !TIERS.includes(tier) ? TIERS.length - 1 : TIERS.indexOf(tier);
+    const pool = TIERS.slice(0, capIdx + 1);
+    const total = pool.reduce((a, t) => a + rates[t], 0);
     const v = rand(rng, 0, 1);
     let acc = 0;
-    for (const t of TIERS) {
+    for (const t of pool) {
       acc += rates[t];
-      if (v < acc) {
-        L.debug('items', 'items.roll.quality', `quality=${t}`, { quality: t, v });
+      if (v < acc / total) {
+        L.debug('items', 'items.roll.quality', `quality=${t}${tier ? ` tier=${tier}` : ''}`, { quality: t, v, tier: tier || null });
         return t;
       }
     }
-    L.debug('items', 'items.roll.quality', `quality=${TIERS[TIERS.length - 1]}（尾部兜底）`, { quality: TIERS[TIERS.length - 1], v });
-    return TIERS[TIERS.length - 1]; // v=1 的防御路径（rng 产出 [0,1) 不到；stub 可触发）
+    const tail = pool[pool.length - 1];
+    L.debug('items', 'items.roll.quality', `quality=${tail}（尾部兜底）`, { quality: tail, v });
+    return tail;
   }
 
   // 插槽数（I-3）：闭区间均匀 + 下限 1（上限防御 v=1 越界，P2-1）
@@ -184,11 +190,11 @@ function makeItems(logger) {
     return plugin;
   }
 
-  // 开箱（I-7）：品质 → 类别 → 生成；tier 门控池过滤（I-9/validateUnlock）
+  // 开箱（I-7）：品质（tier 截断，D-122）→ 类别 → 生成；tier 门控池过滤（I-9/validateUnlock）
   function openBox(rng, options) {
     const opts = options || {};
     const tier = opts.tier || 'mythic';
-    const quality = rollQuality(rng);
+    const quality = rollQuality(rng, opts.tier);
     const kindWeights = ITEMS_CONFIG.kindWeights;
     const kinds = Object.keys(kindWeights);
     let acc = 0;
