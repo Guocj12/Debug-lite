@@ -11,12 +11,17 @@
  *   - action 断点 = 父 seq childIndex 已推进到 action 之后（A-2）。
  *   - break = 信号：向上弹掉最近 loop 帧（终止迭代），继续外层。
  *   - 变量：根作用域 ctx.vars；函数体独立作用域（D-103：内部 var 不泄漏、可读外层）；getVar 未声明 → 0。
- *   - random 仅实际求值时消费 ai 流（A-7c/d）；stepLimit/traceLimit 常量（B15 完整兜底语义；本批基础 wait 不崩）。
+ *   - random 仅实际求值时消费 ai 流（A-7c/d）。
+ * B15 登记：步数兜底统一（guard 耗尽即 wait + 重置入口 + ai.step.limit(warn)，D-81/A-9a）；
+ *   递归上限 64（ai.depth.limit(warn)，弹栈到入口，A-5/A-9b；vars 保留故弹栈后仍可推进）；
+ *   trace 条目 {seq,path,nodeType,phase,result,depth} + ai.node(trace) 事件 + 超限 2000 截断（trace.truncated(warn) 一次，A-9e）；
+ *   内部异常捕获 → wait + ai.error(err) 日志，绝不抛穿引擎（A-9d）。
  */
 const { nullLogger } = require('../../shared/log.js');
 
 const STEP_LIMIT = 10000;
 const TRACE_LIMIT = 2000;
+const RECURSION_LIMIT = 64; // cl:64（递归深度上限 A-5/A-9b，通用限制常量、非战斗数值）
 
 function deepFreeze(obj) {
   if (obj && typeof obj === 'object') {
@@ -40,6 +45,7 @@ function makeRuntime(logger) {
       trace: [],
       stepLimit: STEP_LIMIT,
       traceLimit: TRACE_LIMIT,
+      recursionLimit: RECURSION_LIMIT,
     };
   }
 
@@ -121,14 +127,32 @@ function makeRuntime(logger) {
     }
   }
 
-  function traceNode(ctx, path) {
+  function traceNode(ctx, path, stmt) {
     if (ctx.trace.length < ctx.traceLimit) {
-      ctx.trace.push({ seq: ctx.trace.length, path, nodeType: 'stmt', phase: 'eval', depth: ctx.frames.length });
+      const nodeType = stmt && stmt.type ? stmt.type : 'stmt';
+      const entry = { seq: ctx.trace.length, path, nodeType, phase: 'eval', depth: ctx.frames.length };
+      if (nodeType === 'action') entry.result = stmt.name; // T-AF-6：末条 action 与返回值一致性
+      ctx.trace.push(entry);
+      L.trace('ai.runtime', 'ai.node', `node ${path}`, { path, nodeType });
+    } else if (!ctx.traceTruncated) {
+      ctx.traceTruncated = true; // A-9e：超限截断、后续不再记录；trace.truncated(warn) 仅一次
+      L.warn('ai.runtime', 'trace.truncated', `trace 超限 ${ctx.traceLimit} 截断`, { limit: ctx.traceLimit });
     }
   }
 
-  // resume：推进到产出 action 或步数上限
+  // resume：推进到产出 action 或步数上限；内部异常绝不抛穿引擎（A-9d → wait + ai.error）
   function resume(ctx, snapshot, rng) {
+    try {
+      return resumeInner(ctx, snapshot, rng);
+    } catch (e) {
+      ctx.halted = false;
+      // P2-3 可观测性：data 补 stack。抛错点实测为入口 deepFreeze 深度冻结读值处（getter 触发），非 evalExpr 求值；
+      // 行为契约不变：wait + ai.error + 绝不抛穿（A-9d）。
+      L.error('ai.runtime', 'ai.error', `runtime error: ${e && e.message}`, { message: e && String(e.message || e), stack: e && e.stack ? String(e.stack) : undefined });
+      return { action: 'wait', trace: (ctx.trace || []).slice(-ctx.traceLimit), error: 'ai_crash' };
+    }
+  }
+  function resumeInner(ctx, snapshot, rng) {
     const snap = deepFreeze(Object.assign({}, snapshot));
     ctx.stepCount = 0;
     ctx.halted = false;
@@ -143,7 +167,6 @@ function makeRuntime(logger) {
       ctx.frames.push({ kind: 'seq', list: program.body.statements || [], childIndex: 0, path: ctx.entry, fnScope: null });
     }
     let produced = null;
-    let failedLimit = false;
 
     for (let guard = 0; guard < ctx.stepLimit; guard++) {
       const top = ctx.frames[ctx.frames.length - 1];
@@ -167,7 +190,7 @@ function makeRuntime(logger) {
         top.childIndex += 1;
         if (!stmt) continue;
         const st = stmt.type;
-        traceNode(ctx, base);
+        traceNode(ctx, base, stmt);
         if (st === 'action') {
           produced = stmt.name;
           ctx.halted = true;
@@ -201,6 +224,14 @@ function makeRuntime(logger) {
         if (st === 'call') {
           const fn = findFunction(program, stmt.name);
           if (fn && fn.body) {
+            // 递归深度上限（A-5/A-9b）：挂起函数帧（fnScope 计数）达上限 → 弹栈到入口 + wait（vars 保留，下一 tick 从入口继续）
+            let depth = 0;
+            for (const f of ctx.frames) if (f.fnScope) depth += 1;
+            if (depth >= ctx.recursionLimit) {
+              ctx.frames.length = 0;
+              L.warn('ai.runtime', 'ai.depth.limit', `depth=${depth + 1}`, { limit: ctx.recursionLimit, depth: depth + 1 });
+              return { action: 'wait', trace: ctx.trace.slice(-ctx.traceLimit), depthLimited: true };
+            }
             const fnScope = {};
             scopes.push(fnScope);
             const fnList = fn.body.type === 'seq' ? fn.body.statements : [fn.body];
@@ -240,12 +271,13 @@ function makeRuntime(logger) {
       // 其余 kind 不可达（帧类型仅 seq/loop）；无兜底代码（stepLimit guard 保证终止）
     }
 
-    if (produced === null && ctx.stepCount >= ctx.stepLimit) {
+    if (produced === null) {
+      // 步数兜底（D-81/A-9a）：guard 耗尽且无产出 → 重置到入口 + ai.step.limit(warn)（B15：无条件兜底）
       ctx.frames.length = 0;
       L.warn('ai.runtime', 'ai.step.limit', `steps=${ctx.stepCount}`, { steps: ctx.stepCount });
-      return { action: 'wait', trace: ctx.trace, stepLimited: true };
+      return { action: 'wait', trace: ctx.trace.slice(-ctx.traceLimit), stepLimited: true };
     }
-    const action = produced === null ? 'wait' : produced;
+    const action = produced;
     L.debug('ai.runtime', 'ai.resume', `resume action=${action}`, { action, frames: ctx.frames.length });
     return { action, trace: ctx.trace.slice(-ctx.traceLimit) };
   }
@@ -269,7 +301,7 @@ function makeRuntime(logger) {
     return v === undefined ? 0 : v;
   }
 
-  return { createContext, resume, getVar, STEP_LIMIT, TRACE_LIMIT };
+  return { createContext, resume, getVar, STEP_LIMIT, TRACE_LIMIT, RECURSION_LIMIT };
 }
 
-module.exports = Object.assign(makeRuntime(), { withLogger: (logger) => makeRuntime(logger), STEP_LIMIT, TRACE_LIMIT });
+module.exports = Object.assign(makeRuntime(), { withLogger: (logger) => makeRuntime(logger), STEP_LIMIT, TRACE_LIMIT, RECURSION_LIMIT });

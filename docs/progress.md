@@ -65,7 +65,8 @@ docs/progress.md       本文件
 - [x] **B12（P2 首）** `ai/ast.js`（validateProgram/collectUsedNodeTypes/nodePathOf/limits；random 分支盲区修复 + 自引用环防御）+ 覆盖型 fixtures（AF-1..13，298 用例；审查 `docs/reviews/B12.md`，P1×2 已修——random 盲区/接口名）
 - [x] **B13** 合法性检测（分支 action 全案 D-101/break/call hoisting）+ 段位门控三段合一 + **unlock.validateAi 退役**（AV-*，302 用例；审查 `docs/reviews/B13.md`，P2×4 已修——表达式位逃逸/文档同步）
 - [x] **B14** `ai/runtime.js` 显式状态机（隐式主循环/作用域链/循环计数/函数独立作用域+调用栈/break/每 tick 每用途随机流/只读快照/防御兜底全谱）（RT-12..17，323 用例；审查 `docs/reviews/B14.md`，P0×1 已修——函数作用域链跨 resume 重建）
-- [ ] **B15 起**（P2：限步/递归上限/错误兜底/病态 fixtures）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B15** `ai/runtime.js` 兜底与轨迹（步数统一兜底 wait+重置入口 / 递归上限 64 弹栈 / ai.node trace 事件 + 2000 截断 / ai.error 内部异常捕获；病态 fixtures pBurnSteps/pDeepRec）（RT-18..23 → runtime-limit 6 测试，329 用例；审查 `docs/reviews/B15.md`，PASS，P2×5 登记）
+- [ ] **B16 起**（P2 收尾：canonicalize/programHash/版本迁移 + /ai/compile、/ai/validate、/ai/battle + CLI ai 子命令 + 上下文序列化）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

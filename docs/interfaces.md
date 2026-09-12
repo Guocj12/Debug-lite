@@ -29,7 +29,7 @@
 | `core/bullets.js` | `spawnBullets(battle, act)` / `resolveBullets(battle, ctx)`（当 tick 全解算→{spawns,collides,hits,expires}）/ `solveIntersection(x1,v1,x2,v2,tMax,tMin)`（连续方程原语）/ `bulletBattle(a,b)`（等级矩阵：b1/b2/both/none）/ `bulletsOnField(battle)` | L2 | B7 ✅ |
 | `core/engine.js` | `createBattle(config)`（`config.logger` 注入）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`；`resolveActorCollision` | L4（编排 L0~L2，不依赖 L5；AI 由 server 层注入） | B8~B11 |
 | `ai/ast.js` | `validateProgram` / `checkLegality`（含分支 action 规则 D-101）/ `collectUsedNodeTypes` / **`validate(program, tier)`（结构+合法性+门控三段合一，B13）** / `canonicalize` / `programHash` / `nodePathOf` / `limits` | L5（只依赖 L0/L1） | B12~B13 ✅ |
-| `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` | L5 | B14~B15 |
+| `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `getVar` / `serializeContext`(B16) / `restoreContext`(B16) / `destroyContext`(B16) / `STEP_LIMIT` / `TRACE_LIMIT` / `RECURSION_LIMIT` | L5 | B14~B15 |
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
 | `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（D-123：不持久化） | L6 | P5 |
 | `cli/index.js` | 子命令（§3）；**只走 HTTP 不 require core**（L14） | L6 | P0-8 |
@@ -134,7 +134,7 @@ health | data <table>
 | L4 | engine | `battle.create`(info) / `tick.begin`(info) / `tick.step`(debug，14 步各一条) / `move.resolve`(debug) / `collision.resolve`(info) / `resource.regen`(trace) / `battle.overtime`(info) / `tick.end`(info) / `battle.judge`(info) / `battle.end`(info) / `action.invalid`(warn) | B8~B11 |
 | L4 | damage | `damage.calc`(debug) / `damage.dodge`(debug) / `damage.lifesteal`(trace) | B9 |
 | L5 | ai.ast | `ai.validate`(debug) / `ai.validate.reject`(warn) / `ai.compile`(debug) / `ai.migrate`(info) | B12~B16 |
-| L5 | ai.runtime | `ai.resume`(debug) / `ai.node`(trace) / `ai.action`(info) / `ai.step.limit`(warn) / `ai.depth.limit`(warn) / `trace.truncated`(warn) | B14~B15 |
+| L5 | ai.runtime | `ai.resume`(debug) / `ai.node`(trace) / `ai.action`(info) / `ai.step.limit`(warn) / `ai.depth.limit`(warn) / `trace.truncated`(warn) / `ai.error`(err) | B14~B15 |
 | L6 | api | `api.req`(info) / `api.res`(info) / `api.err`(error) | P0-8 |
 | L6 | cli | `cli.invoke`(info) / `cli.result`(info) | P0-8 |
 | L6 | ranked | `ranked.snapshot`(debug) / `ranked.match`(info) / `ranked.promote`(info) | B24~B25 |

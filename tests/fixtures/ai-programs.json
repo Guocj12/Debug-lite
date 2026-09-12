@@ -85,5 +85,45 @@
         ]
       }
     }
+  },
+  "pBurnSteps": {
+    "description": "B15 病态步数燃烧器：count=99999 无 action 的大循环（D-101 静态拒；运行时兜底 burn → ai.step.limit）",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "loop", "kind": "count", "times": { "type": "literal", "value": 99999 },
+            "body": { "type": "seq", "statements": [
+              { "type": "set", "name": "n", "value": { "type": "arith", "op": "+", "left": { "type": "getVar", "name": "n" }, "right": { "type": "literal", "value": 1 } } }
+            ] } }
+        ]
+      }
+    }
+  },
+  "pDeepRec": {
+    "description": "B15 病态递归炸弹：n=70 逐 tick 递减、每 tick 一层调用，超过 64 层 → ai.depth.limit（合法程序形态）",
+    "program": {
+      "type": "program",
+      "version": 1,
+      "body": {
+        "type": "seq",
+        "statements": [
+          { "type": "var", "name": "n", "value": { "type": "literal", "value": 70 } },
+          { "type": "function", "name": "r", "body": { "type": "seq", "statements": [
+            { "type": "if",
+              "cond": { "type": "cmp", "op": ">", "left": { "type": "getVar", "name": "n" }, "right": { "type": "literal", "value": 0 } },
+              "then": { "type": "seq", "statements": [
+                { "type": "set", "name": "n", "value": { "type": "arith", "op": "-", "left": { "type": "getVar", "name": "n" }, "right": { "type": "literal", "value": 1 } } },
+                { "type": "action", "name": "dec" },
+                { "type": "call", "name": "r" }
+              ] },
+              "else": { "type": "seq", "statements": [{ "type": "action", "name": "base" }] } }
+          ] } },
+          { "type": "call", "name": "r" }
+        ]
+      }
+    }
   }
 }

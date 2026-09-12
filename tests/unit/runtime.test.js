@@ -325,7 +325,7 @@ test('RT-16b 结构兜底：break 无 loop、call 未定义、单节点函数体
   c1.stepLimit = 50;
   const r1 = runtime.resume(c1, mkSnapshot(), mkRng([]));
   assert.equal(r1.action, 'wait', 'break 无 loop → 防御性 wait');
-  assert.equal(r1.stepLimited, undefined, 'guard 耗尽（主循环重入不增步数）→ 无 stepLimited 标记');
+  assert.equal(r1.stepLimited, true, 'guard 耗尽 → 步数兜底标记（B15 统一语义）');
 
   // call 未定义函数：跳过（不崩）
   const c2 = runtime.createContext({ type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'call', name: 'missing_fn' }, { type: 'action', name: 'after_call' }] } });
@@ -360,7 +360,7 @@ test('RT-16b 结构兜底：break 无 loop、call 未定义、单节点函数体
   c4.stepLimit = 500;
   const r4 = runtime.resume(c4, mkSnapshot(), mkRng([]));
   assert.equal(r4.action, 'wait', '函数内 break 清空帧后重入主循环 → 无行动 → 步数兜底');
-  assert.equal(r4.stepLimited, undefined, 'guard 耗尽路径（无 stepLimited 标记）');
+  assert.equal(r4.stepLimited, true, 'guard 耗尽 → 步数兜底标记（B15 统一语义）');
   assert.equal(runtime.getVar(c4, 'x'), 1, '变量保留在根作用域');
 
   // 顶层 body 非 seq（无 statements）→ 空语句表 → 步数兜底 wait
@@ -368,7 +368,7 @@ test('RT-16b 结构兜底：break 无 loop、call 未定义、单节点函数体
   c5.stepLimit = 20;
   const r5 = runtime.resume(c5, mkSnapshot(), mkRng([]));
   assert.equal(r5.action, 'wait');
-  assert.equal(r5.stepLimited, undefined);
+  assert.equal(r5.stepLimited, true);
 
   // 非法程序：program 缺失 / body 缺失 → ai_invalid
   const c6 = runtime.createContext(undefined);
