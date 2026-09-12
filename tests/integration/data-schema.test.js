@@ -10,12 +10,17 @@ const schema = require('../../server/data/schema.js');
 const gate = require('../../scripts/gate.js');
 
 const REPO_DATA = path.join(__dirname, '..', '..', 'server', 'data');
+const REPO_ASSETS = path.join(__dirname, '..', '..', 'assets');
 
-// 复制真实数据表到临时目录，再执行破坏
+// 复制真实数据表（含 assets 占位表）到临时目录，再执行破坏
 function corruptTable(mutate) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-data-'));
   for (const f of fs.readdirSync(REPO_DATA)) {
     if (f.endsWith('.json')) fs.copyFileSync(path.join(REPO_DATA, f), path.join(root, f));
+  }
+  fs.mkdirSync(path.join(root, 'assets'), { recursive: true });
+  for (const f of fs.readdirSync(REPO_ASSETS)) {
+    if (f.endsWith('.json')) fs.copyFileSync(path.join(REPO_ASSETS, f), path.join(root, 'assets', f));
   }
   if (mutate) mutate(root);
   return root;
@@ -50,7 +55,7 @@ test('DS-2 battle-config 冻结数值改动 → fail（§2.5.7 逐值）', () =>
     bc.cellPx = 63;
     writeJSON(root, 'battle-config.json', bc);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('cellPx'), r.detail);
   });
@@ -62,7 +67,7 @@ test('DS-3 角色模板缺 regen（D-110 必填）→ fail', () => {
     delete t.roleTemplates[0].regen;
     writeJSON(root, 'role-templates.json', t);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('regen'), r.detail);
   });
@@ -74,7 +79,7 @@ test('DS-4 技能模板出现已删除字段 bulletSpeed（D-21）→ fail', () 
     t.skillTemplates[0].bulletSpeed = 8;
     writeJSON(root, 'skill-templates.json', t);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('bulletSpeed'), r.detail);
   });
@@ -87,7 +92,7 @@ test('DS-5 品质 tiers 不接续 / dropRates 和不为 1 → fail', () => {
     q.qualities[0].tiers[2][0] = 0.96; // 应接 0.97
     writeJSON(root, 'qualities.json', q);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('接续'), r.detail);
   });
@@ -96,7 +101,7 @@ test('DS-5 品质 tiers 不接续 / dropRates 和不为 1 → fail', () => {
     ic.dropRates.common = 0.56;
     writeJSON(root, 'items-config.json', ic);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('dropRates'), r.detail);
   });
@@ -108,7 +113,7 @@ test('DS-6 unlock 与三表 unlockTier 交叉不一致 → fail（防双源漂�
     t.roleTemplates[0].unlockTier = 'rare'; // 表改 rare，unlock 仍登记在 common
     writeJSON(root, 'role-templates.json', t);
   }, (root) => {
-    const r = schema.validateStructure(root);
+    const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('unlock'), r.detail);
   });
@@ -254,9 +259,47 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
       mutate(obj);
       writeJSON(root, file, obj);
     }, (root) => {
-      const r = schema.validateStructure(root);
+      const r = schema.validateStructure(root, path.join(root, "assets"));
       assert.equal(r.ok, false, `${label}: 应 fail`);
       assert.ok(r.detail.includes(keyword), `${label}: detail 应含 "${keyword}"，实际: ${r.detail}`);
     });
   }
+});
+
+test('DS-11 assets 占位表（P0-9）：真实通过；缺条目/描边色漂移/形状枚举/帧非法 → fail', () => {
+  // 真实仓库（默认推导 assets 路径）
+  assert.equal(schema.validateStructure(REPO_DATA).ok, true, '真实仓库 assets 校验应通过');
+  const withAssets = (mutate) => withRoot((root) => {
+    const sp = readJSON(path.join(root, 'assets'), 'sprites.json');
+    mutate(sp);
+    writeJSON(path.join(root, 'assets'), 'sprites.json', sp);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+
+  // 破坏 1：缺一条角色占位（与 role-templates 交叉不一致）
+  const r1 = withAssets((sp) => { sp.roleTemplates = sp.roleTemplates.filter((x) => x.templateId !== 'role_bal'); });
+  assert.equal(r1.ok, false, '缺 role_bal 占位应 fail');
+  assert.ok(r1.detail.includes('role_bal'), r1.detail);
+  // 破坏 2：品质描边色与 qualities.json 不一致
+  const r2 = withAssets((sp) => { sp.palette.quality.common = '#ffffff'; });
+  assert.equal(r2.ok, false, '描边色漂移应 fail');
+  assert.ok(r2.detail.includes('quality.common'), r2.detail);
+  // 破坏 3：形状不在枚举
+  const r3 = withAssets((sp) => { sp.skillTemplates[0].shape = 'circle'; });
+  assert.equal(r3.ok, false, '形状枚举外应 fail');
+  assert.ok(r3.detail.includes('circle'), r3.detail);
+  // 破坏 4：动画帧非法
+  const r4 = withRoot((root) => {
+    const an = readJSON(path.join(root, 'assets'), 'animations.json');
+    an.animations.role.idle.frames = 0;
+    writeJSON(path.join(root, 'assets'), 'animations.json', an);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r4.ok, false, 'frames=0 应 fail');
+  assert.ok(r4.detail.includes('frames'), r4.detail);
+  // 破坏 5：缺 animations.role.idle
+  const r5 = withRoot((root) => {
+    const an = readJSON(path.join(root, 'assets'), 'animations.json');
+    delete an.animations.role.idle;
+    writeJSON(path.join(root, 'assets'), 'animations.json', an);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r5.ok, false, '缺 role.idle 应 fail');
 });

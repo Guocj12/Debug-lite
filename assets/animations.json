@@ -1,0 +1,20 @@
+{
+  "format": "placeholder-v1",
+  "animations": {
+    "role": {
+      "idle":   { "frames": 4, "durationMs": 800, "loop": true,  "offsetPx": [0, 0] },
+      "move":   { "frames": 4, "durationMs": 400, "loop": true,  "offsetPx": [16, 0] },
+      "dodge":  { "frames": 6, "durationMs": 300, "loop": false, "offsetPx": [32, 0] },
+      "hit":    { "frames": 3, "durationMs": 200, "loop": false, "offsetPx": [0, 0] },
+      "cast":   { "frames": 5, "durationMs": 400, "loop": false, "offsetPx": [0, 0] },
+      "dead":   { "frames": 4, "durationMs": 600, "loop": false, "offsetPx": [0, 16] }
+    },
+    "bullet": {
+      "straight": { "frames": 2, "durationMs": 80,  "loop": true,  "offsetPx": [8, 0] },
+      "impact":   { "frames": 4, "durationMs": 200, "loop": false, "offsetPx": [0, 0] }
+    },
+    "base": {
+      "hit": { "frames": 3, "durationMs": 300, "loop": false, "offsetPx": [0, 0] }
+    }
+  }
+}

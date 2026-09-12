@@ -33,7 +33,7 @@
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
 | `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（D-123：不持久化） | L6 | P5 |
 | `cli/index.js` | 子命令（§3）；**只走 HTTP 不 require core**（L14） | L6 | P0-8 |
-| `server/data/schema.js` | `validateStructure(dataDir)`（T-DC-1）/ `validateConsistency(dataDir)`（T-DC-2）/ `validate` | 数据层 | P0-6 ✅ |
+| `server/data/schema.js` | `validateStructure(dataDir, assetsDir?)`（T-DC-1，assets 占位表经可选 assetsDir 校验，缺省推导 `<repo>/assets`）/ `validateConsistency(dataDir)`（T-DC-2）/ `validate` | 数据层 | P0-6 ✅（P0-9 扩展） |
 
 **依赖分层**（tasks §2.1）：`L-1 shared/log.js`｜`L0 rng·field`｜`L1 effects·items(数值)·unlock`｜`L2 roles·skills(实例化)·bullets`｜`L3 items(仓库)·skills(释放)`｜`L4 engine`｜`L5 ai/ast·ai/runtime`｜`L6 server·cli`｜`L7 public(P6)`。方向检查见 `scripts/check-arch.js` 契约。
 

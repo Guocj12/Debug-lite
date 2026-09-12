@@ -9,7 +9,10 @@ const { createLogger } = require('../../shared/log.js');
 const serverMod = require('../../server/index.js');
 
 const REPO_DATA = path.join(__dirname, '..', '..', 'server', 'data');
-const TABLES = require('node:fs').readdirSync(REPO_DATA).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
+const REPO_ASSETS = path.join(__dirname, '..', '..', 'assets');
+const TABLES = []
+  .concat(require('node:fs').readdirSync(REPO_DATA).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')))
+  .concat(require('node:fs').readdirSync(REPO_ASSETS).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')));
 
 function request(port, method, urlPath, body) {
   return new Promise((resolve, reject) => {
@@ -54,7 +57,7 @@ test('AP-1 health：统一信封 + api.* 日志事件', async () => {
   });
 });
 
-test('AP-2 data：全部 7 张表可达且信封正确', async () => {
+test('AP-2 data：全部 9 张表（7 数据表 + sprites/animations）可达且信封正确', async () => {
   await withServer(null, async ({ port }) => {
     assert.ok(TABLES.includes('battle-config'), '表清单应含 battle-config');
     for (const t of TABLES) {

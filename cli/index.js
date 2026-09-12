@@ -56,7 +56,7 @@ async function main(argv, options) {
       }
     } else if (cmd === 'data') {
       if (!args[1]) {
-        console.error(`data 需要一个表名（可选：battle-config/role-templates/skill-templates/plugins/qualities/items-config/unlock）\n`);
+        console.error(`data 需要一个表名（battle-config/role-templates/skill-templates/plugins/qualities/items-config/unlock/sprites/animations）\n`);
         code = 2;
       } else {
         const r = await httpJson(baseUrl, 'GET', `/api/v1/data/${encodeURIComponent(args[1])}`);

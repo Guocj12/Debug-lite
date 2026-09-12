@@ -50,7 +50,8 @@ docs/progress.md       本文件
 - [x] **P0-6** 数据表：`schema.js`（T-DC-1/2）+ 7 张表（battle-config 冻结值/11 角色/10 技能/29 插件/5 品质/unlock）；门禁 6 PASS/0 FAIL/3 PEND（项 4/6② 激活，T-DC-2 接线进项 5；审查 `docs/reviews/P0-6.md`，P2×2 已修）
 - [x] **P0-7** 接口冻结：`docs/interfaces.md`（模块 ICD + API/CLI v1 + **D 落点表 78 条** + 日志矩阵）+ IF-1..5 契约测试（审查 `docs/reviews/P0-7.md`，P2×4 已修；**gate 项 5 T-DC-8 激活 → 7 PASS/0 FAIL/2 PEND**）
 - [x] **P0-8** HTTP/CLI 骨架：零依赖 node:http（express 白名单保留未引入）+ 统一信封 + health/data/log-level + CLI 退出码 0/1/2（AP-1..10/CLI-1..14；真实进程闭环 health=0/data=1/bogus=2；审查 `docs/reviews/P0-8.md`，P2×4 已修；**gate 项 9 激活 → 8 PASS/0 FAIL/1 PEND**）
-- [ ] **P0-9 起**按 `docs/tasks.md` §6 推进（P0 基建 9 批 → P1 内核 11 批 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
+- [x] **P0-9** assets 占位表：sprites/animations 纳入 T-DC-1 + 经 /api/v1/data/:table 提供（DS-11/AP-2 扩展；审查 `docs/reviews/P0-9.md`，P2×4 已修）—— **P0 阶段 9/9 批收口**
+- [ ] **P1 B1 起**按 `docs/tasks.md` §6 推进（P1 内核 11 批 B1~B11 → P2 AI 5 批 → P3 物品 5 批 → P4 回放 2 批 → P5 排位 2 批；P6 前端延后）
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

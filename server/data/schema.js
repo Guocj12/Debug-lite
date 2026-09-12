@@ -3,12 +3,24 @@
  * 契约：server/data/README.md；被 scripts/gate.js 项 4（validateStructure）与项 5（validateConsistency）调用。
  * 期望值硬编码于此（校验器而非战斗代码，注释标明文档出处）；战斗代码必须读取数据表而非本文件。
  * 产物：validateStructure(dataDir) / validateConsistency(dataDir) / validate(dataDir) → {ok, detail}
+ * P0-9：assets/ 占位表（sprites/animations）纳入 T-DC-1 校验范围（dataDir 的兄弟目录，经 API 作为数据表提供）。
  */
 const fs = require('node:fs');
 const path = require('node:path');
 
 const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 const TIER_SEQ = Object.fromEntries(TIERS.map((t, i) => [t, i]));
+
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// assets 形状枚举（items-data §1 占位规范；技能四形状 + 插件固定几何形——几何形清单为 P0-9 占位定义，B21 前可扩展）
+const ASSET_SHAPES = {
+  roleTemplate: ['square16'],
+  skillTemplate: ['melee_bar', 'straight_arrow', 'vertical_bar', 'displacement_trail'],
+  rolePlugin: ['sword', 'shield', 'heart', 'bolt', 'bolt_regen', 'drop', 'drop_regen', 'wind', 'fang', 'star', 'cross'],
+  skillPlugin: ['up_arrow', 'down_arrow', 'clock', 'ruler', 'multi_dot', 'star_up', 'arrow_shift', 'spiral', 'push', 'pull', 'flame', 'pierce', 'star', 'fang', 'aura'],
+};
+const BASE_ANIMS = ['idle', 'move', 'dodge', 'hit', 'cast', 'dead'];
 
 // ---------- T-DC-1 冻结数值（出处：tasks.md §2.5.7 / systems/06-field.md §3） ----------
 
@@ -100,9 +112,11 @@ function isNum(n) { return typeof n === 'number' && Number.isFinite(n); }
 
 // ---------- T-DC-1：结构 + 冻结数值 ----------
 
-function validateStructure(dataDir) {
+function validateStructure(dataDir, assetsDir) {
   const problems = [];
   const tables = {};
+  // assets 占位表（P0-9）：默认推导 <repo>/assets；fixture 测试可显式传入
+  const assetsDirResolved = assetsDir || path.join(dataDir, '..', '..', 'assets');
   try {
     tables.battle = loadJSON(dataDir, 'battle-config.json').data;
   } catch (e) { problems.push(`battle-config.json 缺失或解析失败: ${e.message}`); }
@@ -124,6 +138,13 @@ function validateStructure(dataDir) {
   try {
     tables.unlock = loadJSON(dataDir, 'unlock.json').data;
   } catch (e) { problems.push(`unlock.json 缺失或解析失败: ${e.message}`); }
+  // assets 占位表（P0-9：path.join(dataDir, '..', '..', 'assets') —— dataDir=server/data）
+  try {
+    tables.sprites = loadJSON(assetsDirResolved, 'sprites.json').data;
+  } catch (e) { problems.push(`assets/sprites.json 缺失或解析失败: ${e.message}`); }
+  try {
+    tables.animations = loadJSON(assetsDirResolved, 'animations.json').data;
+  } catch (e) { problems.push(`assets/animations.json 缺失或解析失败: ${e.message}`); }
   if (problems.length > 0) return problemsOf(problems);
 
   // battle-config：冻结数值逐值相等（D-117：tasks.md §2.5.7 + 06-field §3）
@@ -264,6 +285,56 @@ function validateStructure(dataDir) {
     for (const id of uSkills) if (!skillIdsOfTier.has(id)) problems.push(`unlock ${t}: 登记了技能 ${id} 但表内 unlockTier 不符`);
   }
   if (tables.unlock.unlocks.length !== 5) problems.push(`unlock 应 5 段位`);
+
+  // assets（P0-9 占位表）：sprites 交叉一致 + 形状枚举；animations 帧规格
+  const sp = tables.sprites;
+  const roleIdSet = new Set(tables.roles.map((r) => r.id));
+  const skillIdSet = new Set(tables.skills.map((s) => s.id));
+  const idSetOf = (list, key) => new Set(list.map((x) => x[key]));
+  if (!['pixel-placeholder-v1'].includes(sp.format)) problems.push(`sprites.format 应为 pixel-placeholder-v1`);
+  if (!isInt(sp.tileSize) || sp.tileSize <= 0 || !isInt(sp.iconSize) || sp.iconSize <= 0) problems.push('sprites.tileSize/iconSize 正整数');
+  if (!sp.palette || !COLOR_RE.test(sp.palette.outline || '')) problems.push('sprites.palette.outline 应为 #rrggbb');
+  for (const t of TIERS) {
+    const c = sp.palette && sp.palette.quality && sp.palette.quality[t];
+    const q = tables.qualities.qualities.find((x) => x.id === t);
+    if (!c || !COLOR_RE.test(c)) problems.push(`sprites.palette.quality.${t} 缺失或非 #rrggbb`);
+    else if (q && c !== q.color) problems.push(`sprites.palette.quality.${t}(${c}) 应与 qualities.${t}.color(${q.color}) 一致`);
+  }
+  const expectIds = (actual, expected, label, key, shapes, shapeList) => {
+    const a = idSetOf(actual, key);
+    const diff = [...a].filter((x) => !expected.has(x));
+    const missing = [...expected].filter((x) => !a.has(x));
+    if (diff.length || missing.length) problems.push(`${label} 与数据表交叉不一致（多余: ${diff.join(',')} / 缺失: ${missing.join(',')}）`);
+    for (const item of actual) {
+      if (!COLOR_RE.test(item.color || '')) problems.push(`${label} ${item[key]} 颜色非 #rrggbb`);
+      if (shapes && !shapeList.includes(item.shape)) problems.push(`${label} ${item[key]} 形状 ${item.shape} 不在枚举 ${shapeList.join('/')}`);
+    }
+    if (actual.length !== expected.size) problems.push(`${label} 条数应为 ${expected.size}，实际 ${actual.length}`);
+  };
+  expectIds(sp.roleTemplates, roleIdSet, 'sprites.roleTemplates', 'templateId', true, ASSET_SHAPES.roleTemplate);
+  expectIds(sp.skillTemplates, skillIdSet, 'sprites.skillTemplates', 'templateId', true, ASSET_SHAPES.skillTemplate);
+  const rolePluginIds = new Set(tables.plugins.filter((p) => p.kind === 'rolePlugin').map((p) => p.id));
+  const skillPluginIds = new Set(tables.plugins.filter((p) => p.kind === 'skillPlugin').map((p) => p.id));
+  expectIds(sp.rolePlugins, rolePluginIds, 'sprites.rolePlugins', 'pluginId', true, ASSET_SHAPES.rolePlugin);
+  expectIds(sp.skillPlugins, skillPluginIds, 'sprites.skillPlugins', 'pluginId', true, ASSET_SHAPES.skillPlugin);
+
+  const an = tables.animations;
+  if (an.format !== 'placeholder-v1') problems.push('animations.format 应为 placeholder-v1');
+  for (const group of ['role', 'bullet', 'base']) {
+    if (!an.animations || !an.animations[group]) { problems.push(`animations.${group} 缺失`); continue; }
+    const anims = an.animations[group];
+    if (group === 'role') {
+      for (const n of BASE_ANIMS) {
+        if (!anims[n]) problems.push(`animations.role.${n} 必填（基础动画六件套）`);
+      }
+    }
+    for (const [name, a] of Object.entries(anims)) {
+      if (!isInt(a.frames) || a.frames < 1) problems.push(`animations.${group}.${name}.frames 应为 ≥1 整数`);
+      if (!isNum(a.durationMs) || a.durationMs <= 0) problems.push(`animations.${group}.${name}.durationMs 应为正数`);
+      if (typeof a.loop !== 'boolean') problems.push(`animations.${group}.${name}.loop 应为布尔`);
+      if (!Array.isArray(a.offsetPx) || a.offsetPx.length !== 2 || !a.offsetPx.every(isInt)) problems.push(`animations.${group}.${name}.offsetPx 应为 2 元素整数数组`);
+    }
+  }
 
   return problemsOf(problems);
 }

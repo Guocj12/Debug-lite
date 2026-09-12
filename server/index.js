@@ -10,18 +10,25 @@ const path = require('node:path');
 const { createLogger } = require('../shared/log.js');
 
 const DATA_DIR = path.join(__dirname, 'data');
+const ASSETS_DIR = path.join(__dirname, '..', 'assets'); // P0-9：占位美术表作为数据表经 API 提供
 const VERSION = '3.0.0';
 
 function tableNames() {
-  return fs.readdirSync(DATA_DIR)
+  const data = fs.readdirSync(DATA_DIR)
     .filter((f) => f.endsWith('.json'))
     .map((f) => f.slice(0, -5));
+  const assets = fs.existsSync(ASSETS_DIR)
+    ? fs.readdirSync(ASSETS_DIR).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5))
+    : [];
+  return [...data, ...assets].sort();
 }
 
 function loadTable(name) {
-  const file = path.join(DATA_DIR, `${name}.json`);
-  if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const dir of [DATA_DIR, ASSETS_DIR]) {
+    const file = path.join(dir, `${name}.json`);
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+  return null;
 }
 
 function okEnvelope(data, logger) {
