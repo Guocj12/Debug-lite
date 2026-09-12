@@ -224,3 +224,12 @@ test('GX-11 runGate：项 6 的 pending 组合（日志过 + 数值缺配置）'
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---------- 项 9：接口冒烟（checkApiSmoke） ----------
+
+test('GX-12 checkApiSmoke：真实仓库 pass（health/data + CLI 闭环）；无服务端文件 → pending', async () => {
+  const real = await gate.checkApiSmoke();
+  assert.equal(real.status, 'pass', real.detail);
+  const pend = await runCheck(gate.checkApiSmoke, { 'server/README.md': '#', 'cli/README.md': '#' });
+  assert.equal(pend.status, 'pending', '无 server/index.js 与 cli/index.js 必须 pending');
+});

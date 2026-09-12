@@ -417,10 +417,69 @@ async function checkTests(options) {
   return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}`);
 }
 
-// ---------- 项 8/9：待激活 ----------
+// ---------- 项 8：待激活（B11） ----------
 
 function pendingUntil(reason) {
   return () => resultOf('pending', `前置未落地：${reason}`);
+}
+
+// ---------- 项 9：接口冒烟（P0-8 激活） ----------
+// 同进程 listen(0) 起服务 → GET /api/v1 关键端点 → 进程内 CLI 闭环（无 spawn，真实 HTTP 传输）。
+// 注意：shared/log.js 在本函数内 require 是安全的——项 9 在项 7 的覆盖率会话结束后执行（V8 机制见 scripts/README）。
+async function checkApiSmoke(options) {
+  const root = (options && options.projectRoot) || REPO;
+  const indexPath = path.join(root, 'server', 'index.js');
+  const cliPath = path.join(root, 'cli', 'index.js');
+  if (!fs.existsSync(indexPath) || !fs.existsSync(cliPath)) {
+    return resultOf('pending', 'server/index.js 与 cli/index.js 缺失（P0-8 落地后激活）');
+  }
+  // eslint-disable-next-line global-require
+  const { createLogger } = require('../shared/log.js');
+  // eslint-disable-next-line global-require
+  const { start } = require(indexPath);
+  // eslint-disable-next-line global-require
+  const { main: cliMain } = require(cliPath);
+  const http = require('node:http');
+
+  const getJson = (port, urlPath) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: urlPath }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c; });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(d); } catch (e) { /* 非 JSON */ }
+        resolve({ status: res.statusCode, body: j });
+      });
+    }).on('error', reject);
+  });
+
+  const s = await start({ logger: createLogger({ level: 'silent' }) });
+  try {
+    const checks = [];
+    const health = await getJson(s.port, '/api/v1/health');
+    checks.push(health.status === 200 && health.body && health.body.ok === true ? null : 'health 信封异常');
+    const data = await getJson(s.port, '/api/v1/data/battle-config');
+    checks.push(data.status === 200 && data.body && data.body.data && data.body.data.cellPx === 64 ? null : 'data battle-config 异常');
+    // CLI 闭环：捕获其 stdout 输出避免污染门禁报告
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = () => {};
+    console.error = () => {};
+    try {
+      const base = `http://127.0.0.1:${s.port}`;
+      const rcHealth = await cliMain(['health'], { baseUrl: base });
+      const rcData = await cliMain(['data', 'battle-config'], { baseUrl: base });
+      checks.push(rcHealth === 0 && rcData === 0 ? null : `CLI 闭环退出码 health=${rcHealth} data=${rcData}`);
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+    const problems = checks.filter(Boolean);
+    if (problems.length > 0) return resultOf('fail', problems.join('；'));
+    return resultOf('pass', 'health/data 端点 + CLI 闭环（退出码 0）通过');
+  } finally {
+    await s.close();
+  }
 }
 
 // ---------- 主入口 ----------
@@ -453,7 +512,7 @@ async function runGate(options) {
     } },
     { id: 7, name: '全量测试 + 覆盖率（§3.4 第 7 项）', fn: (o) => checkTests({ projectRoot: o.projectRoot, runner }), },
     { id: 8, name: '日志冒烟：trace 跑一场 + cid 链路 + 与 silent 逐帧一致（T-LG-11/5）', fn: pendingUntil('B11 引擎/走查落地') },
-    { id: 9, name: '接口冒烟：listen(0) → /api/v1 → CLI 闭环（T-AP-*/T-CLI-*）', fn: pendingUntil('P0-8 服务端落地') },
+    { id: 9, name: '接口冒烟：listen(0) → /api/v1 → CLI 闭环（T-AP-*/T-CLI-*）', fn: checkApiSmoke },
   ];
   const results = [];
   let failed = 0;
@@ -490,7 +549,7 @@ async function main(options) {
 module.exports = {
   REPO, checkStaticRandEval, checkStaticConsole, checkNumericHardcode,
   checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency,
-  checkTests, runSuite, judgeCoverage, validateEvent, runGate, main,
+  checkTests, runSuite, judgeCoverage, validateEvent, checkApiSmoke, runGate, main,
 };
 
 if (require.main === module) {
