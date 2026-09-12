@@ -47,7 +47,7 @@ docs/progress.md       本文件
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
 ### 3.2 文档（可选收尾）
-- [ ] `.audit/` 下的校验器（`verify-movement/bullets/rest/v2`）是**脚手架**：B11 用真实引擎替代后即可删除；当前保留供复核
+- [ ] 设计期 `.audit/verify-*.js` 校验器已按 `examples/README.md` §3 在验证通过后删除（未入库）；B11 黄金用例需用**真实引擎**重写校验，不复用脚手架
 - [ ] 实现期若发现新边界，按 `V-x` 编号登记到 `docs/examples/README.md` §4 并由用户拍板
 
 ---
