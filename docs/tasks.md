@@ -623,7 +623,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 |---|---|---|---|
 | B12 `[x]` | `ai/ast.js` 白名单 + 结构/深度/大小校验 + 稳定路径 id + **隐式主循环语义**（body=seq 契约）+ 覆盖型 fixtures | T-AI-2/11 + **T-AF-8/9** | `ai.validate`（审查 `docs/reviews/B12.md`，P1×2 已修） |
 | B13 `[x]` | 合法性检测（**分支 action 规则** D-101）+ 段位门控 + 错误带 `path`（unlock.validateAi 退役整合） | T-AI-1/3/12 + T-UL-1..4 + **T-AF-5/10** | `ai.validate.reject`（审查 `docs/reviews/B13.md`，P2×4 已修） |
-| B14 | `ai/runtime.js` 显式状态机：作用域/循环/函数（独立作用域+调用栈）/break/每 tick 每用途随机流/只读快照 | T-AI-4/5/7/9 + **T-AF-1/2/3/11** | `ai.runtime.*` |
+| B14 `[x]` | `ai/runtime.js` 显式状态机：作用域/循环/函数（独立作用域+调用栈）/break/每 tick 每用途随机流/只读快照 | T-AI-4/5/7/9 + **T-AF-1/2/3/11** | `ai.runtime.*`（审查 `docs/reviews/B14.md`，P0×1 已修） |
 | B15 | 限步/递归上限/错误兜底（返回 **`wait`**）+ trace + 病态 fixtures | T-AI-6/8/10 + **T-AF-4/6** | `ai.step.limit`/`ai.node` |
 | B16 | `canonicalize`/`programHash`/版本迁移 + `/ai/compile`、`/ai/validate`、`/ai/battle` + CLI `ai` 子命令 + 上下文序列化 | T-AP-1..5 + T-CLI-1 + T-LG-8/9 + **T-AF-7** | `ai.compile`/`ai.migrate`/`api.*`/`cli.*` |
 
