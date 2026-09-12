@@ -1,13 +1,17 @@
 'use strict';
-/* server/ai/ast.js —— AI 程序 AST 静态校验（P2 B12，契约 docs/interfaces.md §1）
- * 依据：systems/08-ai.md §3（节点清单）/§4.2①（结构校验：白名单、字段类型、深度≤32、节点≤2000、字节≤256KB、
- *   危险键拒绝）——合法性检测（分支 action 规则）与段位门控属 B13；隐式主循环结构契约（body 必须 seq，D-100）。
- * 纯函数内核（L11）：日志经 withLogger 注入；事件 ai.ast.validate(debug)（§4.6 L5 行）。
+/* server/ai/ast.js —— AI 程序 AST 静态校验（P2 B12/B13，契约 docs/interfaces.md §1）
+ * 依据：systems/08-ai.md §3（节点清单）/§4.2（结构校验 + 合法性检测 D-101 + 段位门控）；B13 落地 checkLegality。
+ * 纯函数内核（L11）：日志经 withLogger 注入；事件 ai.validate(debug)/ai.validate.reject(warn)（§4.6 L5 行）。
  * 路径 id 规范（B12 登记，08-ai A-6h 格式）：seq→s[i]、if→then/else、loop→body、function→body（body 内再 s[i]）；
- *   其余节点为叶子。
+ *   表达式子节点 → .expr；其余节点为叶子。
+ * B13 登记：validateAi 自 unlock.js 退役（B4→B13），段位门控由本模块 validate(program, tier) 统一承担
+ *   （unlock 保留 tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout 原语；ai L5 → core L1 方向合法）。
+ * 分支行动规则（D-101）：loop 体内所有 if 的每个分支（含隐式空 else）必须含至少一个 action 或已定义函数 call；
+ *   call 视为行动产出点（静态保守）；break 必须位于同一函数作用域内的 loop 体内（跨函数 break 拒绝）；call 必须已定义（hoisting）。
  */
 
 const { nullLogger } = require('../../shared/log.js');
+const unlock = require('../core/unlock.js'); // L5 → L1：availableNodes/isUnlocked（段位原语）
 
 // 节点白名单（systems/08-ai.md §3；loop 含 count/while 两种 kind）
 const NODE_TYPES = new Set([
@@ -23,6 +27,7 @@ const LIMITS = {
   stepLimit: 10000,
   traceLimit: 2000,
   recursionLimit: 64, // cl:64
+  analyzeDepth: 16, // cl:16 —— 静态分支分析防爆上限（B13）
 };
 
 // 子节点字段（含其下路径段命名）：seq.statements → s[i]；if.then/else；random.then/else；loop.body；function.body
@@ -185,6 +190,131 @@ function makeAst(logger) {
     return used;
   }
 
+  // ---- B13：合法性检测（D-101）----
+  // 分支行动规则：loop 体内所有 if 的每个分支（含隐式空 else）必须含 action 或已定义 call（A-6 全案）
+  function branchHasAction(node, fns, depth) {
+    if (!node || typeof node !== 'object') return false;
+    if (depth > LIMITS.analyzeDepth) return false; // 保守上限（B13 登记：静态分析防爆炸）
+    if (node.type === 'action') return true;
+    if (node.type === 'call') return fns.has(node.name); // call 已定义函数 = 行动产出点
+    if (node.type === 'seq') return (node.statements || []).some((s) => branchHasAction(s, fns, depth + 1));
+    if (node.type === 'if') return branchHasAction(node.then, fns, depth + 1) && (!node.else || branchHasAction(node.else, fns, depth + 1));
+    if (node.type === 'loop') return branchHasAction(node.body, fns, depth + 1);
+    return false;
+  }
+
+  // 合法性：分支行动规则 + break 位置 + call 存在性（错误带 path）
+  function checkLegality(program) {
+    const errors = [];
+    if (!program || !program.body) return { ok: false, errors };
+    // 函数名收集（hoisting，D-103：先调用后定义合法）
+    const fns = new Set();
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      if (n.type === 'function' && typeof n.name === 'string') fns.add(n.name);
+      const ch = childList(n);
+      for (const c of (Array.isArray(ch.list) ? ch.list : [])) walk(c);
+      for (const c of exprChildren(n)) walk(c);
+    })(program.body);
+    (function scan(node, path, ctx) {
+      if (!node || typeof node !== 'object') return;
+      switch (node.type) {
+        case 'loop': {
+          if (!branchHasAction(node.body, fns, 0)) {
+            errors.push({ path: `${path}.body`, code: 'branch_without_action', message: '循环体必须至少包含一个 action' });
+          }
+          scan(node.body, `${path}.body`, { loopDepth: ctx.loopDepth + 1, scope: ctx.scope }, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors); // P2-1：表达式位 call/break 不逃逸
+          break;
+        }
+        case 'if': {
+          // 仅在循环体内检查分支行动（顶层 if 允许无 else，A-1）
+          if (ctx.loopDepth > 0) {
+            if (!branchHasAction(node.then, fns, 0)) errors.push({ path: `${path}.then`, code: 'branch_without_action', message: 'if 的 then 分支必须包含 action' });
+            if (!node.else || !branchHasAction(node.else, fns, 0)) errors.push({ path: `${path}.else`, code: 'branch_without_action', message: 'if 的 else 分支必须包含 action（缺 else 视为空分支）' });
+          }
+          if (node.then) scan(node.then, `${path}.then`, ctx, fns, errors);
+          if (node.else) scan(node.else, `${path}.else`, ctx, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors); // P2-1：cond 位不逃逸
+          break;
+        }
+        case 'break': {
+          if (ctx.loopDepth === 0) errors.push({ path, code: 'break_outside_loop', message: 'break 只能位于循环体内' });
+          break;
+        }
+        case 'call': {
+          if (!fns.has(node.name)) errors.push({ path, code: 'unknown_call', message: `未定义函数 ${node.name}` });
+          break;
+        }
+        case 'function': {
+          // 函数体独立作用域：循环深度重置（函数内 break 只能指向自身循环）
+          scan(node.body, `${path}.body`, { loopDepth: 0, scope: 'fn' }, fns, errors);
+          break;
+        }
+        default: {
+          const ch = childList(node);
+          if (ch.list && Array.isArray(ch.list)) {
+            ch.list.forEach((c, i) => {
+              const cp = ch.pathName === 's' ? `${path}.s[${i}]` : ch.key === null ? `${path}.${i === 0 ? 'then' : 'else'}` : `${path}.${ch.pathName}`;
+              scan(c, cp, ctx, fns, errors);
+            });
+          }
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors);
+        }
+      }
+    })(program.body, 'body', { loopDepth: 0, scope: 'root' }, fns, errors);
+    return { ok: errors.length === 0, errors };
+  }
+
+  // 全量校验（B13）：结构 + 合法性 + 段位门控 → {ok, errors:[{path,code,message}]}；拒绝记 ai.validate.reject(warn)
+  function validate(program, tier) {
+    const errors = [];
+    const struct = validateProgram(program);
+    errors.push(...struct.errors);
+    let legality = { ok: true, errors: [] };
+    if (struct.ok) {
+      legality = checkLegality(program);
+      errors.push(...legality.errors);
+    }
+    // 段位门控（unlock 原语：unknown → 保守拒绝）
+    const gateErrors = [];
+    if (struct.ok) {
+      const seen = new Set();
+      (function walk(n, p) {
+        if (!n || typeof n !== 'object' || typeof n.type !== 'string') return;
+        if (!seen.has(n)) {
+          seen.add(n);
+          if (!unlock.isUnlocked(tier, n.type)) {
+            gateErrors.push({ path: p, code: 'node_locked', node: n.type, message: `节点 ${n.type} 需 ${tierOfNode(n.type)} 段位` });
+          }
+        }
+        const ch = childList(n);
+        const chList = Array.isArray(ch.list) ? ch.list : [];
+        chList.forEach((c, i) => walk(c, ch.pathName === 's' ? `${p}.s[${i}]` : ch.key === null ? `${p}.${i === 0 ? 'then' : 'else'}` : `${p}.${ch.pathName}`));
+        for (const c of exprChildren(n)) walk(c, `${p}.expr`);
+      })(program && program.body, 'body');
+    }
+    errors.push(...gateErrors);
+    const ok = errors.length === 0;
+    if (!ok) {
+      for (const e of errors) {
+        if (e.code === 'node_locked' || e.code === 'branch_without_action' || e.code === 'break_outside_loop' || e.code === 'unknown_call') {
+          L.warn('ai.ast', 'ai.validate.reject', `${e.code} @ ${e.path}`, { code: e.code, path: e.path, node: e.node });
+        }
+      }
+    }
+    L.debug('ai.ast', 'ai.validate', `validate(${tier}) ok=${ok}`, { ok, tier, version: program && program.version });
+    return { ok, errors };
+  }
+
+  // 节点所属解锁段位（错误消息用；unlock 原语反查）
+  function tierOfNode(nodeType) {
+    for (const t of ['common', 'rare', 'epic', 'legendary', 'mythic']) {
+      if (unlock.isUnlocked(t, nodeType)) return t;
+    }
+    return 'unknown';
+  }
+
   // 稳定路径 id：node → path 映射（遍历序确定；A-6h 格式 body.s[i].then.body.s[j]）
   function nodePathOf(program) {
     const map = new WeakMap();
@@ -204,7 +334,7 @@ function makeAst(logger) {
     return map;
   }
 
-  return { validateProgram, collectUsedNodeTypes, nodePathOf, NODE_TYPES, limits: LIMITS };
+  return { validateProgram, collectUsedNodeTypes, checkLegality, validate, nodePathOf, NODE_TYPES, limits: LIMITS };
 }
 
 // 字段类型表（B12 登记：结构层面；合法性检测（分支 action 规则）B13）

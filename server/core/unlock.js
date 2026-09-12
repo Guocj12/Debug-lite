@@ -4,7 +4,8 @@
  * 纯函数内核（L11）：无 IO / 无随机 / 无 console；日志经 withLogger 注入（缺省 nullLogger）。
  * 事件：unlock.check(debug) / unlock.reject(warn)（§4.6）。
  * 数据：unlock.json（增量 aiNodes）+ 三表 unlockTier；10 个基础节点恒可用。
- * 注：结构校验（白名单/深度/大小）由 ai/ast.js（B12）接管；本模块 validateAi 只做未知节点拒绝 + 段位门控（U-4）。
+ * 注：AI 程序校验（结构/合法性/段位门控）由 ai/ast.js（B12/B13）统一承担——validateAi 于 B13 退役；
+ * 本模块保留段位原语（tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout）。
  */
 const { nullLogger } = require('../../shared/log.js');
 const UNLOCK = require('../data/unlock.json').unlocks;
@@ -15,11 +16,6 @@ const PLUGINS = require('../data/plugins.json').plugins;
 const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 // 基础节点恒可用（examples/09-unlock §1：common=10 基础 + if = 11）
 const BASE_NODES = ['seq', 'literal', 'get', 'bullets', 'var', 'set', 'getVar', 'arith', 'cmp', 'action'];
-// 全部已知节点白名单（U-4g 结构拒绝用；B12 ast.js 将接管完整结构）
-const ALL_NODES = new Set([
-  ...BASE_NODES,
-  'if', 'loop', 'while', 'break', 'random', 'logic', 'arith_ext', 'function', 'call',
-]);
 
 const roleMap = Object.fromEntries(ROLE_TEMPLATES.map((r) => [r.id, r]));
 const skillMap = Object.fromEntries(SKILL_TEMPLATES.map((s) => [s.id, s]));
@@ -67,47 +63,6 @@ function makeUnlock(logger) {
     });
   }
 
-  // 收集程序用到的节点类型（递归，附路径）
-  function collectUsedNodes(node, path, out) {
-    if (!node || typeof node !== 'object') return;
-    if (typeof node.type === 'string') {
-      out.push({ type: node.type, path });
-    }
-    for (const [key, child] of Object.entries(node)) {
-      if (key === 'type' || key === 'name' || key === 'version' || key === 'kind' || key === 'value' || key === 'prob') continue;
-      if (Array.isArray(child)) {
-        child.forEach((c, i) => collectUsedNodes(c, `${path}.${key}[${i}]`, out));
-      } else if (child && typeof child === 'object') {
-        collectUsedNodes(child, `${path}.${key}`, out);
-      }
-    }
-  }
-
-  // AI 程序段位门控（U-4）：未知节点 → unknown_node（结构，B12 前就地拒绝）；未解锁 → node_locked（带 path 与节点名）
-  function validateAi(program, tier) {
-    if (!program || !program.body) {
-      const err = { path: '', code: 'ai_invalid', message: '程序结构非法（缺 body）' };
-      L.warn('unlock', 'unlock.reject', `ai_invalid: 缺 body`, { node: 'program' });
-      return { ok: false, errors: [err] };
-    }
-    const used = [];
-    collectUsedNodes(program.body, 'body', used);
-    const errors = [];
-    for (const { type, path } of used) {
-      if (!ALL_NODES.has(type)) {
-        errors.push({ path, code: 'unknown_node', node: type, message: `未知节点类型 ${type}` });
-        L.warn('unlock', 'unlock.reject', `unknown_node ${type}`, { node: type, path });
-        continue;
-      }
-      if (!isUnlocked(tier, type)) {
-        errors.push({ path, code: 'node_locked', node: type, message: `节点 ${type} 需 ${tierOfNode(type)} 段位` });
-        L.warn('unlock', 'unlock.reject', `node ${type} locked @ ${tier}`, { node: type, tier });
-      }
-    }
-    if (errors.length > 0) return { ok: false, errors };
-    return { ok: true, errors: [] };
-  }
-
   // 出战配置门控（U-5）：角色/技能/插件 unlockTier ≤ 段位
   function validateLoadout(loadout, tier) {
     const ld = loadout || {};
@@ -143,16 +98,7 @@ function makeUnlock(logger) {
     return a !== null && b !== null && a <= b;
   }
 
-  // 节点所属解锁段位（错误消息用）
-  function tierOfNode(node) {
-    if (BASE_NODES.includes(node)) return 'common';
-    for (const t of TIERS) {
-      if ((NODE_GAIN[t] || []).includes(node)) return t;
-    }
-    return 'unknown';
-  }
-
-  return { tierIndex, isUnlocked, filterByTier, validateAi, validateLoadout, availableNodes };
+  return { tierIndex, isUnlocked, filterByTier, validateLoadout, availableNodes };
 }
 
 module.exports = Object.assign(makeUnlock(), { withLogger: (logger) => makeUnlock(logger) });

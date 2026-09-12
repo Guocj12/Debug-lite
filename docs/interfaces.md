@@ -23,12 +23,12 @@
 | `core/effects.js` | `addEffect(state, effect)`（补 uid + addedTick，下一 tick 起效）/ `resolveContinuous(state)`（clamp/递减/移除，入口先清 remaining≤0）/ `resolveControl(effects, aiAction)` → `{action}`（'wait' 眩晕；`{action:'forced_move',dir,cells}` 位移意图，B8 落位；无控制原样）/ `resolveControlMove(x, otherX, displacement)`（单方落位 gap≥64 + clamp，T-FD-4）/ `withLogger` | L1 | B2 ✅ |
 | `core/items.js`（数值） | `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf` / `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox` / `applyAffixes` / `validateUnlock` | L1 + 数据表 | B3 |
 | `core/items.js`（仓库） | `createWarehouse` / `addItem` / `assemble` / `disassemble` / `buildLoadout` / 序列化往返 | L3（同文件双分层，见 check-arch 契约） | B18 |
-| `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateAi` / `validateLoadout` / `availableNodes` | L1 + unlock.json | B4 |
+| `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateLoadout` / `availableNodes`（**validateAi 于 B13 退役**，AI 程序校验由 ai/ast.validate 统一承担） | L1 + unlock.json | B4 ✅（B13 更新） |
 | `core/roles.js` | `instantiateRole` / `applyTypeModifier` / `equipPlugins` / `getFinalStats` | L2 | B5 |
 | `core/skills.js` | `instantiateSkill` / `applySkillPlugins` / `canCast` / `buildSkillAction` / `coveredCellRanges` | L2 + field/battle-config | B6 |
 | `core/bullets.js` | `spawnBullets(battle, act)` / `resolveBullets(battle, ctx)`（当 tick 全解算→{spawns,collides,hits,expires}）/ `solveIntersection(x1,v1,x2,v2,tMax,tMin)`（连续方程原语）/ `bulletBattle(a,b)`（等级矩阵：b1/b2/both/none）/ `bulletsOnField(battle)` | L2 | B7 ✅ |
 | `core/engine.js` | `createBattle(config)`（`config.logger` 注入）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`；`resolveActorCollision` | L4（编排 L0~L2，不依赖 L5；AI 由 server 层注入） | B8~B11 |
-| `ai/ast.js` | `validateProgram` / `checkLegality`（含分支 action 规则 D-101）/ `collectUsedNodeTypes` / `canonicalize` / `programHash` / `nodePathOf` / `limits` | L5（只依赖 L0/L1） | B12~B13 |
+| `ai/ast.js` | `validateProgram` / `checkLegality`（含分支 action 规则 D-101）/ `collectUsedNodeTypes` / **`validate(program, tier)`（结构+合法性+门控三段合一，B13）** / `canonicalize` / `programHash` / `nodePathOf` / `limits` | L5（只依赖 L0/L1） | B12~B13 ✅ |
 | `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` | L5 | B14~B15 |
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
 | `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（D-123：不持久化） | L6 | P5 |
