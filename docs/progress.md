@@ -75,7 +75,8 @@ docs/progress.md       本文件
 - [x] **B19** loadout API + 校验 + `POST /api/v1/panel`（server/loadout.js L6 编排：I-12 全案/T-PB-9 引用完整/T-PB-8 双引用/门控 + 面板聚合五维/regen/special/技能参数；P1×3 已修——skills 畸形 500、双引用面板双计、无 warehouse 空转；404 用例；审查 `docs/reviews/B19.md`）
 - [x] **B20** 技能插件消耗补偿与聚合 + 面板一致性（skills.applySkillPlugins 接入 buildPanel：delta=costDeltaBase×tier、减耗 ceil、倍率/冷却聚合；插件 unlockTier×2 数据门控真分支——T-PB-7/U-5d 兑现；P1×1 已修——聚合路径未知模板 500；411 用例；审查 `docs/reviews/B20.md`）
 - [x] **B21（P3 收尾）** 属性测试全套（T-PB-10 往返包裹 T-PB-1..10）+ 数值校准收口（dodgeChanceBonus 0.20 定稿 D-127 / defK=40 入表 D-128 / 附加效果·melee·regen 冻结；schema 冻结清单同步；P1×1 已修；420 用例；审查 `docs/reviews/B21.md`）—— **P3 阶段 5/5 批收口，开放数值项全部关闭**
-- [ ] **B22 起**（P4：回放帧契约完备性 + POST /api/v1/battle + GET /api/v1/replay/:id）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B22（P4 首）** 回放帧契约完备性 + `POST /api/v1/battle`（双方 loadout + AI + seed → 完整帧）+ `GET /api/v1/replay/:id` 分片（server/battle.js L6：buildPlayer 面板聚合 + 双 AI 驱动 + 进程内回放注册表；engine tick/cid 感知日志装饰 + tick.end 入帧；同 seed 帧字节级复现；T-EN-9 + T-BT-1 帧可重建；P1×2 已修；427 用例；审查 `docs/reviews/B22.md`）
+- [ ] **B23 起**（P4：文本回放器 CLI `replay --file/--tick` + 帧数据充分性审计）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 
@@ -92,3 +93,32 @@ docs/progress.md       本文件
 3. **机制在代码、数值在表**：所有战斗数值来自 `battle-config.json` 等数据表。
 4. **计算与文档分工**：分支穷举在 `examples/`，端到端串联在 `battle-walkthrough.md`，实现细则在 `systems/`。
 5. **开发提交一律在 `dev` 分支**（2026-09-12 用户指示）；`main` 保持门禁全绿才合并。
+
+---
+
+## 5. 遗留问题审查（2026-09-12 记录，按优先级）
+
+### 5.1 质量类（建议 B22 前处理）
+
+| # | 问题 | 证据 | 建议处置 |
+|---|---|---|---|
+| L-1 | **偶发 flake：gate 项 7 有约 1/7 概率 2 个用例失败** | 首跑 `[FAIL] 项7 … 2 个用例失败（总 420）`；随后 6 次（npm test / npm run cov / gate×2 / 独立进程×4）全部 420/0。**未定位到具体用例** | B22 批内加"连续 5 次全量复跑全绿"回归并定位根因（疑：order/时序/端口类用例） |
+| L-2 | **走查文档与真实引擎黄金战斗不一致** | `battle-walkthrough.md` §3.1 为设计期轨迹 **17 tick / P1 胜**；`.audit/golden-battle.json`（gate 项 8 在用）为 **18 tick / P2 胜**（seed 20260912） | 按真实引擎输出重生成走查 §3.1 轨迹表（或以 golden-battle.json 为准并标注），消除文档漂移 |
+| L-3 | **临时审查目录被提交**：`.review-b16..b20`（24 文件，探针脚本）已入库 | `git ls-files ".review-*"` = 24；审查结论另有 `docs/reviews/`（30 文件，正常） | 移出追踪 + 追加 `.gitignore`；若需保留探针则归入 `tools/scratch/` 并说明 |
+| L-4 | **设计期临时校验器残留**：`.audit/verify-rest.js` 等 | 约定"验完即删"；`.audit/golden-battle.js/json` 为 gate 项 8 依赖**必须保留** | 删除已无用的 verify-* 临时脚本；保留 golden-battle.*；`.audit/.v8cov*` 确认是否入库，若是则移出 |
+| L-5 | **main 落后 dev 32 个提交**，无合流检查清单 | `git log --oneline main..dev` = 32 | 制定合 main 检查清单（gate 9/9 + 连续复跑 + 文档同步），B24/B25 后合一次 |
+
+### 5.2 功能未完成（预期内，非缺陷）
+
+| 项 | 批次 | 现状 |
+|---|---|---|
+| 回放：`/api/v1/battle` + `/api/v1/replay/:id` + 文本回放 CLI + 帧自足审计 | B22/B23 | **⚠ 审查时观察到 `server/battle.js` 正在被并发实施**（`index.js` +52 行等改动在途）；落地后将同步 `server.md` §3.2 与 `interfaces.md` 状态列 |
+| 排位：`/ranked/run` + `/ranked/promote`（快照/bot 池/晋升 x=6） | B24/B25 | 未接线；`ranked.js` 未实现 |
+| 前端全部 | P6 | 0 行代码；`docs/frontend-spec.md` 已备（7 屏/store/渲染/Blockly/日志面板/API 映射）；还需静态托管（/public、/shared、/vendor/blockly）、localStorage 存档（D-123）、T-LG-10 前端日志 |
+| 数值开放项 | — | 已全部关闭（D-127 dodgeChanceBonus、D-128 defK 入表，B21 收口） |
+
+### 5.3 说明
+
+- 门禁实测：后两次 `npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`npm test` 与 `npm run cov` 均为 420/0。
+- 测试规模：**420 用例 / 48 个测试文件**；覆盖率阈值（行 90 / 分支 85 / 函数 90）通过。
+- 黄金战斗为 gate 项 8 的冒烟基准（18 tick，P2 胜），B11 黄金回归测试 `tests/regression/golden-battle.test.js` 尚未单独落地（L-2 一并处理）。

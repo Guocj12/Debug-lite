@@ -74,7 +74,7 @@ L2  roles · skills(实例化/插件) · bullets
 L3  items(仓库/装配层) · skills(释放/canCast)
 L4  engine            ← 唯一编排者
 L5  ai/ast · ai/runtime      ← 只依赖 L0/L1，不依赖 engine
-L6  server/index.js (/api/v1) · server/runner.js (AI 编排) · server/box.js (开箱编排) · server/loadout.js (出战/面板编排) · cli/
+L6  server/index.js (/api/v1) · server/runner.js (AI 编排) · server/box.js (开箱编排) · server/loadout.js (出战/面板编排) · server/battle.js (对战/回放编排) · cli/
 L7  public/**（P6）
 ```
 - `scripts/check-arch.js`：反向依赖、循环依赖、core 引用 `express/fs/http`、`shared/log.js` 之外的跨层共享 → 失败。
@@ -643,7 +643,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
-| B22 | 回放帧契约完备性（1px 位置、碰撞位置、cid、AI 轨迹）+ `POST /api/v1/battle` 完整帧 + `GET /api/v1/replay/:id` | T-EN-9 + **T-BT-1** |
+| B22 `[x]` | 回放帧契约完备性（1px 位置、碰撞位置、cid、AI 轨迹）+ `POST /api/v1/battle` 完整帧 + `GET /api/v1/replay/:id` | T-EN-9 + **T-BT-1** | `events`/`battle.*`（审查 `docs/reviews/B22.md`，P1×2 已修——events 空心化/tick.end 入帧 + 同 seed 帧 ts 漂移） |
 | B23 | 文本回放器 CLI（`replay --file/--tick`，打印 px 位置与碰撞）+ 帧数据充分性审计 | T-CLI-1/2 |
 
 ### P5 排位（2 批；**按 D-123 不做存档**）

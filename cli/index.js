@@ -19,6 +19,8 @@ commands:
   wh assemble|disassemble --file wh.json --item <uid> --slot <i> [--plugin <uid>] [--tier <t>]
                                                # 装配/拆卸（B18，经 HTTP）
   panel --loadout <file> [--tier <t>]          # 最终面板（B19，经 HTTP）
+  battle --p1 a.json --p2 b.json [--seed <n>] [--tier <t>] [--out replay.json]
+                                               # 双方 loadout 对战 → 完整回放帧（B22，经 HTTP）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -294,6 +296,74 @@ async function main(argv, options) {
           if (r.status === 200) {
             console.log(JSON.stringify(r.body.data.panel, null, 2));
             code = 0;
+          } else {
+            console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+            code = 1;
+          }
+        }
+      }
+    } else if (cmd === 'battle') {
+      // battle --p1 a.json --p2 b.json [--seed <n>] [--tier <t>] [--out replay.json]（B22）
+      let p1 = null;
+      let p2 = null;
+      let seed = null;
+      let tier = null;
+      let out = null;
+      let valid = true;
+      for (let i = 1; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--p1') p1 = args[++i];
+        else if (a === '--p2') p2 = args[++i];
+        else if (a === '--seed') seed = args[++i];
+        else if (a === '--tier') tier = args[++i];
+        else if (a === '--out') out = args[++i];
+        else { valid = false; }
+      }
+      if (!valid || !p1 || !p2) {
+        console.error(`battle 参数非法（--p1/--p2 必填）\n${USAGE}`);
+        code = 2;
+      } else {
+        const readLd = (f) => {
+          try {
+            const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+            return raw && typeof raw === 'object' && raw.loadout ? { ld: raw.loadout, wh: raw.warehouse || null } : { ld: raw, wh: null };
+          } catch (e) {
+            console.error(`读取/解析 ${f} 失败: ${e.message}`);
+            return null;
+          }
+        };
+        const r1 = readLd(p1);
+        const r2 = readLd(p2);
+        if (r1 === null || r2 === null) {
+          code = 2;
+        } else {
+          const body = { p1: r1.ld, p2: r2.ld };
+          if (r1.wh) body.warehouse = r1.wh;
+          else if (r2.wh) body.warehouse = r2.wh;
+          if (seed !== null) {
+            const n = Number(seed);
+            body.seed = Number.isInteger(n) && n >= 1 ? n : seed;
+          }
+          if (tier !== null) body.tier = tier;
+          const r = await httpJson(baseUrl, 'POST', '/api/v1/battle', body);
+          if (r.status === 200) {
+            const data = r.body.data;
+            const summary = { seed: data.seed, winner: data.winner, phase: data.phase, ticks: data.ticks };
+            if (out !== null) {
+              try {
+                fs.writeFileSync(out, JSON.stringify({ summary, frames: data.frames }, null, 2));
+              } catch (e) {
+                console.error(`写入 ${out} 失败: ${e.message}`);
+                code = 1;
+              }
+              if (code !== 1) {
+                console.log(JSON.stringify({ summary, replayId: data.id, out }, null, 2));
+                code = 0;
+              }
+            } else {
+              console.log(JSON.stringify({ summary, replayId: data.id, frames: data.frames.length }, null, 2));
+              code = 0;
+            }
           } else {
             console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
             code = 1;

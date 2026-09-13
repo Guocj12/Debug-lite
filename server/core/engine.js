@@ -24,7 +24,22 @@ const DEFAULT_CFG = require('../data/battle-config.json');
 function createBattle(cfgIn, options) {
   const opts = options || {};
   const cfg = Object.assign({}, DEFAULT_CFG, cfgIn || {});
-  const logger = opts.logger || nullLogger;
+  const rawLogger = opts.logger || nullLogger;
+  // B22 P1-1：tick/cid 感知装饰——子系统的日志记录缺 data.tick（如 bullet.spawn/damage.calc），回放帧 events
+  //   按 tick 过滤会剔除它们；装饰统一补 tick 并按 `t{tick}:{seq}` 生成 cid（§4.3「事件带 cid」；链序=seq 序）。
+  let tickStamp = 0;
+  let cidSeq = 0;
+  const L = {};
+  const stamp = (level, channel, event, msg, data) => {
+    const d = Object.assign({}, data || {});
+    if (d.tick === undefined) d.tick = tickStamp;
+    if (d.cid === undefined) d.cid = `t${tickStamp}:${++cidSeq}`;
+    rawLogger.log ? rawLogger.log(level, channel, event, msg, d) : nullLogger[level](channel, event, msg, d);
+  };
+  for (const lv of ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'log']) L[lv] = lv === 'log'
+    ? (level, channel, event, msg, data) => stamp(level, channel, event, msg, data)
+    : (channel, event, msg, data) => stamp(lv, channel, event, msg, data);
+  const logger = L;
   // 子系统接线（B8 审查教训：模块默认版为 nullLogger，必须在战斗级注入真实 logger）
   const skills = skillsMod.withLogger(logger);
   const effects = effectsMod.withLogger(logger);
@@ -220,11 +235,14 @@ function createBattle(cfgIn, options) {
     const o = stepOpts || {};
     const state = battle.state;
     const actions = o.actions || state.queuedActions || {};
+    // B22：帧事件缓冲（调用方注入整场记录，diff.events 按 tick 切分；记录带 cid/tick，§4.3 回放帧契约）
+    const frameEvents = o.eventsBuf || null;
     const players = state.players;
     const p1 = players.p1, p2 = players.p2;
 
     state.tick += 1;
     const tick = state.tick;
+    if (tickStamp !== tick) { tickStamp = tick; cidSeq = 0; } // 每 tick 重置 cid 序列（B22 P1-1 装饰）
     logger.info('engine', 'tick.begin', `tick ${tick}`, { tick });
     const stepLog = (stepNo, msg, data) => logger.debug('engine', 'tick.step', `[${stepNo}] ${msg}`, Object.assign({ step: stepNo, tick }, data || {}));
 
@@ -307,6 +325,8 @@ function createBattle(cfgIn, options) {
       plans[owner] = plan;
     }
     stepLog(6, '意图提交');
+    // 弹幕快照（B22 回放帧：bullets[] 契约——步骤 6 生成完毕、步骤 8 解算前的场上弹幕，1px x0）
+    battleState._frameBullets = state.bullets.map((b) => ({ uid: b.uid, owner: b.owner, type: b.type, level: b.level, dir: b.dir, x: b.x0, len: b.len, v: b.v }));
 
     // 步骤 7：统一落位与角色碰撞（07 §1 五步）
     const resolved = resolveActorCollision(
@@ -391,23 +411,30 @@ function createBattle(cfgIn, options) {
       state.verdict = verdict;
     }
     stepLog(12, '结束判定');
+    // B22 P1-1：tick.end 于帧捕获前发出——回放帧 events 以 end 收尾（§4.3 链终止符；B22 审查调整登记）
+    logger.info('engine', 'tick.end', `tick ${tick} 完成`, { tick });
 
-    // 步骤 13：帧差异（diff；前端只按 diff 插值）
+    // 步骤 13：帧差异（diff；前端只按 diff 插值；B22 回放帧契约：players/bullets/bases/events/aiTrace，1px + cid）
     const diff = {
       tick,
       players: {
         p1: { fromX: resolved.p1.fromX, toX: p1.x, facing: p1.facing, hp: p1.hp, mp: p1.mp, sp: p1.sp },
         p2: { fromX: resolved.p2.fromX, toX: p2.x, facing: p2.facing, hp: p2.hp, mp: p2.mp, sp: p2.sp },
       },
+      bullets: battleState._frameBullets || [],
+      bases: {
+        p1: { hp: battleState.bases.p1.hp, def: battleState.bases.p1.def },
+        p2: { hp: battleState.bases.p2.hp, def: battleState.bases.p2.def },
+      },
+      events: frameEvents ? frameEvents.filter((r) => r.tick === tick) : [],
       collision: resolved.collision,
       bulletHits: bulletEvents.hits.map((h) => ({ uid: h.uid, target: h.target, atX: h.atX })),
       verdict: state.verdict || null,
       aiTrace: aiTraceBuf ? aiTraceBuf.slice() : [],
     };
+    battleState._frameBullets = null;
     stepLog(13, '帧输出');
 
-    // 步骤 14
-    logger.info('engine', 'tick.end', `tick ${tick} 完成`, { tick });
     return diff;
   }
 

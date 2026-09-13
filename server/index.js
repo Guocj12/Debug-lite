@@ -294,6 +294,25 @@ function createHandler(logger, extraRoutes) {
         }
         return { status: 200, payload: okEnvelope({ panel: p.panel }, logger) };
       },
+      '/api/v1/battle': async (ctx) => {
+        // B22：双方 loadout + AI + seed → 完整回放帧（服务端重执行；回放注册表进程内，D-123 不落盘）
+        const battleApi = require('./battle.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+        const unlockApi = require('./core/unlock.js');
+        if (unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const r = battleApi.runBattle({ p1: body.p1, p2: body.p2, warehouse: body.warehouse, seed: body.seed, tier });
+        if (r.status !== 200) {
+          if (r.code === 'loadout_invalid') {
+            return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
+          }
+          return { status: r.status, payload: errEnvelope(r.code, r.message) };
+        }
+        return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
     },
   };
   if (extraRoutes) {
@@ -302,7 +321,20 @@ function createHandler(logger, extraRoutes) {
     }
   }
 
-  return async (req, res) => {
+  // 动态路由：/api/v1/data/:table（P0-8）+ /api/v1/replay/:id（B22）
+function parsePathArg(urlPath, prefix) {
+  if (!urlPath.startsWith(prefix)) return null;
+  let arg = null;
+  let badUri = false;
+  try {
+    arg = decodeURIComponent(urlPath.slice(prefix.length));
+  } catch (e) {
+    badUri = true;
+  }
+  return { arg, badUri };
+}
+
+return async (req, res) => {
     const started = Date.now();
     const urlPath = (req.url || '/').split('?')[0];
     logger.info('api', 'api.req', `${req.method} ${req.url}`, { method: req.method, path: urlPath, query: req.url.includes('?') ? req.url.split('?')[1] : null });
@@ -332,6 +364,24 @@ function createHandler(logger, extraRoutes) {
           } else {
             status = 200;
             payload = okEnvelope(data, logger);
+          }
+        }
+      } else if (req.method === 'GET' && urlPath.startsWith('/api/v1/replay/')) {
+        // B22 动态路由：GET /api/v1/replay/:id（?from=&to= 1-based 含端切分；未知 id → 404）
+        const q = parseQuery(req.url);
+        const pt = parsePathArg(urlPath, '/api/v1/replay/');
+        if (pt.badUri || pt.arg === null || pt.arg === '' || pt.arg.includes('/') || pt.arg.includes('..')) {
+          status = 400;
+          payload = errEnvelope('bad_replay', `非法回放 id ${pt.arg || ''}`);
+        } else {
+          const battleApi = require('./battle.js');
+          const r = battleApi.getReplay(pt.arg, Number(q.from), Number(q.to));
+          if (r.status !== 200) {
+            status = r.status;
+            payload = errEnvelope(r.code, r.message);
+          } else {
+            status = 200;
+            payload = okEnvelope(r.data, logger);
           }
         }
       } else {
