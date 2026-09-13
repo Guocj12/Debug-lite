@@ -62,11 +62,13 @@ test('warehouseLayout：Tab 四枚 + 网格卡坐标 + 详情（点数/槽位/�
   const pts = boxes.find((b) => b.id === 'wh_detail_pts');
   assert.equal(pts.text, '点数 0/4');
   const putButtons = boxes.filter((b) => b.id && b.id.startsWith('wh_put_'));
-  assert.equal(putButtons.length, 4, '2 槽 × 候选 2（p1/p3）');
+  // F4 slot 预过滤语义：p1(slot atk) 仅 atk 槽；p3 无 slot 字段 → 双槽放行
+  assert.equal(putButtons.length, 3, 'atk 槽 [p1,p3] + def 槽 [p3]（p2 已装备排除、p1 槽型不匹配 def）');
+  const bySlot = (i) => putButtons.filter((b) => b.payload.slotIndex === i);
+  assert.deepEqual(bySlot(0).map((b) => b.payload.pluginUid), ['p1', 'p3']);
+  assert.deepEqual(bySlot(1).map((b) => b.payload.pluginUid), ['p3']);
   assert.deepEqual(putButtons[0].payload, { targetUid: 'r1', pluginUid: 'p1', slotIndex: 0 });
-  assert.deepEqual(putButtons[2].payload, { targetUid: 'r1', pluginUid: 'p1', slotIndex: 1 }, '第二槽同候选不同槽位');
-  const first = putButtons[0];
-  assert.equal(first.action, 'wh/assemble');
+  assert.equal(putButtons[0].action, 'wh/assemble');
   // 空态：提示 + 去开箱
   const empty = mkState({ warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } } });
   const eboxes = warehouseLayout(empty);

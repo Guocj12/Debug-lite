@@ -83,7 +83,8 @@ docs/progress.md       本文件
 - [x] **F1（P6 基建）** 布局引擎（sizes/layout/verifyLayout 四类自检）+ api client（信封/seed 回带/signal）+ store（reducer buckets 形状 + effects + persist schemaVersion）+ app boot 主流程；P1×5 已修（契约形状断裂/标志缺失/key 分叉）；479 用例；审查 `docs/reviews/F1.md`（CONDITIONAL PASS → 修复后 PASS）
 - [x] **F2（P6 外壳）** shell/menu 四态/settings 日志面板 + mount 装配层（唯一 DOM 写入点/paint+verifyLayout/事件委托 data-action·goto）+ app start 主流程（records 接缝/SAVE_ON_ACTIONS 补齐）；P1×8 已修（含 console 铁律回归）；492 用例；审查 `docs/reviews/F2.md`（CONDITIONAL PASS → 修复后全绿）
 - [x] **F3（P6 gacha+warehouse）** 开箱屏（段位/次数/结果 grid/空态）+ 仓库屏（4 Tab/卡片/详情点数槽位/候选装配/wh·take 拆卸 + 错误 toast 映射）；P1×3 已修（几何重叠/真实形状溢出/空态相交）；503 用例；审查 `docs/reviews/F3.md`（CONDITIONAL → 修复绿；探针 .review-f3/probe-loop.js 真后端全链）
-- [ ] **F4 起**（P6 battle 配置屏 + loadout/面板，接 /battle；candidatesFor 补 slot 预过滤）按 `docs/frontend-spec.md` §11 推进
+- [x] **F4（P6 battle 配置）** 对手三模板（kiter/charger/cautious 真数据同步锁）+ config/preview 布局 + seed 随机/面板预览 + battle/run 起战链（补 warehouse）+ candidatesFor slot 预过滤（P2★）；P1×2 已修（模板非存在技能 id/起战缺 wh，真后端探针实证）；510 用例；审查 `docs/reviews/F4.md`（CONDITIONAL → 修复绿）
+- [ ] **F5 起**（P6 replay：canvas planFrame + 控制条 + HUD + 结算 golden 帧快照）按 `docs/frontend-spec.md` §11 推进
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

@@ -143,11 +143,11 @@ test('renderScreen：已实现屏拼接 shell+main；未实现屏 fallback', asy
   assert.ok(r.main.some((b) => b.id === 'btn_ai'));
   const all = allBoxes(r);
   assert.equal(all.length, r.shell.length + r.main.length);
-  const unimplemented = renderScreen({ ...st, screen: 'battle' }, {});
+  const unimplemented = renderScreen({ ...st, screen: 'editor' }, {});
   assert.equal(unimplemented.main[0].id, 'screen_unimplemented');
-  assert.equal(VIEWS.battle, null, 'F4 前未注册');
-  // F3：warehouse/gacha 已注册并有布局
-  assert.ok(VIEWS.warehouse.layout && VIEWS.gacha.layout, 'gacha/warehouse 已挂');
+  assert.equal(VIEWS.editor, null, 'F6 前未注册');
+  // F3/F4：已实现屏有布局
+  assert.ok(VIEWS.warehouse.layout && VIEWS.gacha.layout && VIEWS.battle.layout, 'gacha/warehouse/battle 已挂');
   const whR = renderScreen({ ...st, screen: 'warehouse' }, {});
   assert.ok(whR.main.some((b) => b.id.startsWith('wh_tab_')), '仓库屏盒');
 });

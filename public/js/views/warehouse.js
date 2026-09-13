@@ -27,7 +27,8 @@ const BTN_PITCH = SIZES.buttonGhost.h + 2; // 34：按钮间 2px 间隙（行距
 
 // 候选插件（纯函数预过滤——权威校验仍在后端；仅提示可装项）：
 // kind 匹配（角色目标 ← 角色插件；技能目标 ← 技能插件）+ 未装备（equipped !== true）+ 段位门控（unlockTier ≤ tier）
-export function candidatesFor(item, warehouse, tierName) {
+// + slot 预过滤（F4，F3 P2★：插件模板 slot 与目标槽 type 匹配——真数据错配面 ~86% 由此消除）
+export function candidatesFor(item, warehouse, tierName, slotType) {
   if (!item) return [];
   const wantKind = item.kind === 'role' ? 'rolePlugin' : item.kind === 'skill' ? 'skillPlugin' : null;
   if (!wantKind) return [];
@@ -38,6 +39,7 @@ export function candidatesFor(item, warehouse, tierName) {
     if (p.uid === item.uid) return false;
     if (p.equipped) return false;
     if (p.unlockTier && tierRank(p.unlockTier) > myRank) return false;
+    if (slotType !== undefined && p.slot !== undefined && p.slot !== slotType) return false; // 仅槽型已知才过滤（无 slot 字段者放行给后端）
     return true;
   });
 }
@@ -111,7 +113,7 @@ export function warehouseLayout(state) {
         sy += BTN_PITCH;
         continue;
       }
-      const cands = candidatesFor(selectedItem, state.warehouse, state.tier);
+      const cands = candidatesFor(selectedItem, state.warehouse, state.tier, s.type); // F4：槽型预过滤
       for (const p of cands) {
         // 预检：按钮落地后不得越过 DETAIL_MAX_Y（F3 审查 P1 修复——原后置 break 让按钮底部越到 580 面板之下）
         if (sy + SIZES.buttonGhost.h > DETAIL_MAX_Y) break;

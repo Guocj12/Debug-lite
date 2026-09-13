@@ -83,6 +83,35 @@ export const EFFECTS = {
     if (r.ok) ctx.dispatch({ type: 'panel/loaded', payload: r.data.panel });
     else toastCtx(ctx, { type: 'panel/show' }, r);
   },
+  // ---- F4 对战动作 ----
+  // battle/run：POST /battle（B22 完整双配置）→ battle/loaded → goto replay
+  // F4 审查 P1：请求体必须带 warehouse——loadout 装配引用（role/skills[].slots[].pluginUid）需要
+  // 仓库做引用完整性校验（T-PB-9）；缺省 → 后端 409 missing_warehouse（真后端探针实证）。
+  'battle/run': async (ctx, action) => {
+    const st = ctx.store();
+    const r = await ctx.api.post('/battle', {
+      p1: st.loadout, p2: (action.payload && action.payload.opponent) || null,
+      seed: st.seed, tier: st.tier, warehouse: st.warehouse,
+    });
+    if (r.ok) {
+      ctx.dispatch({ type: 'battle/loaded', payload: { frames: r.data.frames || [], result: { winner: r.data.winner, ticks: r.data.ticks } } });
+      ctx.dispatch({ type: 'goto', payload: { screen: 'replay' } });
+    } else {
+      toastCtx(ctx, action, r);
+    }
+  },
+  // seed/random：随机种子（ctx.randomInt 注入缝——app 浏览器侧可注入 crypto；缺省 Date.now 派生；
+  // 随机性属客户端选择域，非战斗确定性输入（同 seed 复现语义不受影响）
+  'seed/random': async (ctx) => {
+    const rnd = (ctx.randomInt && ctx.randomInt()) || ((Date.now() >>> 0) % 0x7fffffff) + 1;
+    ctx.dispatch({ type: 'seed/set', payload: { seed: rnd } });
+  },
+  // battle/opp：对手选择（无副作用——仅存 activeTab）
+  'battle/opp': async (ctx, action) => {
+    const st = ctx.store();
+    ctx.dispatch({ type: 'battle/opp/set', payload: { id: action.payload.id } });
+    void st;
+  },
   // store/save：落盘（由各业务 effect 触发）
   'store/save': async (ctx, action) => {
     if (ctx.save) ctx.save(ctx.store());
