@@ -22,7 +22,7 @@
 | `core/field.js` | `FIELD_PX/CELL_PX/ACTOR_HALF/START_X/START_FACING/BASE_DEF`；`clampX` / `cellOf` / `xCenter` / `cellRange` / `baseOf` / `touchesBase` | L0 + battle-config（D-04/D-05） | B1 |
 | `core/effects.js` | `addEffect(state, effect)`（补 uid + addedTick，下一 tick 起效）/ `resolveContinuous(state)`（clamp/递减/移除，入口先清 remaining≤0）/ `resolveControl(effects, aiAction)` → `{action}`（'wait' 眩晕；`{action:'forced_move',dir,cells}` 位移意图，B8 落位；无控制原样）/ `resolveControlMove(x, otherX, displacement)`（单方落位 gap≥64 + clamp，T-FD-4）/ `withLogger` | L1 | B2 ✅ |
 | `core/items.js`（数值） | `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf` / `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox` / `applyAffixes` / `validateUnlock` | L1 + 数据表 | B3 |
-| `core/items.js`（仓库） | `createWarehouse` / `addItem` / `assemble` / `disassemble` / `buildLoadout` / 序列化往返 | L3（同文件双分层，见 check-arch 契约） | B18 |
+| `core/items.js`（仓库，L3） | `emptyWarehouse` / `assemble(wh,{targetUid,pluginUid,slotIndex,tier})` / `disassemble(wh,{targetUid,slotIndex})` / `buildLoadout`（B19） / 序列化往返 | L3（同文件双分层，见 check-arch 契约） | B18/B19 |
 | `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateLoadout` / `availableNodes`（**validateAi 于 B13 退役**，AI 程序校验由 ai/ast.validate 统一承担） | L1 + unlock.json | B4 ✅（B13 更新） |
 | `core/roles.js` | `instantiateRole` / `applyTypeModifier` / `equipPlugins` / `getFinalStats` | L2 | B5 |
 | `core/skills.js` | `instantiateSkill` / `applySkillPlugins` / `canCast` / `buildSkillAction` / `coveredCellRanges` | L2 + field/battle-config | B6 |
@@ -48,7 +48,7 @@
 | GET | `/api/v1/unlock?tier=` | 该段位可用节点/模板/技能 | 400 `bad_tier` | B4 接 |
 | POST | `/api/v1/box` | 开箱（seed/tier/次数；tier **缺省 common**；段位序号即品质上限 D-122 且截断后按剩余池重归一；409 `tier_locked` = 门控后掉落池为空——当前数据防御路径；seed 缺省生成并回带） | 400 / 409 `tier_locked` | B17 ✅ |
 | GET | `/api/v1/warehouse` | 仓库（分桶 + 装配状态） | — | B18 |
-| POST | `/api/v1/warehouse/assemble` | 装配 | 409 `slot_type_mismatch`/`points_exceeded`/`slot_occupied`/`tier_locked` | B18 |
+| POST | `/api/v1/warehouse/assemble` | 装配 | 409 `slot_type_mismatch`/`points_exceeded`/`slot_occupied`/`tier_locked`/`plugin_equipped`/`item_missing` | B18 |
 | POST | `/api/v1/warehouse/disassemble` | 拆卸 | 404 `slot_empty`/`plugin_missing` | B18 |
 | GET/POST | `/api/v1/loadout` | 读取/保存出战配置（**无持久化**，D-123） | 409 `loadout_invalid` | B19 |
 | POST | `/api/v1/panel` | 最终面板（五维/regen/special/技能参数） | 409 | B19 |
@@ -128,7 +128,7 @@ health | data <table>
 | L0 | rng | `rng.create`(info) / `rng.draw`(trace) / `rng.stream`(debug) | B1 |
 | L0 | field | `field.clamp`(trace) / `field.base`(debug) | B1 |
 | L1 | effects | `effect.add`(debug) / `effect.continuous`(trace) / `effect.expire`(debug) / `effect.control.override`(debug) | B2 |
-| L1 | items | `items.roll.quality`(debug) / `items.generate`(debug) / `items.affix.apply`(trace) / `items.assemble`(info) / `items.reject`(warn) | B3/B18 |
+| L1 | items | `items.roll.quality`(debug) / `items.generate`(debug) / `items.affix.apply`(trace) / `items.assemble`(info) / `items.disassemble`(info) / `items.reject`(warn) | B3/B18 |
 | L1 | unlock | `unlock.check`(debug) / `unlock.reject`(warn) | B4 |
 | L2 | roles | `role.instantiate`(debug) / `role.panel`(debug) | B5 |
 | L2 | skills | `skill.instantiate`(debug) / `skill.plugin.apply`(debug) / `skill.cast`(info) / `skill.reject`(warn) / `skill.area`(trace) | B6 |

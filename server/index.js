@@ -116,6 +116,11 @@ function createHandler(logger, extraRoutes) {
           }, logger),
         };
       },
+      '/api/v1/warehouse': () => {
+        // B18：仓库规范骨架（分桶键 + 装配状态语义；D-123 不持久化，客户端状态为权威）
+        const itemsApi = require('./core/items.js');
+        return { status: 200, payload: okEnvelope(itemsApi.emptyWarehouse(), logger) };
+      },
     },
     POST: {
       '/api/v1/log-level': async (ctx) => {
@@ -216,6 +221,33 @@ function createHandler(logger, extraRoutes) {
           return { status: r.status, payload: errEnvelope(r.code, r.message || '开箱请求被拒绝') };
         }
         return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
+      '/api/v1/warehouse/assemble': async (ctx) => {
+        // B18：装配（I-10 四道校验 + T-PB-8 唯一性；原子性：失败状态完全不变；日志经 withLogger 接线）
+        const itemsApi = require('./core/items.js').withLogger(logger);
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        if (!body.warehouse || typeof body.warehouse !== 'object' ||
+            typeof body.targetUid !== 'string' || typeof body.pluginUid !== 'string' ||
+            !Number.isInteger(body.slotIndex) || body.slotIndex < 0) {
+          return { status: 400, payload: errEnvelope('bad_request', '需要 warehouse 对象 + targetUid/pluginUid 字符串 + slotIndex 非负整数') };
+        }
+        const r = itemsApi.assemble(body.warehouse, { targetUid: body.targetUid, pluginUid: body.pluginUid, slotIndex: body.slotIndex, tier: body.tier });
+        if (!r.ok) return { status: 409, payload: errEnvelope(r.code, r.message) };
+        return { status: 200, payload: okEnvelope({ warehouse: r.warehouse }, logger) };
+      },
+      '/api/v1/warehouse/disassemble': async (ctx) => {
+        // B18：拆卸（I-11；空槽 404 slot_empty；悬挂引用 404 plugin_missing）
+        const itemsApi = require('./core/items.js').withLogger(logger);
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        if (!body.warehouse || typeof body.warehouse !== 'object' ||
+            typeof body.targetUid !== 'string' || !Number.isInteger(body.slotIndex) || body.slotIndex < 0) {
+          return { status: 400, payload: errEnvelope('bad_request', '需要 warehouse 对象 + targetUid 字符串 + slotIndex 非负整数') };
+        }
+        const r = itemsApi.disassemble(body.warehouse, { targetUid: body.targetUid, slotIndex: body.slotIndex });
+        if (!r.ok) return { status: 404, payload: errEnvelope(r.code, r.message) };
+        return { status: 200, payload: okEnvelope({ warehouse: r.warehouse }, logger) };
       },
     },
   };

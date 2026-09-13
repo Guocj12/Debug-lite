@@ -263,10 +263,108 @@ function makeItems(logger) {
     return a <= b;
   }
 
+  // ===== L3：仓库与装配（B18；同文件双分层——纯函数，输入仓库不变，成功返回新仓库）=====
+
+  // 仓库规范骨架（分桶键；GET /api/v1/warehouse 返回）
+  function emptyWarehouse() {
+    return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } };
+  }
+
+  function cloneWarehouse(wh) {
+    try {
+      return wh ? JSON.parse(JSON.stringify(wh)) : emptyWarehouse();
+    } catch (e) {
+      return emptyWarehouse();
+    }
+  }
+
+  // 仓库内按 uid 找物品（全桶扫描；桶值非数组 → 跳过，P1-2 防御）
+  function findItem(wh, uid) {
+    const buckets = (wh && wh.buckets) || {};
+    for (const list of Object.values(buckets)) {
+      if (!Array.isArray(list)) continue;
+      const it = list.find((x) => x && x.uid === uid);
+      if (it) return it;
+    }
+    return null;
+  }
+
+  // 拒绝出口（P2-2 日志管线）：所有装配/拆卸拒绝统一记 items.reject(warn)（§4.6 冻结）
+  function rejectOut(code, message) {
+    L.warn('items', 'items.reject', `${code}: ${message}`, { code, message });
+    return { ok: false, code, message };
+  }
+
+  // 装配（I-10 全案 + T-PB-8 唯一性）：四道校验任失败 → {ok:false, code, message}（状态完全不变）；
+  // 成功 → {ok:true, warehouse}（新仓库，入参不变）。点数仅角色目标（I-10d）。
+  function assemble(wh, req) {
+    const w = cloneWarehouse(wh || emptyWarehouse());
+    const targetUid = req && req.targetUid;
+    const pluginUid = req && req.pluginUid;
+    const slotIndex = req && req.slotIndex;
+    const tier = (req && req.tier) || 'mythic'; // 装配门控缺省宽松（显式 tier 才收紧；与 core openBox 缺省一致）
+    const target = findItem(w, targetUid);
+    const plugin = findItem(w, pluginUid);
+    if (!target) return rejectOut('item_missing', `目标物品不存在: ${targetUid}`);
+    if (!plugin) return rejectOut('item_missing', `插件不存在: ${pluginUid}`);
+    // ① 目标必须是模板物品（角色/技能）；把插件当目标 → slot_type_mismatch（P1-1 第三态）
+    if (target.kind !== 'role' && target.kind !== 'skill') return rejectOut('slot_type_mismatch', '目标必须是角色/技能物品');
+    // ② 类别匹配（I-10a）
+    if (target.kind === 'role' && plugin.kind !== 'rolePlugin') return rejectOut('slot_type_mismatch', '角色目标只能装角色插件');
+    if (target.kind === 'skill' && plugin.kind !== 'skillPlugin') return rejectOut('slot_type_mismatch', '技能目标只能装技能插件');
+    // ③ 插槽存在且类型匹配（I-10b；越界/非数字/slots 缺失 → 槽位不可用，P1-1 防御）
+    const slots = Array.isArray(target.slots) ? target.slots : null;
+    const slot = slots && Number.isInteger(slotIndex) && slotIndex >= 0 ? slots[slotIndex] : null;
+    if (!slot) return rejectOut('slot_type_mismatch', `槽位不可用: ${slotIndex}`);
+    if (plugin.slot !== slot.type) return rejectOut('slot_type_mismatch', `插件槽 ${plugin.slot} ≠ 插槽 ${slot.type}`);
+    // ④ 段位门控（I-10c）：插件与目标均须 ≤ tier
+    if (!validateUnlock(plugin, tier) || !validateUnlock(target, tier)) return rejectOut('tier_locked', '物品解锁段位高于玩家段位');
+    // ⑤ 点数预算（I-10d，仅角色目标）
+    if (target.kind === 'role') {
+      const used = slots.reduce((sum, s) => {
+        if (!s.pluginUid) return sum;
+        const p = findItem(w, s.pluginUid);
+        return sum + (p && Number.isFinite(p.pointCost) ? p.pointCost : 0);
+      }, 0);
+      if (used + (plugin.pointCost || 0) > (target.pluginPoints || 0)) {
+        return rejectOut('points_exceeded', `点数超限: ${used}+${plugin.pointCost} > ${target.pluginPoints}`);
+      }
+    }
+    // ⑥ 空槽（I-10e）与 ⑦ 唯一性（T-PB-8：同一插件不可同时装两处）
+    if (slot.pluginUid !== null && slot.pluginUid !== undefined) return rejectOut('slot_occupied', `槽位已被占用: ${slot.pluginUid}`);
+    if (plugin.equipped === true) return rejectOut('plugin_equipped', `插件已装配别处: ${pluginUid}`);
+    // 提交（在克隆上）
+    target.slots[slotIndex].pluginUid = plugin.uid;
+    plugin.equipped = true;
+    L.info('items', 'items.assemble', `装 ${pluginUid} → ${targetUid}[${slotIndex}]`, { targetUid, slotIndex, pluginUid, tier });
+    return { ok: true, warehouse: w };
+  }
+
+  // 拆卸（I-11 全案）：空槽 → slot_empty；悬挂引用（T-PB-9 防御）→ plugin_missing；成功清槽 + equipped=false
+  function disassemble(wh, req) {
+    const w = cloneWarehouse(wh || emptyWarehouse());
+    const targetUid = req && req.targetUid;
+    const slotIndex = req && req.slotIndex;
+    const target = findItem(w, targetUid);
+    if (!target) return rejectOut('plugin_missing', `目标物品不存在: ${targetUid}`);
+    const slots = Array.isArray(target.slots) ? target.slots : null;
+    const slot = slots && Number.isInteger(slotIndex) && slotIndex >= 0 ? slots[slotIndex] : null;
+    if (!slot) return rejectOut('slot_empty', `槽位不可用: ${slotIndex}`);
+    const pluginUid = slot.pluginUid;
+    if (pluginUid === null || pluginUid === undefined) return rejectOut('slot_empty', `槽位为空: ${targetUid}[${slotIndex}]`);
+    const plugin = findItem(w, pluginUid);
+    if (!plugin) return rejectOut('plugin_missing', `装配引用的插件不在仓库: ${pluginUid}`);
+    slot.pluginUid = null;
+    plugin.equipped = false;
+    L.info('items', 'items.disassemble', `卸 ${pluginUid} ← ${targetUid}[${slotIndex}]`, { targetUid, slotIndex, pluginUid });
+    return { ok: true, warehouse: w };
+  }
+
   return {
     getQuality, rollQuality, rollSlotCount, tierOf,
     generateRoleItem, generateSkillItem, generatePlugin, openBox,
     applyAffixes, validateUnlock,
+    emptyWarehouse, assemble, disassemble,
   };
 }
 

@@ -1,7 +1,7 @@
 'use strict';
 /* cli/index.js —— 命令行"操作台"（P0-8，契约 docs/interfaces.md §3）
  * 只走 HTTP（不 require server/core，L14）；退出码 0 成功 / 1 业务拒绝 / 2 参数错误（T-CLI-2）。
- * P0-8 子命令：health / data / log；B16：ai validate|compile|battle。
+ * P0-8 子命令：health / data / log；B16：ai validate|compile|battle；B17：box；B18：wh list|assemble|disassemble。
  */
 const http = require('node:http');
 const fs = require('node:fs');
@@ -15,6 +15,9 @@ commands:
   ai <validate|compile|battle> --file ai.json [--tier <t>] [--opponent <o>] [--seed <n>]
                                   # AI 程序校验/编译/对战（B16）
   box [--seed <n>] [--tier <t>] [--times <k>]  # 开箱（B17）
+  wh list --file wh.json                       # 本地仓库摘要（分桶 + 装配状态）
+  wh assemble|disassemble --file wh.json --item <uid> --slot <i> [--plugin <uid>] [--tier <t>]
+                                               # 装配/拆卸（B18，经 HTTP）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -192,6 +195,71 @@ async function main(argv, options) {
         } else {
           console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
           code = 1;
+        }
+      }
+    } else if (cmd === 'wh') {
+      // wh list --file wh.json | wh assemble|disassemble --file wh.json --item <uid> --slot <i> [--plugin <uid>] [--tier <t>]
+      const sub = args[1];
+      if (!['list', 'assemble', 'disassemble'].includes(sub)) {
+        console.error(`wh 需要一个子命令（list/assemble/disassemble）\n${USAGE}`);
+        code = 2;
+      } else {
+        let file = null;
+        let item = null;
+        let slot = null;
+        let plugin = null;
+        let tier = null;
+        let valid = true;
+        for (let i = 2; i < args.length; i++) {
+          const a = args[i];
+          if (a === '--file') file = args[++i];
+          else if (a === '--item') item = args[++i];
+          else if (a === '--slot') slot = args[++i];
+          else if (a === '--plugin') plugin = args[++i];
+          else if (a === '--tier') tier = args[++i];
+          else { valid = false; }
+        }
+        if (!valid || !file) {
+          console.error(`wh ${sub} 参数非法（--file 必填）\n${USAGE}`);
+          code = 2;
+        } else if (sub !== 'list' && (!item || slot === null || Number.isNaN(Number(slot)))) {
+          console.error(`wh ${sub} 需要 --item <uid> 与 --slot <i>\n${USAGE}`);
+          code = 2;
+        } else if (sub === 'assemble' && !plugin) {
+          console.error(`wh assemble 需要 --plugin <uid>\n${USAGE}`);
+          code = 2;
+        } else {
+          let wh = null;
+          try {
+            wh = JSON.parse(fs.readFileSync(file, 'utf8'));
+          } catch (e) {
+            console.error(`读取/解析 ${file} 失败: ${e.message}`);
+            code = 2;
+          }
+          if (wh !== null) {
+            if (sub === 'list') {
+              // 本地摘要（只读文件；不 require core）
+              const buckets = (wh.buckets || {});
+              const summary = {};
+              for (const [kind, items] of Object.entries(buckets)) {
+                summary[kind] = { total: (items || []).length, equipped: (items || []).filter((x) => x && x.equipped).length };
+              }
+              console.log(JSON.stringify(summary, null, 2));
+              code = 0;
+            } else {
+              const body = { warehouse: wh, targetUid: item, slotIndex: Number(slot) };
+              if (plugin !== null) body.pluginUid = plugin;
+              if (tier !== null) body.tier = tier;
+              const r = await httpJson(baseUrl, 'POST', `/api/v1/warehouse/${sub}`, body);
+              if (r.status === 200) {
+                console.log(JSON.stringify(r.body.data.warehouse, null, 2));
+                code = 0;
+              } else {
+                console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+                code = 1;
+              }
+            }
+          }
         }
       }
     } else {
