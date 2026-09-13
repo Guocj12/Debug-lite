@@ -7,6 +7,20 @@ export function toastCtx(ctx, action, r) {
   }
 }
 
+// wh/disassemble / wh/take（详情槽位拆卸，F3）：POST → 整体替换（共用实现）
+async function doDisassemble(ctx, action) {
+  const st = ctx.store();
+  const r = await ctx.api.post('/warehouse/disassemble', {
+    warehouse: st.warehouse, targetUid: action.payload.targetUid, slotIndex: action.payload.slotIndex,
+  });
+  if (r.ok) {
+    ctx.dispatch({ type: 'wh/replaced', payload: { warehouse: r.data.warehouse } });
+    ctx.dispatch({ type: 'store/save' });
+  } else {
+    toastCtx(ctx, action, r);
+  }
+}
+
 export const EFFECTS = {
   // tier/set：GET /unlock?tier= → tierInfo（§4.2 行）
   'tier/set': async (ctx, action) => {
@@ -36,19 +50,9 @@ export const EFFECTS = {
       toastCtx(ctx, action, r);
     }
   },
-  // wh/disassemble：POST → 整体替换
-  'wh/disassemble': async (ctx, action) => {
-    const st = ctx.store();
-    const r = await ctx.api.post('/warehouse/disassemble', {
-      warehouse: st.warehouse, targetUid: action.payload.targetUid, slotIndex: action.payload.slotIndex,
-    });
-    if (r.ok) {
-      ctx.dispatch({ type: 'wh/replaced', payload: { warehouse: r.data.warehouse } });
-      ctx.dispatch({ type: 'store/save' });
-    } else {
-      toastCtx(ctx, action, r);
-    }
-  },
+  // wh/disassemble / wh/take（详情槽位拆卸，F3）：共用 doDisassemble（定义在上方）
+  'wh/disassemble': doDisassemble,
+  'wh/take': doDisassemble,
   // loadout/validate：POST /loadout → details 展开（错误入 aiDraft.errors）
   'loadout/validate': async (ctx) => {
     const st = ctx.store();

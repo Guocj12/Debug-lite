@@ -82,7 +82,8 @@ docs/progress.md       本文件
 - [x] **F0（P6 首）** 静态托管（public/shared/assets 六前缀 + 穿越加固）、gate 五目录阈值、check-arch public→L7（ESM 扫描）、public 骨架（index.html/tokens/ util/log 三态 / app boot）；P2×4 当批落实；457 用例；审查 `docs/reviews/F0.md`（PASS）
 - [x] **F1（P6 基建）** 布局引擎（sizes/layout/verifyLayout 四类自检）+ api client（信封/seed 回带/signal）+ store（reducer buckets 形状 + effects + persist schemaVersion）+ app boot 主流程；P1×5 已修（契约形状断裂/标志缺失/key 分叉）；479 用例；审查 `docs/reviews/F1.md`（CONDITIONAL PASS → 修复后 PASS）
 - [x] **F2（P6 外壳）** shell/menu 四态/settings 日志面板 + mount 装配层（唯一 DOM 写入点/paint+verifyLayout/事件委托 data-action·goto）+ app start 主流程（records 接缝/SAVE_ON_ACTIONS 补齐）；P1×8 已修（含 console 铁律回归）；492 用例；审查 `docs/reviews/F2.md`（CONDITIONAL PASS → 修复后全绿）
-- [ ] **F3 起**（P6 gacha 开箱屏 + warehouse 仓库/装配屏，接 /box /warehouse）按 `docs/frontend-spec.md` §11 推进
+- [x] **F3（P6 gacha+warehouse）** 开箱屏（段位/次数/结果 grid/空态）+ 仓库屏（4 Tab/卡片/详情点数槽位/候选装配/wh·take 拆卸 + 错误 toast 映射）；P1×3 已修（几何重叠/真实形状溢出/空态相交）；503 用例；审查 `docs/reviews/F3.md`（CONDITIONAL → 修复绿；探针 .review-f3/probe-loop.js 真后端全链）
+- [ ] **F4 起**（P6 battle 配置屏 + loadout/面板，接 /battle；candidatesFor 补 slot 预过滤）按 `docs/frontend-spec.md` §11 推进
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

@@ -72,6 +72,10 @@ export function reducer(state, action) {
     }
     case 'wh/replaced':
       return { ...state, warehouse: action.payload.warehouse };
+    case 'wh/tab':
+      return { ...state, ui: { ...state.ui, activeTab: { ...state.ui.activeTab, warehouse: action.payload.key } } };
+    case 'wh/select':
+      return { ...state, ui: { ...state.ui, selected: action.payload.uid } };
     case 'loadout/set': {
       const ld = action.payload.loadout;
       const next = { role: ld.role || state.loadout.role, skills: ld.skills || state.loadout.skills, ai: ld.ai === undefined ? state.loadout.ai : ld.ai };
