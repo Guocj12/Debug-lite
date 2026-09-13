@@ -16,7 +16,8 @@ export function createFrontLog(win, opts) {
     } catch (e) { /* 解析失败保持默认 */ }
     let prefs = null;
     try {
-      const local = w.localStorage && w.localStorage.getItem('logPrefs');
+      // F1 P1-5：与 store/persist 同为 dl.v3.logPrefs（spec §4.3 权威；§2.4 措辞漂移已登记）
+      const local = w.localStorage && w.localStorage.getItem('dl.v3.logPrefs');
       if (local) prefs = JSON.parse(local);
     } catch (e) { /* localStorage 不可用/损坏 → 保持 */ }
     if (prefs && prefs.level) level = prefs.level; // localStorage 优先（F0 审查确认语义）

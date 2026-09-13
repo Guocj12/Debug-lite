@@ -57,16 +57,23 @@ test('util/log：浏览器形态（window.DLLog 桩）→ 引导级别/localStor
       };
     },
   };
-  // 形态 A：localStorage.logPrefs（level + channels，含非法通道值走 parseLevel null 臂）
+  // 形态 A：localStorage.logPrefs（dl.v3.logPrefs key，P1-5）——level + channels（含非法通道值走 parseLevel null 臂）
   const sinkA = [];
+  const lsKeys = [];
   const winA = {
     DLLog: fakeDLLog, location: { href: 'http://x/' },
-    localStorage: { getItem: () => JSON.stringify({ level: 'info', channels: { render: 'trace', api: 'bogus' } }) },
+    localStorage: {
+      getItem: (k) => {
+        lsKeys.push(k);
+        return JSON.stringify({ level: 'info', channels: { render: 'trace', api: 'bogus' } });
+      },
+    },
   };
   const logA = mod.createFrontLog(winA, { sink: sinkA });
   logA.info('ui', 'ev.c', 'm3');
   assert.equal(created[0].level, 4, 'localStorage.logPrefs.level 引导（parseLevel → 数值 4=info）');
   assert.equal(created[0].level, LV.info, '与桩映射一致');
+  assert.ok(lsKeys.includes('dl.v3.logPrefs'), 'P1-5：读取 dl.v3.logPrefs 键');
   assert.equal(sinkA.length, 1, 'onRecord → sink 收集');
   assert.equal(sinkA[0].event, 'ev.c');
   // 形态 B：URL ?log=bogus → parseLevel null → 默认 all
@@ -91,26 +98,31 @@ test('util/log：浏览器形态（window.DLLog 桩）→ 引导级别/localStor
   assert.equal(created[2].level, 7, 'localStorage 异常 → ?log=trace 回退生效');
 });
 
-test('app.js boot：注入 fetch 成功/失败两分支 + 默认启动不抛', async () => {
+test('app.js boot：健康检查两分支 + !f 分支 + 默认启动不抛 + menu goto', async () => {
   const mod = await import('../../public/js/app.js');
   const msgs = [];
   const stubLog = {
     info: (ch, ev, msg) => msgs.push([ev, msg]),
     warn: (ch, ev, msg) => msgs.push([ev, msg]),
+    debug: () => {},
+    error: () => {},
     setLevel: () => {}, setChannelLevel: () => {},
   };
-  const data = await mod.boot({
-    fetchImpl: () => Promise.resolve({ json: () => Promise.resolve({ ok: true, data: { version: 'v1' } }) }),
+  const bootA = await mod.boot({
+    fetchImpl: () => Promise.resolve({ json: () => Promise.resolve({ ok: true, data: { version: 'v1', tableNames: ['x'] } }) }),
     log: stubLog,
   });
-  assert.equal(data.ok, true);
-  assert.ok(msgs[0][1].includes('bootstrap'), 'store.boot 启动日志');
-  const bad = await mod.boot({
+  await bootA.health; // meta/loaded 异步落定
+  assert.equal(bootA.store.getState().screen, 'menu', 'boot 后 goto menu');
+  assert.equal(bootA.store.getState().meta.serverOk, true, 'meta/loaded 生效');
+  assert.ok(msgs.some(([ev]) => ev === 'store.boot'), 'store.boot 日志');
+  const bootB = await mod.boot({
     fetchImpl: () => Promise.reject(new Error('boom')),
     log: stubLog,
   });
-  assert.equal(bad, null);
+  await bootB.health; // 失败分支异步落定
   assert.ok(msgs.some(([ev, msg]) => ev === 'store.boot' && msg === 'server unreachable'), '失败分支 warn');
-  const none = await mod.boot({ fetchImpl: null, log: stubLog });
-  assert.equal(none, null, '无 fetch 环境 → resolve null（!f 分支）');
+  const bootC = await mod.boot({ fetchImpl: null, log: stubLog });
+  assert.equal(bootC.store.getState().screen, 'menu', '无 fetch 也正常 goto（!f 分支）');
+  assert.equal(typeof bootC.api.raw, 'function', 'api 就绪（createApi 全局 fetch 兜底）');
 });
