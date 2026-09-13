@@ -1,6 +1,6 @@
 # 后端验收手册（给用户的检查流程）
 
-> 版本：v1　更新：2026-09-13（**本次实测记录**：B25 之后的全量验收）
+> 版本：v1　更新：2026-09-13（本次实测记录：B25 之后的全量验收）
 > 用途：AI 声称"后端开发完成、测试全过"时，按本手册逐项复核并给出结论。
 > 适用对象：`dev` 分支（目前领先 `main` **36 个提交**；main 尚未合流，见 §7）。
 
@@ -108,3 +108,24 @@ npm run cli -- ranked run --seed 11         # P5：10 场离线结算
 - box 确定性比较要**剥离 uid**（进程内单调，设计语义）。
 - PowerShell 5.1 直读中文文档会乱码（显示层），以 `git show` / Node 读取为准。
 - 验收用的临时文件用完即删（不污染 `.audit/`）。
+
+---
+
+## 8. 前端（P6）阶段验收补充（2026-09-13 实测）
+
+**结论：前端 F0…F7 全部落地（42/42 批勾选，含后端 34 批）。**
+
+| 检查 | 实测 |
+|---|---|
+| 前端批次 | F0 静态托管/gate 五目录阈值 → F1 布局引擎+store → F2 外壳/menu/settings → F3 gacha/warehouse → F4 battle 配置 → F5 replay（planFrame/canvas）→ F6 Blockly 编辑器 → F7 存档/AI 轨迹可视化 |
+| 门禁 | **实跑 `npm run gate` = 9 PASS / 0 FAIL / 0 PEND** |
+| 覆盖率 | F7 提交自报 cov **98.02 / 88.44 / 96.60**（含 public/js，check-arch 49 文件） |
+| 整链路冒烟（起服务实测） | `GET /`(index.html 913B)、`/js/app.js`、`/css/tokens.css`、`/shared/log.js`、`/js/editor/bridge.js`、`/assets/sprites.json`、`/api/v1/health`(ok)、`/api/v1/data/battle-config`(ok)、未知路径 404 |
+| 确定性与审查 | golden 战斗 18 tick 一致（gate 项 8）；每批审查 CONDITIONAL→修复 |
+
+**浏览器侧手工验收建议**：
+1. 起服务后浏览器打开 `http://127.0.0.1:3000`，走一遍 菜单→开箱→装配→编辑 AI→对战→回放 闭环；
+2. 对照 `docs/screens.md` 的 7 屏示意图核对布局（重叠/越界已在每批 verifyLayout 自检暴露）；
+3. F12：`window.DLLog` 面板确认 render/ui/api 事件齐全、`dlui.exportTrace()` 可导出。
+
+**遗留（前端阶段后仍未处理，非阻断）**：L-1 flake（本次 3 次实跑未复现，观察中）；L-3 `.review-*` 追踪 **67** 个文件待清理；L-4 `.audit/verify-rest.js` 待删；L-5 `main` 落后 dev **44** 提交待合流。
