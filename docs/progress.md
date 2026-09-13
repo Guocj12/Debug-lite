@@ -70,7 +70,8 @@ docs/progress.md       本文件
 - [x] **B17（P3 首）** 开箱 + 掉落池门控 + `POST /api/v1/box` + CLI `box`（**D-122 段位品质上限 + 截断后重归一**，P1×1 已修；unit/api/cli 共 12 用例，367 用例；审查 `docs/reviews/B17.md`）
 - [x] **B18** 仓库 + 装配/拆卸 API（`GET /warehouse` 骨架 + assemble/disassemble 纯函数 L3 + HTTP + CLI `wh`；I-10 四道校验/原子性/T-PB-1..8 + T-PB-4 数据表单调；P1×2 已修——插件当目标/畸形桶崩溃 500；387 用例；审查 `docs/reviews/B18.md`）
 - [x] **B19** loadout API + 校验 + `POST /api/v1/panel`（server/loadout.js L6 编排：I-12 全案/T-PB-9 引用完整/T-PB-8 双引用/门控 + 面板聚合五维/regen/special/技能参数；P1×3 已修——skills 畸形 500、双引用面板双计、无 warehouse 空转；404 用例；审查 `docs/reviews/B19.md`）
-- [ ] **B20 起**（P3：技能插件消耗补偿逐档数组与聚合 + 面板一致性）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B20** 技能插件消耗补偿与聚合 + 面板一致性（skills.applySkillPlugins 接入 buildPanel：delta=costDeltaBase×tier、减耗 ceil、倍率/冷却聚合；插件 unlockTier×2 数据门控真分支——T-PB-7/U-5d 兑现；P1×1 已修——聚合路径未知模板 500；411 用例；审查 `docs/reviews/B20.md`）
+- [ ] **B21 起**（P3 收尾：数值校准/附加效果登记/dodge 数值）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

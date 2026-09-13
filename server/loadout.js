@@ -5,7 +5,16 @@
  * D-123：不持久化——POST 校验后回带；GET 返回规范骨架。事件：api.*（api 行）；unlock.reject/ai.validate（既有行）。
  */
 const items = require('./core/items.js');
+const skills = require('./core/skills.js'); // B20：技能插件词条聚合（消耗补偿/减耗/倍率冷却，L2 → L6 合法）
 const ast = require('./ai/ast.js');
+
+// 技能实例化基准 rng（面板聚合只需确定性基=1；物品参数随后覆盖）
+const STUB_RNG = { float: () => 1, int: () => 0, pick: () => 0 };
+
+// 数据表存在性索引（P1-1 修复：聚合路径不得对客户端注入的未知模板/品质崩溃）
+const ROLE_IDS = new Set(require('./data/role-templates.json').roleTemplates.map((r) => r.id));
+const SKILL_IDS = new Set(require('./data/skill-templates.json').skillTemplates.map((s) => s.id));
+const QUALITY_IDS = new Set(require('./data/qualities.json').qualities.map((q) => q.id));
 
 // 规范骨架（GET /api/v1/loadout）
 const EMPTY_LOADOUT = { role: null, skills: [null, null, null], ai: null };
@@ -29,12 +38,24 @@ function validateLoadout(loadout, opts) {
   const errors = [];
   if (!ld.role || typeof ld.role !== 'object') errors.push({ where: 'role', code: 'loadout_invalid', message: '缺少角色物品' });
   else if (ld.role.kind !== 'role') errors.push({ where: 'role', code: 'loadout_invalid', message: '角色位置必须是角色物品' });
+  else {
+    if (!ROLE_IDS.has(ld.role.templateId)) errors.push({ where: 'role', code: 'loadout_invalid', message: `未知角色模板 ${ld.role.templateId}` });
+    if (ld.role.quality !== undefined && ld.role.quality !== null && !QUALITY_IDS.has(ld.role.quality)) {
+      errors.push({ where: 'role', code: 'loadout_invalid', message: `未知品质 ${ld.role.quality}` });
+    }
+  }
   const skills = Array.isArray(ld.skills) ? ld.skills : null;
   if (!skills || skills.length !== 3) errors.push({ where: 'skills', code: 'loadout_invalid', message: `技能必须恰 3 个（实际 ${skills ? skills.length : 0}）` });
   else {
     skills.forEach((s, i) => {
       if (!s || typeof s !== 'object') errors.push({ where: `skills[${i}]`, code: 'loadout_invalid', message: `技能位置缺失: ${i}` });
       else if (s.kind !== 'skill') errors.push({ where: `skills[${i}]`, code: 'loadout_invalid', message: '技能位置必须是技能物品' });
+      else {
+        if (!SKILL_IDS.has(s.templateId)) errors.push({ where: `skills[${i}]`, code: 'loadout_invalid', message: `未知技能模板 ${s.templateId}` });
+        if (s.quality !== undefined && s.quality !== null && !QUALITY_IDS.has(s.quality)) {
+          errors.push({ where: `skills[${i}]`, code: 'loadout_invalid', message: `未知品质 ${s.quality}` });
+        }
+      }
     });
   }
   if (!ld.ai || typeof ld.ai !== 'object') errors.push({ where: 'ai', code: 'loadout_invalid', message: '缺少 AI 程序' });
@@ -42,10 +63,10 @@ function validateLoadout(loadout, opts) {
   // 存在装配引用但无 warehouse → missing_warehouse（P1-3：引用校验不得空转）。
   const refs = [];
   if (ld.role && Array.isArray(ld.role.slots)) {
-    ld.role.slots.forEach((s, i) => { if (s && s.pluginUid) refs.push({ where: `role.slots[${i}]`, uid: s.pluginUid }); });
+    ld.role.slots.forEach((s, i) => { if (s && s.pluginUid) refs.push({ where: `role.slots[${i}]`, uid: s.pluginUid, kind: 'role' }); });
   }
   (skills || []).forEach((sk, j) => {
-    if (sk && Array.isArray(sk.slots)) sk.slots.forEach((s, i) => { if (s && s.pluginUid) refs.push({ where: `skills[${j}].slots[${i}]`, uid: s.pluginUid }); });
+    if (sk && Array.isArray(sk.slots)) sk.slots.forEach((s, i) => { if (s && s.pluginUid) refs.push({ where: `skills[${j}].slots[${i}]`, uid: s.pluginUid, kind: 'skill' }); });
   });
   if (refs.length > 0 && !wh) {
     errors.push({ where: 'warehouse', code: 'missing_warehouse', message: '出战配置含装配引用，需要 warehouse 校验引用完整性（T-PB-9）' });
@@ -60,6 +81,8 @@ function validateLoadout(loadout, opts) {
       const p = findItem(wh, ref.uid);
       if (!p) errors.push({ where: ref.where, code: 'loadout_invalid', message: `悬挂引用 ${ref.uid}` });
       else if (p.equipped !== true) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件未装配: ${ref.uid}` });
+      else if (p.kind !== (ref.kind === 'role' ? 'rolePlugin' : 'skillPlugin')) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件类别与槽位不匹配: ${ref.uid}` });
+      else if (ref.kind === 'skill' && (!Number.isInteger(p.tier) || p.tier < 1)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `技能插件缺档位（tier 必须 ≥1）: ${ref.uid}` });
       else if (!items.validateUnlock(p, tier)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件 ${ref.uid} 需 ${p.unlockTier} 段位（P2-2 复核）` });
     }
   }
@@ -103,7 +126,29 @@ function buildPanel(loadout, opts) {
         pluginPoints: role.pluginPoints === undefined ? null : role.pluginPoints,
         quality: role.quality === undefined ? null : role.quality,
       },
-      skills: loadout.skills.map((sk) => ({ templateId: sk.templateId, uid: sk.uid, params: sk.params || {} })),
+      skills: loadout.skills.map((sk) => {
+        // B20：技能插件词条聚合——消耗补偿（D-113：costDeltaBase×tier）/减耗 ceil（S-3）/倍率·冷却·射程等
+        const plugins = [];
+        for (const s of sk.slots || []) {
+          if (!s || !s.pluginUid) continue;
+          const p = findItem(wh, s.pluginUid);
+          if (p) plugins.push(p);
+        }
+        let params = Object.assign({}, sk.params || {});
+        if (plugins.length > 0) {
+          const base = skills.instantiateSkill(sk.templateId, sk.quality || 'common', STUB_RNG);
+          const applied = skills.applySkillPlugins(Object.assign({}, base, sk.params || {}), plugins);
+          params = {};
+          for (const k of ['multiplier', 'cost', 'cooldown', 'bulletLevel', 'bulletCount', 'range', 'area', 'distance', 'passThroughEnemy', 'dealDamage', 'fullDodgeDuring', 'falloff']) {
+            if (applied[k] !== undefined) params[k] = applied[k];
+          }
+          // P2-②：未列入白名单的自定义字段保留透传（聚合投影不丢非标准字段）
+          for (const k of Object.keys(sk.params || {})) {
+            if (params[k] === undefined) params[k] = sk.params[k];
+          }
+        }
+        return { templateId: sk.templateId, uid: sk.uid, params };
+      }),
     },
   };
 }

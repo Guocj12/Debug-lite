@@ -7,7 +7,7 @@
       "regen": { "mp": 1, "sp": 2 }, "pluginPoints": 4, "unlockTier": "common"
     },
     "skills": [
-      { "uid": "s1", "kind": "skill", "templateId": "skill_straight_precise", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.2, "cost": { "hp": 0, "mp": 10, "sp": 0 }, "cooldown": 3, "bulletLevel": 3 }, "unlockTier": "common" },
+      { "uid": "s1", "kind": "skill", "templateId": "skill_straight_precise", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": "qx" } ], "params": { "multiplier": 1.2, "cost": { "hp": 0, "mp": 10, "sp": 0 }, "cooldown": 3, "bulletLevel": 3 }, "unlockTier": "common" },
       { "uid": "s2", "kind": "skill", "templateId": "skill_melee_whirl", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.1, "cost": { "hp": 0, "mp": 8, "sp": 0 }, "cooldown": 2, "bulletLevel": 2 }, "unlockTier": "common" },
       { "uid": "s3", "kind": "skill", "templateId": "skill_dash_bash", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.4, "cost": { "hp": 0, "mp": 12, "sp": 0 }, "cooldown": 4, "bulletLevel": 4 }, "unlockTier": "mythic" }
     ],
@@ -25,7 +25,7 @@
     "buckets": {
       "role": [ { "uid": "r1", "kind": "role", "templateId": "role_bal", "name": "均衡", "quality": "epic", "slotCount": 2, "slots": [ { "type": "atk", "pluginUid": "pa" }, { "type": "hp", "pluginUid": "pb" } ], "stats": { "hp": 100, "atk": 20, "def": 8, "sp": 60, "mp": 40 }, "regen": { "mp": 1, "sp": 2 }, "pluginPoints": 4, "unlockTier": "common" } ],
       "skill": [
-        { "uid": "s1", "kind": "skill", "templateId": "skill_straight_precise", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.2, "cost": { "hp": 0, "mp": 10, "sp": 0 }, "cooldown": 3, "bulletLevel": 3 }, "unlockTier": "common" },
+        { "uid": "s1", "kind": "skill", "templateId": "skill_straight_precise", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": "qx" } ], "params": { "multiplier": 1.2, "cost": { "hp": 0, "mp": 10, "sp": 0 }, "cooldown": 3, "bulletLevel": 3 }, "unlockTier": "common" },
         { "uid": "s2", "kind": "skill", "templateId": "skill_melee_whirl", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.1, "cost": { "hp": 0, "mp": 8, "sp": 0 }, "cooldown": 2, "bulletLevel": 2 }, "unlockTier": "common" },
         { "uid": "s3", "kind": "skill", "templateId": "skill_dash_bash", "quality": "rare", "slotCount": 1, "slots": [ { "type": "basic", "pluginUid": null } ], "params": { "multiplier": 1.4, "cost": { "hp": 0, "mp": 12, "sp": 0 }, "cooldown": 4, "bulletLevel": 4 }, "unlockTier": "mythic" }
       ],
@@ -33,7 +33,9 @@
         { "uid": "pa", "kind": "rolePlugin", "id": "atk_up", "name": "攻击强化", "slot": "atk", "quality": "rare", "tier": 2, "pointCost": 2, "affixes": [ { "id": "atk_pct", "desc": "+10%", "params": { "v": 0.10 } }, { "id": "crit_chance", "desc": "+50%", "params": { "v": 0.5 } } ], "equipped": true },
         { "uid": "pb", "kind": "rolePlugin", "id": "hp_up", "name": "生命强化", "slot": "hp", "quality": "rare", "tier": 2, "pointCost": 2, "affixes": [ { "id": "hp_flat", "desc": "+50", "params": { "v": 50 } } ], "equipped": true }
       ],
-      "skillPlugin": []
+      "skillPlugin": [
+        { "uid": "qx", "kind": "skillPlugin", "id": "sp_mult", "name": "倍率提升", "slot": "basic", "quality": "rare", "tier": 2, "affixes": [ { "id": "mult_up", "desc": "+15%", "params": { "v": 0.15 } } ], "costDeltaByTier": { "mp": [2, 4, 6] }, "equipped": true }
+      ]
     }
   }
 }

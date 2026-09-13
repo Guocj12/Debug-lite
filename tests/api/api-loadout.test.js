@@ -109,3 +109,22 @@ test('P1 回归（HTTP）：skills 缺失 409 非 500；装配引用缺 warehous
     assert.ok(logger.records.some((x) => x.event === 'api.reject' && x.level === 'warn'), 'api.reject(warn) 记录（P2-5）');
   });
 });
+
+test('B20 P1-1 回归（HTTP）：未知技能模板 → 双端点 409 非 500；/panel 聚合值 1.38/16 显式断言', async () => {
+  await withServer(null, async ({ port }) => {
+    const f = JSON.parse(JSON.stringify(LOADOUT));
+    f.loadout.skills[2].templateId = 'nope_not_a_template';
+    const r1 = await request(port, 'POST', '/api/v1/loadout', { loadout: f.loadout, warehouse: f.warehouse });
+    assert.equal(r1.status, 409, r1.raw);
+    assert.equal(r1.body.error.code, 'loadout_invalid');
+    assert.ok(r1.body.error.details.some((e) => e.message.includes('未知技能模板')), JSON.stringify(r1.body.error.details));
+    const r2 = await request(port, 'POST', '/api/v1/panel', { loadout: f.loadout, warehouse: f.warehouse });
+    assert.equal(r2.status, 409, r2.raw);
+    assert.equal(r2.body.error.code, 'loadout_invalid', '面板不再 500');
+    // 聚合值经 HTTP 显式断言（P2-⑥）
+    const pnl = await request(port, 'POST', '/api/v1/panel', { loadout: LOADOUT.loadout, warehouse: LOADOUT.warehouse, tier: 'mythic' });
+    assert.equal(pnl.status, 200);
+    assert.equal(pnl.body.data.panel.skills[0].params.multiplier, 1.38, '倍率聚合经 HTTP');
+    assert.equal(pnl.body.data.panel.skills[0].params.cost.mp, 16, '消耗补偿经 HTTP');
+  });
+});

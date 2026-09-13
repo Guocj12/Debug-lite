@@ -92,7 +92,8 @@ test('B19 面板聚合（I-8 公式机器推导）：atk=round(20×1.10)=22、hp
   assert.equal(role.pluginPoints, 4);
   assert.equal(role.quality, 'epic');
   assert.equal(p.panel.skills.length, 3, '技能参数直透');
-  assert.equal(p.panel.skills[0].params.multiplier, 1.2);
+  assert.equal(p.panel.skills[0].params.multiplier, 1.38, 'B20 聚合：1.2×(1+0.15) = 1.38（sp_mult）');
+  assert.equal(p.panel.skills[0].params.cost.mp, 16, 'B20 消耗补偿：10 + costDeltaBase.rare(3)×tier2 = 16');
   // 非法 loadout → panel 拒绝
   const f2 = fixture();
   f2.loadout.skills = f2.loadout.skills.slice(0, 2);
@@ -171,4 +172,48 @@ test('P2-3 回归：AI 错误截断标记', () => {
   const v = loadout.validateLoadout(f.loadout, { warehouse: f.warehouse, tier: 'mythic' });
   assert.equal(v.ok, false);
   assert.ok(v.errors.some((e) => e.message.includes('已截断')), JSON.stringify(v.errors));
+});
+
+// P1-1 回归（审查 docs/reviews/B20.md）：未知模板/品质 → 校验拒绝（面板聚合路径不再 500）
+test('P1-1 回归：未知技能模板/品质 → loadout_invalid（不抛）', () => {
+  const f1 = fixture();
+  f1.loadout.skills[0].templateId = 'nope_not_a_template';
+  const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
+  assert.equal(v1.ok, false, '未知技能模板拒绝');
+  assert.ok(v1.errors.some((e) => e.where === 'skills[0]' && e.message.includes('未知技能模板')), JSON.stringify(v1.errors));
+  const f2 = fixture();
+  f2.loadout.skills[1].quality = 'platinum';
+  const v2 = loadout.validateLoadout(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
+  assert.equal(v2.ok, false, '未知品质拒绝');
+  const f3 = fixture();
+  f3.loadout.role.templateId = 'ghost_role';
+  const v3 = loadout.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'mythic' });
+  assert.equal(v3.ok, false, '未知角色模板拒绝');
+  // 面板同样拒绝（不再 500）
+  const p1 = loadout.buildPanel(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
+  assert.equal(p1.ok, false);
+  assert.equal(p1.errors[0].where, 'skills[0]');
+});
+
+// B20 P2 落实回归：类别错配/缺 tier 插件拒绝；junkField 透传；非声明维不变
+test('B20 P2 回归：技能槽类别错配与缺 tier 插件拒绝；junkField 透传；非声明维度不变', () => {
+  const f1 = fixture();
+  f1.loadout.skills[0].slots = [{ type: 'basic', pluginUid: 'pa' }]; // rolePlugin 装技能槽
+  const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
+  assert.equal(v1.ok, false, '类别错配拒绝');
+  const f2 = fixture();
+  f2.warehouse.buckets.skillPlugin[0].tier = undefined; // qx 缺 tier
+  const v2 = loadout.validateLoadout(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
+  assert.equal(v2.ok, false, '技能插件缺 tier 拒绝');
+  // 非白名单字段透传（P2-②）
+  const f3 = fixture();
+  f3.loadout.skills[0].params.junkField = 'keep-me';
+  const p = loadout.buildPanel(f3.loadout, { warehouse: f3.warehouse, tier: 'mythic' });
+  assert.equal(p.ok, true);
+  assert.equal(p.panel.skills[0].params.junkField, 'keep-me', '非标准字段保留');
+  // 非声明维不变（P2-⑦）：qx 只声明 mp；hp/sp 不被补偿
+  const p4 = loadout.buildPanel(fixture().loadout, { warehouse: fixture().warehouse, tier: 'mythic' });
+  assert.equal(p4.panel.skills[0].params.cost.hp, 0, 'hp 非声明维不变');
+  assert.equal(p4.panel.skills[0].params.cost.sp, 0, 'sp 非声明维不变');
+  assert.equal(p4.panel.skills[0].params.cost.mp, 16, 'mp 声明维 = 10 + 3×2');
 });

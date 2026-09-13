@@ -27,7 +27,7 @@
     { "id": "rp_sp_opt", "kind": "rolePlugin", "slot": "sp", "category": "SP 优化",
       "name": "SP 优化·上限", "desc": "sp 上限 +15%（基础值，随档位缩放）",
       "affixes": [{ "id": "sp_cap", "desc": "sp 上限 +15%", "params": { "v": 0.15 } }],
-      "pointCostByTier": [1, 2, 3] },
+      "pointCostByTier": [1, 2, 3], "unlockTier": "legendary" },
     { "id": "rp_sp_regen", "kind": "rolePlugin", "slot": "sp", "category": "SP 优化",
       "name": "SP 优化·回复", "desc": "sp 回复 +1（叠加到模板 regen，D-110）",
       "affixes": [{ "id": "sp_regen", "desc": "sp 回复 +1", "params": { "v": 1 } }],
@@ -84,7 +84,7 @@
     { "id": "sp_displacement", "kind": "skillPlugin", "slot": "basic", "category": "位移增强",
       "name": "位移增强", "desc": "位移距离 +1",
       "affixes": [{ "id": "distance_plus", "desc": "位移距离 +1", "params": { "v": 1 } }],
-      "costDeltaByTier": { "sp": [2, 4, 6] } },
+      "costDeltaByTier": { "sp": [2, 4, 6] }, "unlockTier": "legendary" },
 
     { "id": "sp_stun", "kind": "skillPlugin", "slot": "special", "category": "眩晕",
       "name": "眩晕", "desc": "命中眩晕 1 tick",

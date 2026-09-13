@@ -636,7 +636,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B17 `[x]` | 开箱 + 掉落池门控 + `POST /api/v1/box` | T-IT-1/2/3/9 | `items.*`/`api.*`（审查 `docs/reviews/B17.md`，P1×1 已修——品质池截断重归一；P2×8 落实） |
 | B18 `[x]` | 仓库 + **装配/拆卸 API**（槽位/点数/档位/词条聚合） | T-IT-7/10 + T-PB-1/2/3/4 | `items.assemble/disassemble/reject`（审查 `docs/reviews/B18.md`，P1×2 已修——插件当目标/畸形桶 500；P2 落实） |
 | B19 `[x]` | loadout API + 校验 + `POST /api/v1/panel` | T-IT-8 + T-RK-6 | `api.reject`（审查 `docs/reviews/B19.md`，P1×3 已修——skills 畸形 500/双引用面板双计/无 warehouse 空转；P2×7 落实） |
-| B20 | 技能插件消耗补偿（逐档数组）与聚合 + 面板一致性 | T-PB-5/6/7/8/9 |
+| B20 `[x]` | 技能插件消耗补偿（逐档数组）与聚合 + 面板一致性 | T-PB-5/6/7/8/9 | `skill.plugin.apply`/`items.*`（审查 `docs/reviews/B20.md`，P1×1 已修——聚合路径未知模板 500；U-5d 真分支兑现） |
 | B21 | 属性测试全套 + 数值校准（只改数据表） | T-PB-10 + T-PB-1..10 全量 |
 
 ### P4 回放数据（2 批）

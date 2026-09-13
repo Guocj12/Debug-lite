@@ -78,14 +78,20 @@ test('U-5 validateLoadout：角色/技能/插件门控（tier_locked + 具体成
   }, 'rare');
   assert.equal(badSkill.ok, false);
   assert.equal(badSkill.errors[0].where, 'skills[0]', 'U-5c 技能槽定位');
-  // U-5d 插件门控：当前数据 29 个插件全部无 unlockTier（UL-7 佐证）→ 任意段位通过；
-  // 高段位插件路径（tier_locked）随 B20 引入带 unlockTier 的插件后由 T-PB-7 覆盖
+  // U-5d 插件门控（B20 真分支：rp_sp_opt 已带 unlockTier=legendary；此前 29 插件全无该字段）
   const badPlugin = ul.validateLoadout({
+    role: { templateId: 'role_bal' },
+    skills: [],
+    plugins: [{ uid: 'p1', id: 'rp_sp_opt' }],
+  }, 'rare');
+  assert.equal(badPlugin.ok, false, 'U-5d 真分支：legendary 插件 + rare → tier_locked');
+  assert.equal(badPlugin.errors[0].code, 'tier_locked');
+  const okPlugin = ul.validateLoadout({
     role: { templateId: 'role_bal' },
     skills: [],
     plugins: [{ uid: 'p1', id: 'sp_buff' }],
   }, 'common');
-  assert.equal(badPlugin.ok, true, 'U-5d（当前数据）: 无 unlockTier 插件不拒绝');
+  assert.equal(okPlugin.ok, true, '无 unlockTier 插件不拒绝');
 });
 
 test('UL-6 tierIndex：段位序号映射与未知保守', () => {
@@ -112,7 +118,10 @@ test('UL-7 T-IT-6 协同：filterByTier 与 items.validateUnlock 同一口径', 
   const plugins = new Set(PLUGINS.map((x) => x.unlockTier || 'common'));
   assert.deepEqual([...roles].sort(), ['common', 'legendary', 'rare'], '角色覆盖 3 段');
   assert.deepEqual([...skills].sort(), ['common', 'epic', 'legendary', 'mythic', 'rare'], '技能覆盖 5 段');
-  assert.deepEqual([...plugins], ['common'], '插件当前全部已解锁');
+  assert.deepEqual([...plugins].sort(), ['common', 'legendary'], 'B20：插件引入 unlockTier（rp_sp_opt/sp_displacement）——T-PB-7 真分支');
+  // 门控插件与 filterByTier 同口径（T-PB-7）
+  assert.deepEqual(ul.filterByTier(PLUGINS, 'rare').map((x) => x.id).filter((id) => id === 'rp_sp_opt' || id === 'sp_displacement'), [], 'rare 剔除高段位插件');
+  assert.deepEqual(ul.filterByTier(PLUGINS, 'legendary').map((x) => x.id).filter((id) => id === 'rp_sp_opt' || id === 'sp_displacement'), ['rp_sp_opt', 'sp_displacement'], 'legendary 保留');
 });
 
 test('UL-9 健壮性：validateLoadout(null/空) 不抛错（审查 P2-b）', () => {
