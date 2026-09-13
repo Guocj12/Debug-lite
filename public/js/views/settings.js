@@ -38,9 +38,14 @@ export function settingsLayout(state, opts) {
     channels: o.channels || null,
   });
   const boxes = [
-    panel(16, 80, 560, 560, '外观', 'settings_left'),
-    { id: 'settings_left_hint', kind: 'text', parent: 'settings_left', x: 32, y: 112, w: 500, h: 24, z: 1, visible: true, text: '（F7 打磨期扩展）' },
+    panel(16, 80, 560, 560, '设置', 'settings_left'),
+    // F7：存档/种子/段位/关于（§6.7 left）——纵向分排，x/y 均与相邻盒错位防 overlap 自检
+    { id: 'settings_seed', kind: 'text', parent: 'settings_left', x: 32, y: 112, w: 300, h: 24, z: 1, visible: true, text: `当前 seed：${state.seed === null ? '（未设）' : state.seed}` },
   ];
+  boxes.push(button('settings_seed_rand', 340, 108, '随机', { parent: 'settings_left', z: 1, ghost: true, action: 'seed/random' }));
+  boxes.push({ id: 'settings_about', kind: 'text', parent: 'settings_left', x: 32, y: 152, w: 500, h: 20, z: 1, visible: true, text: 'Debug-Lite v3（P6 前端完整版）' });
+  boxes.push(button('settings_export', 32, 184, '导出存档', { parent: 'settings_left', z: 1, action: 'save/export' }));
+  boxes.push({ id: 'settings_import_hint', kind: 'text', parent: 'settings_left', x: 204, y: 196, w: 340, h: 20, z: 1, visible: true, text: '导入：打磨期文件选择' });
   boxes.push(panel(600, 80, 664, 560, '日志面板', 'settings_log'));
   // 级别下拉（三个常用级别；payload 带 level——F2 审查 P1：原 radio 无 payload → log/level 死控件）
   let ly = 116;

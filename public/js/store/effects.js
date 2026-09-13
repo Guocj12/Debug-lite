@@ -206,6 +206,35 @@ export const EFFECTS = {
   'store/save': async (ctx, action) => {
     if (ctx.save) ctx.save(ctx.store());
   },
+  // ---- F7 存档导出/导入（§8：download/读文件；doc 守卫，node 安全跳过）----
+  'save/export': async (ctx) => {
+    const { exportState } = await import('../util/archive.js');
+    const text = exportState(ctx.store());
+    const doc = ctx.doc;
+    if (doc && typeof doc.createElement === 'function') {
+      try {
+        const blob = new Blob([text], { type: 'application/json' });
+        const a = doc.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `dl-save-${Date.now()}.json`;
+        a.click();
+      } catch (e) { /* 导出失败静默 */ }
+    }
+  },
+  'save/import': async (ctx, action) => {
+    const payload = action.payload;
+    const text = payload && typeof payload.text === 'string' ? payload.text : null;
+    if (!text) return;
+    const { parseImport } = await import('../util/archive.js');
+    const r = parseImport(text);
+    if (r.ok) {
+      ctx.dispatch({ type: 'save/import', payload: r.data });
+      if (ctx.save) ctx.save(ctx.store());
+      ctx.dispatch({ type: 'ui/toast', payload: { text: '存档已导入', kind: 'ok' } });
+    } else {
+      ctx.dispatch({ type: 'ui/toast', payload: { text: `导入失败：${r.message}`, kind: 'danger' } });
+    }
+  },
   // ---- F2 设置/日志动作 ----
   // boot：menu error 态「重试」按钮（§6.1 data-action="boot"；F2 审查 P1：原无 EFFECTS['boot'] → 死按钮）
   // 语义：重查 /health → meta/loaded（等价于 app 启动步骤 5 的健康检查；unlock 拉取见 P2 登记）

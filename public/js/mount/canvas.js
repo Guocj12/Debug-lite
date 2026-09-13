@@ -42,6 +42,20 @@ export function paintCanvas(canvasEl, primitives, opts) {
     } else if (p.kind === 'collision') {
       ctx.fillStyle = PALETTE.collision;
       ctx.fillRect(p.x, p.y, p.w, p.h);
+    } else if (p.kind === 'trail') {
+      // F7 AI 轨迹线（连续 toX 折线；透明色弱化）
+      if (typeof ctx.beginPath === 'function') {
+        ctx.strokeStyle = p.owner === 'p1' ? PALETTE.p1 : PALETTE.p2;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        const pts = p.points || [];
+        for (let i = 0; i < pts.length; i++) {
+          if (i === 0) ctx.moveTo(pts[i].x, pts[i].y);
+          else ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     } else if (p.kind === 'verdict') {
       ctx.fillStyle = PALETTE.verdict;
       if (typeof ctx.fillText === 'function') ctx.fillText(p.text || '', p.x, p.y + 12);

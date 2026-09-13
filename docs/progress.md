@@ -86,7 +86,7 @@ docs/progress.md       本文件
 - [x] **F4（P6 battle 配置）** 对手三模板（kiter/charger/cautious 真数据同步锁）+ config/preview 布局 + seed 随机/面板预览 + battle/run 起战链（补 warehouse）+ candidatesFor slot 预过滤（P2★）；P1×2 已修（模板非存在技能 id/起战缺 wh，真后端探针实证）；510 用例；审查 `docs/reviews/F4.md`（CONDITIONAL → 修复绿）
 - [x] **F5（P6 replay）** planFrame 图元投影（players/bullets/hits/collision/verdict 1px）+ replay 屏（画布/控制条播放状态机/倍速/HUD 含基地条/aiTrace 实装字段/结算 Modal）+ paintCanvas 绘制器 + mount 坐标注入（injectBoxGeom 根因修复）；P1×5 已修；516 用例；审查 `docs/reviews/F5.md`（CONDITIONAL → 修复绿；探针 .review-f5 双局真帧）
 - [x] **F6（P6 editor）** bridge 契约直译（JSON↔AST 18 块型 16 节点 双向等价）+ toolbox 节点键门控 + Blockly 装配点（#blocklyDiv 骨架/presetLoop 真预置/高亮链/离屏 dispose）+ /vendor/blockly 静态路由（首次外部依赖 blockly 13.3.0）+ ai/edit 带 tier·compile programHash·试运行帧包装；P1×6 已修；527 用例；审查 `docs/reviews/F6.md`（CONDITIONAL → 修复绿；探针双向等价 + 穿越矩阵）
-- [ ] **F7 起（P6 收尾）** 自定义 Blockly 块定义 + AI 轨迹可视化 + 存档 export/import + 打磨（伤害跳字/震动）按 `docs/frontend-spec.md` §11 推进
+- [x] **F7（P6 收官：存档/轨迹/块注册/设置控件）** 存档 export/import（exportState=persistFields 全量 + parseImport schemaVersion 校验/形状归一 buckets+loadout 三槽）+ AI 轨迹（planTrail 限长 32 + canvas trail 折线 globalAlpha 0.4 + mount paint 并入）+ 自定义块注册（16 型对齐 bridge 词汇，接线 mount 装配点，F6 P2-1 闭环）+ settings 新控件（seed 行/随机/导出/关于/导入提示）+ 打磨登记（伤害跳字/震动/tick 滑块/导入文件选择器/块视觉 init）；审查 `docs/reviews/F7.md`（CONDITIONAL → 修复绿：P0 块词汇 20→16、P1 扁平仓库归一 + skills 三槽）；533 用例；gate 9 PASS；**P6 前端 7 屏全部完成（F0..F7）——后端 P0..P5 31 批 + 前端 8 批全量收口**
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

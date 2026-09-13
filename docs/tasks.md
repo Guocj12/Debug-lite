@@ -666,7 +666,9 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | F4 `[x]` | loadout/面板 + battle 配置屏（接 /battle） | 配置→对战闭环用例 | P1×2 已修（对手模板非存在技能 id 必 409/起战缺 warehouse）（审查 `docs/reviews/F4.md`） |
 | F5 `[x]` | replay：canvas planFrame + 控制条 + HUD + 结算（golden 帧快照） | render 快照绿 | P1×5 已修（暂停死按钮/结算时刻/坐标注入根因/基地条/aiTrace 字段——浏览器全部屏此前堆叠 (0,0)）（审查 `docs/reviews/F5.md`） |
 | F6 `[x]` | editor：Blockly blocks/bridge/main + 门控 + 实时校验（blockly 13.3.0 已装） | bridge 往返测试 | P1×6 已修（bridge 方言→契约直译根因/带 tier/compile programHash/帧形状/装配接线/门控键位）（审查 `docs/reviews/F6.md`，含双向等价实证） |
-| F7 | AI 轨迹可视化 + 存档 export/import + 打磨 | 全流程用例 |
+| F7 `[x]` | AI 轨迹可视化 + 存档 export/import + 自定义块注册（16 型对齐 bridge）+ 打磨 | 全流程用例 | P0×1 已修（块词汇 20→16 对齐 bridge + 注册接线 mount，F6 P2-1 闭环）+ P1×2 已修（扁平仓库 import 归一 buckets/loadout skills 三槽）（审查 `docs/reviews/F7.md`） |
+
+> F7 登记（审查留档）：自定义块视觉 init 已最小化（setColour/setPreviousStatement/setNextStatement/appendDummyInput，无 setOutput/形状/颜色细分）——块型 16 键与 bridge 块 JSON 词汇逐字一致（F7 审查 P0 修正）；表达式块视觉（setOutput/连接形状）、toolbox 分类与序列化高亮样式留待打磨（F6 P2-1 收口：注册已接线至 mount 装配点）。存档导入的 UI 文件选择器为打磨项（设置屏仅「导入提示」占位）。
 
 ---
 

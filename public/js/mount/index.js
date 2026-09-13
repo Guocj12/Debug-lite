@@ -3,8 +3,10 @@ import { boxesToHtml, collectBoxes, validateBoxIds } from './render.js';
 import { routeEvent } from './delegate.js';
 import { verifyLayout } from '../ui/verify.js';
 import { planFrame } from '../render/planFrame.js';
+import { planTrail } from '../render/trail.js';
 import { paintCanvas } from './canvas.js';
 import { createEditor, presetLoop, highlightByPath } from '../editor/main.js';
+import { registerBlockTypes } from '../editor/blocks.js'; // F7：自定义块注册（对准 bridge 16 块型；幂等）
 
 // F5 审查 P1：盒坐标注入——.dl-box 携带 data-box-* 坐标，但此前无任何代码把坐标落到元素几何
 // （style.css 注释「坐标由布局层注入（JS 写 position/left/top/width/height），CSS 只负责视觉」从未实现）
@@ -88,6 +90,9 @@ export function mountApp(deps) {
         editorEl.style.zIndex = String(editorBox.z);
       }
       const B = (typeof globalThis !== 'undefined' && globalThis.Blockly) ? globalThis.Blockly : null;
+      // F7：Blockly.Blocks 注册（幂等，null/无 Blocks 安全）——presetLoop newBlock('loop_forever') 依赖
+      // 块定义（F6 P2-1：未注册类型 → Blockly 抛错 → 根循环不落座）；注册 16 型与 bridge 词汇一一对应。
+      registerBlockTypes(B);
       if (B && !editorHandle) {
         editorHandle = createEditor({
           Blockly: B, container: editorEl, dispatch: (a) => store.dispatch(a), debounceMs: 300,
@@ -107,14 +112,16 @@ export function mountApp(deps) {
       if (editorEl && editorEl.style) editorEl.style.display = 'none';
       if (editorHandle) { editorHandle.dispose(); editorHandle = null; }
     }
-    // F5：回放屏画布绘制（画布盒存在 → #battle 元素 → planFrame 图元；no-ctx（测试/doc 缺 canvas）安全跳过）
+    // F5：回放屏画布绘制（画布盒存在 → #battle 元素 → planFrame 图元 + F7 planTrail 轨迹；no-ctx 安全跳过）
     if (st.screen === 'replay') {
       const el = canvasBox && canvasEl ? canvasEl : null;
       if (el) {
         const frames = st.battle.frames;
-        const frame = frames[st.battle.tick || 0];
-        const res = paintCanvas(el, planFrame(frame && frame.diff, st.battle.tick || 0), {});
-        if (log) log.debug('render', 'render.frame', `canvas ${res.painted ? res.count : res.reason}`, { tick: st.battle.tick || 0, painted: res.painted });
+        const tick = st.battle.tick || 0;
+        const frame = frames[tick];
+        const prims = planFrame(frame && frame.diff, tick).concat(planTrail(frames, tick, 'p1')).concat(planTrail(frames, tick, 'p2'));
+        const res = paintCanvas(el, prims, {});
+        if (log) log.debug('render', 'render.frame', `canvas ${res.painted ? res.count : res.reason}`, { tick, painted: res.painted });
       }
     }
     if (log) log.debug('render', 'render.frame', `paint ${st.screen}`, { screen: st.screen, boxes: boxes.length, issues: lastVerify.issues.length });
