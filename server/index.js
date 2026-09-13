@@ -121,6 +121,11 @@ function createHandler(logger, extraRoutes) {
         const itemsApi = require('./core/items.js');
         return { status: 200, payload: okEnvelope(itemsApi.emptyWarehouse(), logger) };
       },
+      '/api/v1/loadout': () => {
+        // B19：出战配置规范骨架（D-123 不持久化；客户端 loadout 为权威，POST 校验回带）
+        const loadoutApi = require('./loadout.js');
+        return { status: 200, payload: okEnvelope({ loadout: loadoutApi.EMPTY_LOADOUT }, logger) };
+      },
     },
     POST: {
       '/api/v1/log-level': async (ctx) => {
@@ -248,6 +253,46 @@ function createHandler(logger, extraRoutes) {
         const r = itemsApi.disassemble(body.warehouse, { targetUid: body.targetUid, slotIndex: body.slotIndex });
         if (!r.ok) return { status: 404, payload: errEnvelope(r.code, r.message) };
         return { status: 200, payload: okEnvelope({ warehouse: r.warehouse }, logger) };
+      },
+      '/api/v1/loadout': async (ctx) => {
+        // B19：出战配置校验（I-12 全案 + T-PB-9 引用完整性 + I-12e 门控）；无持久化回带
+        const loadoutApi = require('./loadout.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        if (!body.loadout || typeof body.loadout !== 'object') {
+          return { status: 400, payload: errEnvelope('bad_request', '需要 loadout 对象') };
+        }
+        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+        const unlockApi = require('./core/unlock.js');
+        if (unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const v = loadoutApi.validateLoadout(body.loadout, { warehouse: body.warehouse, tier });
+        if (!v.ok) {
+          logger.warn('api', 'api.reject', `loadout_invalid: ${v.errors.length} 条`, { path: '/api/v1/loadout', count: v.errors.length, errors: v.errors.slice(0, 5) });
+          return { status: 409, payload: errEnvelope('loadout_invalid', '出战配置不合法', v.errors) };
+        }
+        return { status: 200, payload: okEnvelope({ loadout: body.loadout }, logger) };
+      },
+      '/api/v1/panel': async (ctx) => {
+        // B19：最终面板（五维/regen/special/技能参数；loadout 校验同 /loadout）
+        const loadoutApi = require('./loadout.js');
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        if (!body.loadout || typeof body.loadout !== 'object') {
+          return { status: 400, payload: errEnvelope('bad_request', '需要 loadout 对象') };
+        }
+        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+        const unlockApi = require('./core/unlock.js');
+        if (unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const p = loadoutApi.buildPanel(body.loadout, { warehouse: body.warehouse, tier });
+        if (!p.ok) {
+          logger.warn('api', 'api.reject', `loadout_invalid: ${p.errors.length} 条`, { path: '/api/v1/panel', count: p.errors.length, errors: p.errors.slice(0, 5) });
+          return { status: 409, payload: errEnvelope('loadout_invalid', '出战配置不合法', p.errors) };
+        }
+        return { status: 200, payload: okEnvelope({ panel: p.panel }, logger) };
       },
     },
   };

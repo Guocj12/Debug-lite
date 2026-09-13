@@ -33,6 +33,7 @@
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
 | `server/runner.js` | `compileAi(program, logger)` / `runAiBattle({program,seed,tier,opponent,logger})` / `projectSnapshot(state,owner)` / `OPPONENTS` / `baselinePlayer` | L6 | B16 ✅ |
 | `server/box.js` | `openBoxes({seed,tier,times,items?,logger})`（校验 + 每箱独立 rng 流 + 409 映射）/ `BOX_TIMES_MAX` | L6 | B17 ✅ |
+| `server/loadout.js` | `EMPTY_LOADOUT` / `validateLoadout(loadout,{warehouse,tier})`（I-12 全案 + T-PB-9 引用完整 + T-PB-8 双引用 + 门控）/ `buildPanel`（五维/regen/special/技能参数聚合） | L6 | B19 |
 | `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（D-123：不持久化） | L6 | P5 |
 | `cli/index.js` | 子命令（§3）；**只走 HTTP 不 require core**（L14） | L6 | P0-8 |
 | `server/data/schema.js` | `validateStructure(dataDir, assetsDir?)`（T-DC-1，assets 占位表经可选 assetsDir 校验，缺省推导 `<repo>/assets`）/ `validateConsistency(dataDir)`（T-DC-2）/ `validate` | 数据层 | P0-6 ✅（P0-9 扩展） |
@@ -137,7 +138,7 @@ health | data <table>
 | L4 | damage | `damage.calc`(debug) / `damage.dodge`(debug) / `damage.lifesteal`(trace) | B9 |
 | L5 | ai.ast | `ai.validate`(debug) / `ai.validate.reject`(warn) / `ai.compile`(debug) / `ai.migrate`(info) | B12~B16 |
 | L5 | ai.runtime | `ai.resume`(debug) / `ai.node`(trace) / `ai.action`(info) / `ai.step.limit`(warn) / `ai.depth.limit`(warn) / `trace.truncated`(warn) / `ai.error`(err) | B14~B15 |
-| L6 | api | `api.req`(info) / `api.res`(info) / `api.err`(error) | P0-8 |
+| L6 | api | `api.req`(info) / `api.res`(info) / `api.err`(error) / `api.reject`(warn，业务拒绝带 count/errors，B19) | P0-8/B19 |
 | L6 | cli | `cli.invoke`(info) / `cli.result`(info) | P0-8 |
 | L6 | ranked | `ranked.snapshot`(debug) / `ranked.match`(info) / `ranked.promote`(info) | B24~B25 |
 | P6 | store/view/render/editor | `store.dispatch` / `view.render` / `render.frame` / `render.sprite` / `editor.ast.*` —— 仅登记 | P6 |

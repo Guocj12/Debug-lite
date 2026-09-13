@@ -18,6 +18,7 @@ commands:
   wh list --file wh.json                       # 本地仓库摘要（分桶 + 装配状态）
   wh assemble|disassemble --file wh.json --item <uid> --slot <i> [--plugin <uid>] [--tier <t>]
                                                # 装配/拆卸（B18，经 HTTP）
+  panel --loadout <file> [--tier <t>]          # 最终面板（B19，经 HTTP）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -259,6 +260,43 @@ async function main(argv, options) {
                 code = 1;
               }
             }
+          }
+        }
+      }
+    } else if (cmd === 'panel') {
+      // panel --loadout <file> [--tier <t>]；文件可为裸 loadout 或 {loadout, warehouse} 包装（B19）
+      let file = null;
+      let tier = null;
+      let valid = true;
+      for (let i = 1; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--loadout') file = args[++i];
+        else if (a === '--tier') tier = args[++i];
+        else { valid = false; }
+      }
+      if (!valid || !file) {
+        console.error(`panel 参数非法（--loadout 必填）\n${USAGE}`);
+        code = 2;
+      } else {
+        let raw = null;
+        try {
+          raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch (e) {
+          console.error(`读取/解析 ${file} 失败: ${e.message}`);
+          code = 2;
+        }
+        if (raw !== null) {
+          const loadout = raw && typeof raw === 'object' && raw.loadout ? raw.loadout : raw;
+          const body = { loadout };
+          if (raw && raw.warehouse) body.warehouse = raw.warehouse;
+          if (tier !== null) body.tier = tier;
+          const r = await httpJson(baseUrl, 'POST', '/api/v1/panel', body);
+          if (r.status === 200) {
+            console.log(JSON.stringify(r.body.data.panel, null, 2));
+            code = 0;
+          } else {
+            console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+            code = 1;
           }
         }
       }

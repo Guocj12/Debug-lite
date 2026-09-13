@@ -1,0 +1,10 @@
+{
+  "loadout": {
+    "role": { "uid": "r1", "kind": "role", "templateId": "role_bal", "quality": "epic", "slots": [], "stats": { "hp": 100, "atk": 20, "def": 8, "sp": 60, "mp": 40 }, "regen": { "mp": 1, "sp": 2 }, "pluginPoints": 4, "unlockTier": "common" },
+    "skills": [
+      { "uid": "s1", "kind": "skill", "templateId": "skill_straight_precise", "quality": "rare", "slots": [], "params": { "multiplier": 1.2 } },
+      { "uid": "s2", "kind": "skill", "templateId": "skill_melee_whirl", "quality": "rare", "slots": [], "params": { "multiplier": 1.1 } }
+    ],
+    "ai": { "type": "program", "version": 1, "body": { "type": "seq", "statements": [ { "type": "action", "name": "wait" } ] } }
+  }
+}

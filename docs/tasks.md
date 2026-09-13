@@ -74,7 +74,7 @@ L2  roles · skills(实例化/插件) · bullets
 L3  items(仓库/装配层) · skills(释放/canCast)
 L4  engine            ← 唯一编排者
 L5  ai/ast · ai/runtime      ← 只依赖 L0/L1，不依赖 engine
-L6  server/index.js (/api/v1) · server/runner.js (AI 编排) · server/box.js (开箱编排) · cli/
+L6  server/index.js (/api/v1) · server/runner.js (AI 编排) · server/box.js (开箱编排) · server/loadout.js (出战/面板编排) · cli/
 L7  public/**（P6）
 ```
 - `scripts/check-arch.js`：反向依赖、循环依赖、core 引用 `express/fs/http`、`shared/log.js` 之外的跨层共享 → 失败。
@@ -635,7 +635,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 |---|---|---|
 | B17 `[x]` | 开箱 + 掉落池门控 + `POST /api/v1/box` | T-IT-1/2/3/9 | `items.*`/`api.*`（审查 `docs/reviews/B17.md`，P1×1 已修——品质池截断重归一；P2×8 落实） |
 | B18 `[x]` | 仓库 + **装配/拆卸 API**（槽位/点数/档位/词条聚合） | T-IT-7/10 + T-PB-1/2/3/4 | `items.assemble/disassemble/reject`（审查 `docs/reviews/B18.md`，P1×2 已修——插件当目标/畸形桶 500；P2 落实） |
-| B19 | loadout API + 校验 + `POST /api/v1/panel` | T-IT-8 + T-RK-6 |
+| B19 `[x]` | loadout API + 校验 + `POST /api/v1/panel` | T-IT-8 + T-RK-6 | `api.reject`（审查 `docs/reviews/B19.md`，P1×3 已修——skills 畸形 500/双引用面板双计/无 warehouse 空转；P2×7 落实） |
 | B20 | 技能插件消耗补偿（逐档数组）与聚合 + 面板一致性 | T-PB-5/6/7/8/9 |
 | B21 | 属性测试全套 + 数值校准（只改数据表） | T-PB-10 + T-PB-1..10 全量 |
 
