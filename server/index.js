@@ -55,10 +55,57 @@ function errEnvelope(code, message, details) {
 }
 
 function send(res, status, payload) {
+  if (Buffer.isBuffer(payload)) {
+    res.writeHead(status, { 'content-type': payload._contentType || 'application/octet-stream', 'content-length': payload.length });
+    res.end(payload);
+    return payload.length;
+  }
   const body = JSON.stringify(payload);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body);
   return Buffer.byteLength(body);
+}
+
+// P6 F0 静态资源：public/ + shared/ + assets/（GET；/api/v1/* 由路由优先，不落入）
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const STATIC_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+};
+function staticFile(method, urlPath) {
+  if (method !== 'GET') return null;
+  // F0 P2-1：显式解码（编码型穿越 %2e%2e 归一后统一判拒；解码失败 → 400 bad_static）
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch (e) {
+    return { bad: true, reason: 'uri' };
+  }
+  let rel = null;
+  if (decoded === '/' || decoded === '/index.html') rel = 'public/index.html';
+  else if (decoded.startsWith('/js/')) rel = `public${decoded}`;
+  else if (decoded.startsWith('/css/')) rel = `public${decoded}`;
+  else if (decoded.startsWith('/shared/')) rel = `shared${decoded.slice('/shared'.length)}`;
+  else if (decoded.startsWith('/assets/')) rel = `assets${decoded.slice('/assets'.length)}`;
+  if (rel === null) return null;
+  if (decoded.includes('..') || decoded.includes('\\')) return { bad: true, reason: 'traversal' };
+  const abs = path.join(__dirname, '..', rel);
+  if (!abs.startsWith(path.join(__dirname, '..'))) return { bad: true };
+  let buf;
+  try {
+    buf = fs.readFileSync(abs);
+  } catch (e) {
+    return null; // 不存在 → 404（走 unknown_endpoint）
+  }
+  const ext = path.extname(abs).toLowerCase();
+  const type = STATIC_TYPES[ext] || 'application/octet-stream';
+  const decorated = Buffer.from(buf);
+  decorated._contentType = type; // Buffer 属性随 send 消费（仅静态路径）
+  return { buf: decorated, name: rel };
 }
 
 function readBody(req) {
@@ -422,6 +469,18 @@ return async (req, res) => {
           const r = await handler(ctx);
           status = r.status;
           payload = r.payload;
+        } else {
+          // P6 F0 静态资源（public/ shared/ assets/；GET；路径穿越 → 400 bad_static）
+          const st = staticFile(req.method, urlPath);
+          if (st) {
+            if (st.bad) {
+              status = 400;
+              payload = errEnvelope('bad_static', `非法静态路径 ${urlPath}`);
+            } else {
+              status = 200;
+              payload = st.buf;
+            }
+          }
         }
       }
     } catch (e) {

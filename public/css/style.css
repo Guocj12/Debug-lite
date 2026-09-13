@@ -1,0 +1,23 @@
+/* style.css —— 全局样式骨架（P6 F1 起逐屏补充；类名前缀 .dl-，禁用行内样式） */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+#app { min-height: 100vh; }
+.dl-hidden { display: none !important; }
+.dl-btn {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-s);
+  background: var(--color-panel);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.dl-btn:hover { border-color: var(--color-accent); }
+.dl-btn-primary { border-color: var(--color-accent); color: var(--color-accent); }
+.dl-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: var(--radius-m); padding: var(--space-4); }
+.dl-muted { color: var(--color-muted); }

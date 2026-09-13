@@ -655,9 +655,18 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 > ~~B26 服务端存档~~ **取消**（D-123）：存档延后到 P6（localStorage）。
 
-### P6 前端（**延后，本轮不排批次**）
+### P6 前端（D-124 无框架；批次按 frontend-spec §11，F0 为后端配合）
 
-无框架：纯函数 `render(state) → HTML` + 自研 store（D-124）。含 Blockly 编辑器、仓库/装配、开箱、对战回放、HUD、AI 轨迹可视化 + 前端绘制日志（T-LG-10）。
+| 批次 | 交付物 | 出口证据 |
+|---|---|---|
+| F0 `[x]` | 静态托管（public/shared/assets）+ gate 阈值目录 + check-arch public→L7 + public 骨架（index.html/tokens.css/util/log/app boot） | api-static + frontend/util-log 测试 + gate 9 PASS |
+| F1 | 基建：ui/sizes+layout+verifyLayout、util/log 完善、api/client、store（reducer+persist+effects）、store.boot 主流程 | layout/api/store 单测绿 |
+| F2 | 外壳 + menu + settings（含日志面板） | 四态测试 + 布局核对清单 |
+| F3 | gacha（开箱）+ warehouse（装配/拆卸 + 错误映射） | 端到端 localStorage/API 用例 |
+| F4 | loadout/面板 + battle 配置屏（接 /battle） | 配置→对战闭环用例 |
+| F5 | replay：canvas planFrame + 控制条 + HUD + 结算（golden 帧快照） | render 快照绿 |
+| F6 | editor：Blockly blocks/bridge/main + 门控 + 实时校验（需 npm install blockly，网络阻塞时停下询问） | bridge 往返测试 |
+| F7 | AI 轨迹可视化 + 存档 export/import + 打磨 | 全流程用例 |
 
 ---
 

@@ -79,7 +79,8 @@ docs/progress.md       本文件
 - [x] **B23（P4 收尾）** 文本回放器 CLI（`replay --file/--tick` 打印 px/碰撞/命中/verdict/事件）+ 帧充分性审计（.audit/replay-audit.js：六维 + 第七维链完整性/hp 守恒；雕像局破除——技能局 11 tick/3 命中真实执行；P1×1 已修——畸形帧崩溃误报；433 用例；审查 `docs/reviews/B23.md`）—— **P4 阶段 2/2 批收口**
 - [x] **B24（P5 首）** 排位核心：快照不可变深拷贝（T-RK-5）+ 匹配 10 场（bot 补齐/排除自己/平局不计胜）+ `POST /api/v1/ranked/run` + CLI ranked run（ranked.js L6：抽签确定性、逐场派生种子、invalid 单独计数、ranked.* 日志；P1×1 已修——bot 技能不足 3 全 invalid；444 用例；审查 `docs/reviews/B24.md`）
 - [x] **B25（P5 收尾）** 晋升判定（x=6/D-122）+ 段位→奖励品质 tierReward + `POST /api/v1/ranked/promote`（ranked.promote 事件；promotedAt 顶段口径分离 + wins 上限 + 开箱上限交叉绑定；审查 PASS；450 用例；`docs/reviews/B25.md`）—— **P5 阶段 2/2 批收口，后端全量完成（P0..P5 共 31 批）**
-- [ ] **P6 前端（延后）**：Blockly 编辑器/仓库·开箱 UI/回放可视化/HUD/AI 轨迹 + 前端绘制日志（D-124）；另含遗留清理（fixture 雕像局行动名、unlock.validateLoadout plugins 分支、T-IT-8 面板序列化往返、docs/screens.md 收口等）
+- [x] **F0（P6 首）** 静态托管（public/shared/assets 六前缀 + 穿越加固）、gate 五目录阈值、check-arch public→L7（ESM 扫描）、public 骨架（index.html/tokens/ util/log 三态 / app boot）；P2×4 当批落实；457 用例；审查 `docs/reviews/F0.md`（PASS）
+- [ ] **F1 起**（P6 基建：ui/sizes+layout+verifyLayout、api/client、store reducer+persist+effects、store.boot 主流程）按 `docs/frontend-spec.md` §11 推进
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

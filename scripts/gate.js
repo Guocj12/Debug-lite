@@ -11,7 +11,7 @@ const { analyze } = require('./check-arch.js');
 const REPO = path.join(__dirname, '..');
 const STATIC_SCOPE = ['server/core', 'server/ai']; // 项 1 范围（T-DC-3）
 const CONSOLE_SCOPE = ['server/core'];             // 项 2 范围（T-DC-5）
-const THRESHOLD_DIRS = ['server/core', 'server/ai', 'shared', 'cli']; // 覆盖率阈值目录（§3.4）
+const THRESHOLD_DIRS = ['server/core', 'server/ai', 'shared', 'cli', 'public/js']; // 覆盖率阈值目录（§3.4 + P6 前端 F0）
 const LINE_PCT = 90;
 const BRANCH_PCT = 85;
 const FUNC_PCT = 90;
@@ -377,8 +377,8 @@ async function runSuite(files, withCoverage) {
   return { pass, fail, coverageSummary };
 }
 
-// 纯判定：仅 THRESHOLD_DIRS 四目录、每文件阈值；返回 {ok, under[]}
-// 盲区兜底（P0-5 审查 P1-3）：磁盘上存在、但从未被测试加载（不在 summary）的四目录文件
+// 纯判定：仅 THRESHOLD_DIRS 五目录、每文件阈值；返回 {ok, under[]}
+// 盲区兜底（P0-5 审查 P1-3）：磁盘上存在、但从未被测试加载（不在 summary）的五目录文件
 // 覆盖率视为 0% —— 否则新文件可凭"未加载"逃过门禁。
 function judgeCoverage(coverageSummary, projectRoot) {
   const reported = new Set();
@@ -428,7 +428,7 @@ async function checkTests(options) {
   if (!judged.ok) {
     return resultOf('fail', `覆盖率低于阈值（行${LINE_PCT}/分支${BRANCH_PCT}/函数${FUNC_PCT}）：${judged.under.join('；')}`);
   }
-  return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}`);
+  return resultOf('pass', `${res.pass} 用例通过；五目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}`);
 }
 
 // ---------- 项 8：日志冒烟（B11 激活） ----------

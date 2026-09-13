@@ -1,0 +1,13 @@
+/* tokens.css —— 视觉令牌（frontend-spec §1.4；P6 F0 第一行代码） */
+:root {
+  --color-bg: #0e1116; --color-panel: #161b22; --color-line: #30363d;
+  --color-text: #e6edf3; --color-muted: #8b949e; --color-accent: #58a6ff;
+  --color-danger: #f85149; --color-ok: #3fb950;
+  --color-q-common: #2ecc71; --color-q-rare: #3498db; --color-q-epic: #9b59b6;
+  --color-q-legendary: #e67e22; --color-q-mythic: #1abc9c;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --font-ui: system-ui, sans-serif; --font-mono: ui-monospace, monospace;
+  --radius-s: 4px; --radius-m: 8px; --radius-l: 12px;
+  --z-base: 0; --z-panel: 10; --z-modal: 90; --z-snack: 95;
+}
