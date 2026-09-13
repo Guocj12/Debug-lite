@@ -81,7 +81,8 @@ docs/progress.md       本文件
 - [x] **B25（P5 收尾）** 晋升判定（x=6/D-122）+ 段位→奖励品质 tierReward + `POST /api/v1/ranked/promote`（ranked.promote 事件；promotedAt 顶段口径分离 + wins 上限 + 开箱上限交叉绑定；审查 PASS；450 用例；`docs/reviews/B25.md`）—— **P5 阶段 2/2 批收口，后端全量完成（P0..P5 共 31 批）**
 - [x] **F0（P6 首）** 静态托管（public/shared/assets 六前缀 + 穿越加固）、gate 五目录阈值、check-arch public→L7（ESM 扫描）、public 骨架（index.html/tokens/ util/log 三态 / app boot）；P2×4 当批落实；457 用例；审查 `docs/reviews/F0.md`（PASS）
 - [x] **F1（P6 基建）** 布局引擎（sizes/layout/verifyLayout 四类自检）+ api client（信封/seed 回带/signal）+ store（reducer buckets 形状 + effects + persist schemaVersion）+ app boot 主流程；P1×5 已修（契约形状断裂/标志缺失/key 分叉）；479 用例；审查 `docs/reviews/F1.md`（CONDITIONAL PASS → 修复后 PASS）
-- [ ] **F2 起**（P6 外壳：mount/事件委托 + menu + settings 日志面板）按 `docs/frontend-spec.md` §11 推进
+- [x] **F2（P6 外壳）** shell/menu 四态/settings 日志面板 + mount 装配层（唯一 DOM 写入点/paint+verifyLayout/事件委托 data-action·goto）+ app start 主流程（records 接缝/SAVE_ON_ACTIONS 补齐）；P1×8 已修（含 console 铁律回归）；492 用例；审查 `docs/reviews/F2.md`（CONDITIONAL PASS → 修复后全绿）
+- [ ] **F3 起**（P6 gacha 开箱屏 + warehouse 仓库/装配屏，接 /box /warehouse）按 `docs/frontend-spec.md` §11 推进
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

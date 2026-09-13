@@ -83,6 +83,45 @@ export const EFFECTS = {
   'store/save': async (ctx, action) => {
     if (ctx.save) ctx.save(ctx.store());
   },
+  // ---- F2 设置/日志动作 ----
+  // boot：menu error 态「重试」按钮（§6.1 data-action="boot"；F2 审查 P1：原无 EFFECTS['boot'] → 死按钮）
+  // 语义：重查 /health → meta/loaded（等价于 app 启动步骤 5 的健康检查；unlock 拉取见 P2 登记）
+  'boot': async (ctx) => {
+    const r = await ctx.api.get('/health');
+    ctx.dispatch({ type: 'meta/loaded', payload: { ok: !!r.ok, version: r.ok && r.data && r.data.version, tableNames: r.ok && r.data && r.data.tableNames } });
+    if (ctx.log) {
+      const fn = r.ok ? ctx.log.info : ctx.log.warn;
+      if (fn) fn('store', 'store.boot', r.ok ? 'server ok (retry)' : 'server unreachable (retry)', { ok: !!r.ok });
+    }
+  },
+  'log/level': async (ctx, action) => {
+    const level = action.payload && action.payload.level;
+    if (!level) return;
+    ctx.dispatch({ type: 'log/set', payload: { level } });
+    if (ctx.log && ctx.log.setLevel) ctx.log.setLevel(level);
+  },
+  'log/reset': async (ctx) => {
+    ctx.dispatch({ type: 'log/set', payload: { level: 'debug', channels: {} } });
+    if (ctx.log && ctx.log.setLevel) ctx.log.setLevel('debug');
+  },
+  'log/toggle': async (ctx) => {
+    ctx.dispatch({ type: 'goto', payload: { screen: 'settings' } }); // 外壳日志按钮 → 设置屏
+  },
+  'log/export': async (ctx) => {
+    const records = ctx.records ? ctx.records() : [];
+    const { exportLogs } = await import('../views/settings.js');
+    const text = exportLogs(records, {});
+    const doc = ctx.doc;
+    if (doc && typeof doc.createElement === 'function') {
+      try {
+        const blob = new Blob([text], { type: 'application/json' });
+        const a = doc.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `dl-logs-${Date.now()}.json`;
+        a.click();
+      } catch (e) { /* 导出失败静默（浏览器环境差异） */ }
+    }
+  },
 };
 
 export function runEffect(ctx, action) {

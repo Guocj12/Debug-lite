@@ -36,12 +36,13 @@ export function verifyLayout(boxes) {
       }
     }
   }
-  // overlap：同 z 两可见盒相交（父-子盒除外）
+  // overlap：同 z 两可见盒相交（父-子盒除外；region 容器豁免——屏内容画在其上属设计语义）
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i], b = list[j];
       if (!a.visible || !b.visible || a.z !== b.z) continue;
       if (a.parent === b.id || b.parent === a.id) continue;
+      if (a.kind === 'region' || b.kind === 'region') continue; // F2：shell_main 与其上内容共存
       if (rectsOverlap(a, b)) {
         issues.push({ boxId: a.id, issue: 'overlap', detail: `与 ${b.id} 相交（z=${a.z}）` });
       }

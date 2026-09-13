@@ -125,4 +125,12 @@ test('app.js boot：健康检查两分支 + !f 分支 + 默认启动不抛 + men
   const bootC = await mod.boot({ fetchImpl: null, log: stubLog });
   assert.equal(bootC.store.getState().screen, 'menu', '无 fetch 也正常 goto（!f 分支）');
   assert.equal(typeof bootC.api.raw, 'function', 'api 就绪（createApi 全局 fetch 兜底）');
+  // skipMount 分支（doc 存在但跳过挂载）+ d.records 注入
+  const fakeDoc = { getElementById: () => null, createElement: () => ({ id: '' }), addEventListener: () => {}, removeEventListener: () => {} };
+  const recs = [{ level: 'info', levelValue: 4, channel: 'ui', event: 'x' }];
+  const bootD = await mod.boot({
+    fetchImpl: () => Promise.resolve({ text: () => Promise.resolve('{"ok":true,"data":{}}') }),
+    log: stubLog, doc: fakeDoc, skipMount: true, records: () => recs, loadPersist: () => null,
+  });
+  assert.equal(bootD.mount, null, 'skipMount → 不挂载');
 });

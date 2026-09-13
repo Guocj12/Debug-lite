@@ -53,5 +53,9 @@ export function button(id, x, y, text, opts) {
     id, kind: 'button', parent: o.parent || null,
     x, y, w: sz.w, h: sz.h, z: o.z === undefined ? 0 : o.z, visible: true,
     style: o.style || (ghost ? 'ghost' : 'default'), text, disabled: !!o.disabled,
+    ...(o.action !== undefined ? { action: o.action } : {}),
+    ...(o.goto !== undefined ? { goto: o.goto } : {}),
+    ...(o.payload !== undefined ? { payload: o.payload } : {}),
+    ...(o.detail !== undefined ? { detail: o.detail } : {}),
   };
 }

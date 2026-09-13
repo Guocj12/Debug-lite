@@ -661,7 +661,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 |---|---|---|
 | F0 `[x]` | 静态托管（public/shared/assets）+ gate 阈值目录 + check-arch public→L7 + public 骨架（index.html/tokens.css/util/log/app boot） | api-static + frontend/util-log 测试 + gate 9 PASS |
 | F1 `[x]` | 基建：ui/sizes+layout+verifyLayout、util/log 完善、api/client、store（reducer+persist+effects）、store.boot 主流程 | layout/api/store 单测绿 | P1×5 已修（仓库 buckets 形状/box items 数组/compiling·running 标志/ai·wh 补 tier/logPrefs key）（审查 `docs/reviews/F1.md`） |
-| F2 | 外壳 + menu + settings（含日志面板） | 四态测试 + 布局核对清单 |
+| F2 `[x]` | 外壳 + menu + settings（含日志面板） | 四态测试 + 布局核对清单 | P1×8 已修（按钮栈越界/级别刻度对齐/死控件/死按钮/zconflict/console 铁律/records 接缝/seed 落盘）（审查 `docs/reviews/F2.md`） |
 | F3 | gacha（开箱）+ warehouse（装配/拆卸 + 错误映射） | 端到端 localStorage/API 用例 |
 | F4 | loadout/面板 + battle 配置屏（接 /battle） | 配置→对战闭环用例 |
 | F5 | replay：canvas planFrame + 控制条 + HUD + 结算（golden 帧快照） | render 快照绿 |

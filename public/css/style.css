@@ -21,3 +21,31 @@ body {
 .dl-btn-primary { border-color: var(--color-accent); color: var(--color-accent); }
 .dl-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: var(--radius-m); padding: var(--space-4); }
 .dl-muted { color: var(--color-muted); }
+/* F2：盒模型——坐标由布局层注入（JS 写 position/left/top/width/height），CSS 只负责视觉 */
+.dl-box {
+  position: absolute;
+  box-sizing: border-box;
+  font-family: var(--font-ui);
+  overflow: hidden;
+  border-radius: var(--radius-s);
+}
+.dl-fullwidth { background: var(--color-panel); border-bottom: 1px solid var(--color-line); }
+.dl-badge { border-radius: 50%; }
+.dl-q-common { background: var(--color-q-common); }
+.dl-q-rare { background: var(--color-q-rare); }
+.dl-q-epic { background: var(--color-q-epic); }
+.dl-q-legendary { background: var(--color-q-legendary); }
+.dl-q-mythic { background: var(--color-q-mythic); }
+.dl-text { color: var(--color-text); font-size: 14px; }
+.dl-muted-blue { color: var(--color-muted); }
+.dl-button { border: 1px solid var(--color-line); background: var(--color-panel); color: var(--color-text); cursor: pointer; }
+.dl-button:hover { border-color: var(--color-accent); }
+.dl-primary { border-color: var(--color-accent); color: var(--color-accent); }
+.dl-ghost { background: transparent; }
+.dl-radio { border: 1px solid var(--color-line); color: var(--color-muted); cursor: pointer; }
+.dl-on { border-color: var(--color-accent); color: var(--color-accent); }
+.dl-listitem { display: flex; align-items: center; gap: var(--space-2); color: var(--color-text); font-size: 12px; }
+.dl-listitem .dl-d { color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-region { background: var(--color-bg); }
+#dl-toasts { position: fixed; top: var(--space-4); right: var(--space-4); z-index: var(--z-snack); display: flex; flex-direction: column; gap: var(--space-2); }

@@ -19,6 +19,8 @@ export function createStore(opts) {
     dispatch: (action) => dispatch(action),
     log: o.log || null,
     save: o.save || null,
+    records: o.records || null, // 日志面板数据源（F2）
+    doc: o.doc || null, // 导出下载等浏览器副作用（F2）
   };
   function mergePersist(base, data) {
     return {
