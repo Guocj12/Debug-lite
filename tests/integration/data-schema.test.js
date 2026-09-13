@@ -49,7 +49,7 @@ test('DS-1 真实数据表：结构 + 一致性校验全过（T-DC-1/2 门禁语
   assert.equal(schema.validate(REPO_DATA).ok, true);
 });
 
-test('DS-2 battle-config 冻结数值改动 → fail（§2.5.7 逐值）', () => {
+test('DS-2 battle-config 冻结数值改动 → fail（§2.5.7 逐值；含 B21 defK 入表）', () => {
   withRoot((root) => {
     const bc = readJSON(root, 'battle-config.json');
     bc.cellPx = 63;
@@ -58,6 +58,24 @@ test('DS-2 battle-config 冻结数值改动 → fail（§2.5.7 逐值）', () =>
     const r = schema.validateStructure(root, path.join(root, "assets"));
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('cellPx'), r.detail);
+  });
+  // P1-1 回归（审查 docs/reviews/B21.md）：defK 漂移/缺失必须被冻结校验拦截
+  withRoot((root) => {
+    const bc = readJSON(root, 'battle-config.json');
+    bc.defK = 41;
+    writeJSON(root, 'battle-config.json', bc);
+  }, (root) => {
+    const r = schema.validateStructure(root, path.join(root, "assets"));
+    assert.equal(r.ok, false, 'defK 漂移 40→41 应 fail');
+    assert.ok(r.detail.includes('defK'), r.detail);
+  });
+  withRoot((root) => {
+    const bc = readJSON(root, 'battle-config.json');
+    delete bc.defK;
+    writeJSON(root, 'battle-config.json', bc);
+  }, (root) => {
+    const r = schema.validateStructure(root, path.join(root, "assets"));
+    assert.equal(r.ok, false, 'defK 缺失应 fail');
   });
 });
 

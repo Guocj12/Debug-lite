@@ -27,7 +27,7 @@
 | `core/roles.js` | `instantiateRole` / `applyTypeModifier` / `equipPlugins` / `getFinalStats` | L2 | B5 |
 | `core/skills.js` | `instantiateSkill` / `applySkillPlugins` / `canCast` / `buildSkillAction` / `coveredCellRanges` | L2 + field/battle-config | B6 |
 | `core/bullets.js` | `spawnBullets(battle, act)` / `resolveBullets(battle, ctx)`（当 tick 全解算→{spawns,collides,hits,expires}）/ `solveIntersection(x1,v1,x2,v2,tMax,tMin)`（连续方程原语）/ `bulletBattle(a,b)`（等级矩阵：b1/b2/both/none）/ `bulletsOnField(battle)` | L2 | B7 ✅ |
-| `core/engine.js` | `createBattle(config)`（`config.logger` 注入）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`；`resolveActorCollision` | L4（编排 L0~L2，不依赖 L5；AI 由 server 层注入） | B8~B11 |
+| `core/engine.js` | `createBattle(config)`（`config.logger` 注入；数值读 battle-config，含 B21 校准 `dodgeChanceBonus`(D-127)/`defK`(D-128)）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`；`resolveActorCollision` | L4（编排 L0~L2，不依赖 L5；AI 由 server 层注入） | B8~B11/B21 |
 | `ai/ast.js` | `validateProgram` / `checkLegality`（含分支 action 规则 D-101）/ `collectUsedNodeTypes` / **`validate(program, tier)`（结构+合法性+门控三段合一，B13）** / `canonicalize` / `programHash`（纯 JS sha256） / `statsOf` / `getNodeAtPath` / `migrateProgram` / `nodePathOf` / `limits` / `CURRENT_VERSION` / `MIGRATIONS` | L5（只依赖 L0/L1） | B12~B16 ✅ |
 | `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `getVar` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` / `TRACE_LIMIT` / `RECURSION_LIMIT` | L5 | B14~B16 ✅ |
 | `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |

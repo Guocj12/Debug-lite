@@ -174,10 +174,11 @@
 | D-124 | 前端（P6）选型：**无框架**——纯函数 `render(state) → HTML` + 自研 store + 事件委托 | `P6`、`§7 前端规范` |
 | D-125 | **走查文档的定位**：只讲**系统间数值与状态传递**（六条边界：数据表→实例、物品→面板、AI→hash、请求→战斗、引擎→帧、引擎→响应）；计算细节由 `examples/*` 负责 | `battle-walkthrough.md` |
 | D-126 | ⚠️ **同步重写受影响的设计文档章节**（保持"文档即唯一权威"） | `v3-design`、`systems/*`、`items-data` |
+| **D-127** | **`dodge` 附带闪避加成定稿：`dodgeChanceBonus = 0.20`（B21 校准，保持占位值冻结）**——机制语义 = 本 tick 使用 dodge 行动的玩家，闪避判定额外 +20%（叠加在面板 dodgeChance 上，封顶 1）；不再开放 | `battle-config.json`、`07-engine §4.4`、`R17` |
+| **D-128** | **数值校准收口（B21）**：① 减伤公式常数入表 `battle-config.defK = 40`（`1 − def/(def+40)`，代码零字面量兜底）；② 附加效果数值定稿——stun `remaining=1`、knockback/pull 位移 `±1 格`、dot `remaining=3`，数值 v 由词条档位给出；③ melee 射程不可增强（登记冻结）；④ regen 差异化维持数据表现值（D-110 必填口径） | `battle-config.json`、`07-engine §4.4`、`03-skills S-6`、`B9/B6/B8 审查遗留` |
 
 ---
 
-## 14. 待补充的数值（不阻塞开工，B21 统一校准）
+## 14. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
-- `battle-config.json` 初始占位值：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus`（dodge 附带的闪避加成，占位 **+20%** —— D-15 只定义了"移动 2 格可穿敌"，**闪避加成数值仍未定**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`。
-- **唯一仍无结论的机制点**：`dodge` 是否附带额外闪避率及其数值（默认按占位 +20% 实现，B21 校准）。
+- 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

@@ -29,6 +29,7 @@ const BATTLE_CONFIG_FROZEN = {
   movePx: 64, dodgePx: 128,
   collisionDmgMul: 0.8, baseHitMul: 0.8, baseDef: 64, defendDefMul: 1.6,
   dodgeChanceBonus: 0.2, backstab: 1.5, crit: 1.5,
+  defK: 40, // B21 校准入表（D-128：减伤公式常数 1 − def/(def+defK)）
   overtimeStart: 48, overtimeRatio: 0.0625, hardCapTick: 64,
 };
 

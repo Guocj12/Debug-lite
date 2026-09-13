@@ -1,6 +1,6 @@
 # 当前状态与下一步
 
-> 更新：2026-09-11
+> 更新：2026-09-12
 > 用途：跨会话续接。只记录**当前状态**与**待办**，不保留历史。
 
 ---
@@ -8,10 +8,13 @@
 ## 1. 文档体系（权威链）
 
 ```
-docs/decisions.md      决策记录（D-01…D-126）  ← 最高权威
+docs/decisions.md      决策记录（D-01…D-128）  ← 最高权威
 docs/systems/01~10.md  各系统实现细则
 docs/v3-design.md      主设计文档（架构/数据模型/数值）
 docs/items-data.md     物品数值、名称、贴图占位
+docs/interfaces.md     接口冻结（ICD v1：模块/API/CLI/数据结构/D 落点）
+docs/server.md         服务器文档（部署、端点速查、信封与错误码、无状态契约）
+docs/frontend-spec.md  前端设计文档（P6 唯一前端规范）
 docs/tasks.md          开发计划（铁律/接口/测试矩阵/批次/门禁）
 docs/examples/         分支示例集（10 系统 + 索引），计算细节的唯一出处
 docs/battle-walkthrough.md  端到端走查：**系统间数值与状态传递**
@@ -35,7 +38,7 @@ docs/progress.md       本文件
 | 数据表 | 角色模板必填 `regen`；技能模板带 `slotWeights`/`falloff`/`bulletLevel`（含位移）；三表可选 `unlockTier`；`costDeltaByTier` 逐档数组；插件变体拆独立 id | D-110~D-118 |
 | 产品 | 紫段位=随机+扩展运算符；晋升 x=6；本轮不做存档；前端无框架 | D-120~D-124 |
 
-**仍开放的唯一数值项**：`dodge` 附带的闪避加成数值（占位 +20%，B21 校准）。
+**开放数值项已全部关闭**：`dodgeChanceBonus=0.20`（D-127）、`defK=40` 入表（D-128）——B21 校准收口，battle-config 全部数值冻结。
 
 ---
 
@@ -71,7 +74,8 @@ docs/progress.md       本文件
 - [x] **B18** 仓库 + 装配/拆卸 API（`GET /warehouse` 骨架 + assemble/disassemble 纯函数 L3 + HTTP + CLI `wh`；I-10 四道校验/原子性/T-PB-1..8 + T-PB-4 数据表单调；P1×2 已修——插件当目标/畸形桶崩溃 500；387 用例；审查 `docs/reviews/B18.md`）
 - [x] **B19** loadout API + 校验 + `POST /api/v1/panel`（server/loadout.js L6 编排：I-12 全案/T-PB-9 引用完整/T-PB-8 双引用/门控 + 面板聚合五维/regen/special/技能参数；P1×3 已修——skills 畸形 500、双引用面板双计、无 warehouse 空转；404 用例；审查 `docs/reviews/B19.md`）
 - [x] **B20** 技能插件消耗补偿与聚合 + 面板一致性（skills.applySkillPlugins 接入 buildPanel：delta=costDeltaBase×tier、减耗 ceil、倍率/冷却聚合；插件 unlockTier×2 数据门控真分支——T-PB-7/U-5d 兑现；P1×1 已修——聚合路径未知模板 500；411 用例；审查 `docs/reviews/B20.md`）
-- [ ] **B21 起**（P3 收尾：数值校准/附加效果登记/dodge 数值）按 `docs/tasks.md` §6 推进；P6 前端延后
+- [x] **B21（P3 收尾）** 属性测试全套（T-PB-10 往返包裹 T-PB-1..10）+ 数值校准收口（dodgeChanceBonus 0.20 定稿 D-127 / defK=40 入表 D-128 / 附加效果·melee·regen 冻结；schema 冻结清单同步；P1×1 已修；420 用例；审查 `docs/reviews/B21.md`）—— **P3 阶段 5/5 批收口，开放数值项全部关闭**
+- [ ] **B22 起**（P4：回放帧契约完备性 + POST /api/v1/battle + GET /api/v1/replay/:id）按 `docs/tasks.md` §6 推进；P6 前端延后
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` 的 17 tick 轨迹，同 seed 逐帧一致）
 

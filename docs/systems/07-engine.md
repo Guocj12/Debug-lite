@@ -77,7 +77,7 @@
 1 闪避判定：defender.dodgeChance（本 tick 若用 dodge 行动则叠加 dodgeChanceBonus）
 2 取本 tick 的攻方 atk 与受方 def
     受方本 tick defending → def × 1.6（D-43，等效临时 +60% 防御插件）
-3 基础伤害：普通 max(1, floor(atk × 倍率 × (1 − def/(def+40))))
+3 基础伤害：普通 max(1, floor(atk × 倍率 × (1 − def/(def+`defK`))))（`defK=40` 自 `battle-config.json`，B21/D-128 入表）
             真实 max(1, floor(atk × 倍率))
 4 背击 ×1.5（§4.5）
 5 暴击 ×1.5（critChance，命中时消耗 crit 流）

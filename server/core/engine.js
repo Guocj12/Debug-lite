@@ -7,7 +7,7 @@
  *   resource.regen(trace)/battle.overtime(info)/tick.end(info)/battle.judge(info)/battle.end(info)/action.invalid(warn)（§4.6 L4 行）。
  * 边界（B8 登记）：本批伤害为**基础链路**——普通 max(1,floor(atk×mult×(1−def/(def+40)))) 与碰撞 atk×0.8，不记 damage.* 事件；
  *   背击/暴击/吸血/真实/附加效果与 damage.* 事件（§4.6 B9 行）由 B9 交付。步骤 3 AI 续执行由调用方注入 actions（B15 起 AI 链路替换）。
- * 减伤公式常数 def+40 为机制公式常量（examples/README §1 基准），非战斗数值（L9）；B21 校准若需入表再迁移。
+ * 减伤公式常数 def+40 已随 B21 校准入表（battle-config.defK，L9：无代码字面量兜底）。
  */
 const { nullLogger } = require('../../shared/log.js');
 const { createRng } = require('./rng.js');
@@ -17,7 +17,6 @@ const effectsMod = require('./effects.js');
 const bulletsMod = require('./bullets.js');
 
 const ACTIONS = new Set(['move_left', 'move_right', 'dodge_left', 'dodge_right', 'wait', 'defend']);
-const DEF_K = 40; // 减伤公式分母常数（examples/README §1：1 − def/(def+40)）
 const round1 = Math.round;
 // L9：全部战斗数值默认自 battle-config.json（createBattle 覆盖注入）；引擎无字面量兜底
 const DEFAULT_CFG = require('../data/battle-config.json');
@@ -47,7 +46,7 @@ function createBattle(cfgIn, options) {
     // 步骤 2-3 攻防属性：defending def×1.6（D-43）；真实伤害不吃护甲（reduction=1）
     const mult = p.mult === undefined ? cfg.baseHitMul : p.mult;
     const def = defender.defending ? defender.def * cfg.defendDefMul : defender.def;
-    const reduction = p.trueDamage ? 1 : 1 - def / (def + DEF_K);
+    const reduction = p.trueDamage ? 1 : 1 - def / (def + cfg.defK);
     // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击 ×1.5（critChance 消耗 crit 流）
     const backM = p.backstab ? cfg.backstab : 1;
     const critChance = (attacker.special && attacker.special.critChance) || 0;
@@ -355,7 +354,7 @@ function createBattle(cfgIn, options) {
       // 撞基地：atk×0.8 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）
       const base = battleState.bases[resolved.baseHit.owner];
       const atk = resolved.baseHit.by;
-      const reduction = 1 - base.def / (base.def + DEF_K);
+      const reduction = 1 - base.def / (base.def + cfg.defK);
       base.hp = Math.max(0, base.hp - Math.max(1, Math.floor(atk.atk * cfg.collisionDmgMul * reduction)));
     }
     stepLog(9, '伤害结算');

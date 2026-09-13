@@ -26,8 +26,8 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   const missing = [...decided].filter((d) => !landed.has(d));
   assert.deepEqual(missing, [], `无落点的 D 编号：${missing.join('、')}`);
   // decisions.md 编号有跳段（D-01..D-08、D-10..D-19、D-20..D-35、D-40..D-46、D-50..51、
-  // D-60..62、D-70..72、D-80..84、D-90..92、D-100..104、D-110..118、D-120..126），共 78 条
-  assert.equal(decided.size, 78, `D 编号数量应为 78（decisions.md 无跳段之外的编号）`);
+  // D-60..62、D-70..72、D-80..84、D-90..92、D-100..104、D-110..118、D-120..128），共 80 条
+  assert.equal(decided.size, 80, `D 编号数量应为 80（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

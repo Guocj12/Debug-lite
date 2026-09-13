@@ -150,7 +150,7 @@ health | data <table>
 4. **物品实例 / 技能实例 / loadout / AI AST**：以 `decisions.md` 与重写后的 `v3-design` §4.4/§6.3/§12.2/§11.5 为冻结版本。
 5. **AiContext**：`programHash/frames[]/vars/halted/stepCount/trace/entry`（**必须可序列化**）。
 6. **LogRecord**：`seq/ts/cid/tick/level/levelValue/channel/event/msg/data`。
-7. **`battle-config.json`**（新增，D-117）：`cellPx=64`/`fieldPx=1024`/`actorHalfPx=32`/`movePx=64`/`dodgePx=128`/`collisionDmgMul=0.8`/`baseHitMul=0.8`/`baseDef=64`/`defendDefMul=1.6`/`dodgeChanceBonus=0.20`(占位)/`backstab=1.5`/`crit=1.5`/`overtimeStart=48`/`overtimeRatio=0.0625`/`hardCapTick=64`。
+7. **`battle-config.json`**（新增，D-117）：`cellPx=64`/`fieldPx=1024`/`actorHalfPx=32`/`movePx=64`/`dodgePx=128`/`collisionDmgMul=0.8`/`baseHitMul=0.8`/`baseDef=64`/`defendDefMul=1.6`/`dodgeChanceBonus=0.20`（**B21 定稿，D-127**）/`defK=40`（**B21 入表，D-128**）/`backstab=1.5`/`crit=1.5`/`overtimeStart=48`/`overtimeRatio=0.0625`/`hardCapTick=64`。
 8. **本轮 schema 变更**（D-110~D-116）：`role-templates` 增**必填** `regen{mp,sp}`；`skill-templates` 增 `slotWeights`、`falloff`，**删 `bulletSpeed`**；三表增可选 `unlockTier`；技能插件消耗统一 `costDeltaByTier` 逐档数组；角色插件按 `rp_*_pct`/`rp_*_flat` **拆独立 id**。
 
 ---
@@ -637,7 +637,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B18 `[x]` | 仓库 + **装配/拆卸 API**（槽位/点数/档位/词条聚合） | T-IT-7/10 + T-PB-1/2/3/4 | `items.assemble/disassemble/reject`（审查 `docs/reviews/B18.md`，P1×2 已修——插件当目标/畸形桶 500；P2 落实） |
 | B19 `[x]` | loadout API + 校验 + `POST /api/v1/panel` | T-IT-8 + T-RK-6 | `api.reject`（审查 `docs/reviews/B19.md`，P1×3 已修——skills 畸形 500/双引用面板双计/无 warehouse 空转；P2×7 落实） |
 | B20 `[x]` | 技能插件消耗补偿（逐档数组）与聚合 + 面板一致性 | T-PB-5/6/7/8/9 | `skill.plugin.apply`/`items.*`（审查 `docs/reviews/B20.md`，P1×1 已修——聚合路径未知模板 500；U-5d 真分支兑现） |
-| B21 | 属性测试全套 + 数值校准（只改数据表） | T-PB-10 + T-PB-1..10 全量 |
+| B21 `[x]` | 属性测试全套 + 数值校准（只改数据表 + schema 冻结清单） | T-PB-10 + T-PB-1..10 全量 | D-127/D-128（审查 `docs/reviews/B21.md`，P1×1 已修——defK 未入冻结清单；数值全部定稿关闭开放项） |
 
 ### P4 回放数据（2 批）
 
@@ -663,11 +663,14 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 ## 7. 前端架构规范（**P6 参考，本轮不实现**）
 
+> **完整前端设计见 `docs/frontend-spec.md`**（v1，含屏幕/状态模型/视图契约/渲染层/Blockly/日志面板/API 消费映射/测试策略）——本文只保留要点索引。
+
 - **屏幕**：`menu/editor/warehouse/gacha/battle/replay/settings`；切换只走 `store.dispatch({type:'goto'})`。
 - **分层**：`api/`（唯一网络出口）→ `store/`（唯一状态源）→ `views/*.render(state) → HTML`（**纯函数**）→ `mount/`（唯一 DOM 写入点）；`render/` 只消费 diff，**禁止复制战斗算法**。
 - **视觉令牌**：`public/css/tokens.css`；禁止行内样式与魔法数字。
 - **每屏出口**：四态齐全、纯函数测试、无算法复制、每次绘制有 `render.frame` 日志、截图核对。
 - Blockly 集成：由 `mount` 独占 DOM，纯函数视图不参与其内部重绘。
+- **服务器/API 使用**：见 `docs/server.md`（部署、端点速查、信封与错误码、无状态契约）。
 
 ---
 
@@ -697,14 +700,14 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | R6 | 前端框架 | ✅ **已决**：无框架（D-124） | 已决 |
 | R7 | 沙箱多进程 runner 不可用 | ✅ 已定：单进程 `--test-isolation=none` | 已决 |
 | R8 | 美术占位规格细节 | 按 `items-data` §1（本轮只作数据表） | P6 前 |
-| R9 | 数值平衡 | 机制先冻结、数值入表，B21 校准 | B21 |
+| R9 | 数值平衡 | ✅ **已决（B21 校准收口，D-128）**：机制冻结、数值全部入表（battle-config 无占位项） | 已决 |
 | R10 | 日志体积/性能失控 | 环形缓冲 + 采样 + 禁用零成本 | 已定（P0-4） |
 | R11 | 日志与确定性互相污染 | 注入 logger + 不耗 RNG + T-LG-5 | 已定（B8 起） |
 | R12 | 日志携带巨大载荷 | 默认摘要，trace 才完整 | 已定 |
 | R13 | API 契约变更成本高 | `/api/v1` 前缀 + 统一信封 + 契约测试 | 已定（P0-7/8） |
 | R14 | 无 UI 时流程正确性难判断 | CLI 文本回放 + 逐 tick 摘要 + `cid` 因果链 + trace | 已定（B11/B23） |
 | **R16** | **设计文档需同步重写受影响章节**（D-126） | 我按 `decisions.md` 逐章重写 `v3-design` / `systems/*` / `items-data` | **P0-7 前** |
-| **R17** | **`dodge` 的闪避加成数值未定**（仅知"2 格可穿"） | `battle-config.dodgeChanceBonus` 占位 +20% | B21 校准 |
+| **R17** | **`dodge` 的闪避加成数值** | ✅ **已决（B21 校准，D-127）**：`dodgeChanceBonus = +20%`（叠加面板 dodgeChance，封顶 1） | 已决 |
 | **R18** | 文档编辑工具纪律 | ✅ 已加入铁律 L17（禁用 PS 5.1 读写中文文档） | 已定 |
 
 ---

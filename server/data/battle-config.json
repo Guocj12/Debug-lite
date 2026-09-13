@@ -11,6 +11,7 @@
   "baseDef": 64,
   "defendDefMul": 1.6,
   "dodgeChanceBonus": 0.2,
+  "defK": 40,
   "backstab": 1.5,
   "crit": 1.5,
   "overtimeStart": 48,
