@@ -13,6 +13,18 @@ export function toastCtx(ctx, action, r) {
   }
 }
 
+// 编辑器程序实时校验（F6：ai/edit 实时 + ai/validate 手动按钮共用）。
+// ★F6 审查 P1（修复）：①必须带 tier——后端缺省 'common' → 高段位节点误报 node_locked（F1 P1-4 同型）；
+// ②程序必须为后端形状（bridge.toAst 已按 interfaces §1 产出 program/version/body）；③空程序跳过（编辑器未变更
+// 前 aiDraft.program=null → 不产生 not_program 噪音）。
+async function validateEditorProgram(ctx) {
+  const st = ctx.store();
+  const program = st.aiDraft && st.aiDraft.program;
+  if (!program) return;
+  const r = await ctx.api.post('/ai/validate', { ai: program, tier: st.tier });
+  ctx.dispatch({ type: 'ai/validate/result', payload: { errors: r.ok ? [] : (r.details || [{ code: r.code, message: r.message }]) } });
+}
+
 // wh/disassemble / wh/take（详情槽位拆卸，F3）：POST → 整体替换（共用实现）
 async function doDisassemble(ctx, action) {
   const st = ctx.store();
@@ -75,18 +87,39 @@ export const EFFECTS = {
     const r = await ctx.api.post('/loadout', { loadout: st.loadout, warehouse: st.warehouse, tier: st.tier });
     ctx.dispatch({ type: 'loadout/errors', payload: { errors: r.ok ? [] : (r.details || [{ code: r.code, message: r.message }]) } });
   },
-  // ai/compile：POST /ai/compile → hash + stats
+  // ai/edit（F6 实时校验：编辑器 change debounce 后 → /ai/validate → errors（带后端路径）→ editorLayout 渲染 + 高亮）
+  // ai/validate：面板「校验」按钮手动触发（screens.md btn_validate；与实时校验同语义）
+  'ai/edit': validateEditorProgram,
+  'ai/validate': validateEditorProgram,
+  // ai/compile：POST /ai/compile → hash（★F6 审查 P1：后端契约字段为 data.programHash（interfaces §2/runner.compileAi）
+  // ——原读 data.hash 恒 undefined → 编译后 hash 永显「未编译」）+ stats
   'ai/compile': async (ctx) => {
     const st = ctx.store();
-    const r = await ctx.api.post('/ai/compile', { ai: st.aiDraft.program });
-    ctx.dispatch({ type: 'ai/compiled', payload: r.ok ? { hash: r.data.hash, errors: r.data.errors || [] } : { hash: null, errors: r.details || [] } });
+    // 手动编译不设空程序守卫：null → 后端 400 bad_ai → errors 上屏（用户可见反馈；实时校验链才静默跳过）
+    const r = await ctx.api.post('/ai/compile', { ai: st.aiDraft && st.aiDraft.program });
+    ctx.dispatch({ type: 'ai/compiled', payload: r.ok ? { hash: (r.data && r.data.programHash) || null, errors: r.data.errors || [] } : { hash: null, errors: r.details || [] } });
   },
-  // ai/run：POST /ai/validate + /ai/battle → battle/loaded（F5 起对接回放；F1 P1-4：带 tier 防门控放宽）
+  // ai/run：POST /ai/battle → battle/loaded（F5 起对接回放；F1 P1-4：带 tier 防门控放宽；§6.2 试运行 opponent:kiter）
+  // ★F6 审查 P1（修复）：/ai/battle 帧为扁平 {tick,players,collision,bulletHits,verdict,aiTrace}（runner.js，无
+  // diff/bullets/bases）——回放屏消费 B22 diff 形状 → 转换后再 battle/loaded（与 F4 battle/run 产物同构）。
   'ai/run': async (ctx, action) => {
     const st = ctx.store();
-    const r = await ctx.api.post('/ai/battle', { ai: st.aiDraft.program || st.loadout.ai, opponent: action.payload.opponent, seed: st.seed, tier: st.tier });
+    const r = await ctx.api.post('/ai/battle', { ai: (st.aiDraft && st.aiDraft.program) || st.loadout.ai, opponent: (action.payload && action.payload.opponent) || 'kiter', seed: st.seed, tier: st.tier });
     if (r.ok) {
-      ctx.dispatch({ type: 'battle/loaded', payload: { frames: r.data.frames || [], result: { winner: r.data.winner, ticks: r.data.ticks } } });
+      const frames = (r.data && Array.isArray(r.data.frames) ? r.data.frames : []).map((f) => ({
+        tick: f && f.tick,
+        diff: {
+          players: (f && f.players) || {},
+          bullets: (f && f.bullets) || [],
+          bases: (f && f.bases) || {},
+          events: (f && f.events) || [],
+          aiTrace: (f && f.aiTrace) || [],
+          collision: (f && f.collision) || null,
+          bulletHits: (f && f.bulletHits) || [],
+          verdict: (f && f.verdict) || null,
+        },
+      }));
+      ctx.dispatch({ type: 'battle/loaded', payload: { frames, result: { winner: r.data && r.data.winner, ticks: r.data && r.data.ticks } } });
       ctx.dispatch({ type: 'goto', payload: { screen: 'replay' } });
     } else {
       toastCtx(ctx, action, r);

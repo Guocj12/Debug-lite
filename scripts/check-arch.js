@@ -163,8 +163,10 @@ function analyze(options) {
         } else if (target.startsWith('shared/')) {
           const abs = path.resolve(projectRoot, target);
           if (fs.existsSync(abs)) graph.get(rel).push(relOf(abs));
+        } else if (target === 'blockly') {
+          // F6：vendor 白名单（node_modules/blockly；经 /vendor/blockly/* 静态路由；spec §1.1）
         } else {
-          violations.push({ file: rel, rule: 'import-bare', detail: `public 禁止裸导入 '${target}'（只允许相对路径或 shared/*）` });
+          violations.push({ file: rel, rule: 'import-bare', detail: `public 禁止裸导入 '${target}'（只允许相对路径/shared/*/blockly）` });
         }
       }
     }

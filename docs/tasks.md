@@ -665,7 +665,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | F3 `[x]` | gacha（开箱）+ warehouse（装配/拆卸 + 错误映射） | 端到端 localStorage/API 用例 | P1×3 已修（详情按钮 2px 重叠/真实形状溢出/空态盒相交）（审查 `docs/reviews/F3.md`，闭环探针含真后端链路） |
 | F4 `[x]` | loadout/面板 + battle 配置屏（接 /battle） | 配置→对战闭环用例 | P1×2 已修（对手模板非存在技能 id 必 409/起战缺 warehouse）（审查 `docs/reviews/F4.md`） |
 | F5 `[x]` | replay：canvas planFrame + 控制条 + HUD + 结算（golden 帧快照） | render 快照绿 | P1×5 已修（暂停死按钮/结算时刻/坐标注入根因/基地条/aiTrace 字段——浏览器全部屏此前堆叠 (0,0)）（审查 `docs/reviews/F5.md`） |
-| F6 | editor：Blockly blocks/bridge/main + 门控 + 实时校验（需 npm install blockly，网络阻塞时停下询问） | bridge 往返测试 |
+| F6 `[x]` | editor：Blockly blocks/bridge/main + 门控 + 实时校验（blockly 13.3.0 已装） | bridge 往返测试 | P1×6 已修（bridge 方言→契约直译根因/带 tier/compile programHash/帧形状/装配接线/门控键位）（审查 `docs/reviews/F6.md`，含双向等价实证） |
 | F7 | AI 轨迹可视化 + 存档 export/import + 打磨 | 全流程用例 |
 
 ---

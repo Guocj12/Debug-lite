@@ -57,7 +57,7 @@ test('effects 全分支：tier/set、wh/disassemble ok、loadout/validate、ai/c
       if (mode === 'err') return { ok: false, code: 'err', message: 'm', details: [{ code: 'd' }] };
       if (p === '/warehouse/disassemble') return { ok: true, data: { warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } } } };
       if (p === '/loadout') return { ok: false, code: 'loadout_invalid', details: [{ code: 'missing_warehouse' }] };
-      if (p === '/ai/compile') return { ok: true, data: { hash: 'h' } };
+      if (p === '/ai/compile') return { ok: true, data: { programHash: 'h' } }; // F6 契约：/ai/compile → data.programHash（interfaces §2）
       if (p === '/ai/battle') return { ok: true, data: { frames: [{ t: 1 }], winner: 'A', ticks: 5 } };
       if (p === '/panel') return { ok: true, data: { panel: { role: {} } } };
       return { ok: false, code: 'nope' };

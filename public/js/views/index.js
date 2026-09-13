@@ -6,6 +6,7 @@ import { gachaLayout } from './gacha.js';
 import { warehouseLayout } from './warehouse.js';
 import { battleLayout } from './battle.js';
 import { replayLayout } from './replay.js';
+import { editorLayout } from './editor.js';
 
 // 各屏 layout 签名统一 (state, opts) → Box[]（不含 shell；shell 由 renderScreen 拼装）
 export const VIEWS = {
@@ -15,8 +16,7 @@ export const VIEWS = {
   warehouse: { layout: warehouseLayout },
   battle: { layout: battleLayout },
   replay: { layout: replayLayout },
-  // F6/F7 注册：editor
-  editor: null,
+  editor: { layout: editorLayout },
 };
 
 export function renderScreen(state, opts) {

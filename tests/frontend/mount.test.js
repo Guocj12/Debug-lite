@@ -347,3 +347,97 @@ test('app boot：DLLog records 数组接缝（P1 修复）+ dispatch boot 重试
   assert.equal(b.store.getState().meta.serverOk, true, 'boot effect 重查 health → serverOk=true');
   assert.equal(b.store.getState().meta.version, '3.0.0', 'version 回填');
 });
+
+test('mount：editor 屏 Blockly 装配（createEditor 一次 + presetLoop 真预置 + 高亮消费/toast + 离屏 dispose）', async () => {
+  // ★F6 审查 P1 回归锁：createEditor 全仓唯一装配点；workspace 盒 id=blocklyDiv 由 body 级骨架承载；
+  // errors 行点击（editor/highlight）→ highlightByPath → 找不到 toast「程序已变化」。
+  const { mountApp } = await import('../../public/js/mount/index.js');
+  const { createStore } = await import('../../public/js/store/index.js');
+  const { initialState } = await import('../../public/js/store/reducer.js');
+  const { editorLayout } = await import('../../public/js/views/editor.js');
+  const rootBlk = () => ({ id: 'blk_root', type: 'loop_forever', fields: {}, inputs: { body0: { block: { id: 'blk_a', type: 'action', fields: { name: 'wait' }, inputs: {}, next: null } } }, next: null });
+  let changeFn = null;
+  let disposed = false;
+  const hlIds = [];
+  const made = [];
+  const widget = {
+    opts: null,
+    addChangeListener: (fn) => { changeFn = fn; },
+    getTopBlocks: () => [rootBlk()],
+    dispose: () => { disposed = true; },
+    highlightBlock: (id) => hlIds.push(id),
+    newBlock: (type) => {
+      const blk = { type, flags: {} };
+      for (const m of ['setMovable', 'setDeletable']) blk[m] = (v) => { blk.flags[m] = v; };
+      for (const m of ['initSvg', 'render']) blk[m] = () => { blk.flags[m] = true; };
+      blk.moveBy = (x, y) => { blk.flags.move = [x, y]; };
+      made.push(blk);
+      return blk;
+    },
+  };
+  const fakeBlockly = { inject: (el, opts) => { widget.opts = opts; return { ...widget }; } };
+  const prevB = globalThis.Blockly;
+  globalThis.Blockly = fakeBlockly;
+  try {
+    const els = {};
+    const elOf = (id) => { if (!els[id]) els[id] = { id, style: {}, innerHTML: '' }; return els[id]; };
+    const fakeDoc = {
+      getElementById: (id) => elOf(id),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      createElement: () => ({ id: '', href: '', download: '', click: () => {} }),
+    };
+    const store = createStore({
+      api: { get: async () => ({ ok: true, data: {} }), post: async () => ({ ok: true, data: {} }) },
+      log: null,
+      doc: fakeDoc,
+      state: initialState(),
+    });
+    const { renderScreen } = await import('../../public/js/views/index.js');
+    const mount = mountApp({ doc: fakeDoc, store, log: null, records: () => [], renderScreen });
+    // 非 editor 屏：骨架隐藏、不装配
+    assert.equal(els.blocklyDiv.style.display, 'none');
+    assert.equal(made.length, 0);
+    // goto editor → 装配一次：显隐/定位 + createEditor + presetLoop（D-100 根循环 movable/deletable false）
+    store.dispatch({ type: 'goto', payload: { screen: 'editor' } });
+    const edBox = editorLayout(store.getState()).find((b) => b.id === 'blocklyDiv');
+    assert.equal(els.blocklyDiv.style.display, 'block');
+    assert.equal(els.blocklyDiv.style.left, `${edBox.x}px`);
+    assert.equal(els.blocklyDiv.style.width, `${edBox.w}px`);
+    assert.equal(widget.opts.grid.spacing, 24, 'inject 选项（§6.2 grid）');
+    assert.equal(widget.opts.zoom.controls, true, 'zoom controls');
+    assert.equal(made.length, 1);
+    assert.equal(made[0].type, 'loop_forever');
+    assert.equal(made[0].flags.setMovable, false);
+    assert.equal(made[0].flags.setDeletable, false);
+    // 重复 paint（再次 dispatch）不重复装配
+    store.dispatch({ type: 'seed/set', payload: { seed: 1 } });
+    assert.equal(made.length, 1, '装配仅一次');
+    // change 触发 → debounce 300 → ai/edit（后端形状 program，真定时器）
+    assert.ok(changeFn, '监听器已挂');
+    changeFn();
+    await new Promise((r) => setTimeout(r, 380));
+    const prog = store.getState().aiDraft.program;
+    assert.equal(prog.type, 'program', '实时校验链：change → toAst → ai/edit');
+    assert.equal(prog.body.statements[0].type, 'action');
+    // 高亮命中：errors 行 action editor/highlight → mount 消费 → highlightBlock + 状态清空
+    store.dispatch({ type: 'editor/highlight', payload: { path: 'body.s[0]' } });
+    assert.deepEqual(hlIds, ['blk_a']);
+    assert.equal(store.getState().aiDraft.highlightPath, null, '消费后清空（editor/highlight/done）');
+    // 高亮 miss：路径越界 → toast「程序已变化」
+    store.dispatch({ type: 'editor/highlight', payload: { path: 'body.s[99]' } });
+    const toast = store.getState().ui.snackbar[0];
+    assert.ok(toast, 'miss → toast');
+    assert.equal(toast.text, '程序已变化');
+    // 离屏 → dispose + 骨架隐藏；再进 → 重新装配
+    store.dispatch({ type: 'goto', payload: { screen: 'menu' } });
+    assert.equal(disposed, true, '离屏 dispose（清 debounce 定时器 + widget.dispose）');
+    assert.equal(els.blocklyDiv.style.display, 'none');
+    store.dispatch({ type: 'goto', payload: { screen: 'editor' } });
+    assert.equal(made.length, 2, '再进重新装配');
+    mount.unsubscribe();
+  } finally {
+    if (prevB === undefined) delete globalThis.Blockly;
+    else globalThis.Blockly = prevB;
+  }
+});

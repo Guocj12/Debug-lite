@@ -75,6 +75,16 @@ test('F0 静态：GET-only + 编码穿越统一 400 + 缺失 404 + /api/v1 优�
   });
 });
 
+test('F0 静态：/vendor/blockly/* 可达（F6 Blockly 静态路由）', async () => {
+  await withServer(null, async ({ port }) => {
+    const main = await request(port, 'GET', '/vendor/blockly/blockly_compressed.js');
+    assert.equal(main.status, 200, 'blockly 主文件可达');
+    assert.ok(main.body.toString().includes('Blockly'), '内容为 Blockly（文件头为许可注释/混淆前缀）');
+    const missB = await request(port, 'GET', '/vendor/blockly/nope.js');
+    assert.equal(missB.status, 404);
+  });
+});
+
 test('F0 静态：/assets/* 可达（sprites.json 200，缺省 404）', async () => {
   await withServer(null, async ({ port }) => {
     const sprites = await request(port, 'GET', '/assets/sprites.json');

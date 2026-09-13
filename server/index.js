@@ -91,6 +91,7 @@ function staticFile(method, urlPath) {
   else if (decoded.startsWith('/css/')) rel = `public${decoded}`;
   else if (decoded.startsWith('/shared/')) rel = `shared${decoded.slice('/shared'.length)}`;
   else if (decoded.startsWith('/assets/')) rel = `assets${decoded.slice('/assets'.length)}`;
+  else if (decoded.startsWith('/vendor/blockly/')) rel = `node_modules/blockly${decoded.slice('/vendor/blockly'.length)}`; // F6：Blockly 静态（spec §1.1）
   if (rel === null) return null;
   if (decoded.includes('..') || decoded.includes('\\')) return { bad: true, reason: 'traversal' };
   const abs = path.join(__dirname, '..', rel);

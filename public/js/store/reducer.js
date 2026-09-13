@@ -93,6 +93,11 @@ export function reducer(state, action) {
       return { ...state, aiDraft: { ...state.aiDraft, hash: action.payload.hash || null, errors: action.payload.errors || [], compiling: false } };
     case 'ai/validate/result':
       return { ...state, aiDraft: { ...state.aiDraft, errors: action.payload.errors || [] } };
+    // F6 §6.2 高亮：errors 行点击 → highlightPath（瞬时态；mount 消费定位积木后 dispatch done 清空）
+    case 'editor/highlight':
+      return { ...state, aiDraft: { ...state.aiDraft, highlightPath: (action.payload && action.payload.path) || null } };
+    case 'editor/highlight/done':
+      return { ...state, aiDraft: { ...state.aiDraft, highlightPath: null } };
     case 'ai/run':
       return { ...state, battle: { ...state.battle, running: true } }; // F1 P1-3：§4.2 行
     case 'battle/loaded': {

@@ -7,10 +7,16 @@
 <link rel="stylesheet" href="/css/tokens.css">
 <link rel="stylesheet" href="/css/style.css">
 <script src="/shared/log.js"></script>
+<!-- F6：Blockly（/vendor/blockly/* 静态路由，§1.1；13.3.0 Apache-2.0）。blockly_compressed.js 为 UMD → 全局 Blockly；
+     msg/en.js 提供本地化。积木定义（自定义 Blockly.Blocks）属 F7（见 docs/reviews/F6.md 登记） -->
+<script src="/vendor/blockly/blockly_compressed.js"></script>
+<script src="/vendor/blockly/msg/en.js"></script>
 </head>
 <body>
   <div id="app"></div>
   <canvas id="battle" width="1024" height="128" style="display:none"></canvas>
+  <!-- F6：Blockly 注入容器（body 级骨架，同 #battle 模式——mount 按 blocklyDiv 盒显隐/定位；Blockly 独占其内部 DOM） -->
+  <div id="blocklyDiv" style="display:none"></div>
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>

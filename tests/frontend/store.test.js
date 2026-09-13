@@ -150,6 +150,70 @@ test('effects：box/open→done 闭环、wh/assemble 失败 toast、store/save �
   assert.ok(calls.some((c) => c[0] === 'save'), 'store/save 委托 ctx.save');
 });
 
+test('effects：F6 ai 链——ai/edit 带 tier+空程序跳过、ai/validate 手动同语义、ai/compile programHash、ai/run 帧转换', async () => {
+  const { runEffect } = await import('../../public/js/store/effects.js');
+  const posts = [];
+  const api = {
+    post: (p, body) => {
+      posts.push([p, body]);
+      if (p === '/ai/validate') return Promise.resolve({ ok: false, code: 'ai_invalid', details: [{ path: 'body.s[0]', code: 'bad_field', message: 'x' }] });
+      if (p === '/ai/compile') return Promise.resolve({ ok: true, data: { programHash: 'h'.repeat(64), stats: {} } });
+      if (p === '/ai/battle') return Promise.resolve({ ok: true, data: { winner: 'p1', ticks: 3, frames: [{ tick: 1, players: { p1: { x: 1 }, p2: {} }, collision: null, bulletHits: [], verdict: null, aiTrace: [] }] } });
+      return Promise.resolve({ ok: true, data: {} });
+    },
+  };
+  const actions = [];
+  let state = { tier: 'mythic', seed: 1, aiDraft: { program: { type: 'program', version: 2, body: { type: 'seq', statements: [] } } }, loadout: { ai: null }, battle: { frames: [], result: null, tick: 0, speed: 1, playing: false, running: false } };
+  const ctx = { api, store: () => state, dispatch: (a) => actions.push(a), log: null, save: null };
+  await runEffect(ctx, { type: 'ai/edit' });
+  assert.deepEqual(posts[0], ['/ai/validate', { ai: state.aiDraft.program, tier: 'mythic' }], '★F6 P1：ai/edit 必须带 tier（防后端缺省 common 误报 node_locked）');
+  const vr = actions.filter((a) => a.type === 'ai/validate/result');
+  assert.deepEqual(vr[0].payload.errors, [{ path: 'body.s[0]', code: 'bad_field', message: 'x' }], 'errors 带 path');
+  // 空程序跳过（不产生 not_program 噪音）
+  state = { ...state, aiDraft: { program: null } };
+  await runEffect(ctx, { type: 'ai/edit' });
+  assert.equal(posts.length, 1, '空程序跳过校验');
+  await runEffect(ctx, { type: 'ai/validate' });
+  assert.equal(posts.length, 1, '手动校验同语义跳过');
+  // 校验成功臂（擦除 errors）+ 手动按钮
+  const okApi = { post: async () => ({ ok: true, data: {} }) };
+  await runEffect({ api: okApi, store: () => state, dispatch: (a) => actions.push(a), log: null }, { type: 'ai/validate' });
+  // 编译：programHash 字段（★F6 P1：原读 data.hash 恒 undefined）
+  state = { ...state, aiDraft: { program: { type: 'program', version: 2, body: { type: 'seq', statements: [] } } } };
+  await runEffect(ctx, { type: 'ai/compile' });
+  const comp = actions.filter((a) => a.type === 'ai/compiled').pop();
+  assert.equal(comp.payload.hash, 'h'.repeat(64), 'data.programHash 落 hash');
+  // 编译失败臂
+  const failApi = { post: async () => ({ ok: false, code: 'ai_invalid', details: [{ path: '', code: 'not_program', message: '根' }] }) };
+  await runEffect({ api: failApi, store: () => state, dispatch: (a) => actions.push(a), log: null }, { type: 'ai/compile' });
+  const compFail = actions.filter((a) => a.type === 'ai/compiled').pop();
+  assert.equal(compFail.payload.hash, null);
+  assert.equal(compFail.payload.errors[0].code, 'not_program');
+  // 试运行：扁平帧 → B22 diff 包装（★F6 P1：/ai/battle 帧无 diff/bullets → 回放屏可渲染）
+  await runEffect(ctx, { type: 'ai/run', payload: { opponent: 'kiter' } });
+  const loaded = actions.filter((a) => a.type === 'battle/loaded').pop();
+  assert.equal(loaded.payload.frames[0].diff.players.p1.x, 1, 'frame.diff 包装');
+  assert.deepEqual(loaded.payload.frames[0].diff.bullets, []);
+  assert.equal(loaded.payload.frames[0].diff.aiTrace.length, 0);
+  assert.deepEqual(loaded.payload.result, { winner: 'p1', ticks: 3 });
+  assert.ok(actions.some((a) => a.type === 'goto' && a.payload.screen === 'replay'));
+  // 试运行失败 → toast
+  const badApi = { post: async () => ({ ok: false, code: 'network', message: 'x' }) };
+  await runEffect({ api: badApi, store: () => state, dispatch: (a) => actions.push(a), log: null }, { type: 'ai/run', payload: { opponent: 'kiter' } });
+  const toasts = actions.filter((a) => a.type === 'ui/toast');
+  assert.ok(toasts.length >= 1, '失败 toast');
+});
+
+test('reducer：editor/highlight 瞬时态（设置→消费清除→miss toast 语义由 mount 承担）', async () => {
+  const { reducer, initialState } = await import('../../public/js/store/reducer.js');
+  const s0 = initialState();
+  const s1 = reducer(s0, { type: 'editor/highlight', payload: { path: 'body.s[2]' } });
+  assert.equal(s1.aiDraft.highlightPath, 'body.s[2]');
+  const s2 = reducer(s1, { type: 'editor/highlight/done' });
+  assert.equal(s2.aiDraft.highlightPath, null);
+  assert.equal(reducer(s0, { type: 'editor/highlight' }).aiDraft.highlightPath, null, '无 payload → null');
+});
+
 test('createStore：订阅/退订 + onChange 钩子 + dispatch 日志', async () => {
   const { createStore } = await import('../../public/js/store/index.js');
   const seen = [];
