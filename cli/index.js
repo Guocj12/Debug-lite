@@ -22,6 +22,8 @@ commands:
   battle --p1 a.json --p2 b.json [--seed <n>] [--tier <t>] [--out replay.json]
                                                # 双方 loadout 对战 → 完整回放帧（B22，经 HTTP）
   replay --file replay.json [--tick N]         # 文本回放（px 位置/碰撞/事件；B23，本地文件）
+  ranked run --seed <n> [--tier <t>] [--loadout <file>] [--pool <file>]
+                                               # 排位 10 场离线结算（B24，经 HTTP；D-123 不持久化）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -440,6 +442,83 @@ async function main(argv, options) {
                 const v = last && last.diff && last.diff.verdict;
                 if (v) console.log(`verdict: winner=${v.winner} phase=${v.phase}（${frames.length} tick）`);
                 code = 0;
+              }
+            }
+          }
+        }
+      }
+    } else if (cmd === 'ranked') {
+      // ranked run --seed <n> [--tier <t>] [--loadout <file>] [--pool <file>]（B24）
+      const sub = args[1];
+      if (sub !== 'run') {
+        console.error(`ranked 需要一个子命令（run）\n${USAGE}`);
+        code = 2;
+      } else {
+        let seed = null;
+        let tier = null;
+        let ldf = null;
+        let poolf = null;
+        let valid = true;
+        for (let i = 2; i < args.length; i++) {
+          const a = args[i];
+          if (a === '--seed') seed = args[++i];
+          else if (a === '--tier') tier = args[++i];
+          else if (a === '--loadout') ldf = args[++i];
+          else if (a === '--pool') poolf = args[++i];
+          else { valid = false; }
+        }
+        if (!valid || !ldf) {
+          console.error(`ranked run 参数非法（--loadout 必填）\n${USAGE}`);
+          code = 2;
+        } else {
+          const readJson = (f, what) => {
+            try {
+              return { data: JSON.parse(fs.readFileSync(f, 'utf8')), err: null };
+            } catch (e) {
+              return { data: null, err: `读取/解析 ${f} 失败: ${e.message}` };
+            }
+          };
+          const lr = readJson(ldf);
+          let failed = false;
+          if (lr.err) {
+            console.error(lr.err);
+            code = 2;
+            failed = true;
+          } else {
+            const raw = lr.data;
+            const body = { loadout: raw && typeof raw === 'object' && raw.loadout ? raw.loadout : raw };
+            if (raw && raw.warehouse) body.warehouse = raw.warehouse;
+            if (seed !== null) {
+              const n = Number(seed);
+              body.seed = Number.isInteger(n) && n >= 1 ? n : seed;
+            }
+            if (tier !== null) body.tier = tier;
+            if (poolf !== null) {
+              const pr = readJson(poolf, 'pool');
+              if (pr.err) {
+                console.error(pr.err);
+                code = 2;
+                failed = true;
+              } else if (!Array.isArray(pr.data)) {
+                console.error('--pool 文件必须是 loadout 数组');
+                code = 2;
+                failed = true;
+              } else {
+                body.pool = pr.data;
+              }
+            }
+            if (!failed) {
+              const r = await httpJson(baseUrl, 'POST', '/api/v1/ranked/run', body);
+              if (r.status === 200) {
+                console.log(JSON.stringify({
+                  tier: r.body.data.tier, seed: r.body.data.seed, matches: r.body.data.matches,
+                  wins: r.body.data.wins, draws: r.body.data.draws, losses: r.body.data.losses,
+                  promoted: r.body.data.promoted,
+                }, null, 2));
+                code = 0;
+              } else {
+                console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+                code = 1;
               }
             }
           }

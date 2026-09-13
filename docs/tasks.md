@@ -650,7 +650,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
-| B24 | 快照（不可变深拷贝）+ 匹配 10 场（bot 补齐）+ `POST /api/v1/ranked/run`（段位由请求传入/回带） | T-RK-1/5 |
+| B24 `[x]` | 快照（不可变深拷贝）+ 匹配 10 场（bot 补齐）+ `POST /api/v1/ranked/run`（段位由请求传入/回带） | T-RK-1/5 | `ranked.snapshot/match`（审查 `docs/reviews/B24.md`，P1×1 已修——bot 技能不足 3 全 invalid；P2 落实） |
 | B25 | 晋升判定（x=6）+ 段位→奖励品质 + `POST /api/v1/ranked/promote` | T-RK-2/3/4 |
 
 > ~~B26 服务端存档~~ **取消**（D-123）：存档延后到 P6（localStorage）。

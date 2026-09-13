@@ -313,6 +313,23 @@ function createHandler(logger, extraRoutes) {
         }
         return { status: 200, payload: okEnvelope(r.data, logger) };
       },
+      '/api/v1/ranked/run': async (ctx) => {
+        // B24：排位——抽 10 场离线结算（段位由请求传入/回带，D-123 不持久化；平局不计胜）
+        const rankedApi = require('./ranked.js').withLogger(logger);
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+        const unlockApi = require('./core/unlock.js');
+        if (unlockApi.tierIndex(tier) === null) {
+          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
+        }
+        const r = rankedApi.runRankedBattle({ loadout: body.loadout, warehouse: body.warehouse, pool: body.pool, seed: body.seed, tier });
+        if (r.status !== 200) {
+          if (r.code === 'loadout_invalid') return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
+          return { status: r.status, payload: errEnvelope(r.code, r.message) };
+        }
+        return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
     },
   };
   if (extraRoutes) {
