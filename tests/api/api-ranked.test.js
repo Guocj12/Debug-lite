@@ -73,3 +73,28 @@ test('T-AP-3/T-AP-2 错误路径：409 no_loadout/loadout_invalid；400 bad_seed
     assert.equal(badPool.body.error.code, 'bad_pool');
   });
 });
+
+test('B25 POST /ranked/promote：晋升/不晋升/顶段 409/参数 400', async () => {
+  await withServer(null, async ({ port }) => {
+    const ok = await request(port, 'POST', '/api/v1/ranked/promote', { tier: 'common', wins: 7 });
+    assert.equal(ok.status, 200, ok.raw);
+    assert.equal(ok.body.data.tier, 'rare');
+    assert.equal(ok.body.data.promoted, true);
+    assert.equal(ok.body.data.reward, 'rare');
+    const no = await request(port, 'POST', '/api/v1/ranked/promote', { tier: 'common', wins: 6 });
+    assert.equal(no.status, 200);
+    assert.equal(no.body.data.promoted, false);
+    const max = await request(port, 'POST', '/api/v1/ranked/promote', { tier: 'mythic', wins: 7 });
+    assert.equal(max.status, 409);
+    assert.equal(max.body.error.code, 'already_max');
+    const bt = await request(port, 'POST', '/api/v1/ranked/promote', { tier: 'platinum', wins: 7 });
+    assert.equal(bt.status, 400);
+    assert.equal(bt.body.error.code, 'bad_tier');
+    const bw = await request(port, 'POST', '/api/v1/ranked/promote', { tier: 'common', wins: 'x' });
+    assert.equal(bw.status, 400);
+    assert.equal(bw.body.error.code, 'bad_wins');
+    const bj = await request(port, 'POST', '/api/v1/ranked/promote', '{nope');
+    assert.equal(bj.status, 400);
+    assert.equal(bj.body.error.code, 'bad_json');
+  });
+});

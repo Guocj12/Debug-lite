@@ -109,3 +109,59 @@ test('409 业务/400 参数：无 loadout → no_loadout；非法 loadout → lo
   assert.equal(r4.status, 400);
   assert.equal(r4.code, 'bad_pool');
 });
+
+// ---- B25：晋升与段位奖励（T-RK-2/4，D-122）----
+
+test('T-RK-4 段位→品质上限 tierReward（RK-5a..e 逐档；非法段位 null）', () => {
+  assert.equal(ranked.tierReward('common'), 'common', 'RK-5a');
+  assert.equal(ranked.tierReward('rare'), 'rare', 'RK-5b');
+  assert.equal(ranked.tierReward('epic'), 'epic', 'RK-5c');
+  assert.equal(ranked.tierReward('legendary'), 'legendary', 'RK-5d');
+  assert.equal(ranked.tierReward('mythic'), 'mythic', 'RK-5e');
+  assert.equal(ranked.tierReward('platinum'), null, '非法段位');
+});
+
+test('T-RK-2 晋升阈值 x=6：wins=6 不晋升；7 晋升；连续段位递增；顶段 409 already_max', () => {
+  const r6 = ranked.promote('common', 6);
+  assert.equal(r6.status, 200);
+  assert.deepEqual(r6.data, { tier: 'common', promoted: false, reward: 'common', wins: 6 }, 'wins=6 不晋升');
+  const r7 = ranked.promote('common', 7);
+  assert.equal(r7.status, 200);
+  assert.deepEqual(r7.data, { tier: 'rare', promoted: true, reward: 'rare', wins: 7 }, 'wins=7 晋升 + 奖励品质=新段位');
+  const r8 = ranked.promote('rare', 8);
+  assert.equal(r8.data.tier, 'epic');
+  const rM = ranked.promote('mythic', 7);
+  assert.equal(rM.status, 409);
+  assert.equal(rM.code, 'already_max', '最高段位不再晋升');
+});
+
+test('promote 参数错误：bad_tier / bad_wins（非整数/负数/缺省/超上限）', () => {
+  assert.equal(ranked.promote('platinum', 7).code, 'bad_tier');
+  assert.equal(ranked.promote(undefined, 7).code, 'bad_tier');
+  assert.equal(ranked.promote('common', 'x').code, 'bad_wins');
+  assert.equal(ranked.promote('common', -1).code, 'bad_wins');
+  assert.equal(ranked.promote('common', 1.5).code, 'bad_wins');
+  assert.equal(ranked.promote('common', undefined).code, 'bad_wins');
+  assert.equal(ranked.promote('common', 11).code, 'bad_wins', 'P2-2：wins ≤ 10 上限');
+});
+
+test('P2-1：promotedAt 顶段不判定晋升（与 /ranked/run 口径同源分离）', () => {
+  assert.equal(ranked.promotedAt('mythic', 7), false, '顶段 wins=7 不判定晋升');
+  assert.equal(ranked.promotedAt('legendary', 7), true, '次顶段 wins=7 判定晋升');
+  assert.equal(ranked.promotedAt('common', 6), false, 'wins=6 不达阈值');
+  assert.equal(ranked.promote('mythic', 7).status, 409, 'promote 顶段仍 409 already_max');
+});
+
+test('P2-3：tierReward 与开箱品质上限交叉一致（B17 同源 D-122；逐档 5000 样本 max 品质）', () => {
+  const items = require('../../server/core/items.js');
+  const { createRng } = require('../../server/core/rng.js');
+  for (const t of ranked.TIERS) {
+    const rng = createRng(20260913 + ranked.TIERS.indexOf(t));
+    let maxQ = null;
+    for (let i = 0; i < 5000; i++) {
+      const q = items.rollQuality(rng, t);
+      if (maxQ === null || ranked.TIERS.indexOf(q) > ranked.TIERS.indexOf(maxQ)) maxQ = q;
+    }
+    assert.equal(maxQ, ranked.tierReward(t), `${t} 段位开箱上限 == tierReward（交叉绑定）`);
+  }
+});

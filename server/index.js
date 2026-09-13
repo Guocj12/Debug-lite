@@ -330,6 +330,15 @@ function createHandler(logger, extraRoutes) {
         }
         return { status: 200, payload: okEnvelope(r.data, logger) };
       },
+    '/api/v1/ranked/promote': async (ctx) => {
+        // B25：晋升判定（x=6，D-122）+ 段位→奖励品质（D-123 不持久化，段位由请求传入/回带）
+        const rankedApi = require('./ranked.js').withLogger(logger);
+        const body = jsonBody(ctx);
+        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+        const r = rankedApi.promote(body.tier, body.wins);
+        if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, r.message) };
+        return { status: 200, payload: okEnvelope(r.data, logger) };
+      },
     },
   };
   if (extraRoutes) {

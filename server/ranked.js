@@ -134,7 +134,7 @@ function runRankedBattle(opts, L) {
     data: {
       tier, seed, matches: 10,
       wins, draws, losses, invalids,
-      promoted: wins > X_PROMOTE, // D-122：x=6，胜 7 晋升
+      promoted: promotedAt(tier, wins), // P2-1：顶段不判定晋升（与 promote 的 409 口径同源分离）
       results,
     },
   };
@@ -145,10 +145,46 @@ function makeRanked(logger) {
   return {
     takeSnapshot: (ld) => takeSnapshot(ld, L),
     runRankedBattle: (opts) => runRankedBattle(opts, L),
+    promote: (tier, wins) => promote(tier, wins, L),
+    tierReward,
   };
+}
+
+// ---- B25：段位奖励与晋升 ----
+
+// 段位 → 品质上限（D-122/RK-5a..e：段位序号即品质上限；common→common … mythic→mythic）
+function tierReward(tier) {
+  const idx = TIERS.indexOf(tier);
+  return idx === -1 ? null : TIERS[idx];
+}
+
+// 晋升判定（D-122：x=6，wins > 6 即 10 场胜 7 晋升；最高段位不再晋升 → 409 already_max）
+function promotedAt(tier, wins) {
+  return wins > X_PROMOTE && TIERS.indexOf(tier) < TIERS.length - 1; // P2-1：顶段不判定晋升（与 rank/run 同源）
+}
+
+function promote(tier, wins, L) {
+  if (tier === undefined || !TIERS.includes(tier)) {
+    return { status: 400, code: 'bad_tier', message: `非法段位 ${tier}（可选: ${TIERS.join('/')}）` };
+  }
+  if (typeof wins !== 'number' || !Number.isInteger(wins) || wins < 0 || wins > 10) {
+    return { status: 400, code: 'bad_wins', message: `非法 wins ${wins}（必须是非负整数且 ≤ 10，P2-2 上限）` };
+  }
+  const idx = TIERS.indexOf(tier);
+  const willPromote = wins > X_PROMOTE; // 原始阈值（顶段「想晋不可」由 409 拒绝，P2-1 口径分离）
+  if (!willPromote) {
+    return { status: 200, data: { tier, promoted: false, reward: tierReward(tier), wins } };
+  }
+  if (idx === TIERS.length - 1) {
+    L && L.warn('ranked', 'ranked.promote', `最高段位不再晋升: ${tier}`, { tier, wins });
+    return { status: 409, code: 'already_max', message: `${tier} 已是最高段位` };
+  }
+  const next = TIERS[idx + 1];
+  L && L.info('ranked', 'ranked.promote', `${tier} → ${next}（wins=${wins}）`, { from: tier, to: next, wins });
+  return { status: 200, data: { tier: next, promoted: true, reward: tierReward(next), wins } };
 }
 
 module.exports = Object.assign(makeRanked(), {
   withLogger: (logger) => makeRanked(logger),
-  takeSnapshot, runRankedBattle, BOT_LD, buildBotLoadout, X_PROMOTE, TIERS,
+  takeSnapshot, runRankedBattle, promote, tierReward, promotedAt, BOT_LD, buildBotLoadout, X_PROMOTE, TIERS,
 });
