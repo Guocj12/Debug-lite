@@ -1,5 +1,11 @@
 // store/effects.js —— 副作用层（frontend-spec §4.2：签名 (ctx, action) → Promise；ctx={api,store,dispatch,log}）
 // 测试可注入假 api；网络失败一律不抛（toast 兜底）。
+import { clampTick } from '../render/planFrame.js';
+
+// 播放定时器来源（F5：ctx.timers 注入缝；缺省浏览器定时器——测试注入假 timers）
+function storedTimers(ctx) {
+  return ctx.timers || { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (id) => clearInterval(id) };
+}
 
 export function toastCtx(ctx, action, r) {
   if (r && !r.ok) {
@@ -19,6 +25,16 @@ async function doDisassemble(ctx, action) {
   } else {
     toastCtx(ctx, action, r);
   }
+}
+
+// 播放停止（共用：清 playbackTimer + 复位 playing；battle/pause 与 replay/pause 同语义）
+function stopPlayback(ctx) {
+  const timers = storedTimers(ctx);
+  if (ctx.playbackTimer !== undefined && ctx.playbackTimer !== null && timers.clearInterval) {
+    timers.clearInterval(ctx.playbackTimer);
+  }
+  ctx.playbackTimer = null;
+  ctx.dispatch({ type: 'battle/pause' });
 }
 
 export const EFFECTS = {
@@ -111,6 +127,47 @@ export const EFFECTS = {
     const st = ctx.store();
     ctx.dispatch({ type: 'battle/opp/set', payload: { id: action.payload.id } });
     void st;
+  },
+  // ---- F5 回放播放状态机（§6.6：playing 时每 1000/speed ms seek tick+1；末帧自动 pause；timers 经 storedTimers）----
+  'replay/step': async (ctx, action) => {
+    const st = ctx.store();
+    const delta = (action.payload && action.payload.delta) || 1;
+    ctx.dispatch({ type: 'battle/seek', payload: { tick: clampTick(st.battle.tick, st.battle.frames, delta) } });
+  },
+  'replay/play': async (ctx) => {
+    if (ctx.playbackTimer !== undefined && ctx.playbackTimer !== null) return; // 防重入
+    const st = ctx.store();
+    const frames = st.battle.frames || [];
+    if (frames.length <= 1) return;
+    if (!st.battle.playing) ctx.dispatch({ type: 'battle/play' });
+    const timers = storedTimers(ctx);
+    const ms = Math.max(50, Math.floor(1000 / (st.battle.speed || 1))); // 倍速映射（F5：≤20fps 防抖）
+    ctx.playbackTimer = timers.setInterval(() => {
+      const s = ctx.store();
+      const framesN = s.battle.frames || [];
+      const n = clampTick(s.battle.tick, framesN, 1);
+      const done = framesN.length > 0 && n === framesN.length - 1;
+      ctx.dispatch({ type: 'battle/seek', payload: { tick: n } });
+      if (done) {
+        if (ctx.playbackTimer !== null && timers.clearInterval) timers.clearInterval(ctx.playbackTimer);
+        ctx.playbackTimer = null;
+        ctx.dispatch({ type: 'battle/pause' });
+      }
+    }, ms);
+  },
+  // battle/pause 与 replay/pause（§4.2 契约 action 名=播放/暂停切换，F5 审查 P1：播放中按钮 action 为
+  // replay/pause，原 EFFECTS 无此键 → 暂停按钮是死按钮（定时器不清、playing 不复位）——补齐别名实现）
+  'battle/pause': async (ctx) => { stopPlayback(ctx); },
+  'replay/pause': async (ctx) => { stopPlayback(ctx); },
+  'replay/speed': async (ctx, action) => {
+    ctx.dispatch({ type: 'battle/speed', payload: { speed: action.payload.speed } });
+    // 播放中改速 → 重启定时器（保持节奏一致）
+    if (ctx.playbackTimer !== undefined && ctx.playbackTimer !== null) {
+      const timers = storedTimers(ctx);
+      if (timers.clearInterval) timers.clearInterval(ctx.playbackTimer);
+      ctx.playbackTimer = null;
+      await runEffect(ctx, { type: 'replay/play' });
+    }
   },
   // store/save：落盘（由各业务 effect 触发）
   'store/save': async (ctx, action) => {

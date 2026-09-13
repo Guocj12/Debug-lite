@@ -1,10 +1,11 @@
-// views/index.js —— 视图注册表（frontend-spec §1.3/§6：7 屏；F4 挂 battle）
+// views/index.js —— 视图注册表（frontend-spec §1.3/§6：7 屏；F5 挂 replay）
 import { shellLayout } from './shell.js';
 import { menuLayout } from './menu.js';
 import { settingsLayout } from './settings.js';
 import { gachaLayout } from './gacha.js';
 import { warehouseLayout } from './warehouse.js';
 import { battleLayout } from './battle.js';
+import { replayLayout } from './replay.js';
 
 // 各屏 layout 签名统一 (state, opts) → Box[]（不含 shell；shell 由 renderScreen 拼装）
 export const VIEWS = {
@@ -13,8 +14,8 @@ export const VIEWS = {
   gacha: { layout: gachaLayout },
   warehouse: { layout: warehouseLayout },
   battle: { layout: battleLayout },
-  // F5/F6/F7 注册：replay/editor
-  replay: null,
+  replay: { layout: replayLayout },
+  // F6/F7 注册：editor
   editor: null,
 };
 

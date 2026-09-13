@@ -30,7 +30,17 @@ export function verifyLayout(boxes) {
       }
     }
     if (box.kind === 'modal-mask') {
-      const above = list.filter((o) => o.id !== box.id && o.parent !== box.id && o.z > box.z);
+      // 遮罩以上只允许其（间接）后代（F5：text/again 挂面板、面板挂 mask——沿 parent 链递归豁免）
+      const isDescendant = (o) => {
+        let cur = o.parent;
+        while (cur !== null && cur !== undefined) {
+          if (cur === box.id) return true;
+          const parentBox = list.find((p) => p.id === cur);
+          cur = parentBox ? parentBox.parent : null;
+        }
+        return false;
+      };
+      const above = list.filter((o) => o.id !== box.id && !isDescendant(o) && o.z > box.z);
       if (above.length > 0) {
         issues.push({ boxId: box.id, issue: 'zconflict', detail: `遮罩 z=${box.z} 低于其下内容 ${above.map((o) => o.id).join(',')}` });
       }
