@@ -24,7 +24,7 @@
 
 ### 4.1 创建战斗 `createBattle(config, seed)`
 
-1. `createRng(seed)`；各用途流在每 tick 由 `deriveStream(seed, tick, purpose)` 派生（D-91），`purpose ∈ {ai, crit, dodge}`。
+1. `createRng(seed)`；各用途流在每 tick 由 `deriveStream(tick, purpose)` 派生（seed 于 createRng 绑定，D-91 概念式 hash(seed,tick,purpose)），`purpose ∈ {ai, crit, dodge}`。
 2. 实例化双方角色与技能（模板 + 品质 + 插件；含模板 `regen`）。
 3. 建立双方 `AiContext`（隐式主循环入口，见 `08-ai`）。
 4. 设置初始位置 `x = 224 / 800`、朝向 `+1 / -1`、基地血量 `100`。
@@ -77,7 +77,7 @@
 1 闪避判定：defender.dodgeChance（本 tick 若用 dodge 行动则叠加 dodgeChanceBonus）
 2 取本 tick 的攻方 atk 与受方 def
     受方本 tick defending → def × 1.6（D-43，等效临时 +60% 防御插件）
-3 基础伤害：普通 max(1, floor(atk × 倍率 × (1 − def/(def+40))))
+3 基础伤害：普通 max(1, floor(atk × 倍率 × (1 − def/(def+`defK`))))（`defK=40` 自 `battle-config.json`，B21/D-128 入表）
             真实 max(1, floor(atk × 倍率))
 4 背击 ×1.5（§4.5）
 5 暴击 ×1.5（critChance，命中时消耗 crit 流）
@@ -96,8 +96,8 @@
 | 攻击类型 | 判定 |
 |---|---|
 | 近战 / 位移 | 攻方位于受击方**朝向的反方向**（身后）→ 背击 |
-| 平射弹幕 | 弹幕飞行方向与受击方朝向相反 → 背击 |
-| 垂直弹幕 | **永不触发** |
+| 平射弹幕 | **弹幕飞行方向与受击方朝向相同（追尾）** → 背击；迎面不算（2026-09-12 拍板"追尾语义"） |
+| 位移/垂直弹幕 | 垂直**永不触发**；**位移路径弹幕与平射同规则（追尾判背击，迎面不背**——04-bullets M4/M5 保持 12 无背击） |
 
 背击 ×1.5，与暴击可叠加为 ×2.25。
 
