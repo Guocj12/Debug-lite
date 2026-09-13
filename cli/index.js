@@ -21,6 +21,7 @@ commands:
   panel --loadout <file> [--tier <t>]          # 最终面板（B19，经 HTTP）
   battle --p1 a.json --p2 b.json [--seed <n>] [--tier <t>] [--out replay.json]
                                                # 双方 loadout 对战 → 完整回放帧（B22，经 HTTP）
+  replay --file replay.json [--tick N]         # 文本回放（px 位置/碰撞/事件；B23，本地文件）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
 
 function httpJson(baseUrl, method, urlPath, body) {
@@ -367,6 +368,80 @@ async function main(argv, options) {
           } else {
             console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
             code = 1;
+          }
+        }
+      }
+    } else if (cmd === 'replay') {
+      // replay --file replay.json [--tick N]（B23 文本回放：px 位置/碰撞/事件；本地文件，不碰服务端）
+      let file = null;
+      let tickArg = null;
+      let valid = true;
+      for (let i = 1; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--file') file = args[++i];
+        else if (a === '--tick') tickArg = args[++i];
+        else { valid = false; }
+      }
+      if (!valid || !file) {
+        console.error(`replay 参数非法（--file 必填）\n${USAGE}`);
+        code = 2;
+      } else {
+        let data = null;
+        try {
+          data = JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch (e) {
+          console.error(`读取/解析 ${file} 失败: ${e.message}`);
+          code = 2;
+        }
+        if (data !== null) {
+          const frames = Array.isArray(data.frames) ? data.frames : null;
+          if (!frames || frames.length === 0) {
+            console.error(`回放文件无 frames（应来自 battle --out 或 GET /replay）`);
+            code = 2;
+          } else {
+            // 帧内容护栏（B23 P1-1：畸形帧不得抛穿为「连接失败」）
+            const frameOk = (f) => {
+              const d = f && f.diff;
+              return !!(d && d.players && d.players.p1 && d.players.p2
+                && Number.isInteger(d.players.p1.fromX) && Number.isInteger(d.players.p1.toX)
+                && Number.isInteger(d.players.p2.fromX) && Number.isInteger(d.players.p2.toX));
+            };
+            if (!frames.some(frameOk)) {
+              console.error(`回放文件帧内容非法（缺 diff/players 或位置非 1px）`);
+              code = 2;
+            } else {
+              const line = (f) => {
+                const d = f.diff;
+                const p = (o) => `${o} ${d.players[o].fromX}->${d.players[o].toX} hp=${d.players[o].hp} mp=${d.players[o].mp} sp=${d.players[o].sp}`;
+                const coll = d.collision ? ` | 碰撞@${d.collision.contactX}` : '';
+                const hits = d.bulletHits && d.bulletHits.length ? ` | 命中[${d.bulletHits.map((h) => `${h.uid}->${h.target}@${h.atX}`).join(' ')}]` : '';
+                return `tick ${f.tick}: ${p('p1')} | ${p('p2')}${coll}${hits}`;
+              };
+              if (tickArg !== null) {
+                const n = Number(tickArg);
+                const frame = Number.isInteger(n) && n >= 1 ? frames.find((f) => f.tick === n) : null;
+                if (!frame || !frameOk(frame)) {
+                  console.error(`tick ${tickArg} 不存在或内容非法（回放范围 1..${frames.length}）`);
+                  code = 2;
+                } else {
+                  const d = frame.diff;
+                  console.log(line(frame));
+                  if (d.verdict) console.log(`verdict: winner=${d.verdict.winner} phase=${d.verdict.phase}`);
+                  const evs = Array.isArray(d.events) ? d.events : [];
+                  console.log(`events (${evs.length}):`);
+                  for (const e of evs.slice(-12)) console.log(`  [${e.cid}] ${e.channel}.${e.event} ${e.msg || ''}`);
+                  code = 0;
+                }
+              } else {
+                for (const f of frames) {
+                  if (frameOk(f)) console.log(line(f));
+                }
+                const last = frames[frames.length - 1];
+                const v = last && last.diff && last.diff.verdict;
+                if (v) console.log(`verdict: winner=${v.winner} phase=${v.phase}（${frames.length} tick）`);
+                code = 0;
+              }
+            }
           }
         }
       }

@@ -644,7 +644,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
 | B22 `[x]` | 回放帧契约完备性（1px 位置、碰撞位置、cid、AI 轨迹）+ `POST /api/v1/battle` 完整帧 + `GET /api/v1/replay/:id` | T-EN-9 + **T-BT-1** | `events`/`battle.*`（审查 `docs/reviews/B22.md`，P1×2 已修——events 空心化/tick.end 入帧 + 同 seed 帧 ts 漂移） |
-| B23 | 文本回放器 CLI（`replay --file/--tick`，打印 px 位置与碰撞）+ 帧数据充分性审计 | T-CLI-1/2 |
+| B23 `[x]` | 文本回放器 CLI（`replay --file/--tick`，打印 px 位置与碰撞）+ 帧数据充分性审计 | T-CLI-1/2 | `cli.replay`（审查 `docs/reviews/B23.md`，P1×1 已修——畸形帧崩溃误报连接失败；第七维链/守恒审计落地） |
 
 ### P5 排位（2 批；**按 D-123 不做存档**）
 

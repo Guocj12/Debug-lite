@@ -83,6 +83,7 @@ function createBattle(cfgIn, options) {
     logger.debug('damage', 'damage.calc', `${attacker.id} -> ${defender.id} ${dmg}`, {
       attacker: attacker.id, target: defender.id, mult, reduction, backM, critM,
       backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, raw, dmg, lifesteal,
+      hitUid: p.hitUid === undefined ? null : p.hitUid,
     });
     // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害）
     for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
@@ -354,6 +355,7 @@ function createBattle(cfgIn, options) {
     stepLog(8, '弹幕解算');
 
     // 步骤 9：伤害结算（B9 完整链路：弹幕命中 + 碰撞 + 基地；crit 流每 tick 派生一次共享）
+    // B23 P2-9：damage.calc 带 hitUid（命中与伤害一一对应，回放帧审计七维消歧）
     const critRng = battleState.rng.deriveStream(tick, 'crit');
     for (const h of bulletEvents.hits) {
       const atk = players[h.owner];
@@ -362,7 +364,7 @@ function createBattle(cfgIn, options) {
       const backstab = isBackstab({ attackerX: atk.x, attackerFacing: atk.facing }, def, h.srcType || 'aoe', h.dir);
       dealDamage(atk, def, {
         mult: h.payload.multiplier * h.falloffFactor,
-        critRng, backstab, affixes: h.payload.affixes || [], sourceDir: h.dir,
+        critRng, backstab, affixes: h.payload.affixes || [], sourceDir: h.dir, hitUid: h.uid,
       });
     }
     if (resolved.collision) {
