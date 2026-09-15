@@ -15,5 +15,8 @@
     "demo": "node scripts/demo.js",
     "demo:log": "node scripts/demo.js --log-level trace",
     "cli": "node cli/index.js"
+  },
+  "dependencies": {
+    "blockly": "13.3.0"
   }
 }

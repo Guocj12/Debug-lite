@@ -319,6 +319,75 @@ test('R5 effects：boot 分支锤 —— 桶非数组计数 0', async () => {
   assert.ok(store.getState().meta.serverOk === true);
 });
 
+test('R6 effects：ai/edit —— 空程序跳过 / manual 立即校验 / errors 映射 / 无 timers 臂', async () => {
+  const pending = [];
+  const timers2 = { setTimeout: (fn, ms) => { pending.push([fn, ms]); return pending.length; }, clearTimeout: () => {} };
+  // 空程序 → 早退
+  const { store: st0 } = harness(okApi(), fakePersist(), timers2);
+  st0.dispatch({ type: 'ai/edit', program: null });
+  await flush();
+  assert.equal(st0.getState().aiDraft.errors.length, 0);
+  // 注入 program（reducer ai/edit 存 program）→ manual 立即校验
+  const api = okApi({ aiValidate: async (b) => (b.program && b.program.body.statements.length === 0 ? { ok: false, code: 'ai_invalid', message: 'bad', details: [{ path: 'body.s[0]', code: 'branch_without_action', message: 'x' }] } : { ok: true, data: {} }) });
+  const { store: st1 } = harness(api, fakePersist(), timers2);
+  st1.dispatch({ type: 'ai/edit', program: { type: 'program', version: 1, body: { type: 'seq', statements: [] } } });
+  await flush();
+  st1.dispatch({ type: 'ai/edit', manual: true });
+  await flush();
+  assert.deepEqual(st1.getState().aiDraft.errors, [{ path: 'body.s[0]', code: 'branch_without_action', message: 'x' }], '拒绝 → details 直通 errors');
+  // 无 timers → 非 manual 也立即校验
+  const { store: st2 } = harness(api, fakePersist(), null);
+  st2.dispatch({ type: 'ai/edit', program: { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } } });
+  await flush();
+  st2.dispatch({ type: 'ai/edit', manual: true });
+  await flush();
+  assert.deepEqual(st2.getState().aiDraft.errors, [], '合法程序 → errors 清空');
+  // 防抖：非 manual + timers → 300ms 后回调
+  assert.ok(pending.length >= 1, '防抖已排程');
+  const last = pending[pending.length - 1];
+  assert.equal(last[1], 300);
+  last[0](); // 触发防抖回调 → 校验（当前 program 为空 → 早退）
+  await flush();
+});
+
+test('R6 effects：ai/compile —— 成功 hash+loadout 接线 / 失败 toast / 空程序守卫', async () => {
+  const prog = { type: 'program', version: 1, body: { type: 'seq', statements: [] } };
+  const api = okApi({ aiCompile: async () => ({ ok: true, data: { programHash: 'abcdef1234567890' } }) });
+  const { store } = harness(api);
+  store.dispatch({ type: 'ai/edit', program: prog });
+  await flush();
+  store.dispatch({ type: 'ai/compile' });
+  await flush();
+  assert.equal(store.getState().aiDraft.hash, 'abcdef1234567890', 'state 存完整 hash（视图显示前 8 位）');
+  assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('编译通过')));
+  // 失败
+  const { store: st2 } = harness(okApi({ aiCompile: async () => ({ ok: false, code: 'ai_too_large', message: 'x', details: [] }) }), fakePersist());
+  st2.dispatch({ type: 'ai/edit', program: prog });
+  await flush();
+  st2.dispatch({ type: 'ai/compile' });
+  await flush();
+  assert.equal(st2.getState().aiDraft.hash, null);
+  assert.ok(st2.getState().ui.snackbar.some((t) => t.text.includes('ai_too_large')));
+  // 空程序
+  const { store: st3 } = harness(okApi(), fakePersist());
+  st3.dispatch({ type: 'ai/compile' });
+  await flush();
+  assert.ok(st3.getState().ui.snackbar.some((t) => t.text.includes('ai_empty')));
+});
+
+test('R6 effects：editor/highlight —— dom 缝高亮 / 未找到臂', async () => {
+  const paths = [];
+  const { store } = harness(okApi(), fakePersist(), null);
+  store.dispatch({ type: 'editor/highlight', path: 'body.s[0]' });
+  await flush();
+  assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('高亮 body.s[0]')));
+  // dom.highlight false → 程序已变化
+  const store2 = createStore({ reducer, effects: effects(), persist: fakePersist(), api: okApi(), log: sink().log, timers: null, dom: { highlight: () => false } });
+  store2.dispatch({ type: 'editor/highlight', path: 'body.s[0]' });
+  await flush();
+  assert.ok(store2.getState().ui.snackbar.some((t) => t.text.includes('程序已变化')));
+});
+
 test('R2 effects：save/export —— doc 缝下载 + 无 doc 提示臂', async () => {
   const persist = fakePersist();
   persist.exportState = (s) => JSON.stringify({ schemaVersion: 1, tier: s.tier });

@@ -7,6 +7,7 @@
 import { verifyLayout } from '../ui/layout.js';
 import { collectBoxes } from '../views/html.js';
 import { injectCanvas } from './canvas.js';
+import { wireEditor } from './editor.js';
 
 const TOAST_MS = 3000;
 
@@ -36,6 +37,8 @@ export function mountApp(options) {
   const renderScreen = opts.renderScreen || null;
   if (!root || !store || !renderScreen) return null; // no-doc/no-app 跳过
 
+  let editorCtl = null;
+
   function paint() {
     const state = store.getState();
     const html = renderScreen(state.screen, state, { records: () => (log ? log.dump() : []), log });
@@ -47,6 +50,13 @@ export function mountApp(options) {
     if (typeof window !== 'undefined') window.__DL_LAST_BOXES__ = boxes;
     renderToasts(doc, state.ui.snackbar);
     injectCanvas(doc, state, { log });
+    // editor 屏：入屏装配 / 离屏销毁（mount 独占 Blockly DOM；editorFactory 注入缝）
+    if (state.screen === 'editor' && !editorCtl && opts.editorFactory) {
+      editorCtl = opts.editorFactory({ doc, store, log, root }) || null;
+    } else if (state.screen !== 'editor' && editorCtl) {
+      editorCtl.dispose();
+      editorCtl = null;
+    }
   }
 
   // 事件委托（click/change 均走 data-action；change 场景从 target.value 取参）

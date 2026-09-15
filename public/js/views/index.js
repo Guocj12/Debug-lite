@@ -9,9 +9,10 @@ import { gachaLayout } from './gacha.js';
 import { warehouseLayout, assembleDrawerLayout } from './warehouse.js';
 import { battleLayout } from './battle.js';
 import { replayLayout } from './replay.js';
+import { editorLayout } from './editor.js';
 import { boxesToHtml } from './html.js';
 
-// 各屏视图实现（R6 逐批补齐 editor）
+// 各屏视图实现（7 屏全接线）
 const SCREENS = {
   menu: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...menuLayout(state)]),
   settings: (state, ctx) => boxesToHtml([...shellLayout(state, { main: false }), ...settingsLayout(state, ctx && ctx.records)]),
@@ -19,6 +20,7 @@ const SCREENS = {
   warehouse: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...warehouseLayout(state), ...assembleDrawerLayout(state)]),
   battle: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...battleLayout(state)]),
   replay: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...replayLayout(state)]),
+  editor: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...editorLayout(state)]),
 };
 
 function fallbackHtml(screen) {

@@ -4,6 +4,9 @@
  */
 import { opponentOf } from '../views/battle.js';
 
+// ai/edit 防抖表（ctx → timer id；store 重建即失效）
+const debouncers = new Map();
+
 export function toastErr(ctx, code, message) {
   ctx.dispatch({ type: 'ui/toast', text: `${code}${message ? '：' + message : ''}`, kind: 'error' });
 }
@@ -154,6 +157,51 @@ export function effects(apiExtra) {
         ctx.dispatch({ type: 'ui/busy', busy: false });
         toastErr(ctx, r.code, r.message);
       }
+    },
+
+    // AI 编辑（§4.2 ai/edit）：debounce 300ms → POST /ai/validate → ai/errors；manual 臂立即校验
+    async 'ai/edit'(ctx, action) {
+      const runValidate = async () => {
+        const st = ctx.state();
+        const program = (st.aiDraft && st.aiDraft.program) || null;
+        if (!program) return;
+        const r = await ctx.api.aiValidate({ program, tier: st.tier });
+        ctx.dispatch({ type: 'ai/errors', errors: r.ok ? [] : (Array.isArray(r.details) ? r.details : [{ code: r.code, message: r.message }]) });
+      };
+      if (action && action.manual) { await runValidate(); return; }
+      const timers = ctx.timers;
+      if (!timers || typeof timers.setTimeout !== 'function') { await runValidate(); return; }
+      // debounce 300ms：只留最后一次（防抖状态挂 ctx 外部表）
+      debouncers.set(ctx, timers.setTimeout(() => {
+        debouncers.delete(ctx);
+        runValidate();
+      }, 300));
+    },
+
+    // AI 编译（§4.2 ai/compile）→ programHash
+    async 'ai/compile'(ctx) {
+      const st0 = ctx.state();
+      const program = (st0.loadout && st0.loadout.ai) || (st0.aiDraft && st0.aiDraft.program) || null;
+      if (!program) {
+        ctx.dispatch({ type: 'ai/compiled', hash: null });
+        ctx.dispatch({ type: 'ui/toast', text: 'ai_empty：先编辑积木再编译', kind: 'error' });
+        return;
+      }
+      const r = await ctx.api.aiCompile({ program, tier: st0.tier });
+      if (r.ok) {
+        ctx.dispatch({ type: 'ai/compiled', hash: r.data.programHash || null });
+        if (st0.loadout) ctx.dispatch({ type: 'loadout/set', loadout: { ...st0.loadout, ai: program } });
+        ctx.dispatch({ type: 'ui/toast', text: `编译通过 hash ${String(r.data.programHash || '').slice(0, 8)}`, kind: 'info' });
+      } else {
+        ctx.dispatch({ type: 'ai/compiled', hash: null });
+        toastErr(ctx, r.code, r.message);
+      }
+    },
+
+    // 错误行点击 → 高亮（mount 消费 ui.highlight；未找到 → 程序已变化提示）
+    async 'editor/highlight'(ctx, action) {
+      const ok = ctx.dom && typeof ctx.dom.highlight === 'function' ? ctx.dom.highlight(action.path) : null;
+      ctx.dispatch({ type: 'ui/toast', text: ok === false ? '程序已变化，请重新校验' : `高亮 ${action.path}`, kind: 'info' });
     },
 
     // AI 试运行（R6）：POST /ai/battle → battle/loaded → goto replay

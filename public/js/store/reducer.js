@@ -105,13 +105,19 @@ export function reducer(state, action) {
     case 'panel/set':
       return { ...s, panel: a.panel === undefined ? null : a.panel };
     case 'ai/edit':
-      return { ...s, aiDraft: { ...s.aiDraft, program: a.program || null, errors: [], hash: null } };
+      // 编辑：program 直传；manual 臂（无 program 键）保留现有 program（仅清错误）
+      return a.program === undefined
+        ? { ...s, aiDraft: { ...s.aiDraft, errors: [], hash: a.program === undefined ? s.aiDraft.hash : null } }
+        : { ...s, aiDraft: { program: a.program || null, errors: [], hash: null } };
     case 'ai/compile':
       return { ...s, aiDraft: { ...s.aiDraft, compiling: true } };
     case 'ai/compiled':
       return { ...s, aiDraft: { ...s.aiDraft, compiling: false, hash: a.hash || null } };
     case 'ai/errors':
       return { ...s, aiDraft: { ...s.aiDraft, compiling: false, errors: Array.isArray(a.errors) ? a.errors : [] } };
+    case 'editor/highlight':
+      // 瞬时态：错误行 → 高亮路径；mount 消费后清除
+      return { ...s, ui: { ...s.ui, highlight: { path: a.path || 'body', seq: (s.ui.highlight ? s.ui.highlight.seq : 0) + 1 } } };
     case 'battle/opp':
       return { ...s, ui: { ...s.ui, activeTab: { ...s.ui.activeTab, battle: a.id || 'kiter' } } };
     case 'battle/run':

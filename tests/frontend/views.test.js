@@ -173,8 +173,8 @@ test('R2 renderScreen：已实现屏拼接 + 未实现屏 fallback + records 解
   assert.ok(ready.includes('data-box-id="btn_ai"'), 'ready 菜单含按钮');
   assert.ok(ready.includes('data-box-id="logo"'), '拼装外壳');
   assert.ok(ready.includes('data-box-id="seedLit"'), '主菜单含 seedLit');
-  const fb = vi.renderScreen('editor', s, {});
-  assert.ok(fb.includes('尚未接线'), '未实现屏占位（editor 于 R6 接线）');
+  const fb = vi.renderScreen('nosuch', s, {});
+  assert.ok(fb.includes('尚未接线'), '未知屏占位');
   const fnRecords = vi.renderScreen('settings', st({ screen: 'settings' }), { records: () => [{ seq: 1, level: 'debug', channel: 'store', event: 'store.dispatch', msg: 'x' }] });
   assert.ok(fnRecords.includes('store.dispatch'), 'records 函数 → 数组解析');
   // R3/R4：gacha/warehouse/battle 屏接线
