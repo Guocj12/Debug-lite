@@ -163,18 +163,20 @@ test('blocks：注册清单 16 型与 bridge 块型全集一一对应（数量+�
   void prog;
 });
 
-test('settings 新控件：seed 行/随机/导出按钮/关于/导入提示', async () => {
+test('settings 控件（screens.md 设置表）：fld_seed/sel_tier/about/sel_level/channels/ring/save_row', async () => {
   const { settingsLayout } = await import('../../public/js/views/settings.js');
   const { verifyLayout } = await import('../../public/js/ui/verify.js');
   const st = { screen: 'settings', seed: 7, logPrefs: { level: 'debug', channels: {} }, loadout: { role: null, skills: [] }, meta: {} };
   const boxes = settingsLayout(st, {});
-  assert.ok(boxes.find((b) => b.id === 'settings_seed').text.includes('seed：7'));
-  assert.equal(boxes.find((b) => b.id === 'settings_seed_rand').action, 'seed/random');
-  assert.equal(boxes.find((b) => b.id === 'settings_export').action, 'save/export');
-  assert.ok(boxes.find((b) => b.id === 'settings_about').text.includes('Debug-Lite'));
-  assert.ok(boxes.find((b) => b.id === 'settings_import_hint'), '导入提示');
+  assert.ok(boxes.find((b) => b.id === 'fld_seed').text.includes('SEED：7'));
+  assert.equal(boxes.find((b) => b.id === 'fld_seed').action, 'seed/random');
+  assert.equal(boxes.find((b) => b.id === 'btn_export').action, 'save/export');
+  assert.ok(boxes.find((b) => b.id === 'about').text.includes('Debug-Lite'));
+  assert.ok(boxes.find((b) => b.id === 'save_hint'), '导入提示');
+  assert.equal(boxes.find((b) => b.id === 'sel_level').text, 'debug');
+  assert.ok(boxes.filter((b) => b.kind === 'chip').length >= 19, '通道勾选 ≥19 项');
   const unset = settingsLayout({ ...st, seed: null }, {});
-  assert.ok(unset.find((b) => b.id === 'settings_seed').text.includes('未设'));
+  assert.ok(unset.find((b) => b.id === 'fld_seed').text.includes('未设'));
   const verify = verifyLayout(boxes);
   assert.equal(verify.ok, true, `设置屏自检：${verify.issues.slice(0, 3).map((i) => `${i.boxId}:${i.issue}`).join(',')}`);
 });

@@ -1,6 +1,14 @@
-// views/menu.js —— 主菜单（frontend-spec §6.1；四态：loading/ready/error/empty）
-import { SIZES, SPACES } from '../ui/sizes.js';
-import { center, panel, button } from '../ui/layout.js';
+// views/menu.js —— 主菜单（frontend-spec §6.1；坐标口径 = docs/screens.md「主菜单 menu」盒子表）
+import { button } from '../ui/layout.js';
+
+// screens.md menu 表：panel_menu(360,180,560,360,z2) title(408,216,464,32,z3) hint(408,540,464,24,z4)
+// btn_ai/wh/gacha/battle/settings = (560,268/320/372/424/476,160,40,z4)（步距 52 = 40 + 12）
+const PANEL = { x: 360, y: 180, w: 560, h: 360, z: 2 };
+const TITLE = { x: 408, y: 216, w: 464, h: 32, z: 3 };
+const HINT = { x: 408, y: 540, w: 464, h: 24, z: 4 };
+const BTN_X = 560;
+const BTN_Y0 = 268;
+const BTN_PITCH = 52;
 
 const BTN = [
   { id: 'btn_ai', text: 'AI 编辑', goto: 'editor' },
@@ -17,28 +25,43 @@ export function menuPhase(state) {
   return 'ready';
 }
 
+// 四态文案（loading/error/empty/ready；title 与 hint 分别承载）
+const TITLE_TEXT = { loading: '加载中', error: '连接失败', empty: 'Debug-Lite v3', ready: 'Debug-Lite v3' };
+const HINT_TEXT = {
+  loading: '正在连接服务端…',
+  error: '连接失败：服务端不可达',
+  empty: '无存档：先开箱/装配，或直接开始',
+  ready: '选择一项进入',
+};
+
 export function menuLayout(state) {
   const phase = menuPhase(state);
-  const c = center(560, 360);
   const boxes = [
-    panel(c.x, c.y, 560, 360, phase === 'loading' ? '加载中' : 'Debug-Lite', 'menu_panel'),
+    {
+      id: 'panel_menu', kind: 'panel', parent: null,
+      x: PANEL.x, y: PANEL.y, w: PANEL.w, h: PANEL.h, z: PANEL.z, visible: true, text: '',
+    },
+    {
+      id: 'title', kind: 'title', parent: 'panel_menu',
+      x: TITLE.x, y: TITLE.y, w: TITLE.w, h: TITLE.h, z: TITLE.z, visible: true, text: TITLE_TEXT[phase],
+    },
   ];
-  // 三态提示文本统一 y=236（面板 180 + 16 padding + 40 标题）；§6.1 按钮栈「y 从 260 起」为绝对坐标
-  const textY = c.y + SPACES.s5 + SPACES.s4; // 180+24+16=236（SPACES 组合，无魔法数字）
-  if (phase === 'loading') {
-    boxes.push({ id: 'menu_loading', kind: 'text', parent: 'menu_panel', x: c.x + SPACES.s4, y: textY, w: 400, h: 24, z: 1, visible: true, text: '正在连接服务端…' });
-  } else if (phase === 'error') {
-    boxes.push({ id: 'menu_error', kind: 'text', parent: 'menu_panel', x: c.x + SPACES.s4, y: textY, w: 400, h: 24, z: 1, visible: true, text: '连接失败：服务端不可达' });
-    boxes.push(button('btn_boot', c.x + 40, textY + SPACES.s8, '重试', { parent: 'menu_panel', action: 'boot', z: 1 }));
+  // error 态：按钮栈位置只放「重试」（其余屏在服务端不可达时均不可用）；z4 与按钮同层且不共存 → 无重叠
+  if (phase === 'error') {
+    boxes.push(button('btn_boot', BTN_X, BTN_Y0 + BTN_PITCH * 4, '重试', {
+      parent: 'panel_menu', action: 'boot', z: 4,
+    }));
   } else {
-    if (phase === 'empty') {
-      boxes.push({ id: 'menu_empty', kind: 'text', parent: 'menu_panel', x: c.x + SPACES.s4, y: textY, w: 500, h: 24, z: 1, visible: true, text: '无存档：先开箱/装配，或直接开始' });
-    }
-    let y = 260; // §6.1「y 从 260 起」（绝对坐标；relative 会把 3/5 按钮推出面板，F2 审查 P1-1）
-    for (const b of BTN) {
-      boxes.push(button(b.id, c.x + (560 - SIZES.button.w) / 2, y, b.text, { parent: 'menu_panel', goto: b.goto, z: 1 }));
-      y += SIZES.button.h + 12; // gap 12（§6.1）
-    }
+    BTN.forEach((b, i) => {
+      boxes.push(button(b.id, BTN_X, BTN_Y0 + BTN_PITCH * i, b.text, {
+        parent: 'panel_menu', goto: b.goto, z: 4,
+        disabled: phase === 'loading',
+      }));
+    });
   }
+  boxes.push({
+    id: 'hint', kind: 'text', parent: null, style: 'center muted',
+    x: HINT.x, y: HINT.y, w: HINT.w, h: HINT.h, z: HINT.z, visible: true, text: HINT_TEXT[phase],
+  });
   return boxes;
 }

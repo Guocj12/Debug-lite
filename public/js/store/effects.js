@@ -1,6 +1,8 @@
 // store/effects.js —— 副作用层（frontend-spec §4.2：签名 (ctx, action) → Promise；ctx={api,store,dispatch,log}）
 // 测试可注入假 api；网络失败一律不抛（toast 兜底）。
 import { clampTick } from '../render/planFrame.js';
+import { itemByUid, equipInto } from '../views/warehouse.js'; // 纯函数（同层 L7；无循环）
+import { DEFAULT_AI_PROGRAM } from '../views/editor.js'; // 缺省出战 AI（loadout.ai 必填，否则 /battle、/panel 恒 409）
 
 // 播放定时器来源（F5：ctx.timers 注入缝；缺省浏览器定时器——测试注入假 timers）
 function storedTimers(ctx) {
@@ -40,13 +42,17 @@ async function doDisassemble(ctx, action) {
 }
 
 // 播放停止（共用：清 playbackTimer + 复位 playing；battle/pause 与 replay/pause 同语义）
+// ★F8 修复（真机崩溃）：原实现无条件 dispatch('battle/pause')，而 EFFECTS['battle/pause'] 又调 stopPlayback
+// → effect↔effect 无限递归（真实 store 上点「暂停」/末帧自动暂停即 RangeError: Maximum call stack size exceeded）。
+// 现改为幂等：仅当仍在播放时才派发一次。
 function stopPlayback(ctx) {
   const timers = storedTimers(ctx);
   if (ctx.playbackTimer !== undefined && ctx.playbackTimer !== null && timers.clearInterval) {
     timers.clearInterval(ctx.playbackTimer);
   }
   ctx.playbackTimer = null;
-  ctx.dispatch({ type: 'battle/pause' });
+  const st = ctx.store();
+  if (st && st.battle && st.battle.playing) ctx.dispatch({ type: 'battle/pause' });
 }
 
 export const EFFECTS = {
@@ -81,6 +87,24 @@ export const EFFECTS = {
   // wh/disassemble / wh/take（详情槽位拆卸，F3）：共用 doDisassemble（定义在上方）
   'wh/disassemble': doDisassemble,
   'wh/take': doDisassemble,
+  // wh/equip：选中物品 → 出战配置（§6.3 详情区；角色就位时用技能桶补齐三槽）。
+  // 必要性：此前全仓无任何 loadout/set 派发点 → loadout.role 恒 null → /battle 恒 loadout_invalid → 回放屏不可达。
+  'wh/equip': async (ctx, action) => {
+    const st = ctx.store();
+    const wh = st.warehouse && st.warehouse.buckets ? st.warehouse.buckets : {};
+    const item = itemByUid(st.warehouse, action.payload && action.payload.uid);
+    const equipped = equipInto(st.loadout, item, wh.skill);
+    if (!equipped) {
+      toastCtx(ctx, action, { ok: false, code: 'bad_equip' });
+      return;
+    }
+    // loadout.ai 必填（I-12a）：用户未在编辑器编译过 → 用缺省程序兜底，保证装配后即可对战/看面板
+    const loadout = equipped.ai ? equipped : { ...equipped, ai: DEFAULT_AI_PROGRAM };
+    ctx.dispatch({ type: 'loadout/set', payload: { loadout } });
+    ctx.dispatch({ type: 'store/save' });
+    ctx.dispatch({ type: 'ui/toast', payload: { text: `已装配：${item.name || item.uid}`, kind: 'ok' } });
+    if (ctx.log) ctx.log.info('store', 'store.dispatch', 'wh.equip.ok', { uid: item.uid, kind: item.kind });
+  },
   // loadout/validate：POST /loadout → details 展开（错误入 aiDraft.errors）
   'loadout/validate': async (ctx) => {
     const st = ctx.store();
@@ -98,6 +122,11 @@ export const EFFECTS = {
     // 手动编译不设空程序守卫：null → 后端 400 bad_ai → errors 上屏（用户可见反馈；实时校验链才静默跳过）
     const r = await ctx.api.post('/ai/compile', { ai: st.aiDraft && st.aiDraft.program });
     ctx.dispatch({ type: 'ai/compiled', payload: r.ok ? { hash: (r.data && r.data.programHash) || null, errors: r.data.errors || [] } : { hash: null, errors: r.details || [] } });
+    // 编译成功 = 该程序成为出战 AI（loadout.ai 必填；否则 /battle、/panel 恒 loadout_invalid）
+    if (r.ok && st.aiDraft && st.aiDraft.program) {
+      ctx.dispatch({ type: 'loadout/set', payload: { loadout: { ...st.loadout, ai: st.aiDraft.program } } });
+      ctx.dispatch({ type: 'store/save' });
+    }
   },
   // ai/run：POST /ai/battle → battle/loaded（F5 起对接回放；F1 P1-4：带 tier 防门控放宽；§6.2 试运行 opponent:kiter）
   // ★F6 审查 P1（修复）：/ai/battle 帧为扁平 {tick,players,collision,bulletHits,verdict,aiTrace}（runner.js，无
@@ -246,8 +275,15 @@ export const EFFECTS = {
       if (fn) fn('store', 'store.boot', r.ok ? 'server ok (retry)' : 'server unreachable (retry)', { ok: !!r.ok });
     }
   },
-  'log/level': async (ctx, action) => {
-    const level = action.payload && action.payload.level;
+  // log/channel：通道开关 chips（§6.7）——落状态走 log/set（★注意：不可再派发 log/channel 自身，
+  // 否则 effect↔effect 递归：本 effect 会再次被 store 触发），再对 DLLog 生效（开 trace / 关 silent）
+  'log/channel': async (ctx, action) => {
+    const p = action.payload || {};
+    if (!p.channel) return;
+    ctx.dispatch({ type: 'log/set', payload: { channels: { [p.channel]: p.on ? 'trace' : 'silent' } } });
+    if (ctx.log && ctx.log.setChannelLevel) ctx.log.setChannelLevel(p.channel, p.on ? 'trace' : 'silent');
+  },
+  'log/level': async (ctx, action) => {    const level = action.payload && action.payload.level;
     if (!level) return;
     ctx.dispatch({ type: 'log/set', payload: { level } });
     if (ctx.log && ctx.log.setLevel) ctx.log.setLevel(level);

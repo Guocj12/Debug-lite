@@ -11,6 +11,8 @@ export const PALETTE = {
   hit: '#f0883e', // 命中标记（无 token——文字映射登记）
   collision: '#f85149', // --color-danger
   verdict: '#3fb950', // --color-ok
+  base1: '#1f6feb', // 基地 P1（--color-accent 的深色档；无 token——文字映射登记）
+  base2: '#da3633', // 基地 P2（--color-danger 的深色档；无 token——文字映射登记）
 };
 
 const CANVAS_H = 128; // index.html 骨架 <canvas id="battle" height=128>
@@ -30,7 +32,14 @@ export function paintCanvas(canvasEl, primitives, opts) {
   ctx.lineTo(w, 96);
   ctx.stroke();
   for (const p of primitives || []) {
-    if (p.kind === 'player') {
+    if (p.kind === 'base') {
+      // 基地盒（screens.md replay 表 base_l/base_r；填充高度按 hp/maxHp 投影，缺 maxHp → 满格）
+      const ratio = Number.isFinite(p.maxHp) && p.maxHp > 0 && Number.isFinite(p.hp) ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 1;
+      ctx.fillStyle = p.owner === 'p1' ? PALETTE.base1 : PALETTE.base2;
+      ctx.fillRect(p.x, p.y + p.h * (1 - ratio), p.w, p.h * ratio);
+      ctx.strokeStyle = PALETTE.line;
+      ctx.strokeRect(p.x, p.y, p.w, p.h);
+    } else if (p.kind === 'player') {
       ctx.fillStyle = p.owner === 'p1' ? PALETTE.p1 : PALETTE.p2;
       ctx.fillRect(p.x, p.y, p.w, p.h);
     } else if (p.kind === 'bullet') {

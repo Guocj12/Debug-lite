@@ -1,41 +1,81 @@
-// views/editor.js —— AI 编辑器屏布局（frontend-spec §6.2：toolbox 左 / workspace / panel 右 / errors 底）
-import { SIZES } from '../ui/sizes.js';
-import { panel, button } from '../ui/layout.js';
+// views/editor.js —— AI 编辑器屏布局（frontend-spec §6.2；坐标口径 = docs/screens.md「AI 编辑器 editor」盒子表）
 
-// §6.2 布局坐标：toolbox(0,64,120,592) / workspace(120,64,1024,432) / panel(1144,64,136,592) / errors(120,496,1024,160)。
-// ★F6 审查 P1：workspace 盒 id 必须为 blocklyDiv（Blockly.inject 容器；main.createEditor 的 document 回退即取此 id
-// ——原 editor_workspace 使应用内无任何 Blockly 注入可达点）。
+// screens.md editor 表：toolbox(0,64,120,592,z2) workspace(120,64,1024,432,z2) loop_forever(144,88,200,48,z3)
+// panel_right(1144,64,136,592,z2) btn_validate(1156,80,112,32,z3) btn_compile(1156,120,112,32,z3)
+// btn_run(1156,160,112,32,z3) hash(1156,216,112,40,z3) errCount(1156,272,112,24,z3) errors(120,496,1024,160,z2)
+// 注 1：表内 workspace 行 = Blockly 注入容器，其元素 id 由 frontend-spec §6.2 规定为 blocklyDiv（盒 id 沿用）。
+// 注 2：表内 loop_forever 为 Blockly 管理的预置积木（presetLoop），位置由 Blockly 自持，不建 DOM 盒。
+const TOOLBOX_BOX = { x: 0, y: 64, w: 120, h: 592, z: 2 };
+const WORKSPACE = { x: 120, y: 64, w: 1024, h: 432, z: 2 };
+const PANEL = { x: 1144, y: 64, w: 136, h: 592, z: 2 };
+const BTN = { x: 1156, w: 112, h: 32, z: 3 };
+const HASH = { x: 1156, y: 216, w: 112, h: 40, z: 3 };
+const ERR_COUNT = { x: 1156, y: 272, w: 112, h: 24, z: 3 };
+const ERRORS = { x: 120, y: 496, w: 1024, h: 160, z: 2 };
+const TB_CHIP = { x: 8, y: 80, w: 104, h: 28, pitch: 32 }; // toolbox 容器内条目
+const ERR_ROW = { x: 136, y: 528, w: 992, h: 22, pitch: 26, max: 5 }; // errors 容器内行
+
+// 缺省出战 AI（编辑器未产出程序时的兜底）：隐式主循环内恒有一个可达 action → ast 合法性与门控均可通过。
+// 必要性：/battle 与 /panel 的 loadout 校验要求 「缺少 AI 程序 → loadout_invalid」（server/loadout.js I-12a），
+// 无兜底则装配完也无法对战/看面板（回放屏不可达）。
+export const DEFAULT_AI_PROGRAM = Object.freeze({
+  type: 'program', version: 1,
+  body: { type: 'seq', statements: [{ type: 'action', name: 'move_right' }] },
+});
+
 export function editorLayout(state) {
-  const boxes = [
-    panel(0, 64, 120, 592, '积木', 'editor_toolbox'),
-    { id: 'blocklyDiv', kind: 'workspace', parent: null, x: 120, y: 64, w: 1024, h: 432, z: 1, visible: true, text: 'Blockly 区' },
-  ];
-  boxes.push(panel(1144, 64, 136, 592, '控制', 'editor_panel'));
-  // §6.2 面板：校验/编译/试运行 + programHash + 错误计数；宽 136 → 按钮 ghost 96×32（F6 自检修正）
-  boxes.push(button('editor_validate', 1156, 72, '校验', { parent: 'editor_panel', z: 1, ghost: true, action: 'ai/validate' }));
-  boxes.push(button('editor_compile', 1156, 116, '编译', { parent: 'editor_panel', z: 1, ghost: true, action: 'ai/compile' }));
-  boxes.push(button('editor_run', 1156, 160, '试运行', { parent: 'editor_panel', z: 1, ghost: true, action: 'ai/run', payload: { opponent: 'kiter' } }));
   const d = state.aiDraft || {};
-  const hash = d.hash;
-  boxes.push({ id: 'editor_hash', kind: 'text', parent: 'editor_panel', x: 1156, y: 208, w: 112, h: 20, z: 1, visible: true, text: hash ? `hash ${hash.slice(0, 8)}` : '未编译' });
   const errs = d.errors || [];
-  boxes.push({ id: 'editor_err_count', kind: 'text', parent: 'editor_panel', x: 1156, y: 240, w: 112, h: 20, z: 1, visible: true, text: `错误 ${errs.length}` });
-  // 错误列表（底栏 120,496,1024,160；≤5 行；行点击 → 高亮对应积木（§6.2 errors 行点击 → highlight））
-  boxes.push(panel(120, 496, 1024, 160, '错误', 'editor_errors'));
-  let ey = 528;
-  for (const e of errs.slice(0, 5)) {
+  const nodes = (state.tierInfo && state.tierInfo.nodes) || null;
+  const entries = buildToolbox(nodes);
+  const boxes = [
+    { id: 'toolbox', kind: 'panel', parent: null, ...TOOLBOX_BOX, visible: true, text: '积木' },
+  ];
+  entries.forEach((e, i) => {
     boxes.push({
-      id: `editor_err_${ey}`, kind: 'listitem', parent: 'editor_errors',
-      x: 136, y: ey, w: 992, h: 22, z: 1, visible: true,
-      text: `${e.path || ''} ${e.code || ''}`, detail: e.message || '',
-      // F6 审查 P1：高亮调用点（原缺失）——行 action → reducer aiDraft.highlightPath → mount 消费定位积木
-      action: e.path ? 'editor/highlight' : null,
-      payload: e.path ? { path: e.path } : undefined,
+      id: `tb_${e.type}`, kind: 'chip', parent: 'toolbox',
+      x: TB_CHIP.x, y: TB_CHIP.y + i * TB_CHIP.pitch, w: TB_CHIP.w, h: TB_CHIP.h, z: 3, visible: true,
+      text: e.label, disabled: true,
     });
-    ey += 26;
-  }
+  });
+  boxes.push({ id: 'blocklyDiv', kind: 'workspace', parent: null, ...WORKSPACE, visible: true, text: 'Blockly 区' });
+  boxes.push({ id: 'panel_right', kind: 'panel', parent: null, ...PANEL, visible: true, text: '控制' });
+  const btn = (id, y, text, action, payload) => ({
+    id, kind: 'button', parent: 'panel_right', style: 'ghost',
+    x: BTN.x, y, w: BTN.w, h: BTN.h, z: BTN.z, visible: true, text, action,
+    ...(payload === undefined ? {} : { payload }),
+    disabled: !!d.compiling && action === 'ai/compile',
+  });
+  boxes.push(btn('btn_validate', 80, '校验', 'ai/validate'));
+  boxes.push(btn('btn_compile', 120, d.compiling ? '编译中…' : '编译', 'ai/compile'));
+  boxes.push(btn('btn_run', 160, '试运行', 'ai/run', { opponent: 'kiter' }));
+  boxes.push({
+    id: 'hash', kind: 'text', parent: 'panel_right', style: 'wrap muted',
+    x: HASH.x, y: HASH.y, w: HASH.w, h: HASH.h, z: HASH.z, visible: true,
+    text: d.hash ? `HASH ${String(d.hash).slice(0, 8)}` : '未编译',
+  });
+  boxes.push({
+    id: 'errCount', kind: 'text', parent: 'panel_right',
+    x: ERR_COUNT.x, y: ERR_COUNT.y, w: ERR_COUNT.w, h: ERR_COUNT.h, z: ERR_COUNT.z, visible: true,
+    text: `错误 ${errs.length}`,
+  });
+  // 错误列表（容器 + 行；行点击 → 高亮对应积木，§6.2）
+  boxes.push({ id: 'errors', kind: 'panel', parent: null, ...ERRORS, visible: true, text: '错误列表' });
   if (errs.length === 0) {
-    boxes.push({ id: 'editor_err_ok', kind: 'text', parent: 'editor_errors', x: 136, y: 528, w: 400, h: 20, z: 1, visible: true, text: '（无错误）' });
+    boxes.push({
+      id: 'editor_err_ok', kind: 'text', parent: 'errors',
+      x: ERR_ROW.x, y: ERR_ROW.y, w: 400, h: ERR_ROW.h, z: 3, visible: true, text: '（无错误）',
+    });
+  } else {
+    errs.slice(0, ERR_ROW.max).forEach((e, i) => {
+      boxes.push({
+        id: `editor_err_${i}`, kind: 'listitem', parent: 'errors',
+        x: ERR_ROW.x, y: ERR_ROW.y + i * ERR_ROW.pitch, w: ERR_ROW.w, h: ERR_ROW.h, z: 3, visible: true,
+        text: `${e.path || ''} ${e.code || ''}`, detail: e.message || '',
+        action: e.path ? 'editor/highlight' : null,
+        payload: e.path ? { path: e.path } : undefined,
+      });
+    });
   }
   return boxes;
 }

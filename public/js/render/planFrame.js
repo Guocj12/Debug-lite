@@ -6,12 +6,27 @@ export const CELL_PX = 64; // battle-config.cellPx
 export const ACTOR_HALF = 32; // battle-config.actorHalfPx
 export const PLAYER_Y = 96; // 角色中心线（canvas 高 128：上方 64 为 HUD 预留）
 export const BULLET_Y = 96;
+export const BASE_W = 32; // 基地盒（screens.md replay 表 base_l 0,102,32,26 / base_r 992,102,32,26）
+export const BASE_H = 26;
+export const BASE_Y = 102;
+export const BASE_LEFT_X = 0;
+export const BASE_RIGHT_X = FIELD_PX - BASE_W; // 992
 
 // diff（B22 冻结帧）→ 图元数组 [{kind, owner?, x, w, y, hp, ...}]
-// 图元种类：player（A/B 矩形）/ bullet / hit（命中标记）/ collision（碰撞标记）/ verdict（终局文字）
+// 图元种类：base（A/B 基地）/ player（A/B 矩形）/ bullet / hit（命中标记）/ collision（碰撞标记）/ verdict（终局文字）
 export function planFrame(diff, frameIndex) {
   const d = diff || {};
   const out = [];
+  const bases = d.bases || {};
+  for (const owner of ['p1', 'p2']) {
+    const base = bases[owner];
+    if (!base) continue;
+    out.push({
+      kind: 'base', owner, frameIndex,
+      x: owner === 'p1' ? BASE_LEFT_X : BASE_RIGHT_X, y: BASE_Y, w: BASE_W, h: BASE_H,
+      hp: base.hp, maxHp: base.maxHp, def: base.def,
+    });
+  }
   const players = d.players || {};
   for (const owner of ['p1', 'p2']) {
     const p = players[owner];

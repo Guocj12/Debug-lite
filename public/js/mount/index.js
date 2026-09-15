@@ -1,5 +1,6 @@
 // mount/index.js —— 唯一 DOM 写入点（frontend-spec §6.0/§3.5：挂载/事件委托/verifyLayout/日志）
 import { boxesToHtml, collectBoxes, validateBoxIds } from './render.js';
+import { measureRects, compareRects } from './measure.js';
 import { routeEvent } from './delegate.js';
 import { verifyLayout } from '../ui/verify.js';
 import { planFrame } from '../render/planFrame.js';
@@ -13,9 +14,15 @@ import { registerBlockTypes } from '../editor/blocks.js'; // F7：自定义块�
 // → 所有盒子在浏览器视觉堆叠于 (0,0)，F2~F5 各屏全部不可见。此处补齐为唯一注入点（mount=唯一 DOM 写入层）。
 // 防御冗余说明：boxes 恒为 collectBoxes 数组、id 恒非空、x/y/w/h/z 经 num() 恒为数字、doc.getElementById
 // 由 mountApp 入口守卫——故不再叠 ||[]/||0/三元兜底（F5 审查分支净化）。
+// ui.layout 日志摘要（§2.2 必含字段 id/x/y/w/h/z/visible；text 不入日志避免噪声膨胀）
+function rectBrief(b) {
+  return { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h, z: b.z, visible: b.visible };
+}
+
 function injectBoxGeom(doc, boxes) {
   let n = 0;
   for (const b of boxes) {
+    // ★F8 修复：getElementById 依赖 id 属性——boxToHtml 已补 id（此前只写 data-box-id → 全部取空 → 不注入几何）
     const el = doc.getElementById(b.id);
     if (!el || !el.style) continue;
     el.style.position = 'absolute';
@@ -56,6 +63,14 @@ export function mountApp(deps) {
     lastVerify = verifyLayout(boxes);
     if (!lastVerify.ok && log) log.warn('ui', 'ui.layout.report', `布局自检 ${lastVerify.issues.length} 项`, { issues: lastVerify.issues.slice(0, 8) });
     injectBoxGeom(doc, boxes);
+    // §2.2/§2.3 像素级日志：ui.layout（每次布局后的坐标事实源）+ ui.rect（实测校准，>1px 偏差入 report）
+    if (log) log.debug('ui', 'ui.layout', `ui.layout ${st.screen}`, { view: st.screen, boxes: boxes.map(rectBrief) });
+    const rects = measureRects(doc);
+    if (rects.size > 0) {
+      const cmp = compareRects(boxes, rects);
+      if (log) log.debug('ui', 'ui.rect', `ui.rect ${st.screen}，实测 ${rects.size} 盒，偏差 ${cmp.dev.length}`, { view: st.screen, measured: rects.size, dev: cmp.dev, missing: cmp.missing });
+      if (cmp.dev.length > 0 && log) log.warn('ui', 'ui.layout.report', `实测矩形与盒坐标偏差 ${cmp.dev.length} 项（>1px）`, { issues: cmp.dev.slice(0, 8) });
+    }
     // F5 审查 P1：#battle 画布（index.html 骨架，原 display:none 且无定位——回放绘制在浏览器不可见；
     // 回放屏时按画布盒定位显示，其余屏隐藏；getElementById 由入口守卫保证存在）
     const canvasEl = doc.getElementById('battle');
@@ -125,6 +140,7 @@ export function mountApp(deps) {
       }
     }
     if (log) log.debug('render', 'render.frame', `paint ${st.screen}`, { screen: st.screen, boxes: boxes.length, issues: lastVerify.issues.length });
+    renderToasts(st.ui && st.ui.snackbar);
     return { boxes, verify: lastVerify };
   }
 
@@ -133,6 +149,11 @@ export function mountApp(deps) {
     routeEvent(t, (action) => store.dispatch(action), log);
   };
   doc.addEventListener('click', onClick);
+  // Esc → 返回主菜单（screens.md 各屏盒子表未列导航盒 → 用键盘逃生；否则除回放屏外无处可退）
+  const onKey = (evt) => {
+    if (evt && evt.key === 'Escape') store.dispatch({ type: 'goto', payload: { screen: 'menu' } });
+  };
+  doc.addEventListener('keydown', onKey);
 
   // toast 挂载区（#dl-toasts）
   let toastsEl = doc.getElementById('dl-toasts');
@@ -140,6 +161,27 @@ export function mountApp(deps) {
     toastsEl = doc.createElement('div');
     toastsEl.id = 'dl-toasts';
     if (app.parentNode && app.parentNode.appendChild) app.parentNode.appendChild(toastsEl);
+  }
+  const seenToasts = new Set();
+  const toastMs = typeof o.toastMs === 'number' ? o.toastMs : 3000; // §3.2「3s 自动消失」（测试注入小值）
+  // snackbar → DOM（此前 state.ui.snackbar 只进状态、无任何渲染 → 失败/成功提示在界面上完全不可见）
+  // 生命周期与 DOM 解耦：首次见到的 toast 一律调度消散（无容器环境也保持状态收敛）
+  function renderToasts(list) {
+    const canRender = !!toastsEl && typeof toastsEl.appendChild === 'function' && typeof doc.createElement === 'function';
+    if (canRender) toastsEl.innerHTML = '';
+    for (const t of list || []) {
+      if (!seenToasts.has(t.id)) {
+        seenToasts.add(t.id);
+        const timer = setTimeout(() => store.dispatch({ type: 'ui/toast/dismiss', payload: { id: t.id } }), toastMs);
+        if (timer && typeof timer.unref === 'function') timer.unref(); // node 测试不留悬挂句柄
+        if (log) log.debug('ui', 'ui.toast', t.text, { id: t.id, kind: t.kind || 'info' });
+      }
+      if (!canRender) continue;
+      const el = doc.createElement('div');
+      el.className = `dl-toast dl-${t.kind || 'info'}`;
+      el.textContent = t.text;
+      toastsEl.appendChild(el);
+    }
   }
 
   const unsubscribe = store.subscribe(() => paint());
@@ -153,6 +195,7 @@ export function mountApp(deps) {
     unsubscribe: () => {
       unsubscribe();
       if (doc.removeEventListener) doc.removeEventListener('click', onClick);
+      if (doc.removeEventListener) doc.removeEventListener('keydown', onKey);
     },
   };
 }

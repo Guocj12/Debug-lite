@@ -24,7 +24,7 @@ const PREFIX_MAP = {
   engine: ['tick', 'battle', 'move', 'collision', 'resource', 'action'],
   damage: ['damage'], 'ai.ast': ['ai'], 'ai.runtime': ['ai', 'trace'], unlock: ['unlock'],
   api: ['api'], cli: ['cli'], ranked: ['ranked'], log: ['log'],
-  store: ['store'], view: ['view'], render: ['render'], editor: ['editor'], perf: ['perf'],
+  store: ['store'], view: ['view'], ui: ['ui'], render: ['render'], editor: ['editor'], perf: ['perf'],
 };
 // 通道注册表延迟加载：门禁进程不得在项 7 覆盖率会话开始前 require shared/log.js
 // （V8 precise coverage 只统计会话开始之后加载的脚本 —— 预加载会使其覆盖率永久残缺，已实测）。

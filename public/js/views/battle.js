@@ -1,6 +1,5 @@
-// views/battle.js —— 对战配置屏（frontend-spec §6.5：config 左 16,80,640,400 / preview 右 680,80,584,400 / start y500）
-import { SIZES, SPACES } from '../ui/sizes.js';
-import { panel, button, center } from '../ui/layout.js';
+// views/battle.js —— 对战配置屏（frontend-spec §6.5；坐标口径 = docs/screens.md「对战配置 battle」盒子表）
+import { button } from '../ui/layout.js';
 
 // 内置对手模板（B22 端点需完整 loadout；与 B24 后端 bot 独立——前端模板登记）
 // F4 审查 P1：模板技能必须能被后端 /battle 的 validateLoadout 消费——技能模板表 common 档仅 2 个
@@ -38,59 +37,91 @@ export function loadoutSummary(state) {
   return [roleLine, ...skillLines].join('；');
 }
 
+// screens.md battle 表：config(16,80,640,400,z2) sel_opp(40,120,600,40,z3) loadoutSum(40,176,600,120,z3)
+// fld_seed(40,312,280,40,z3) btn_seed(336,312,120,40,z3) preview(680,80,584,400,z2) stats(704,140,536,240,z3)
+// btn_start(560,500,160,40,z4)
+const CONFIG = { x: 16, y: 80, w: 640, h: 400, z: 2 };
+const SEL_OPP = { x: 40, y: 120, w: 600, h: 40, z: 3 };
+const LOADOUT_SUM = { x: 40, y: 176, w: 600, h: 120, z: 3 };
+const FLD_SEED = { x: 40, y: 312, w: 280, h: 40, z: 3 };
+const BTN_SEED = { x: 336, y: 312, w: 120, h: 40, z: 3 };
+const PREVIEW = { x: 680, y: 80, w: 584, h: 400, z: 2 };
+const STATS = { x: 704, y: 140, w: 536, h: 240, z: 3 };
+const BTN_START = { x: 560, y: 500, w: 160, h: 40, z: 4 };
+const STATS_IN = { x: STATS.x + 16, w: STATS.w - 32 }; // stats 容器内元素（左右各留 16）
+
 export function battleLayout(state) {
   const pair = opponentOf(state.ui && state.ui.activeTab && state.ui.activeTab.battle);
-  const boxes = [
-    panel(16, 80, 640, 400, '对战配置', 'battle_config'),
-  ];
-  // 对手选择（3 档 radio）
-  let oy = 116;
-  for (const o of OPPONENTS) {
-    boxes.push({
-      id: `battle_opp_${o.id}`, kind: 'radio', parent: 'battle_config',
-      x: 32, y: oy, w: 240, h: 32, z: 1, visible: true,
-      text: `${o.label}（${o.note}）`, style: pair.id === o.id ? 'on' : 'off',
-      action: 'battle/opp', payload: { id: o.id },
-    });
-    oy += 42;
-  }
-  // 我方 loadout 摘要
-  boxes.push({ id: 'battle_ld_head', kind: 'text', parent: 'battle_config', x: 32, y: 250, w: 580, h: 20, z: 1, visible: true, text: '我方出战' });
-  boxes.push({
-    id: 'battle_ld_summary', kind: 'text', parent: 'battle_config',
-    x: 32, y: 274, w: 580, h: 48, z: 1, visible: true, text: loadoutSummary(state),
-  });
-  // seed：当前值 + 随机按钮 + 面板预览按钮
-  boxes.push({ id: 'battle_seed', kind: 'text', parent: 'battle_config', x: 32, y: 336, w: 300, h: 20, z: 1, visible: true, text: `seed：${state.seed === null ? '（未设，后端生成回带）' : state.seed}` });
-  boxes.push(button('battle_seed_rand', 336, 328, '随机 seed', { parent: 'battle_config', z: 1, ghost: true, action: 'seed/random' }));
-  boxes.push(button('battle_panel', 480, 328, '看面板', { parent: 'battle_config', z: 1, ghost: true, action: 'panel/show' }));
-  // 校验错误提示（loadout/errors 首条）
+  const next = OPPONENTS[(OPPONENTS.indexOf(pair) + 1) % OPPONENTS.length];
   const errs = (state.aiDraft && state.aiDraft.errors) || [];
+  const p = state.panel;
+  const boxes = [
+    { id: 'config', kind: 'panel', parent: null, ...CONFIG, visible: true, text: '对战配置' },
+    {
+      id: 'sel_opp', kind: 'select', parent: 'config',
+      x: SEL_OPP.x, y: SEL_OPP.y, w: SEL_OPP.w, h: SEL_OPP.h, z: SEL_OPP.z, visible: true,
+      text: `对手：${pair.label}（${pair.id}）· ${pair.note}`, action: 'battle/opp', payload: { id: next.id },
+    },
+    {
+      id: 'loadoutSum', kind: 'text', parent: 'config', style: 'wrap',
+      x: LOADOUT_SUM.x, y: LOADOUT_SUM.y, w: LOADOUT_SUM.w, h: LOADOUT_SUM.h, z: LOADOUT_SUM.z, visible: true,
+      text: loadoutSummary(state),
+    },
+    {
+      id: 'fld_seed', kind: 'field', parent: 'config',
+      x: FLD_SEED.x, y: FLD_SEED.y, w: FLD_SEED.w, h: FLD_SEED.h, z: FLD_SEED.z, visible: true,
+      text: `seed：${state.seed === null || state.seed === undefined ? '（未设，后端生成回带）' : state.seed}`,
+      action: 'seed/random',
+    },
+    {
+      id: 'btn_seed', kind: 'button', parent: 'config', style: 'ghost',
+      x: BTN_SEED.x, y: BTN_SEED.y, w: BTN_SEED.w, h: BTN_SEED.h, z: BTN_SEED.z, visible: true,
+      text: '随机 seed', action: 'seed/random',
+    },
+  ];
+  // 校验错误提示（loadout/errors 首条；config 容器底部一行，避开 sel_opp/loadoutSum/fld_seed）
   if (errs.length > 0) {
     boxes.push({
-      id: 'battle_ld_errors', kind: 'text', parent: 'battle_config', x: 32, y: 372, w: 580, h: 20, z: 1, visible: true,
+      id: 'battle_ld_errors', kind: 'text', parent: 'config', style: 'danger',
+      x: LOADOUT_SUM.x, y: CONFIG.y + CONFIG.h - 40, w: LOADOUT_SUM.w, h: 24, z: 3, visible: true,
       text: `⚠ 出战配置待修：${errs[0].code || errs[0].message || '不合法'}`,
     });
   }
-  // preview 右：面板结果 + 对手简表
-  boxes.push(panel(680, 80, 584, 400, '预览', 'battle_preview'));
-  const p = state.panel;
+  // 右：预览容器 + stats 子容器（我方面板：点 stats 拉 /panel）
+  boxes.push({ id: 'preview', kind: 'panel', parent: null, ...PREVIEW, visible: true, text: '预览' });
+  boxes.push({
+    id: 'stats', kind: 'region', parent: 'preview', style: 'panel',
+    x: STATS.x, y: STATS.y, w: STATS.w, h: STATS.h, z: STATS.z, visible: true,
+    text: p && p.role ? '我方面板' : '未加载面板（点击本框 / 或「看面板」）',
+    action: 'panel/show',
+  });
   if (p && p.role) {
     const s = p.role.stats || {};
     const v = (k) => (s[k] === undefined ? '?' : s[k]);
     boxes.push({
-      id: 'battle_panel_stats', kind: 'text', parent: 'battle_preview',
-      x: 696, y: 116, w: 552, h: 60, z: 1, visible: true,
-      text: `hp ${v('hp')} | atk ${v('atk')} | def ${v('def')} | mp ${v('mp')} | sp ${v('sp')}`,
+      id: 'battle_panel_stats', kind: 'text', parent: 'stats',
+      x: STATS_IN.x, y: STATS.y + 32, w: STATS_IN.w, h: 60, z: 4, visible: true,
+      text: `hp ${v('hp')} | atk ${v('atk')} | def ${v('def')} | mp ${v('mp')} | sp ${v('sp')}`
+        + ` | regen mp${(p.role.regen && p.role.regen.mp) || 0}/sp${(p.role.regen && p.role.regen.sp) || 0}`
+        + ` | 插件点 ${v('pluginPoints')}`,
     });
-    const skills = (p.skills || []).map((sk) => sk.params && `· ${sk.params.multiplier ? `×${sk.params.multiplier}` : ''}${sk.params.cost ? ` mp${sk.params.cost.mp || 0}` : ''}`).join(' ');
-    boxes.push({ id: 'battle_panel_skills', kind: 'text', parent: 'battle_preview', x: 696, y: 180, w: 552, h: 20, z: 1, visible: true, text: skills || '（技能摘要）' });
-  } else {
-    boxes.push({ id: 'battle_panel_hint', kind: 'text', parent: 'battle_preview', x: 696, y: 116, w: 552, h: 20, z: 1, visible: true, text: '未查看面板（点「看面板」）' });
+    const skills = (p.skills || []).map((sk) => (sk.params ? `· ×${sk.params.multiplier === undefined ? '?' : sk.params.multiplier} mp${(sk.params.cost && sk.params.cost.mp) || 0}` : '· —')).join(' ');
+    boxes.push({
+      id: 'battle_panel_skills', kind: 'text', parent: 'stats',
+      x: STATS_IN.x, y: STATS.y + 100, w: STATS_IN.w, h: 40, z: 4, visible: true,
+      text: skills || '（技能摘要）',
+    });
   }
-  boxes.push({ id: 'battle_opp_card', kind: 'text', parent: 'battle_preview', x: 696, y: 220, w: 552, h: 60, z: 1, visible: true, text: `对手：${pair.label}——${pair.note}` });
-  // 开始对战（center 底部 y500 起，§6.5）
-  const st = center(240, 48);
-  boxes.push(button('battle_start', st.x - 120, 500, '开始对战', { parent: null, z: 2, style: 'primary', action: 'battle/run', payload: { opponent: pair.loadout } }));
+  boxes.push({
+    id: 'battle_opp_card', kind: 'text', parent: 'stats', style: 'wrap',
+    x: STATS_IN.x, y: STATS.y + 180, w: STATS_IN.w, h: 48, z: 4, visible: true,
+    text: `对手：${pair.label}——${pair.note}（${OPPONENTS.map((o) => o.id).join(' / ')} 循环切换）`,
+  });
+  // 开始对战（表：btn_start 560,500,160,40,z4）
+  boxes.push({
+    id: 'btn_start', kind: 'button', parent: null, style: 'primary',
+    x: BTN_START.x, y: BTN_START.y, w: BTN_START.w, h: BTN_START.h, z: BTN_START.z, visible: true,
+    text: '开始对战', action: 'battle/run', payload: { opponent: pair.loadout },
+  });
   return boxes;
 }

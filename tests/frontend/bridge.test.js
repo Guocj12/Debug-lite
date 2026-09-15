@@ -208,13 +208,16 @@ test('editorLayout：§6.2 坐标（blocklyDiv 注入盒/panel 三按钮/errors 
   }, patch || {});
   const boxes = editorLayout(mk());
   const ws = boxes.find((b) => b.id === 'blocklyDiv');
-  assert.deepEqual([ws.x, ws.y, ws.w, ws.h], [120, 64, 1024, 432], '★F6 P1：workspace 盒 id=blocklyDiv（Blockly.inject 容器）');
-  assert.equal(boxes.find((b) => b.id === 'editor_toolbox').w, 120);
-  assert.equal(boxes.find((b) => b.id === 'editor_panel').w, 136);
-  assert.equal(boxes.find((b) => b.id === 'editor_validate').action, 'ai/validate');
-  assert.equal(boxes.find((b) => b.id === 'editor_compile').action, 'ai/compile');
-  assert.deepEqual(boxes.find((b) => b.id === 'editor_run').payload, { opponent: 'kiter' });
-  assert.equal(boxes.find((b) => b.id === 'editor_hash').text, 'hash abcdef12');
+  assert.deepEqual([ws.x, ws.y, ws.w, ws.h, ws.z], [120, 64, 1024, 432, 2], '★F6 P1：workspace 盒 id=blocklyDiv（Blockly.inject 容器）；坐标=screens.md editor 表 workspace 行');
+  assert.deepEqual([boxes.find((b) => b.id === 'toolbox').x, boxes.find((b) => b.id === 'toolbox').w], [0, 120], '表 toolbox 行');
+  assert.equal(boxes.find((b) => b.id === 'panel_right').w, 136);
+  assert.equal(boxes.find((b) => b.id === 'btn_validate').action, 'ai/validate');
+  assert.equal(boxes.find((b) => b.id === 'btn_validate').y, 80);
+  assert.equal(boxes.find((b) => b.id === 'btn_compile').action, 'ai/compile');
+  assert.equal(boxes.find((b) => b.id === 'btn_compile').y, 120);
+  assert.deepEqual(boxes.find((b) => b.id === 'btn_run').payload, { opponent: 'kiter' });
+  assert.equal(boxes.find((b) => b.id === 'hash').text, 'HASH abcdef12');
+  assert.equal(boxes.find((b) => b.id === 'hash').y, 216);
   assert.ok(boxes.find((b) => b.id === 'editor_err_ok'), '无错误占位');
   assert.equal(verifyLayout(boxes).ok, true, '布局自检');
   // 错误态：行渲染 + 计数 + 高亮 action/payload（★F6 P1：原行无任何点击标注）
@@ -223,18 +226,20 @@ test('editorLayout：§6.2 坐标（blocklyDiv 注入盒/panel 三按钮/errors 
     { path: 'body.s[2].then[0]', code: 'unknown_action', message: 'x' },
   ];
   const errBoxes = editorLayout(mk({ aiDraft: { program: null, hash: null, errors: errs, compiling: false } }));
-  assert.equal(errBoxes.find((b) => b.id === 'editor_hash').text, '未编译');
-  assert.equal(errBoxes.find((b) => b.id === 'editor_err_count').text, '错误 2');
+  assert.equal(errBoxes.find((b) => b.id === 'hash').text, '未编译');
+  assert.equal(errBoxes.find((b) => b.id === 'errCount').text, '错误 2');
+  assert.equal(errBoxes.find((b) => b.id === 'errCount').y, 272);
   const rows = errBoxes.filter((b) => b.id.startsWith('editor_err_') && b.kind === 'listitem');
   assert.equal(rows.length, 2);
   assert.ok(rows[0].text.includes('body.s[1]'));
   assert.equal(rows[0].action, 'editor/highlight');
   assert.deepEqual(rows[0].payload, { path: 'body.s[1]' });
+  assert.equal(rows[0].parent, 'errors');
   assert.equal(verifyLayout(errBoxes).ok, true, '错误态自检');
   // 分支锤：aiDraft 缺层 / 错误无 path·code（无 path → 无高亮 action）
   const noDraft = editorLayout({ screen: 'editor', ui: { busy: false, snackbar: [], modal: null, activeTab: {} } });
-  assert.equal(noDraft.find((b) => b.id === 'editor_hash').text, '未编译');
-  assert.equal(noDraft.find((b) => b.id === 'editor_err_count').text, '错误 0');
+  assert.equal(noDraft.find((b) => b.id === 'hash').text, '未编译');
+  assert.equal(noDraft.find((b) => b.id === 'errCount').text, '错误 0');
   const bareErr = editorLayout({ screen: 'editor', aiDraft: { hash: null, errors: [{ message: '仅消息' }, { path: 'body.s[3]' }] }, ui: { busy: false, snackbar: [], modal: null, activeTab: {} } });
   const bareRows = bareErr.filter((b) => b.kind === 'listitem');
   assert.ok(bareRows[0].text.trim() === '', '无 path/code → 空文本');

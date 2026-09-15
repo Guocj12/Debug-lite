@@ -52,20 +52,32 @@ test('F4 审查 P1 回归：模板 loadout 与后端数据表同步（技能 id 
   }
 });
 
-test('battleLayout：config/preview 坐标 + 对手 radio + seed 行 + 开始按钮 + verifyLayout 全绿', async () => {
+test('battleLayout：config/preview/stats 容器 + sel_opp 循环 + fld_seed/btn_seed + btn_start（screens.md battle 表）', async () => {
   const { battleLayout } = await import('../../public/js/views/battle.js');
   const { verifyLayout } = await import('../../public/js/ui/verify.js');
   const boxes = battleLayout(mkState());
-  const config = boxes.find((b) => b.id === 'battle_config');
-  assert.deepEqual([config.x, config.y, config.w, config.h], [16, 80, 640, 400]);
-  const preview = boxes.find((b) => b.id === 'battle_preview');
-  assert.deepEqual([preview.x, preview.y, preview.w, preview.h], [680, 80, 584, 400]);
-  const radios = boxes.filter((b) => b.kind === 'radio');
-  assert.equal(radios.length, 3);
-  assert.equal(radios.find((b) => b.id === 'battle_opp_kiter').style, 'on');
-  assert.equal(boxes.find((b) => b.id === 'battle_seed').text.includes('seed：7'), true);
-  assert.equal(boxes.find((b) => b.id === 'battle_seed_rand').action, 'seed/random');
-  const start = boxes.find((b) => b.id === 'battle_start');
+  const geo = (id) => {
+    const b = boxes.find((x) => x.id === id);
+    return [b.x, b.y, b.w, b.h, b.z].join(',');
+  };
+  assert.equal(geo('config'), '16,80,640,400,2', '表 config 行');
+  assert.equal(geo('sel_opp'), '40,120,600,40,3', '表 sel_opp 行');
+  assert.equal(geo('loadoutSum'), '40,176,600,120,3', '表 loadoutSum 行');
+  assert.equal(geo('fld_seed'), '40,312,280,40,3', '表 fld_seed 行');
+  assert.equal(geo('btn_seed'), '336,312,120,40,3', '表 btn_seed 行（120×40，非 SIZES.button）');
+  assert.equal(geo('preview'), '680,80,584,400,2', '表 preview 行');
+  assert.equal(geo('stats'), '704,140,536,240,3', '表 stats 行');
+  assert.equal(geo('btn_start'), '560,500,160,40,4', '表 btn_start 行');
+  const sel = boxes.find((b) => b.id === 'sel_opp');
+  assert.equal(sel.action, 'battle/opp');
+  assert.deepEqual(sel.payload, { id: 'charger' }, '点击切下一档（kiter → charger）');
+  assert.ok(sel.text.includes('风筝型'), '当前对手回显');
+  assert.ok(sel.text.includes('kiter'));
+  assert.equal(boxes.find((b) => b.id === 'fld_seed').text.includes('seed：7'), true);
+  assert.equal(boxes.find((b) => b.id === 'fld_seed').action, 'seed/random');
+  assert.equal(boxes.find((b) => b.id === 'btn_seed').action, 'seed/random');
+  assert.equal(boxes.find((b) => b.id === 'stats').action, 'panel/show', 'stats 容器点击拉面板');
+  const start = boxes.find((b) => b.id === 'btn_start');
   assert.equal(start.action, 'battle/run');
   assert.equal(start.payload.opponent.role.templateId, 'role_bal', '开始按钮携带对手 loadout');
   assert.equal(start.payload.opponent.skills.length, 3);
@@ -76,13 +88,15 @@ test('battleLayout：config/preview 坐标 + 对手 radio + seed 行 + 开始按
 test('battleLayout 状态分支：未选对手/无面板提示/错误提示/seed 未设', async () => {
   const { battleLayout } = await import('../../public/js/views/battle.js');
   const none = battleLayout(mkState({ ui: { busy: false, snackbar: [], modal: null, activeTab: {}, selected: null } }));
-  assert.equal(none.find((b) => b.id === 'battle_opp_kiter').style, 'on', '无 activeTab → 默认对手');
+  assert.ok(none.find((b) => b.id === 'sel_opp').text.includes('kiter'), '无 activeTab → 默认对手');
   const unset = battleLayout(mkState({ seed: null }));
-  assert.equal(unset.find((b) => b.id === 'battle_seed').text.includes('后端生成回带'), true);
+  assert.equal(unset.find((b) => b.id === 'fld_seed').text.includes('后端生成回带'), true);
   const hint = battleLayout(mkState());
-  assert.equal(hint.find((b) => b.id === 'battle_panel_hint').text.includes('点「看面板」'), true);
+  assert.equal(hint.find((b) => b.id === 'stats').text.includes('未加载面板'), true);
+  assert.equal(hint.find((b) => b.id === 'battle_panel_stats'), undefined, '未拉面板 → 无 stats 内容盒');
   const paneled = battleLayout(mkState({ panel: { role: { stats: { hp: 100, atk: 10, def: 8, mp: 40, sp: 60 } }, skills: [{ params: { multiplier: 1.2, cost: { mp: 16 } } }] } }));
   assert.ok(paneled.find((b) => b.id === 'battle_panel_stats').text.includes('hp 100'));
+  assert.equal(paneled.find((b) => b.id === 'battle_panel_stats').z, 4, 'stats 内容 z4 > 容器 z3');
   const errState = mkState({ aiDraft: { errors: [{ code: 'missing_warehouse', message: 'x' }] } });
   assert.ok(battleLayout(errState).find((b) => b.id === 'battle_ld_errors').text.includes('missing_warehouse'));
 });
@@ -95,7 +109,7 @@ test('battleLayout 分支锤：空技能/无 stats/技能无 params/错误无 co
   assert.equal(statsText.text.includes('undefined'), false, 'stats 缺失 ? 兜底');
   assert.ok(statsText.text.includes('hp ?'));
   const p2 = battleLayout(mkState({ panel: { role: { stats: { hp: 1 } }, skills: [{ params: { multiplier: 0, cost: { mp: 16 } } }, { params: {} }, { baz: 1 }] } }));
-  assert.ok(p2.find((b) => b.id === 'battle_panel_skills').text.includes('mp16'), '多技能摘要含 mp16 段（multiplier 0 不渲染 ×）');
+  assert.ok(p2.find((b) => b.id === 'battle_panel_skills').text.includes('mp16'), '多技能摘要含 mp16 段');
   const mp0 = battleLayout(mkState({ panel: { role: { stats: { hp: 1 } }, skills: [{ params: { cost: { mp: 0 } } }] } }));
   assert.ok(mp0.find((b) => b.id === 'battle_panel_skills').text.includes('mp0'), 'mp 0 段仍渲染');
   const emptySkills = battleLayout(mkState({ panel: { role: { stats: { hp: 1 } }, skills: [] } }));
@@ -108,7 +122,7 @@ test('battleLayout 分支锤：空技能/无 stats/技能无 params/错误无 co
   // state.ui null（外壳缺 ui 层）→ 默认对手；loadoutSummary 缺 skills/role 无 name
   const noUi = mkState(undefined);
   delete noUi.ui;
-  assert.equal(battleLayout(noUi).find((b) => b.id === 'battle_opp_kiter').style, 'on');
+  assert.ok(battleLayout(noUi).find((b) => b.id === 'sel_opp').text.includes('kiter'));
   assert.equal(loadoutSummary({ loadout: { role: { templateId: 'role_x' }, skills: undefined } }), '角色：role_x（?）');
   assert.equal(loadoutSummary({ loadout: { role: { uid: 'u1' } } }), '角色：u1（?）');
 });

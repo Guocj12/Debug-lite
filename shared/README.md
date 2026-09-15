@@ -15,7 +15,7 @@
 | 导出 | 类型 | 说明 |
 |---|---|---|
 | `LEVELS` | 冻结对象 | `{silent:-1, fatal:0, error:1, warn:2, info:3, debug:4, trace:5, all:99}` |
-| `CHANNELS` | 冻结数组 | 21 通道：`rng field effects items roles skills bullets engine damage ai.ast ai.runtime unlock api cli ranked store view render editor perf log`（P0-5 T-DC-6 用） |
+| `CHANNELS` | 冻结数组 | 22 通道：`rng field effects items roles skills bullets engine damage ai.ast ai.runtime unlock api cli ranked store view ui render editor perf log`（P0-5 T-DC-6 用；`ui` 为 P6 前端界面通道，见 `frontend-spec.md` §2.1） |
 | `createLogger(options)` | 函数 | 见下 |
 | `nullLogger` | 冻结单例 | 全 no-op；`on()` 恒 false；`records` 冻结空数组；禁用零成本 |
 | `parseLevel(str)` | 函数 | 名字（大小写不敏感）或数字串 → 数值；非法 → `null`（env 解析用） |

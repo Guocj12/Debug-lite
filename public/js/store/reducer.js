@@ -17,7 +17,7 @@ export function initialState() {
     loadout: { role: null, skills: [null, null, null], ai: null },
     panel: null,
     aiDraft: { program: null, hash: null, errors: [], compiling: false },
-    gacha: { opening: false, lastResult: null },
+    gacha: { opening: false, lastResult: null, times: 1 },
     battle: { config: null, running: false, frames: [], result: null, tick: 0, speed: 1, playing: false },
     logPrefs: { level: 'debug', channels: { render: 'trace' }, panelOpen: false },
     ui: { busy: false, snackbar: [], modal: null, activeTab: {} },
@@ -44,6 +44,9 @@ export function reducer(state, action) {
       return { ...state, tierInfo: action.payload };
     case 'seed/set':
       return { ...state, seed: action.payload.seed };
+    // 开箱次数字段（§6.4 次数 Field 1..10；gacha 屏 fld_times 点击循环 → 此处落值）
+    case 'gacha/times':
+      return { ...state, gacha: { ...state.gacha, times: action.payload.times } };
     case 'box/open':
       return { ...state, gacha: { ...state.gacha, opening: true }, ui: { ...state.ui, busy: true } };
     case 'box/done': {
@@ -110,13 +113,20 @@ export function reducer(state, action) {
     case 'battle/seek':
       return { ...state, battle: { ...state.battle, tick: action.payload.tick } };
     case 'battle/pause':
-      return { ...state, battle: { ...state.battle, playing: false } };
+      // 幂等：已在暂停态 → 返回原 state（避免 effect↔store 反复渲染/递归）
+      return state.battle.playing ? { ...state, battle: { ...state.battle, playing: false } } : state;
     case 'battle/play':
       return { ...state, battle: { ...state.battle, playing: true } };
     case 'battle/speed':
       return { ...state, battle: { ...state.battle, speed: action.payload.speed } };
     case 'panel/loaded':
       return { ...state, panel: action.payload };
+    // 通道开关（§6.7 通道勾选 chips）：开 → 'trace'，关 → 'silent'（DLLog 阈值语义，silent=-1 全滤）
+    case 'log/channel': {
+      const p = action.payload || {};
+      if (!p.channel) return state;
+      return { ...state, logPrefs: { ...state.logPrefs, channels: { ...state.logPrefs.channels, [p.channel]: p.on ? 'trace' : 'silent' } } };
+    }
     case 'log/set': {
       const p = action.payload || {};
       const channels = p.channels || {};
@@ -133,8 +143,7 @@ export function reducer(state, action) {
       };
     }
     case 'ui/toast':
-      return pushToast(state, action.payload.text, action.payload.kind);
-    case 'ui/toast/dismiss': {
+      return pushToast(state, action.payload.text, action.payload.kind);    case 'ui/toast/dismiss': {
       const id = action.payload && action.payload.id;
       return { ...state, ui: { ...state.ui, snackbar: state.ui.snackbar.filter((t) => t.id !== id) } };
     }

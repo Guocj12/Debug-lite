@@ -23,6 +23,9 @@ export function createFrontLog(win, opts) {
     if (prefs && prefs.level) level = prefs.level; // localStorage 优先（F0 审查确认语义）
     const lv = raw.parseLevel ? raw.parseLevel(level) : null;
     logger = raw.createLogger({ level: lv === null ? 'all' : lv, ringSize: 3000, onRecord: (r) => { if (sink) sink.push(r); } });
+    // 调试出口（§2.4「总控与导出」）：环形缓冲需可从控制台/自动化读取——`window.DLLog.instance.dump()`。
+    // 缺此出口时页面日志只在闭包内，外部（含 AI 调试器）无法取到 → 无法按 §10.1 排障。
+    raw.instance = logger;
   }
   if (!logger) {
     // node 无 DLLog 且未注入：noop 兜底（保持方法面）

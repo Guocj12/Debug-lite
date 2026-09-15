@@ -5,8 +5,13 @@
 export function boxToHtml(box, index) {
   const b = box || {};
   const id = b.id || `box_${index}`;
-  const cls = ['dl-box', `dl-${b.kind || 'generic'}`, b.style ? `dl-${b.style}` : '', b.visible === false ? 'dl-hidden' : ''].filter(Boolean).join(' ');
+  // style 支持多 token（空格分隔）——每段独立加 .dl- 前缀（'right muted' → dl-right dl-muted）
+  const styleCls = String(b.style || '').trim().split(/\s+/).filter(Boolean).map((t) => `dl-${t}`);
+  const cls = ['dl-box', `dl-${b.kind || 'generic'}`, ...styleCls, b.visible === false ? 'dl-hidden' : '', b.disabled ? 'dl-disabled' : ''].filter(Boolean).join(' ');
   const attrs = [
+    // ★id 属性必填：mount/injectBoxGeom 经 getElementById(box.id) 注入几何（F5 P1）。此前只写 data-box-id →
+    // 取不到元素 → 全部盒子裸堆在 (0,0)（浏览器实测：1280×64 的 header 实测 rect=94.84×18.5）。
+    `id="${escapeAttr(id)}"`,
     `data-box-id="${id}"`,
     `data-box-x="${b.x === undefined ? 0 : b.x}"`,
     `data-box-y="${b.y === undefined ? 0 : b.y}"`,
@@ -23,6 +28,7 @@ export function boxToHtml(box, index) {
     [b.goto, 'goto', `data-goto="${b.goto}"`],
     [b.payload !== undefined, 'payload', `data-payload="${escapeAttr(JSON.stringify(b.payload))}"`],
     [b.detail !== undefined, 'detail', `data-detail="${escapeAttr(b.detail)}"`],
+    [b.disabled, 'disabled', 'data-box-disabled="1"'], // 忙态/门控禁用（视觉类 dl-disabled 已入 cls）
   ];
   for (const [cond, , attr] of optional) {
     if (cond) attrs.push(attr);
@@ -77,7 +83,8 @@ export function collectBoxes(html) {
     const dm = /data-detail="([^"]*)"/.exec(attrsSrc);
     if (dm) box.detail = dm[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     const sm = /data-box-style="([^"]*)"/.exec(attrsSrc);
-    if (sm) box.style = sm[1];
+    if (sm) box.style = sm[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    if (/data-box-disabled="1"/.test(attrsSrc)) box.disabled = true;
     out.push(box);
   }
   return out;

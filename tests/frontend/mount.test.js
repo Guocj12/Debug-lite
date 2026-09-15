@@ -35,13 +35,16 @@ test('render：Box → HTML → collectBoxes 往返（坐标/标注/payload 转�
   const { shellLayout } = await import('../../public/js/views/shell.js');
   const { menuLayout } = await import('../../public/js/views/menu.js');
   const { verifyLayout } = await import('../../public/js/ui/verify.js');
-  const viewState = { tier: 'rare', seed: 7, meta: { serverOk: true }, loadout: { role: { uid: 'r' }, skills: [], ai: null } };
+  const viewState = { screen: 'menu', tier: 'rare', seed: 7, meta: { serverOk: true }, loadout: { role: { uid: 'r' }, skills: [], ai: null } };
   const all = [...shellLayout(viewState), ...menuLayout(viewState)];
   const vhtml = boxesToHtml(all);
   const vboxes = collectBoxes(vhtml);
   assert.equal(vboxes.length, all.length, '真实视图盒子全量往返');
-  assert.equal(vboxes.find((b) => b.id === 'shell_tier').style, 'q-rare', 'style 属性往返');
+  assert.equal(vboxes.find((b) => b.id === 'tierBadge').style, 'q-rare', 'style 属性往返');
+  assert.equal(vboxes.find((b) => b.id === 'shell_tier'), undefined, '旧未登记盒已移除（F8：坐标全量对齐 screens.md）');
   assert.equal(vboxes.find((b) => b.id === 'btn_gacha').goto, 'gacha');
+  // id 属性（F8：injectBoxGeom 经 getElementById 注入几何 → 渲染必须带 id）——boxToHtml 输出含 id="<boxId>"
+  assert.ok(vhtml.includes('id="tierBadge"'), 'boxToHtml 输出 id 属性（否则浏览器中所有盒堆在 (0,0)）');
   assert.ok(validateBoxIds(vboxes).ok, '真实视图无重复 id');
   assert.equal(verifyLayout(vboxes).ok, true, '真实视图布局自检通过');
   // 空/null 安全 + 无 box-id 块跳过
@@ -224,6 +227,52 @@ test('mountApp：no-doc/no-app 跳过；装配后 paint/verify/订阅解除/日�
   assert.deepEqual(bootActions[0], { type: 'meta/loaded', payload: { ok: true, version: '3.0.0', tableNames: ['t1'] } }, 'boot → /health → meta/loaded');
   await runEffect({ ...bootOkCtx, api: { get: async () => ({ ok: false }) } }, { type: 'boot' });
   assert.equal(bootActions[1].payload.ok, false, 'boot 失败 → serverOk=false');
+});
+
+test('mount：snackbar → #dl-toasts 渲染 + 注入 toastMs 自动消散（含无容器跳过臂）', async () => {
+  const { mountApp } = await import('../../public/js/mount/index.js');
+  const { createStore } = await import('../../public/js/store/index.js');
+  const { initialState } = await import('../../public/js/store/reducer.js');
+  const mkDoc = (toastsEl) => {
+    const app = { innerHTML: '', parentNode: { appendChild: () => {} } };
+    return {
+      app,
+      doc: {
+        getElementById: (id) => (id === 'app' ? app : id === 'dl-toasts' ? toastsEl : null),
+        createElement: () => ({ style: {}, className: '', textContent: '', id: '' }),
+        addEventListener: () => {}, removeEventListener: () => {},
+      },
+    };
+  };
+  // ① 有 #dl-toasts 容器 → 渲染子元素 + toastMs 后消散
+  const seen = [];
+  const toastsEl = { innerHTML: '', appendChild: (el) => seen.push(el) };
+  const a = mkDoc(toastsEl);
+  const storeA = createStore({ api: {}, log: null, doc: a.doc, state: initialState() });
+  const logsA = [];
+  mountApp({
+    doc: a.doc, store: storeA, log: { debug: (ch, ev, msg, d) => logsA.push([ev, msg, d]), warn: () => {} },
+    records: () => [], renderScreen: () => ({ shell: [], main: [] }), toastMs: 5,
+  });
+  storeA.dispatch({ type: 'ui/toast', payload: { text: '开始对战: loadout_invalid', kind: 'danger' } });
+  assert.equal(seen.length, 1, 'toast 元素已挂载');
+  assert.equal(seen[0].className, 'dl-toast dl-danger', 'kind → 类名');
+  assert.equal(seen[0].textContent, '开始对战: loadout_invalid');
+  assert.ok(logsA.some(([ev]) => ev === 'ui.toast'), 'ui.toast 日志');
+  assert.equal(storeA.getState().ui.snackbar.length, 1);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(storeA.getState().ui.snackbar.length, 0, 'toastMs 后自动消散（ui/toast/dismiss）');
+  assert.equal(seen.length, 1, '消散不重复挂载');
+  // ② 无容器（toastsEl null）→ 跳过渲染但不抛
+  const b = mkDoc(null);
+  const storeB = createStore({ api: {}, log: null, doc: b.doc, state: initialState() });
+  mountApp({
+    doc: b.doc, store: storeB, log: { debug: () => {}, warn: () => {} },
+    records: () => [], renderScreen: () => ({ shell: [], main: [] }), toastMs: 5,
+  });
+  storeB.dispatch({ type: 'ui/toast', payload: { text: '无容器' } });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(storeB.getState().ui.snackbar.length, 0, '无容器仍正常消散');
 });
 
 test('app boot：带 fake doc 的挂载路径（renderScreen 注入）', async () => {
