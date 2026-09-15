@@ -12,7 +12,7 @@ export function escapeHtml(s) {
 
 // 盒 → HTML：坐标内联注入（布局唯一事实源是 layout 函数，CSS 只做盒内视觉）
 export function boxHtml(b) {
-  const cls = ['dl-box', `dl-${b.kind}`, b.style ? `dl-style-${b.style}` : null, b.disabled ? 'dl-disabled' : null]
+  const cls = ['dl-box', `dl-${b.kind}`, b.style ? `dl-style-${b.style}` : null, b.q ? `dl-q-${b.q}` : null, b.disabled ? 'dl-disabled' : null]
     .filter(Boolean).join(' ');
   const action = b.action ? ` data-action="${escapeHtml(b.action)}"` : '';
   const payload = b.payload !== undefined && b.payload !== null ? ` data-payload="${escapeHtml(JSON.stringify(b.payload))}"` : '';

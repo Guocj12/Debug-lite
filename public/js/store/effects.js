@@ -68,6 +68,7 @@ export function effects(apiExtra) {
       if (r.ok) {
         ctx.dispatch({ type: 'wh/set', warehouse: r.data.warehouse });
         ctx.persist.save(ctx.state());
+        ctx.dispatch({ type: 'ui/modal' }); // 装配成功 → 关抽屉
         ctx.log && ctx.log.debug('store', 'wh.assemble.ok', '装配成功', { targetUid: action.targetUid, pluginUid: action.pluginUid });
       } else {
         toastErr(ctx, r.code, r.message);
@@ -94,6 +95,12 @@ export function effects(apiExtra) {
     // 出战配置本地保存（§4.2 loadout/set：可延迟到出战时再 POST 校验）
     async 'loadout/set'(ctx) {
       ctx.persist.save(ctx.state());
+    },
+
+    // 出战装配（详情「出战」按钮）：本地装配 + 落盘 + 提示
+    async 'loadout/equip'(ctx) {
+      ctx.persist.save(ctx.state());
+      ctx.dispatch({ type: 'ui/toast', text: '出战配置已更新（对战时按 /loadout 校验）', kind: 'info' });
     },
 
     // 出战校验（§4.2 loadout/validate：拒绝时 details → snackbar）

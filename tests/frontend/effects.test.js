@@ -274,6 +274,25 @@ test('R2 effects：save/import —— 成功 save/set+goto menu / 失败 toast',
   assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('bad_json')), '失败 toast 带码');
 });
 
+test('R3 effects：loadout/equip 出战装配 → 落盘 + toast；装配成功关抽屉', async () => {
+  const persist = fakePersist();
+  const { store } = harness(okApi(), persist);
+  store.dispatch({ type: 'loadout/equip', uid: 'u1', kind: 'role' });
+  await flush();
+  assert.equal(store.getState().loadout.role, 'u1', 'reducer 已应用');
+  assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('出战')), '出战 toast');
+  assert.equal(persist.saves.filter((x) => !Array.isArray(x)).length, 1, '落盘');
+
+  // wh/assemble 成功 → 抽屉关闭（ui/modal null）
+  const { store: st2 } = harness(okApi());
+  st2.dispatch({ type: 'ui/modal', drawer: 'assemble', targetUid: 'r1' });
+  await flush();
+  assert.ok(st2.getState().ui.modal.drawer === 'assemble');
+  st2.dispatch({ type: 'wh/assemble', targetUid: 'r1', pluginUid: 'p1', slotIndex: 0 });
+  await flush();
+  assert.equal(st2.getState().ui.modal, null, '装配成功 → 关抽屉');
+});
+
 test('R1 effects：seed/set → saveSeed 落盘', async () => {
   const persist = fakePersist();
   const { store } = harness(okApi(), persist);

@@ -37,6 +37,18 @@ html, body {
 .dl-danger-text { color: var(--color-danger); }
 .dl-ok-text { color: var(--color-ok); }
 
+/* 品质色条（卡片左边 2px；spec §6.3 品质描边 → 简化为 2px 左色条） */
+.dl-card { border-left: 2px solid var(--color-line); background: var(--color-panel); border: 1px solid var(--color-line); border-radius: var(--radius-s); }
+.dl-q-common { border-left-color: var(--color-q-common); }
+.dl-q-rare { border-left-color: var(--color-q-rare); }
+.dl-q-epic { border-left-color: var(--color-q-epic); }
+.dl-q-legendary { border-left-color: var(--color-q-legendary); }
+.dl-q-mythic { border-left-color: var(--color-q-mythic); }
+
+/* chips（Tab/通道/候选） */
+.dl-chip { display: flex; align-items: center; padding: 0 var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-s); background: var(--color-panel); color: var(--color-text); overflow: hidden; }
+.dl-chip.dl-style-primary { background: var(--color-accent); color: #0e1116; border-color: var(--color-accent); }
+
 /* 战斗画布：坐标注入由 mount 负责（默认隐藏，仅 replay 屏显示） */
 #battle { position: absolute; background: var(--color-bg); }
 

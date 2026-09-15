@@ -80,6 +80,10 @@ export function reducer(state, action) {
     }
     case 'box/fail':
       return { ...s, gacha: { ...s.gacha, opening: false }, ui: { ...s.ui, busy: false } };
+    case 'gacha/times': {
+      const n = Math.max(1, Math.min(Number(a.times) || 1, 10));
+      return { ...s, gacha: { ...s.gacha, times: n } };
+    }
     case 'wh/set':
       return { ...s, warehouse: a.warehouse || s.warehouse };
     case 'wh/tab':
@@ -88,6 +92,16 @@ export function reducer(state, action) {
       return { ...s, ui: { ...s.ui, selected: { ...s.ui.selected, warehouse: a.uid || null } } };
     case 'loadout/set':
       return { ...s, loadout: { role: null, skills: [null, null, null], ai: null, ...(a.loadout || {}) } };
+    case 'loadout/equip': {
+      // 出战装配：角色就位；技能补首个空槽（无空槽 → 替换槽 0）
+      const lo = { ...s.loadout, skills: [...s.loadout.skills] };
+      if (a.kind === 'role') lo.role = a.uid;
+      else if (a.kind === 'skill') {
+        const i = lo.skills.indexOf(null);
+        lo.skills[i === -1 ? 0 : i] = a.uid;
+      }
+      return { ...s, loadout: lo };
+    }
     case 'panel/set':
       return { ...s, panel: a.panel === undefined ? null : a.panel };
     case 'ai/edit':
@@ -156,7 +170,8 @@ export function reducer(state, action) {
     case 'ui/toast/pop':
       return { ...s, ui: { ...s.ui, snackbar: s.ui.snackbar.slice(1) } };
     case 'ui/modal':
-      return { ...s, ui: { ...s.ui, modal: a.modal === undefined ? null : a.modal } };
+      // modal 可传对象（{drawer,targetUid}）或用 modal 键直传；空参 → 关闭
+      return { ...s, ui: { ...s.ui, modal: a.modal !== undefined ? a.modal : (a.drawer ? { drawer: a.drawer, targetUid: a.targetUid } : null) } };
     default:
       return s;
   }

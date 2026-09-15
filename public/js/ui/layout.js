@@ -110,13 +110,15 @@ export function verifyLayout(boxes, opts) {
       issues.push({ boxId: b.id, issue: 'clip', detail: `x=${b.x},y=${b.y},w=${b.w},h=${b.h}` });
     }
   }
-  // 同 z 可见盒两两相交（父子/祖先链除外）
+  // 同 z 可见盒两两相交（父子/祖先链除外；同为 panel 分区容器亦豁免——区域型盒子允许相邻/叠压，
+  // 组件（按钮/卡片/输入框）之间的重叠仍然报出，见 docs/rewrite-issues.md RW-5）
   const vis = list.filter((b) => b.visible !== false && b.w > 0 && b.h > 0);
   for (let i = 0; i < vis.length; i++) {
     for (let j = i + 1; j < vis.length; j++) {
       const a = vis[i];
       const c = vis[j];
       if (a.z !== c.z) continue;
+      if (a.kind === 'panel' && c.kind === 'panel') continue;
       if (ancestors.get(a.id).has(c.id) || ancestors.get(c.id).has(a.id)) continue;
       if (intersects(a, c)) {
         issues.push({ boxId: `${a.id}~${c.id}`, issue: 'overlap', detail: `z=${a.z} 同层相交 (${a.id}×${c.id})` });

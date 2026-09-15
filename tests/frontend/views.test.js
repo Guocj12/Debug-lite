@@ -173,10 +173,15 @@ test('R2 renderScreen：已实现屏拼接 + 未实现屏 fallback + records 解
   assert.ok(ready.includes('data-box-id="btn_ai"'), 'ready 菜单含按钮');
   assert.ok(ready.includes('data-box-id="logo"'), '拼装外壳');
   assert.ok(ready.includes('data-box-id="seedLit"'), '主菜单含 seedLit');
-  const fb = vi.renderScreen('warehouse', s, {});
-  assert.ok(fb.includes('尚未接线'), '未实现屏占位');
+  const fb = vi.renderScreen('battle', s, {});
+  assert.ok(fb.includes('尚未接线'), '未实现屏占位（battle 于 R4 接线）');
   const fnRecords = vi.renderScreen('settings', st({ screen: 'settings' }), { records: () => [{ seq: 1, level: 'debug', channel: 'store', event: 'store.dispatch', msg: 'x' }] });
   assert.ok(fnRecords.includes('store.dispatch'), 'records 函数 → 数组解析');
+  // R3：gacha/warehouse 屏接线
+  const sg = vi.renderScreen('gacha', st({ screen: 'gacha' }), {});
+  assert.ok(sg.includes('data-box-id="btn_open"'), 'gacha 屏接线');
+  const sw = vi.renderScreen('warehouse', { ...st({ screen: 'warehouse' }), warehouse: { buckets: { role: [{ uid: 'u1', kind: 'role', name: 'x', quality: 'common' }], skill: [], rolePlugin: [], skillPlugin: [] } } }, {});
+  assert.ok(sw.includes('data-box-id="card1"'), 'warehouse 屏接线');
 });
 
 test('R2 menu：ready/empty 提示文案区分', () => {
