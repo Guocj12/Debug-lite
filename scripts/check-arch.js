@@ -22,6 +22,7 @@ const LAYER_RULES = [
   [/^server\/ai\//, 5],
   [/^server\/(index|ranked|runner|box|loadout|battle)\.js$/, 6],
   [/^cli\//, 6],
+  [/^public\//, 7], // P6 前端：ESM 纯函数视图/store（只允许相对路径/shared/blockly；R0 登记）
 ];
 
 // L5 允许的目标层（只依赖 L0/L1 + 数据/shared，不依赖 engine）
@@ -29,7 +30,7 @@ const AI_ALLOWED_LAYERS = new Set([0, 1, -1]);
 
 const CORE_FORBIDDEN = new Set(['fs', 'http', 'https', 'express', 'net', 'child_process', 'os', 'path']);
 
-const SCAN_ROOTS = ['server', 'cli', 'shared'];
+const SCAN_ROOTS = ['server', 'cli', 'shared', 'public'];
 
 // 注释剥离（引用感知，避免 https:// 等串内 // 误判；保长保换行以保留行号）
 function stripComments(src) {
@@ -145,6 +146,29 @@ function analyze(options) {
       }
       // L6（server/index、cli）：外部模块放行（express/http 等）
     }
+    // P6：public 为 ESM —— 补 import 依赖扫描（方向规则入 graph 统一裁决；裸导入拒绝）
+    if (rel.startsWith('public/')) {
+      const impRe = /\bfrom\s*['"]([^'"]+)['"]/g;
+      let im;
+      while ((im = impRe.exec(src)) !== null) {
+        const target = im[1];
+        if (target.startsWith('.')) {
+          const resolved = resolveRel(path.dirname(file), target);
+          if (!resolved) {
+            violations.push({ file: rel, rule: 'unresolved', detail: `import('${target}') 无法解析` });
+            continue;
+          }
+          if (scanSet.has(path.resolve(resolved))) graph.get(rel).push(relOf(resolved));
+        } else if (target.startsWith('shared/')) {
+          const abs = path.resolve(projectRoot, target);
+          if (fs.existsSync(abs)) graph.get(rel).push(relOf(abs));
+        } else if (target === 'blockly') {
+          // F6/R6：vendor 白名单（node_modules/blockly；经 /vendor/blockly/* 静态路由；spec §1.1）
+        } else {
+          violations.push({ file: rel, rule: 'import-bare', detail: `public 禁止裸导入 '${target}'（只允许相对路径/shared/*/blockly）` });
+        }
+      }
+    }
   }
 
   // 层方向
@@ -163,6 +187,9 @@ function analyze(options) {
       }
       if (rel.startsWith('cli/') && (dep.startsWith('server/core') || dep.startsWith('server/ai'))) {
         violations.push({ file: rel, rule: 'cli-core', detail: `CLI 禁止 require core/ai（只走 HTTP，L14）→ ${dep}` });
+      }
+      if (rel.startsWith('public/') && dep.startsWith('server/')) {
+        violations.push({ file: rel, rule: 'public-server', detail: `public 禁止 import server 代码（只走 API，L7）→ ${dep}` });
       }
     }
   }

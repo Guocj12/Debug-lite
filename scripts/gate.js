@@ -11,7 +11,7 @@ const { analyze } = require('./check-arch.js');
 const REPO = path.join(__dirname, '..');
 const STATIC_SCOPE = ['server/core', 'server/ai']; // 项 1 范围（T-DC-3）
 const CONSOLE_SCOPE = ['server/core'];             // 项 2 范围（T-DC-5）
-const THRESHOLD_DIRS = ['server/core', 'server/ai', 'shared', 'cli']; // 覆盖率阈值目录（§3.4）
+const THRESHOLD_DIRS = ['server/core', 'server/ai', 'shared', 'cli', 'public/js']; // 覆盖率阈值目录（§3.4 + P6 前端 R0）
 const LINE_PCT = 90;
 const BRANCH_PCT = 85;
 const FUNC_PCT = 90;
@@ -24,7 +24,7 @@ const PREFIX_MAP = {
   engine: ['tick', 'battle', 'move', 'collision', 'resource', 'action'],
   damage: ['damage'], 'ai.ast': ['ai'], 'ai.runtime': ['ai', 'trace'], unlock: ['unlock'],
   api: ['api'], cli: ['cli'], ranked: ['ranked'], log: ['log'],
-  store: ['store'], view: ['view'], render: ['render'], editor: ['editor'], perf: ['perf'],
+  store: ['store'], view: ['view'], ui: ['ui'], render: ['render'], editor: ['editor'], perf: ['perf'],
 };
 // 通道注册表延迟加载：门禁进程不得在项 7 覆盖率会话开始前 require shared/log.js
 // （V8 precise coverage 只统计会话开始之后加载的脚本 —— 预加载会使其覆盖率永久残缺，已实测）。

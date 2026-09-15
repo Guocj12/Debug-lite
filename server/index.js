@@ -11,7 +11,45 @@ const { createLogger } = require('../shared/log.js');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const ASSETS_DIR = path.join(__dirname, '..', 'assets'); // P0-9：占位美术表作为数据表经 API 提供
+const REPO_DIR = path.join(__dirname, '..');
 const VERSION = '3.0.0';
+
+// P6 R0 静态资源（spec §1.1 六前缀；GET 专用；/api/v1/* 由路由优先，不落入本函数）
+const STATIC_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+};
+// 返回 {buf,type} | null（未命中前缀/文件缺失 → 调用方 404）| {bad:true}（穿越/畸形 URI → 400 bad_static）
+function staticFile(method, urlPath) {
+  if (method !== 'GET') return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch (e) {
+    return { bad: true }; // 编码型穿越（%2e%2e 归一后统一判拒）
+  }
+  let rel = null;
+  if (decoded === '/' || decoded === '/index.html') rel = 'public/index.html';
+  else if (decoded.startsWith('/js/') || decoded.startsWith('/css/')) rel = `public${decoded}`;
+  else if (decoded.startsWith('/shared/')) rel = `shared/${decoded.slice('/shared/'.length)}`;
+  else if (decoded.startsWith('/assets/')) rel = `assets/${decoded.slice('/assets/'.length)}`;
+  else if (decoded.startsWith('/vendor/blockly/')) rel = `node_modules/blockly${decoded.slice('/vendor/blockly'.length)}`; // R6 起可用
+  if (rel === null) return null;
+  if (decoded.includes('..') || decoded.includes('\\')) return { bad: true };
+  const abs = path.join(REPO_DIR, rel);
+  if (!abs.startsWith(REPO_DIR)) return { bad: true };
+  let buf;
+  try {
+    buf = fs.readFileSync(abs);
+  } catch (e) {
+    return null;
+  }
+  return { buf, type: STATIC_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream' };
+}
 
 function tableNames() {
   const data = fs.readdirSync(DATA_DIR)
@@ -54,7 +92,12 @@ function errEnvelope(code, message, details) {
   return { ok: false, error: { code, message, details: details || [] } };
 }
 
-function send(res, status, payload) {
+function send(res, status, payload, contentType) {
+  if (Buffer.isBuffer(payload)) { // 静态资源路径（P6 R0）
+    res.writeHead(status, { 'content-type': contentType || 'application/octet-stream', 'content-length': payload.length });
+    res.end(payload);
+    return payload.length;
+  }
   const body = JSON.stringify(payload);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body);
@@ -365,6 +408,7 @@ return async (req, res) => {
     const urlPath = (req.url || '/').split('?')[0];
     logger.info('api', 'api.req', `${req.method} ${req.url}`, { method: req.method, path: urlPath, query: req.url.includes('?') ? req.url.split('?')[1] : null });
     let status = 404;
+    let payloadType = null; // 仅静态资源路径非空（Buffer 内容类型）
     let payload = errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`);
     try {
       // 动态表端点：GET /api/v1/data/:table
@@ -410,6 +454,17 @@ return async (req, res) => {
             payload = okEnvelope(r.data, logger);
           }
         }
+      } else if (req.method === 'GET' && !urlPath.startsWith('/api/v1/')) {
+        // P6 R0：静态资源（六前缀；GET-only；编码型穿越/畸形 URI → 400 bad_static；未命中 → 落到 404）
+        const st = staticFile(req.method, urlPath);
+        if (st && st.bad) {
+          status = 400;
+          payload = errEnvelope('bad_static', `非法静态路径 ${urlPath}`);
+        } else if (st) {
+          status = 200;
+          payloadType = st.type;
+          payload = st.buf;
+        }
       } else {
         const handler = (routes[req.method] || {})[urlPath];
         if (handler) {
@@ -429,7 +484,7 @@ return async (req, res) => {
       payload = errEnvelope('internal_error', e.message || '服务端内部错误');
       logger.error('api', 'api.err', `处理 ${urlPath} 异常`, { message: e.message, stack: e.stack });
     }
-    const bytes = send(res, status, payload);
+    const bytes = send(res, status, payload, payloadType);
     logger.info('api', 'api.res', `${req.method} ${urlPath} -> ${status}`, { method: req.method, path: urlPath, status, durationMs: Date.now() - started, bytes });
   };
 }

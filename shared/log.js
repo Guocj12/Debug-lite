@@ -25,7 +25,7 @@
   const CHANNELS = Object.freeze([
     'rng', 'field', 'effects', 'items', 'roles', 'skills', 'bullets', 'engine',
     'damage', 'ai.ast', 'ai.runtime', 'unlock', 'api', 'cli', 'ranked',
-    'store', 'view', 'render', 'editor', 'perf', 'log',
+    'store', 'view', 'ui', 'render', 'editor', 'perf', 'log',
   ]);
   const CHANNEL_SET = new Set(CHANNELS);
 

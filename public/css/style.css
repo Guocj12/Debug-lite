@@ -1,0 +1,46 @@
+/* Debug-Lite v3 基础样式（R0 骨架）——只负责"盒内视觉"，关键位置一律由 layout(state)→Box[] 决定。
+ * 原则（spec §0/§3）：无渐变无阴影，扁平描边风格；按钮/场景清晰即可。
+ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 1280px; height: 720px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  overflow: hidden; /* 视口固定 1280×720，禁止滚动出布局 */
+}
+
+#app { position: relative; width: 1280px; height: 720px; }
+
+/* 布局引擎产出的每个盒子：坐标由 style 属性注入（x/y/w/h），CSS 只做盒内视觉 */
+.dl-box { position: absolute; }
+
+/* 面板：细边框 + 面板底色（spec §3.2 Panel） */
+.dl-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: var(--radius-m); }
+
+/* 按钮：primary/danger/ghost 三型（spec §3.2 Button 160×40） */
+.dl-btn { display: block; border-radius: var(--radius-s); border: 1px solid var(--color-line); background: var(--color-panel); color: var(--color-text); font-family: var(--font-ui); font-size: 14px; cursor: pointer; }
+.dl-btn.dl-primary { background: var(--color-accent); border-color: var(--color-accent); color: #0e1116; }
+.dl-btn.dl-danger { background: var(--color-danger); border-color: var(--color-danger); color: #0e1116; }
+.dl-btn.dl-ghost { background: transparent; }
+.dl-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 输入框/下拉（spec §3.2 Field 全宽×40） */
+.dl-field { border: 1px solid var(--color-line); border-radius: var(--radius-s); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); }
+.dl-field:focus { outline: 1px solid var(--color-accent); }
+
+/* 文本辅助 */
+.dl-muted { color: var(--color-muted); }
+.dl-title { font-size: 20px; font-weight: 600; }
+.dl-danger-text { color: var(--color-danger); }
+.dl-ok-text { color: var(--color-ok); }
+
+/* 战斗画布：坐标注入由 mount 负责（默认隐藏，仅 replay 屏显示） */
+#battle { position: absolute; background: var(--color-bg); }
+
+/* toast 容器（spec §3.2 Toast 320×48 右上 z=95） */
+#dl-toasts { position: absolute; top: 8px; right: 8px; width: 320px; z-index: var(--z-snack); }
+.dl-toast { margin-bottom: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-s); background: var(--color-panel); }
+.dl-toast.dl-error { border-color: var(--color-danger); }
