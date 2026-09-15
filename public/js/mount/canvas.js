@@ -4,6 +4,7 @@
  * 其他屏 → 隐藏。doc 注入缝：无 canvas → 跳过（node/测试安全）。
  */
 import { planFrame } from '../render/planFrame.js';
+import { planTrail } from '../render/trail.js';
 import { paintCanvas } from '../render/paint.js';
 
 export function injectCanvas(doc, state, opts) {
@@ -28,8 +29,9 @@ export function injectCanvas(doc, state, opts) {
   if (!cur) return null;
   const ctx = canvas.getContext('2d');
   const primitives = planFrame(cur.diff, { t: 1, winner: state.battle.result && state.battle.result.winner, maxHp: firstMaxHp(frames) });
-  const seen = paintCanvas(ctx, primitives, { log: o.log });
-  return { primitives, seen };
+  const trail = planTrail(frames.slice(0, tick + 1));
+  const seen = paintCanvas(ctx, primitives, { log: o.log, trail });
+  return { primitives, trail, seen };
 }
 
 // maxHp 取首帧 hp（战斗满血起始——只读派生，不重算战斗）

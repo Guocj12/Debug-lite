@@ -10,6 +10,7 @@ export function paintCanvas(ctx, primitives, opts) {
   const seen = [];
   ctx.clearRect(0, 0, 1024, 128);
   seen.push('clear');
+  log && log.trace('render', 'render.clear', '清屏', { x: 0, y: 0, w: 1024, h: 128 });
   // 地面：16 格交替色（§7.2 步骤 2）
   for (let i = 0; i < 16; i++) {
     const x = i * 64;
@@ -19,6 +20,7 @@ export function paintCanvas(ctx, primitives, opts) {
     seen.push(`tile_${i}`);
     log && log.trace('render', 'render.box', 'tile', { kind: 'tile', id: `tile_${i}`, x, y: 64, w: 64, h: 64, z: 1, fill, scale: 1 });
   }
+  // 图元：base/player/bullet/hit/collision/verdict（§7.2 步骤 3~7）
   for (const p of primitives || []) {
     if (p.kind === 'base') {
       ctx.fillStyle = p.owner === 'p1' ? '#2f6f4f' : '#6f2f2f';
@@ -54,6 +56,20 @@ export function paintCanvas(ctx, primitives, opts) {
       seen.push('verdict');
       log && log.trace('render', 'render.text', 'verdict', { kind: 'verdict', text: p.text, x: p.x, y: p.y, w: p.w, h: p.h });
     }
+  }
+  // AI 轨迹：player 图元之后（§7 打磨项；alpha 0.4 折线）
+  for (const trail of o.trail || []) {
+    ctx.globalAlpha = trail.alpha;
+    ctx.strokeStyle = trail.color;
+    ctx.beginPath();
+    trail.points.forEach((x, i) => {
+      if (i === 0) ctx.moveTo(x, trail.y);
+      else ctx.lineTo(x, trail.y);
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    seen.push('trail');
+    log && log.trace('render', 'render.sprite', 'trail', { kind: 'trail', uid: trail.owner, x: trail.points[0], y: trail.y, w: 1, h: 1, alpha: trail.alpha, points: trail.points.length });
   }
   return seen;
 }

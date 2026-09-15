@@ -82,3 +82,34 @@ test('R1 app：doc 注入 → dom 缝创建 + root 挂载（mountApp 生效）',
   assert.ok(h.mount, 'doc+root → mount 装配');
   assert.ok(root.innerHTML.includes('data-box-id'), 'root 已渲染');
 });
+
+test('R7 app：editorFactory —— 入 editor 屏 → 动态 import 失败 → 占位不炸（warn 日志）', async () => {
+  const warns = [];
+  const root = { innerHTML: '', listeners: {}, addEventListener() {} };
+  const doc = { getElementById: (id) => (id === 'app' ? root : null), createElement: () => ({}), body: { appendChild() {}, removeChild() {} } };
+  const h = start({ doc, fetch: async () => ({ status: 200, json: async () => ({ ok: false, error: { code: 'x', message: 'y' } }) }), log: { ...sink().log, warn: (c, e, m, d) => warns.push(m), dump: () => [] } });
+  h.store.dispatch({ type: 'goto', screen: 'editor' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(warns.some((m) => /Blockly 加载失败/.test(m)), 'node 环境 import(/vendor/...) 失败 → warn 占位');
+  assert.equal(root.innerHTML.includes('data-box-id'), true, 'paint 仍完成');
+});
+
+test('R7 app：editorFactory 成功臂（blocklyUrl data: 模块）→ wireEditor 返回 null 也安全 + document 全局臂', async () => {
+  const prev = globalThis.document;
+  globalThis.document = { getElementById: () => null }; // document 全局臂（无 #app → root null）
+  try {
+    const root = { innerHTML: '', listeners: {}, addEventListener() {} };
+    const doc = { getElementById: (id) => (id === 'app' ? root : null), createElement: () => ({}), body: { appendChild() {}, removeChild() {} } };
+    const h = start({
+      doc,
+      fetch: async () => ({ status: 200, json: async () => ({ ok: false, error: { code: 'x', message: 'y' } }) }),
+      log: { ...sink().log, dump: () => [] },
+      blocklyUrl: 'data:text/javascript,export default {}',
+    });
+    h.store.dispatch({ type: 'goto', screen: 'editor' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(typeof h.mount, 'object', 'editorFactory 成功路径（wireEditor 缺 div → null 占位）');
+  } finally {
+    globalThis.document = prev;
+  }
+});

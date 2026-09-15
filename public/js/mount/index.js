@@ -8,6 +8,7 @@ import { verifyLayout } from '../ui/layout.js';
 import { collectBoxes } from '../views/html.js';
 import { injectCanvas } from './canvas.js';
 import { wireEditor } from './editor.js';
+import { createDomHelpers } from './dom.js';
 
 const TOAST_MS = 3000;
 
@@ -71,6 +72,16 @@ export function mountApp(options) {
         if (t.tagName === 'INPUT' && t.type === 'text') action.seed = t.value === '' ? null : Number(t.value) || 0;
         if (t.tagName === 'INPUT' && t.type === 'range') action[action.valueKey || 'tick'] = Number(t.value) || 0;
         if (t.tagName === 'SELECT') action[action.valueKey || 'tier'] = t.value;
+      }
+      if (action.type === 'save/import' && eventName === 'click') {
+        // 存档导入（§8）：文件选择器缝（用户取消 → 不 dispatch）
+        const dom = opts.dom || createDomHelpers(doc);
+        const text = dom.pickText ? dom.pickText() : Promise.resolve('');
+        Promise.resolve(text).then((picked) => {
+          if (picked === null || picked === undefined) return;
+          store.dispatch({ type: 'save/import', text: picked });
+        });
+        return;
       }
       store.dispatch(action);
     };
