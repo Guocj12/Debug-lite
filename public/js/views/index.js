@@ -7,14 +7,16 @@ import { menuLayout, menuPhase } from './menu.js';
 import { settingsLayout } from './settings.js';
 import { gachaLayout } from './gacha.js';
 import { warehouseLayout, assembleDrawerLayout } from './warehouse.js';
+import { battleLayout } from './battle.js';
 import { boxesToHtml } from './html.js';
 
-// 各屏视图实现（R4..R6 逐批补齐；此处只列已实现屏）
+// 各屏视图实现（R5..R6 逐批补齐；此处只列已实现屏）
 const SCREENS = {
   menu: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...menuLayout(state)]),
   settings: (state, ctx) => boxesToHtml([...shellLayout(state, { main: false }), ...settingsLayout(state, ctx && ctx.records)]),
   gacha: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...gachaLayout(state)]),
   warehouse: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...warehouseLayout(state), ...assembleDrawerLayout(state)]),
+  battle: (state) => boxesToHtml([...shellLayout(state, { main: false }), ...battleLayout(state)]),
 };
 
 function fallbackHtml(screen) {

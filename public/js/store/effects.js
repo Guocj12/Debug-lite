@@ -1,7 +1,9 @@
 'use strict';
 /* store/effects.js —— 副作用层（frontend-spec §4.2 右列）：所有 API 调用与定时器在此，
- * 结果经 dispatch 回流 reducer。ctx = {api, state(), dispatch, log, persist, timers}；测试注入假 api。
+ * 结果经 dispatch 回流 reducer。ctx = {api, state(), dispatch, log, persist, timers, dom}；测试注入假 api。
  */
+import { opponentOf } from '../views/battle.js';
+
 export function toastErr(ctx, code, message) {
   ctx.dispatch({ type: 'ui/toast', text: `${code}${message ? '：' + message : ''}`, kind: 'error' });
 }
@@ -92,15 +94,79 @@ export function effects(apiExtra) {
       }
     },
 
-    // 出战配置本地保存（§4.2 loadout/set：可延迟到出战时再 POST 校验）
-    async 'loadout/set'(ctx) {
-      ctx.persist.save(ctx.state());
+    // seed 随机（§6.5）：Date.now 注入在 effect 层（reducer 保持纯）
+    async 'seed/random'(ctx) {
+      const seed = Date.now() % 1e9;
+      ctx.dispatch({ type: 'seed/set', seed });
+    },
+
+    // 起战（§6.5 B22 后接 /battle）：u/uid → 物品解析为 p1；对手模板为 p2
+    async 'battle/run'(ctx) {
+      const s = ctx.state();
+      const pair = opponentOf(s.ui.activeTab.battle);
+      const find = (uid) => {
+        const b = s.warehouse && s.warehouse.buckets;
+        if (!b) return null;
+        for (const key of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
+          const hit = (b[key] || []).find((x) => x.uid === uid);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      const ld = s.loadout || {};
+      const p1 = {
+        role: find(ld.role),
+        skills: (ld.skills || []).map((u) => (u ? find(u) : null)),
+        ai: ld.ai || null,
+      };
+      const r = await ctx.api.battle({ p1, p2: pair.loadout, warehouse: s.warehouse, seed: s.seed, tier: s.tier });
+      if (r.ok) {
+        ctx.dispatch({
+          type: 'battle/loaded',
+          frames: r.data.frames,
+          result: { winner: r.data.winner, phase: r.data.phase, ticks: r.data.ticks },
+          config: { id: r.data.id, seed: r.data.seed, tier: r.data.tier },
+        });
+        ctx.dispatch({ type: 'goto', screen: 'replay' });
+      } else {
+        ctx.dispatch({ type: 'ui/busy', busy: false });
+        toastErr(ctx, r.code, r.message);
+      }
+    },
+
+    // AI 试运行（R6）：POST /ai/battle → battle/loaded → goto replay
+    async 'ai/run'(ctx, action) {
+      const s = ctx.state();
+      const program = (s.loadout && s.loadout.ai) || (s.aiDraft && s.aiDraft.program);
+      if (!program) {
+        ctx.dispatch({ type: 'ui/busy', busy: false });
+        ctx.dispatch({ type: 'ui/toast', text: 'ai_empty：先编译/保存 AI 程序', kind: 'error' });
+        return;
+      }
+      const r = await ctx.api.aiBattle({ program, seed: s.seed, tier: s.tier, opponent: (action && action.opponent) || 'kiter' });
+      if (r.ok) {
+        ctx.dispatch({
+          type: 'battle/loaded',
+          frames: r.data.frames,
+          result: { winner: r.data.winner, phase: r.data.phase, ticks: r.data.ticks },
+          config: { id: r.data.id, seed: r.data.seed, tier: r.data.tier },
+        });
+        ctx.dispatch({ type: 'goto', screen: 'replay' });
+      } else {
+        ctx.dispatch({ type: 'ui/busy', busy: false });
+        toastErr(ctx, r.code, r.message);
+      }
     },
 
     // 出战装配（详情「出战」按钮）：本地装配 + 落盘 + 提示
     async 'loadout/equip'(ctx) {
       ctx.persist.save(ctx.state());
       ctx.dispatch({ type: 'ui/toast', text: '出战配置已更新（对战时按 /loadout 校验）', kind: 'info' });
+    },
+
+    // 出战配置本地保存（§4.2 loadout/set：可延迟到出战时再 POST 校验）
+    async 'loadout/set'(ctx) {
+      ctx.persist.save(ctx.state());
     },
 
     // 出战校验（§4.2 loadout/validate：拒绝时 details → snackbar）

@@ -112,6 +112,10 @@ export function reducer(state, action) {
       return { ...s, aiDraft: { ...s.aiDraft, compiling: false, hash: a.hash || null } };
     case 'ai/errors':
       return { ...s, aiDraft: { ...s.aiDraft, compiling: false, errors: Array.isArray(a.errors) ? a.errors : [] } };
+    case 'battle/opp':
+      return { ...s, ui: { ...s.ui, activeTab: { ...s.ui.activeTab, battle: a.id || 'kiter' } } };
+    case 'battle/run':
+      return { ...s, battle: { ...s.battle, running: true }, ui: { ...s.ui, busy: true } };
     case 'ai/run':
       return { ...s, battle: { ...s.battle, running: true }, ui: { ...s.ui, busy: true } };
     case 'battle/loaded': {

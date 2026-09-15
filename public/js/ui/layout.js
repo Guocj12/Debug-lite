@@ -61,10 +61,10 @@ export function panel(id, x, y, w, h, title) {
   return box(id, 'panel', x, y, w, h, { z: 2, text: title || null });
 }
 
-// 按钮盒：primary/danger 160×40，ghost 96×32（§3.2）；payload/valueKey/options 透传
+// 按钮盒：primary/danger 160×40，ghost 96×32（§3.2）；显式 w/h 覆盖（screens.md 表个别按钮 120×40）
 export function button(id, x, y, opts) {
   const o = opts || {};
-  const size = o.style === 'ghost' ? { w: 96, h: 32 } : { w: 160, h: 40 };
+  const size = o.w && o.h ? { w: o.w, h: o.h } : (o.style === 'ghost' ? { w: 96, h: 32 } : { w: 160, h: 40 });
   return box(id, 'button', x, y, size.w, size.h, {
     style: o.style || 'primary', text: o.text || id, action: o.action || null,
     payload: o.payload, valueKey: o.valueKey, options: o.options, value: o.value,
