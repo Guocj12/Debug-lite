@@ -20,6 +20,7 @@ export function createStore(options) {
     log,
     persist: opts.persist || null,
     timers,
+    dom: opts.dom || null,
   };
 
   function dispatch(action) {

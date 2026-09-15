@@ -16,3 +16,4 @@
 | RW-1 | R1 | frontend-spec §4.1 的 state.warehouse 写为扁平桶 `{roles,skills,rolePlugins,skillPlugins}`，与后端 B18 冻结的仓库形状 `{buckets:{role,skill,rolePlugin,skillPlugin}}` 不一致 | 按权威链以后端形状为准（buckets 形状），前端全程统一；后续批次如遇同类冲突同此处理 |
 | RW-2 | R1 | spec §4.1 logPrefs 含 `panelOpen:false`，而 §8 只持久化 `{level,channels}` | panelOpen 属临时 UI 态，放 state.logPrefs 但不落盘；persist 白名单照 §8 |
 | RW-3 | R1 | spec §4.2 `battle:{...speed}` 未含播放态字段，回放需要 playing 标志 | state.battle 增加 `playing`（播放状态机专用，不持久化）；属形状补充不冲突 |
+| RW-4 | R2 | spec §3.5 zconflict 判「子 z ≤ 父 z」，但面板内嵌同层子盒（如 channels⊂logPanel）是正常 DOM 嵌套，screens.md 表中两者同为 z2 | 自检器放宽为「子 z < 父 z 才判颠倒」；screens.md 表坐标/z 仍逐行锁定 |

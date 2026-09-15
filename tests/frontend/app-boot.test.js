@@ -74,3 +74,11 @@ test('R1 app：全局 localStorage 分支（临时挂载）+ log/patch 注入分
   assert.equal(h2.store.getState().screen, 'gacha', 'patch 覆盖初始屏');
   assert.equal(typeof h2.api.request, 'function');
 });
+
+test('R1 app：doc 注入 → dom 缝创建 + root 挂载（mountApp 生效）', async () => {
+  const root = { innerHTML: '', listeners: {}, addEventListener() {} };
+  const doc = { getElementById: (id) => (id === 'app' ? root : null), createElement: () => ({}), body: { appendChild() {}, removeChild() {} } };
+  const h = start({ doc, fetch: async () => ({ status: 200, json: async () => ({ ok: false, error: { code: 'x', message: 'y' } }) }), log: { ...sink().log, dump: () => [] } });
+  assert.ok(h.mount, 'doc+root → mount 装配');
+  assert.ok(root.innerHTML.includes('data-box-id'), 'root 已渲染');
+});

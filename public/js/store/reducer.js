@@ -122,16 +122,22 @@ export function reducer(state, action) {
       return { ...s, battle: { ...s.battle, playing: false } };
     case 'replay/speed':
       return { ...s, battle: { ...s.battle, speed: [1, 2, 4].includes(a.speed) ? a.speed : s.battle.speed } };
-    case 'log/set':
+    case 'log/set': {
+      const channels = { ...s.logPrefs.channels };
+      for (const [ch, lv] of Object.entries(a.channels || {})) {
+        if (lv === null || lv === undefined) delete channels[ch]; // off：移除覆盖
+        else channels[ch] = lv;
+      }
       return {
         ...s,
         logPrefs: {
           ...s.logPrefs,
           level: a.level || s.logPrefs.level,
-          channels: { ...s.logPrefs.channels, ...(a.channels || {}) },
+          channels,
           ...(a.panelOpen === undefined ? {} : { panelOpen: !!a.panelOpen }),
         },
       };
+    }
     case 'save/set':
       // 存档导入（§8）：tier/warehouse/loadout(+lastResult) 全量替换
       return {

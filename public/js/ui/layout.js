@@ -61,11 +61,15 @@ export function panel(id, x, y, w, h, title) {
   return box(id, 'panel', x, y, w, h, { z: 2, text: title || null });
 }
 
-// 按钮盒：primary/danger 160×40，ghost 96×32（§3.2）
+// 按钮盒：primary/danger 160×40，ghost 96×32（§3.2）；payload/valueKey/options 透传
 export function button(id, x, y, opts) {
   const o = opts || {};
   const size = o.style === 'ghost' ? { w: 96, h: 32 } : { w: 160, h: 40 };
-  return box(id, 'button', x, y, size.w, size.h, { style: o.style || 'primary', text: o.text || id, action: o.action || null, z: o.z === undefined ? 4 : o.z, disabled: !!o.disabled });
+  return box(id, 'button', x, y, size.w, size.h, {
+    style: o.style || 'primary', text: o.text || id, action: o.action || null,
+    payload: o.payload, valueKey: o.valueKey, options: o.options, value: o.value,
+    z: o.z === undefined ? 4 : o.z, disabled: !!o.disabled,
+  });
 }
 
 function covers(viewW, viewH, b) {
@@ -119,12 +123,12 @@ export function verifyLayout(boxes, opts) {
       }
     }
   }
-  // 父子 z 颠倒（子 z ≤ 父 z）
+  // 父子 z 颠倒（子 z < 父 z 才判颠倒；同层父子为正常 DOM 嵌套——见 docs/rewrite-issues.md RW-4）
   for (const b of list) {
     if (b.parent === null || b.parent === undefined) continue;
     const p = byId.get(b.parent);
     if (!p) continue; // 悬挂引用由 zero/其他检查覆盖
-    if (b.z <= p.z) issues.push({ boxId: b.id, issue: 'zconflict', detail: `子 z=${b.z} ≤ 父 z=${p.z}` });
+    if (b.z < p.z) issues.push({ boxId: b.id, issue: 'zconflict', detail: `子 z=${b.z} < 父 z=${p.z}` });
   }
   return issues;
 }

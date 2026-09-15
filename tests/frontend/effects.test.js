@@ -236,6 +236,44 @@ test('R1 effects：无 api ctx 的 log/set（api null 分支）', async () => {
   assert.ok(persist.saves.some((x) => Array.isArray(x) && x[0] === 'logPrefs'));
 });
 
+test('R2 effects：save/export —— doc 缝下载 + 无 doc 提示臂', async () => {
+  const persist = fakePersist();
+  persist.exportState = (s) => JSON.stringify({ schemaVersion: 1, tier: s.tier });
+  const downloads = [];
+  const store1 = createStore({ reducer, effects: effects(), persist, api: okApi(), log: sink().log, timers: null, dom: { download: (name, text) => downloads.push([name, text]) } });
+  store1.dispatch({ type: 'save/export' });
+  await flush();
+  assert.equal(downloads.length, 1, 'doc 缝触发下载');
+  assert.ok(downloads[0][0].startsWith('dl-save-'));
+  assert.ok(downloads[0][1].includes('schemaVersion'));
+  assert.ok(store1.getState().ui.snackbar.some((t) => t.text.includes('已导出')));
+  // 无 dom → 提示臂
+  const rec2 = [];
+  const persist2 = fakePersist();
+  persist2.exportState = (s) => JSON.stringify({ schemaVersion: 1 });
+  const store2 = createStore({ reducer, effects: effects(), persist: persist2, api: okApi(), log: { debug: () => {}, info: (c, e, m) => rec2.push(m), warn: () => {}, error: () => {} }, timers: null, dom: null });
+  store2.dispatch({ type: 'save/export' });
+  await flush();
+  assert.ok(store2.getState().ui.snackbar.some((t) => t.kind === 'error'), '无 doc → toast 提示');
+  assert.ok(rec2.some((m) => /schemaVersion/.test(m)), '导出文本落日志');
+});
+
+test('R2 effects：save/import —— 成功 save/set+goto menu / 失败 toast', async () => {
+  const persist = fakePersist();
+  persist.parseImport = (text) => (text.includes('"tier":"rare"') ? { ok: true, patch: { tier: 'rare', warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } }, loadout: { role: null, skills: [null, null, null], ai: null } } } : { ok: false, code: 'bad_json' });
+  const store = createStore({ reducer, effects: effects(), persist, api: okApi(), log: sink().log, timers: null, dom: null });
+  store.dispatch({ type: 'goto', screen: 'settings' });
+  await flush();
+  store.dispatch({ type: 'save/import', text: '{"tier":"rare"}' });
+  await flush();
+  assert.equal(store.getState().tier, 'rare', 'patch 应用');
+  assert.equal(store.getState().screen, 'menu', '导入后回菜单');
+  assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('已导入')));
+  store.dispatch({ type: 'save/import', text: 'nope' });
+  await flush();
+  assert.ok(store.getState().ui.snackbar.some((t) => t.text.includes('bad_json')), '失败 toast 带码');
+});
+
 test('R1 effects：seed/set → saveSeed 落盘', async () => {
   const persist = fakePersist();
   const { store } = harness(okApi(), persist);

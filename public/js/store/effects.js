@@ -126,7 +126,10 @@ export function effects(apiExtra) {
     async 'log/set'(ctx, action) {
       if (action.level) ctx.log && ctx.log.setLevel(action.level);
       if (action.channels) {
-        for (const [ch, lv] of Object.entries(action.channels)) ctx.log && ctx.log.setChannelLevel(ch, lv);
+        for (const [ch, lv] of Object.entries(action.channels)) {
+          if (lv === null || lv === undefined) continue; // off：不设覆盖（跟随全局级别）
+          ctx.log && ctx.log.setChannelLevel(ch, lv);
+        }
       }
       const s = ctx.state();
       ctx.persist.saveLogPrefs({ level: s.logPrefs.level, channels: s.logPrefs.channels });
@@ -136,6 +139,31 @@ export function effects(apiExtra) {
         if (action.channels) payload.channels = action.channels;
         await ctx.api.logLevel.set(payload); // 网络失败静默（开发期同步，不阻塞界面）
       }
+    },
+
+    // 存档导出（§8）：mount 层落 DOM；无 doc 环境 → toast 提示
+    async 'save/export'(ctx) {
+      const text = ctx.persist.exportState(ctx.state());
+      if (ctx.dom && typeof ctx.dom.download === 'function') {
+        ctx.dom.download(`dl-save-${Date.now()}.json`, text);
+        ctx.dispatch({ type: 'ui/toast', text: '存档已导出', kind: 'info' });
+      } else {
+        ctx.dispatch({ type: 'ui/toast', text: '导出需要浏览器环境（已复制到控制台）', kind: 'error' });
+        ctx.log && ctx.log.info('store', 'store.export', text, {});
+      }
+    },
+
+    // 存档导入（§8）：mount 层负责文件读取，此处解析/校验/落盘
+    async 'save/import'(ctx, action) {
+      const r = ctx.persist.parseImport(action.text || '');
+      if (!r.ok) {
+        ctx.dispatch({ type: 'ui/toast', text: `导入失败：${r.code}`, kind: 'error' });
+        return;
+      }
+      ctx.dispatch({ type: 'save/set', ...r.patch });
+      ctx.persist.save(ctx.state());
+      ctx.dispatch({ type: 'goto', screen: 'menu' });
+      ctx.dispatch({ type: 'ui/toast', text: '存档已导入', kind: 'info' });
     },
 
     // seed 变化落盘（api client seed 回带 → seed/set）
