@@ -643,15 +643,15 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
-| B22 | 回放帧契约完备性（1px 位置、碰撞位置、cid、AI 轨迹）+ `POST /api/v1/battle` 完整帧 + `GET /api/v1/replay/:id` | T-EN-9 + **T-BT-1** |
-| B23 | 文本回放器 CLI（`replay --file/--tick`，打印 px 位置与碰撞）+ 帧数据充分性审计 | T-CLI-1/2 |
+| B22 `[x]` | 回放帧契约完备性（1px 位置、碰撞位置、cid、AI 轨迹）+ `POST /api/v1/battle` 完整帧 + `GET /api/v1/replay/:id` | T-EN-9 + **T-BT-1** | `events`/`battle.*`（审查 `docs/reviews/B22.md`，P1×2 已修——events 空心化/tick.end 入帧 + 同 seed 帧 ts 漂移） |
+| B23 `[x]` | 文本回放器 CLI（`replay --file/--tick`，打印 px 位置与碰撞）+ 帧数据充分性审计 | T-CLI-1/2 | `cli.replay`（审查 `docs/reviews/B23.md`，P1×1 已修——畸形帧崩溃误报连接失败；第七维链/守恒审计落地） |
 
 ### P5 排位（2 批；**按 D-123 不做存档**）
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
-| B24 | 快照（不可变深拷贝）+ 匹配 10 场（bot 补齐）+ `POST /api/v1/ranked/run`（段位由请求传入/回带） | T-RK-1/5 |
-| B25 | 晋升判定（x=6）+ 段位→奖励品质 + `POST /api/v1/ranked/promote` | T-RK-2/3/4 |
+| B24 `[x]` | 快照（不可变深拷贝）+ 匹配 10 场（bot 补齐）+ `POST /api/v1/ranked/run`（段位由请求传入/回带） | T-RK-1/5 | `ranked.snapshot/match`（审查 `docs/reviews/B24.md`，P1×1 已修——bot 技能不足 3 全 invalid；P2 落实） |
+| B25 `[x]` | 晋升判定（x=6）+ 段位→奖励品质 + `POST /api/v1/ranked/promote` | T-RK-2/3/4 | `ranked.promote`（审查 `docs/reviews/B25.md`，PASS；P2-1/2/3 当批落实） |
 
 > ~~B26 服务端存档~~ **取消**（D-123）：存档延后到 P6（localStorage）。
 

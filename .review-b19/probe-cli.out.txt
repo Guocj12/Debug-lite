@@ -1,0 +1,8 @@
+﻿[1] 包装文件合法 → exit=0 atk=22（应 0 / 22）
+[2] 裸 loadout 无 warehouse → exit=0 atk=20（P1-3 候选：0 但 20 非最终）
+[3] 非法 loadout → exit=1（应 1）
+[4] 缺 --loadout → exit=2（应 2）
+[5] 未知选项 → exit=2（应 2）
+[6] 文件不存在 → exit=2（应 2）
+[7] tier=diamond → exit=1（应 1，409）
+[8] 服务已关 → exit=1（应 1 连接失败）

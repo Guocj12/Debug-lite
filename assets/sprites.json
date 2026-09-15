@@ -1,0 +1,73 @@
+{
+  "format": "pixel-placeholder-v1",
+  "tileSize": 16,
+  "iconSize": 8,
+  "palette": {
+    "outline": "#000000",
+    "quality": {
+      "common": "#2ecc71",
+      "rare": "#3498db",
+      "epic": "#9b59b6",
+      "legendary": "#e67e22",
+      "mythic": "#1abc9c"
+    }
+  },
+  "roleTemplates": [
+    { "templateId": "role_bal", "color": "#95a5a6", "shape": "square16" },
+    { "templateId": "role_spc_hp", "color": "#e74c3c", "shape": "square16" },
+    { "templateId": "role_spc_atk", "color": "#d35400", "shape": "square16" },
+    { "templateId": "role_spc_def", "color": "#2980b9", "shape": "square16" },
+    { "templateId": "role_spc_sp", "color": "#27ae60", "shape": "square16" },
+    { "templateId": "role_spc_mp", "color": "#8e44ad", "shape": "square16" },
+    { "templateId": "role_exp_hp", "color": "#c0392b", "shape": "square16" },
+    { "templateId": "role_exp_atk", "color": "#c0392b", "shape": "square16" },
+    { "templateId": "role_exp_def", "color": "#2471a3", "shape": "square16" },
+    { "templateId": "role_exp_sp", "color": "#229954", "shape": "square16" },
+    { "templateId": "role_exp_mp", "color": "#7d3c98", "shape": "square16" }
+  ],
+  "skillTemplates": [
+    { "templateId": "skill_melee_whirl", "color": "#c0392b", "shape": "melee_bar" },
+    { "templateId": "skill_melee_heavy", "color": "#d35400", "shape": "melee_bar" },
+    { "templateId": "skill_straight_precise", "color": "#2c3e50", "shape": "straight_arrow" },
+    { "templateId": "skill_straight_rapid", "color": "#7f8c8d", "shape": "straight_arrow" },
+    { "templateId": "skill_straight_ice", "color": "#3498db", "shape": "straight_arrow" },
+    { "templateId": "skill_straight_poison", "color": "#27ae60", "shape": "straight_arrow" },
+    { "templateId": "skill_vert_rain", "color": "#2980b9", "shape": "vertical_bar" },
+    { "templateId": "skill_vert_fireball", "color": "#e67e22", "shape": "vertical_bar" },
+    { "templateId": "skill_dash_bash", "color": "#8e44ad", "shape": "displacement_trail" },
+    { "templateId": "skill_dash_shadow", "color": "#34495e", "shape": "displacement_trail" }
+  ],
+  "rolePlugins": [
+    { "pluginId": "rp_atk_pct", "shape": "sword", "color": "#c0392b" },
+    { "pluginId": "rp_atk_flat", "shape": "sword", "color": "#e74c3c" },
+    { "pluginId": "rp_def_pct", "shape": "shield", "color": "#2980b9" },
+    { "pluginId": "rp_def_flat", "shape": "shield", "color": "#3498db" },
+    { "pluginId": "rp_hp_pct", "shape": "heart", "color": "#e74c3c" },
+    { "pluginId": "rp_hp_flat", "shape": "heart", "color": "#c0392b" },
+    { "pluginId": "rp_sp_opt", "shape": "bolt", "color": "#27ae60" },
+    { "pluginId": "rp_sp_regen", "shape": "bolt_regen", "color": "#2ecc71" },
+    { "pluginId": "rp_mp_opt", "shape": "drop", "color": "#8e44ad" },
+    { "pluginId": "rp_mp_regen", "shape": "drop_regen", "color": "#9b59b6" },
+    { "pluginId": "rp_dodge", "shape": "wind", "color": "#16a085" },
+    { "pluginId": "rp_lifesteal", "shape": "fang", "color": "#e74c3c" },
+    { "pluginId": "rp_crit", "shape": "star", "color": "#f39c12" },
+    { "pluginId": "rp_regen", "shape": "cross", "color": "#2ecc71" }
+  ],
+  "skillPlugins": [
+    { "pluginId": "sp_mult", "shape": "up_arrow", "color": "#2980b9" },
+    { "pluginId": "sp_cost_down", "shape": "down_arrow", "color": "#16a085" },
+    { "pluginId": "sp_cooldown", "shape": "clock", "color": "#f39c12" },
+    { "pluginId": "sp_range", "shape": "ruler", "color": "#2c3e50" },
+    { "pluginId": "sp_bullet", "shape": "multi_dot", "color": "#7f8c8d" },
+    { "pluginId": "sp_level", "shape": "star_up", "color": "#f1c40f" },
+    { "pluginId": "sp_displacement", "shape": "arrow_shift", "color": "#34495e" },
+    { "pluginId": "sp_stun", "shape": "spiral", "color": "#8e44ad" },
+    { "pluginId": "sp_knockback", "shape": "push", "color": "#d35400" },
+    { "pluginId": "sp_pull", "shape": "pull", "color": "#16a085" },
+    { "pluginId": "sp_dot", "shape": "flame", "color": "#e67e22" },
+    { "pluginId": "sp_true_dmg", "shape": "pierce", "color": "#c0392b" },
+    { "pluginId": "sp_crit", "shape": "star", "color": "#f39c12" },
+    { "pluginId": "sp_lifesteal", "shape": "fang", "color": "#e74c3c" },
+    { "pluginId": "sp_buff", "shape": "aura", "color": "#2ecc71" }
+  ]
+}
