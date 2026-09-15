@@ -17,12 +17,14 @@ export function boxHtml(b) {
   const action = b.action ? ` data-action="${escapeHtml(b.action)}"` : '';
   const payload = b.payload !== undefined && b.payload !== null ? ` data-payload="${escapeHtml(JSON.stringify(b.payload))}"` : '';
   const valueKey = b.valueKey ? ` data-value-key="${escapeHtml(b.valueKey)}"` : '';
-  const options = b.options && b.options.length
-    ? `<select>${b.options.map((x) => `<option value="${escapeHtml(x)}"${x === b.value ? ' selected' : ''}>${escapeHtml(x)}</option>`).join('')}</select>`
-    : (b.html ? b.html : '');
+  const input = b.kind === 'slider'
+    ? `<input type="range" min="${Number(b.min) || 0}" max="${Number(b.max) || 0}" value="${Number(b.value) || 0}">`
+    : (b.options && b.options.length
+      ? `<select>${b.options.map((x) => `<option value="${escapeHtml(x)}"${x === b.value ? ' selected' : ''}>${escapeHtml(x)}</option>`).join('')}</select>`
+      : (b.html ? b.html : ''));
   const style = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;z-index:${b.z};`;
   const text = b.text === undefined || b.text === null ? '' : `<span>${escapeHtml(b.text)}</span>`;
-  return `<div class="${cls}" data-box-id="${escapeHtml(b.id)}" style="${style}"${action}${payload}${valueKey}>${options || text}</div>`;
+  return `<div class="${cls}" data-box-id="${escapeHtml(b.id)}" style="${style}"${action}${payload}${valueKey}>${input || text}</div>`;
 }
 
 export function boxesToHtml(boxes) {

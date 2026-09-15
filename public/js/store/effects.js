@@ -94,6 +94,28 @@ export function effects(apiExtra) {
       }
     },
 
+    // 播放状态机（§6.6）：timers 注入缝 —— 每 1000/speed ms seek 下一帧；末帧自动 pause。
+    // 不自重复 dispatch replay/play（F8 根因：effect→effect 递归会栈溢出）。
+    async 'replay/play'(ctx) {
+      const timers = ctx.timers;
+      if (!timers || typeof timers.setTimeout !== 'function') return; // 测试桩：仅验证状态
+      const schedule = () => {
+        const st = ctx.state();
+        if (!st.battle.playing) return;
+        const last = st.battle.frames.length - 1;
+        if (st.battle.tick >= last) {
+          ctx.dispatch({ type: 'replay/pause' });
+          return;
+        }
+        timers.setTimeout(() => {
+          if (!ctx.state().battle.playing) return;
+          ctx.dispatch({ type: 'battle/seek', tick: ctx.state().battle.tick + 1 });
+          schedule();
+        }, 1000 / (st.battle.speed || 1));
+      };
+      schedule();
+    },
+
     // seed 随机（§6.5）：Date.now 注入在 effect 层（reducer 保持纯）
     async 'seed/random'(ctx) {
       const seed = Date.now() % 1e9;

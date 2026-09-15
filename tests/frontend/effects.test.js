@@ -236,6 +236,89 @@ test('R1 effects：无 api ctx 的 log/set（api null 分支）', async () => {
   assert.ok(persist.saves.some((x) => Array.isArray(x) && x[0] === 'logPrefs'));
 });
 
+test('R5 effects：replay/play —— 无 timers 早退 + 末帧开局自动 pause + speed 0 兜底', async () => {
+  // 无 timers → 早退不炸
+  const store1 = createStore({ reducer, effects: effects(), persist: fakePersist(), api: okApi(), log: sink().log, timers: null });
+  store1.dispatch({ type: 'replay/play' });
+  await flush();
+  assert.equal(store1.getState().battle.playing, true);
+  // speed 0 → 兜底 1000ms
+  const fired = [];
+  const timers = { setTimeout: (fn, ms) => fired.push(ms) };
+  const store2 = createStore({
+    reducer, effects: effects(), persist: fakePersist(), api: okApi(), log: sink().log, timers,
+    initialPatch: { battle: { playing: false, frames: [{}, {}, {}], tick: 0, speed: 0, result: null } },
+  });
+  store2.dispatch({ type: 'replay/play' });
+  await flush();
+  assert.deepEqual(fired, [1000], 'speed 0 → 兜底 1x');
+  // 空局播放（无 frames）→ 立即 pause
+  const store3 = createStore({
+    reducer, effects: effects(), persist: fakePersist(), api: okApi(), log: sink().log, timers,
+    initialPatch: { battle: { playing: false, frames: [], tick: 0, speed: 1, result: null } },
+  });
+  store3.dispatch({ type: 'replay/play' });
+  await flush();
+  assert.equal(store3.getState().battle.playing, false, '空局自动 pause');
+});
+
+test('R5 effects：ai/run —— 成功 goto replay / 失败 toast / 空程序守卫', async () => {
+  const api = okApi({ aiBattle: async () => ({ ok: true, data: { id: 'rp9', seed: 5, tier: 'common', winner: 'p1', phase: 'base', ticks: 7, frames: [{ tick: 1, diff: {} }] } }) });
+  const { store } = harness(api);
+  store.dispatch({ type: 'loadout/set', loadout: { role: null, skills: [null, null, null], ai: { type: 'program', version: 1, body: {} } } });
+  await flush();
+  store.dispatch({ type: 'ai/run' });
+  await flush();
+  assert.equal(store.getState().screen, 'replay');
+  assert.equal(store.getState().battle.frames.length, 1);
+
+  const { store: st2 } = harness(okApi({ aiBattle: async () => ({ ok: false, code: 'ai_invalid', message: 'x', details: [] }) }));
+  st2.dispatch({ type: 'ai/edit', program: { type: 'program', version: 1, body: {} } });
+  await flush();
+  st2.dispatch({ type: 'ai/run' });
+  await flush();
+  assert.equal(st2.getState().ui.busy, false);
+  assert.ok(st2.getState().ui.snackbar.some((t) => t.text.includes('ai_invalid')));
+  assert.equal(st2.getState().screen, 'menu', '失败不切屏');
+
+  // 空程序（loadout.ai 与 aiDraft.program 均无）→ 守卫 toast
+  const { store: st3 } = harness(okApi());
+  st3.dispatch({ type: 'ai/run' });
+  await flush();
+  assert.ok(st3.getState().ui.snackbar.some((t) => t.text.includes('ai_empty')));
+});
+
+test('R5 effects：battle/run 分支锤 —— warehouse null / 悬空 uid / 缺 skills 字段 / 响应缺 warehouse', async () => {
+  const calls = [];
+  const api = okApi({ battle: async (b) => { calls.push(b); return { ok: true, data: { id: 'r', seed: 1, tier: 'common', winner: 'draw', phase: null, ticks: 3, frames: [] } }; } });
+  const persist = fakePersist();
+  const store = createStore({ reducer, effects: effects(), persist, api, log: sink().log, timers: null });
+  store.dispatch({ type: 'save/set', warehouse: null });
+  store.dispatch({ type: 'battle/run' }); // loadout 空 → p1 全 null
+  await flush();
+  const b = calls[0];
+  assert.equal(b.p1.role, null, '悬空/缺 role → null');
+  assert.deepEqual(b.p1.skills, [null, null, null], '缺 skills → null 槽');
+  assert.equal(store.getState().screen, 'replay', '空 p1 也起战（后端裁决）');
+  // assemble 响应缺 warehouse → 状态保持
+  const api2 = okApi({ wh: { assemble: async () => ({ ok: true, data: {} }), disassemble: async () => ({ ok: true, data: {} }) } });
+  const persist2 = fakePersist();
+  const store2 = createStore({ reducer, effects: effects(), persist: persist2, api: api2, log: sink().log, timers: null });
+  store2.dispatch({ type: 'wh/assemble', targetUid: 'a', pluginUid: 'b', slotIndex: 0 });
+  await flush();
+  assert.ok(store2.getState().warehouse.buckets, '缺响应 warehouse → 原状态');
+});
+
+test('R5 effects：boot 分支锤 —— 桶非数组计数 0', async () => {
+  const store = createStore({
+    reducer, effects: effects(), persist: fakePersist(), api: okApi(), log: sink().log, timers: null,
+    initialPatch: { warehouse: { buckets: { role: 'x', skill: [], rolePlugin: [], skillPlugin: [] } } },
+  });
+  store.dispatch({ type: 'boot' });
+  await flush();
+  assert.ok(store.getState().meta.serverOk === true);
+});
+
 test('R2 effects：save/export —— doc 缝下载 + 无 doc 提示臂', async () => {
   const persist = fakePersist();
   persist.exportState = (s) => JSON.stringify({ schemaVersion: 1, tier: s.tier });

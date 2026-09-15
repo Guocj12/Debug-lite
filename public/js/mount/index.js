@@ -6,6 +6,7 @@
  */
 import { verifyLayout } from '../ui/layout.js';
 import { collectBoxes } from '../views/html.js';
+import { injectCanvas } from './canvas.js';
 
 const TOAST_MS = 3000;
 
@@ -19,7 +20,7 @@ export function routeEvent(target) {
       } catch (e) {
         payload = {}; // 坏 payload 不抛，按空处理
       }
-      return { type: node.dataset.action, ...payload };
+      return { type: node.dataset.action, valueKey: node.dataset.valueKey || null, ...payload };
     }
     node = node.parentElement;
   }
@@ -45,6 +46,7 @@ export function mountApp(options) {
     if (issues.length) log && log.warn('ui', 'ui.layout.report', `${issues.length} 个布局问题`, { issues: issues.slice(0, 10) });
     if (typeof window !== 'undefined') window.__DL_LAST_BOXES__ = boxes;
     renderToasts(doc, state.ui.snackbar);
+    injectCanvas(doc, state, { log });
   }
 
   // 事件委托（click/change 均走 data-action；change 场景从 target.value 取参）
@@ -57,7 +59,8 @@ export function mountApp(options) {
       log && log.debug('ui', 'ui.click', `${eventName} ${action.type}`, { boxId: t.dataset.boxId || null, x: ev.clientX, y: ev.clientY });
       if (eventName === 'change') {
         if (t.tagName === 'INPUT' && t.type === 'text') action.seed = t.value === '' ? null : Number(t.value) || 0;
-        if (t.tagName === 'SELECT') action[t.dataset.valueKey || 'tier'] = t.value;
+        if (t.tagName === 'INPUT' && t.type === 'range') action[action.valueKey || 'tick'] = Number(t.value) || 0;
+        if (t.tagName === 'SELECT') action[action.valueKey || 'tier'] = t.value;
       }
       store.dispatch(action);
     };

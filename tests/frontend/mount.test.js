@@ -35,11 +35,13 @@ function clickHandler(root) {
 
 test('R2 mount：routeEvent 委托解析（含向上查找/坏 payload/无匹配）', () => {
   const btn = { dataset: { action: 'goto', payload: '{"screen":"gacha"}', boxId: 'btn_gacha' } };
-  assert.deepEqual(mount.routeEvent(btn), { type: 'goto', screen: 'gacha' });
+  assert.deepEqual(mount.routeEvent(btn), { type: 'goto', valueKey: null, screen: 'gacha' });
   const wrap = { parentElement: btn, dataset: {} };
-  assert.deepEqual(mount.routeEvent(wrap), { type: 'goto', screen: 'gacha' }, '向上查找');
+  assert.deepEqual(mount.routeEvent(wrap), { type: 'goto', valueKey: null, screen: 'gacha' }, '向上查找');
+  const keyed = { dataset: { action: 'battle/seek', valueKey: 'tick', payload: '{"tick":3}' } };
+  assert.deepEqual(mount.routeEvent(keyed), { type: 'battle/seek', valueKey: 'tick', tick: 3 }, 'valueKey 透传');
   const bad = { dataset: { action: 'x', payload: '{oops' } };
-  assert.deepEqual(mount.routeEvent(bad), { type: 'x' }, '坏 payload → 空 payload 不抛');
+  assert.deepEqual(mount.routeEvent(bad), { type: 'x', valueKey: null }, '坏 payload → 空 payload 不抛');
   assert.equal(mount.routeEvent({ dataset: {} }), null);
   assert.equal(mount.routeEvent(null), null);
 });
