@@ -286,6 +286,7 @@ health | data <table>
   8. 日志冒烟：`trace` 跑一场，断言关键事件齐备、`cid` 链路可追（T-LG-11），且结果与 `silent` 一致（T-LG-5）；
   9. 接口冒烟：同进程 `listen(0)` → `/api/v1` 关键端点 → **CLI 闭环**（T-CLI-1）。
 - 禁止"重试绕过"；阈值调整属 §10。
+- **文档↔实现一致性检查器**：`scripts/check-docs.js`（D1–D6，见 `§5.1`）由 `tests/integration/check-docs.test.js` 纳入项 7，也可用 `npm run check:docs` 单独运行；CI 单列一步（`.github/workflows/gate.yml`）。
 
 ---
 
@@ -601,10 +602,10 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
    - `docs/tasks.md` 的**批次勾选**（`[ ]`/`[~]`/`[x]`）；
    - `docs/progress.md` 的**当前状态**对应条目（唯一状态源）。
 2. **提交信息必须写明批次号与"实跑结果"**：`npm test` 的用例数（通过/失败）与 `npm run gate` 的结果（几 PASS / 几 FAIL / 几 PEND）；只写"已测试"不算。
-3. **机器强制（⏳ 计划，未实现）**：本条规则设计上由两个检查器拦截"改了代码但没改任务清单"的提交——
-   - `.githooks/pre-commit`（提交前钩子，比对 staged 文件：有代码改动而任务清单未变 → 拒绝提交）；
-   - `scripts/check-docs.js`（文档-实现一致性检查，接入 CI 与 `npm run check:docs`）。
-   **现状（2026-09-16 实测）**：`.githooks/` 目录、`scripts/check-docs.js`、`package.json` 的 `check:docs` 脚本**均不存在**，即该机器强制**尚未落地**——在落地前本条只能靠人工执行；落地后本段须改为「已实现」并写明入口命令。
+3. **机器强制（已实现，2026-09-16）**：本条规则由两个检查器拦截"改了代码但没改任务清单"的提交——
+   - **`.githooks/pre-commit`**：staged 文件里含 `server/`、`cli/`、`shared/`、`scripts/`、`tests/` 改动，而 `docs/tasks.md`/`docs/progress.md` **都**没改 → 直接拒绝提交（并打印涉及文件；确属无需更新清单的改动可 `--no-verify` 并说明原因）；随后强制跑 `node scripts/check-docs.js`，不通过也拒绝。**`.githooks/pre-push`** 另在推送前跑全量 `node scripts/gate.js`。
+     - **安装方式**：`npm run hooks:install`（= `git config core.hooksPath .githooks`）。**现状（2026-09-16 实测）**：本仓库已安装并生效（`git config core.hooksPath` 返回 `.githooks`；本轮提交由 pre-commit 实际执行 `check-docs` 校验）；新克隆仓库需先执行一次该命令。
+   - **`scripts/check-docs.js`**（文档↔实现一致性，`npm run check:docs`）：D1 npm 脚本双向一致 / D2–D3 文档引用的脚本与数据表存在（标注「计划/未实现/⏳」的行豁免）/ **D4 批次计数一致（tasks.md 头部 ↔ progress.md）** / **D5 批次勾选数 = 批次数且无"已完成未勾选"** / **D6 每个已勾选批次有 `docs/reviews/<批次>.md`**。该检查由 `tests/integration/check-docs.test.js` 纳入 `npm test`（因此在 gate 项 7 内），CI 另单列一步（`.github/workflows/gate.yml`）。
 4. **禁止放宽覆盖率阈值来通过门禁**（行 ≥90 / 分支 ≥85 / 函数 ≥90）：阈值调整属 §10 的接口级变更，必须单独 commit 并说明理由（§3.4）。
 
 ---

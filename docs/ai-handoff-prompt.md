@@ -26,7 +26,7 @@
 | 3 | `docs/tasks.md` | 铁律 L1–L17、接口冻结、API/CLI 契约、测试矩阵（T-*）、批次表、门禁定义、变更控制 |
 | 4 | `docs/systems/01~10.md`（+ **计划中**的 `11-account-store.md`） | 各系统实现细则（**逐个读懂你要实现的那一个**；`11` 属 P7 计划，未实现） |
 | 5 | `docs/examples/README.md` + 对应系统示例 | 分支穷举与**已机器复算的数值**（实现这些数值必须一致） |
-| 6 | `docs/battle-walkthrough.md` | 系统间数据契约（六条边界、14 步数据流、17 tick 轨迹）。⚠ 该 17 tick 轨迹与真实引擎的 18 tick（`.audit/golden-battle.json`）**已知不一致**（`progress.md` L-2），以真实引擎输出为准 |
+| 6 | `docs/battle-walkthrough.md` | 系统间数据契约（六条边界、14 步数据流、**18 tick 轨迹**）。✅ 轨迹已按**真实引擎**重算（seed 20260912 / 18 tick / p2 胜，与 `.audit/golden-battle.json` 逐字段一致；复算：`node .audit/walkthrough.js`） |
 | 7 | `docs/v3-design.md`、`docs/items-data.md` | 架构、数据模型、物品数值（作为参考，冲突时以上面 4 者为准） |
 
 **权威链（冲突时以此为准）**：`decisions.md` > `systems/*` > `v3-design.md` > `tasks.md`。

@@ -102,12 +102,12 @@ docs/progress.md       本文件
 - [ ] B11 落地黄金战斗 `tests/regression/golden-battle.test.js`（依据 `battle-walkthrough.md` §3.1 的**真实引擎复算轨迹：seed 20260912 / 18 tick / p2 胜**，与 `.audit/golden-battle.json` 一致，同 seed 逐帧一致）—— **2026-09-16 复核：`tests/regression/` 目前只有 `.gitkeep`，该测试文件不存在；相同情况见 `tests/contract/`、`tests/property/`（三层均为空目录）**。当前回归由 gate 项 8（黄金战斗 18 tick 日志冒烟 + 与 silent 逐帧一致）与 `node .audit/walkthrough.js` 复算承担。
 
 ### 3.2 文档（可选收尾）
-- [ ] 设计期 `.audit/verify-*.js` 校验器已按 `examples/README.md` §3 在验证通过后删除（未入库）；B11 黄金用例需用**真实引擎**重写校验，不复用脚手架（**2026-09-16 复核：`.audit/verify-rest.js` 仍被 git 追踪，尚未删除**）
+- [ ] 设计期 `.audit/verify-*.js` 校验器已按 `examples/README.md` §3 在验证通过后删除；B11 黄金用例需用**真实引擎**重写校验，不复用脚手架（**2026-09-16 执行：`.audit/verify-rest.js` 已删除**（零引用）；`.audit/golden-battle.js/json` 保留为 gate 项 8 依赖）
 - [ ] 实现期若发现新边界，按 `V-x` 编号登记到 `docs/examples/README.md` §4 并由用户拍板
 
 ### 3.3 本轮完成项（2026-09-16：数据驱动改造 + 机制接线）
 
-> 均**已实测**（`npm test` 478/0；逐项有 `tests/unit/mechanics.test.js` 等用例）。本轮**未新增批次号**（P0–P5 仍为 34 批）。
+> 均**已实测**（`npm test` 484/0、`npm run gate` 9 PASS/0 FAIL/0 PEND、`npm run check:docs` PASS；逐项有 `tests/unit/mechanics.test.js` 等用例）。本轮**未新增批次号**（P0–P5 仍为 34 批）。
 
 - [x] **技能/物品系统数据驱动**：新增 `server/data/skill-mechanics.json`（技能类型机制：params/slots/emit pattern）、`affix-registry.json`（词条语义：agg/skillOp/hitEffect/castEffect）、`ai-nodes.json`（AI 真实节点 17 类 + `base` 10 + `actions` 词汇表）；`core/skills.js`、`core/engine.js`、`core/items.js`、`core/roles.js`、`core/unlock.js`、`ai/ast.js` 不再按技能类型/词条 id 写分支，只解释表里声明的 `pattern`/`op`。相关文档（`systems/03-skills.md`、`systems/01-items.md`、`items-data.md`、`examples/09-unlock.md`、`server/data/README.md`）已同步。
 - [x] **机制接线（此前"已设计未生效"）**：`fullDodgeDuring` 三态（伤害/控制/弹幕判定，D-72）；技能插件词条 `crit_chance`/`lifesteal` → `skill.specials`（随弹幕 payload 参与命中结算、叠加面板值并按 1 封顶）、`cast_buff` → `skill.castEffects`（步骤 6 入队、下一 tick 起效 D-70、`duration` 缺省 2）；命中类 `stun/knockback/pull/dot/true_dmg` 由引擎按注册表 `hitEffect` 结算；角色插件 `hp_regen/sp_regen/mp_regen` 在引擎步骤 10 逐 tick 生效（`hp` 不在 `hp≤0` 时复活）；`loadout.buildPanel` 补 regen 叠加与 `specials/castEffects/affixes` 投影（此前 API 路径会静默丢失机制）；撞基地倍率改用 `battle-config.baseHitMul`（此前误用 `collisionDmgMul`，真值同为 0.8）。
@@ -115,9 +115,11 @@ docs/progress.md       本文件
 - [x] **AI 合法性 + 字段枚举校验**：`call` 采用**调用链定点分析**（函数体直接含 `action`，或调用其它行动产出函数才算；"循环体只调用纯检测函数"被拒，纯检测函数本身可定义、顶层调用合法）；`ai/ast.js` 新增字段枚举校验（`logic.op∈{and,or}`、`loop.kind∈{count,while}` 且 count 必填 `times`/while 必填 `cond`、`arith.op∈{+,-,*,/}`、`cmp.op∈{>,<,>=,<=,==,!=}`）。**动作名仍不做校验期拒绝**（D-80：未知名运行期归一化为 `wait` + `action.invalid` warn）。
 - [x] **节点段位口径收口**：`availableNodes(tier)` 只返回真实节点类型（单一数据源 `ai-nodes.json` 的 `nodes`，共 17 类）；`unlock.json` 新增 `nodePermissions`；权限别名 `while` 折叠为 `loop`；预留权限 `arith_ext`（`implemented:false`）不授予任何节点（`isUnlocked` 恒 false）；真实节点累计数 **11/13/15/15/17**（旧口径 11/14/17/17/19 作废）。
 - [x] **示例数据声明**：数据表当前为**示例数据**（角色/技能/插件/解锁内容待用户手动设计）——已在 `server/data/unlock.json`、`skill-mechanics.json` 等表头与 `server/data/README.md` 标注。
-- [x] **安全与防作弊登记册**：新增 `docs/security-backlog.md`（record-only：SEC-01…SEC-29，含现状证据/风险/处置方向/优先级，**不派发任务、不改门禁**）。
+- [x] **安全与防作弊登记册**：新增 `docs/security-backlog.md`（record-only：**SEC-01…SEC-30 共 30 条**（高 6 / 中 16 / 低 8），含现状证据/风险/处置方向/优先级，**不派发任务、不改门禁**）。
 - [x] **`npm run demo` 补齐**：新增 `scripts/demo.js`（默认 seed 20260912、逐 tick 摘要、`--log-level`/`--quality` 可选；`npm run demo:log` ≡ trace）——修掉安全登记册 SEC-19 记录的"脚本指向不存在文件"。
 - [x] **走查 §3.1 按真实引擎重算**：`docs/battle-walkthrough.md` §3.1 由设计期 17 tick 改为**真实引擎结果 18 tick / p2 胜**（复算脚本 `.audit/walkthrough.js` → `.audit/walkthrough.json`，与 `.audit/golden-battle.json` 逐字段一致）。（**遗留**：`docs/ai-handoff-prompt.md` 第 29 行仍写"17 tick 轨迹 / 已知不一致"，未同步；该文件不在本轮可改范围。）
+- [x] **门禁机器强制 + 文档一致性检查（2026-09-16 落地）**：新增 `.githooks/pre-commit`（代码改动未更新 `tasks.md`/`progress.md` → 拒绝提交；随后强制 `check-docs`）、`.githooks/pre-push`（推送前跑 `scripts/gate.js`）、`scripts/check-docs.js`（D1–D6：npm 脚本双向一致 / 引用文件存在 / 批次计数一致 / 勾选数=批次数 / 审查记录覆盖）、`tests/integration/check-docs.test.js`（纳入 `npm test`）、`.github/workflows/gate.yml`（CI）、`package.json` 的 `check:docs` 与 `hooks:install`。**安装钩子**：`npm run hooks:install`（= `git config core.hooksPath .githooks`）；**本仓库已安装并实测生效**（`git config core.hooksPath` 返回 `.githooks`，本轮两次提交均由 pre-commit 实际执行了 `check-docs`）；新克隆仓库需自行执行一次。
+- [x] **覆盖率回归修复并转绿**：数据驱动改造后 `server/core/skills.js` 分支覆盖率一度 80.17% < 85%（gate 项 7 FAIL，未覆盖的是"注入机制表"才能触发的 4 组防御分支）；修法为导出 `withTables(tables, logger)` 并补 6 个用例（478 → 484 用例），**`npm run gate` 现为 9 PASS / 0 FAIL / 0 PEND**。
 - [x] **文档同步**：`docs/tasks.md`（34 批计数、P0-4 勾选、§5.1 提交前更新任务清单硬性规则、`turn`/枚举/`baseHitMul` 口径）、`docs/interfaces.md`（§1 模块与机制表、§2 端点状态「已实现 / ⏳ 计划」、§4 结构与序列化字段、§6 新增事件）、`docs/systems/07-engine.md`、`docs/systems/09-unlock.md` 已按实现更新。
 
 ---
@@ -128,7 +130,7 @@ docs/progress.md       本文件
 2. **数值必须机器复算**：示例/走查/测试断言里的每个数字都要有独立可复跑的机器计算验证（脚本或测试内的计算），不靠手算；冻结常量注明复算方式。
 3. **机制在代码、数值在表**：所有战斗数值来自 `battle-config.json` 等数据表。
 4. **计算与文档分工**：分支穷举在 `examples/`，端到端串联在 `battle-walkthrough.md`，实现细则在 `systems/`。
-5. **分支现状（2026-09-16 复核）**：`main` 是唯一主线（HEAD `cee2ebf`，合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状**：合流时 gate 为 9 PASS/0 FAIL，但**本轮改动后 gate = 8 PASS / 1 FAIL**（项 7 覆盖率，见 §5.1 L-6）——"门禁全绿"不再是当前事实。
+5. **分支现状（2026-09-16 复核）**：`main` 是唯一主线（合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状（2026-09-16 收尾实测）**：`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（484 用例）；曾出现的项 7 覆盖率 FAIL 已修复（见 §5.1 L-6），阈值未放宽。
 
 ---
 
@@ -138,12 +140,12 @@ docs/progress.md       本文件
 
 | # | 问题 | 证据 | 建议处置 |
 |---|---|---|---|
-| L-1 | **偶发 flake：gate 项 7 有约 1/7 概率 2 个用例失败** | 首跑（B21 时期）`[FAIL] 项7 … 2 个用例失败（总 420）`；随后 6 次（npm test / npm run cov / gate×2 / 独立进程×4）全部 420/0。**未定位到具体用例** | B22 批内加"连续 5 次全量复跑全绿"回归并定位根因（疑：order/时序/端口类用例）。**现状（2026-09-16 实测）：`npm test` = 478 通过 / 0 失败，未复现该 flake；根因仍未定位，仍属观察项。注意：当前 gate 项 7 确有一次稳定 FAIL，但与 flake 无关，见 §5.3 与 L-6** |
+| L-1 | **偶发 flake：gate 项 7 有约 1/7 概率 2 个用例失败** | 首跑（B21 时期）`[FAIL] 项7 … 2 个用例失败（总 420）`；随后 6 次（npm test / npm run cov / gate×2 / 独立进程×4）全部 420/0。**未定位到具体用例** | B22 批内加"连续 5 次全量复跑全绿"回归并定位根因（疑：order/时序/端口类用例）。**现状（2026-09-16 实测）：`npm test` = 484 通过 / 0 失败，未复现该 flake；根因仍未定位，仍属观察项** |
 | L-2 | **走查文档与真实引擎黄金战斗不一致** | `battle-walkthrough.md` §3.1 为设计期轨迹 **17 tick / P1 胜**；`.audit/golden-battle.json`（gate 项 8 在用）为 **18 tick / P2 胜**（seed 20260912） | 按真实引擎输出重生成走查 §3.1 轨迹表（或以 golden-battle.json 为准并标注），消除文档漂移。**现状（2026-09-16 复核）：✅ 已处理**——§3.1 已按真实引擎重算为 **18 tick / p2 胜**（复算 `node .audit/walkthrough.js`，与 `.audit/golden-battle.json` 逐字段一致）；**仍未处理的只剩 `tests/regression/golden-battle.test.js` 未落地**（`tests/regression/` 仅 `.gitkeep`） |
-| L-3 | **临时审查目录被提交**：探针脚本已入库 | 记录时 `git ls-files ".review-*"` = **24**（`.review-b16..b20`）；审查结论另有 `docs/reviews/`。**现状（2026-09-16 复核，实测）：`git ls-files ".review-*"` = 53**（**以 53 为准，24 为旧记录**），分布在 `.review-b16/b17/b18/b19/b20/b22/b23/b24/b25`（覆盖全部后端批次，b21 无独立目录）；`docs/reviews/` = 34 文件 | 移出追踪 + 追加 `.gitignore`；若需保留探针则归入 `tools/scratch/` 并说明。**现状：`.gitignore` 尚无 `.review-*` 条目，53 个文件仍被追踪** |
-| L-4 | **设计期临时校验器残留**：`.audit/verify-rest.js` 等 | 约定"验完即删"；`.audit/golden-battle.js/json` 为 gate 项 8 依赖**必须保留** | 删除已无用的 verify-* 临时脚本；保留 golden-battle.*；`.audit/.v8cov*` 确认是否入库，若是则移出。**现状（2026-09-16 复核）：`.audit/verify-rest.js` 仍被追踪** |
+| L-3 | **临时审查目录被提交**：探针脚本已入库 | 记录时 `git ls-files ".review-*"` = **24**（`.review-b16..b20`）；审查结论另有 `docs/reviews/`。**现状（2026-09-16 复核，实测）：`git ls-files ".review-*"` = 53**（**以 53 为准，24 为旧记录**），分布在 `.review-b16/b17/b18/b19/b20/b22/b23/b24/b25`（覆盖全部后端批次，b21 无独立目录）；`docs/reviews/` = 34 文件 | 移出追踪 + 追加 `.gitignore`；若需保留探针则归入 `tools/scratch/` 并说明。**现状（2026-09-16 已清理）：`.gitignore` 已增 `.review-*/`，`git ls-files ".review-*"` = 0；53 个文件保留在磁盘但不再被追踪；清理提交见 `1b74e3f`** |
+| L-4 | **设计期临时校验器残留**：`.audit/verify-rest.js` 等 | 约定"验完即删"；`.audit/golden-battle.js/json` 为 gate 项 8 依赖**必须保留** | 删除已无用的 verify-* 临时脚本；保留 golden-battle.*；`.audit/.v8cov*` 确认是否入库，若是则移出。**现状（2026-09-16 执行）：`.audit/verify-rest.js` 已删除**（全仓零引用）；`.audit/golden-battle.*`、`.audit/walkthrough.*`、`.audit/fe-samples.*`、`.audit/replay-audit.js` 为 gate/审计/前端字段依据，保留 |
 | L-5 | **`main` 落后 `dev` 32 个提交**，无合流检查清单 | 记录时 `git log --oneline main..dev` = 32 | 制定合 main 检查清单（gate 9/9 + 连续复跑 + 文档同步），B24/B25 后合一次 |
-| **L-6（新，2026-09-16 实测）** | **`npm run gate` 项 7 FAIL：`server/core/skills.js` 分支覆盖率 80.17% < 85%** | gate 输出 `[FAIL] 项7 … 覆盖率低于阈值（行90/分支85/函数90）：server/core/skills.js 行96.875%/分支80.17241379310344%/函数100%`；`npm run cov` 因按**全局**阈值判定仍 exit 0（全表分支 85.30%），gate 项 7 按**文件**判定故 FAIL。未覆盖行：`skills.js` 40、115-116、142-144、223-225（`fieldValue` 非 Px 分支、未知算子 warn、未登记词条 warn、未知发射模式 warn） | 这些防御分支只能通过**注入机制表**触发，而 `makeSkills(logger, tables)` 未对外导出（只导出 `withLogger`）→ 单测无法覆盖。修法二选一：① 导出可注入表的工厂/测试钩子并补 4 组用例；② 补一条直接调用内部路径的用例。**禁止放宽阈值**（`tasks.md` §5.1 第 4 条 / §10）。当前 gate 实测 = **8 PASS / 1 FAIL / 0 PEND** |
+| ~~L-6~~ **（已于 2026-09-16 当轮修复并转绿）** | `npm run gate` 项 7 曾 FAIL：`server/core/skills.js` 分支覆盖率 80.17% < 85% | gate 曾输出 `[FAIL] 项7 … server/core/skills.js 行96.875%/分支80.17241379310344%/函数100%`；`npm run cov` 按**全局**阈值判定仍 exit 0（全表分支 85.30%），gate 项 7 按**文件**判定故 FAIL。未覆盖行：`skills.js` 40、115-116、142-144、223-225（`fieldValue` 非 Px 分支、未知算子 warn、未登记词条 warn、未知发射模式 warn）——这些防御分支只能通过**注入机制表**触发，而当时 `makeSkills(logger, tables)` 未对外导出 | **已修**：`server/core/skills.js` 导出 `withTables(tables, logger)` 并补 6 个用例（478 → 484 用例）→ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**。阈值未放宽（`tasks.md` §5.1 第 4 条 / §10）。 |
 
 
 > **L-5 现状（2026-09-16 复核）**：**已失效**——`dev` 分支不存在（`git branch` = `main` / `deepseek-v4.1f` / `glm-5.3f`），`main` 合流已完成（HEAD `cee2ebf`）；两个前端分支未合并。合流清单见 `docs/acceptance.md` §7（已标记为"已完成"）。

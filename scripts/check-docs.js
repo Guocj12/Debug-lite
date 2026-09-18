@@ -70,7 +70,7 @@ function checkDocs() {
     if (!exists(ref)) {
       const anywhere = Object.entries(texts).find(([, t]) => t.includes(`\`${ref}\``));
       const line = anywhere ? anywhere[1].split('\n').find((l) => l.includes(`\`${ref}\``)) || '' : '';
-      if (/计划|未实现|不存在|待实现|⏳/.test(line) || PLANNED_ROW.test(line)) continue;
+      if (/计划|未实现|不存在|待实现|⏳|已删除|删除|已移除|移除|废弃/.test(line) || PLANNED_ROW.test(line)) continue;
       problems.push(`D2/D3 文档引用了不存在的文件: ${ref}`);
     }
   }
