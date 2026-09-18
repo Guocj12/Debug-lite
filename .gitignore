@@ -3,3 +3,6 @@ node_modules/
 coverage/
 .DS_Store
 *.tgz
+runtime/
+# 审查/探针临时目录（docs/reviews 才是正式审查记录；这些是过程产物，2026-09-16 移出追踪）
+.review-*/

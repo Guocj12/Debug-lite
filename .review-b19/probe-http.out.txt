@@ -1,9 +1,0 @@
-﻿[1] GET /loadout → 200 skeleton={"role":null,"skills":[null,null,null],"ai":null}
-[2] POST /loadout skills='zzz'+warehouse → 500 code=internal_error（P1 候选：应 409 loadout_invalid）
-[3] POST /panel 无 skills + warehouse → 500 code=internal_error
-[4] POST /loadout 双引用同插件 → 200（T-PB-8 候选：应 409）
-[5] POST /panel 双引用 → 200 atk=24（正确应 22，双计得 24）
-[6] POST /panel 无 warehouse → 200 atk=20（应 22；现 20 = 非最终值）
-[7] POST /loadout tier='diamond' → 409 details=[{"where":"role","code":"loadout_invalid","message":"物品 role_bal 需 common 段位"},{"where":"skills","code":"loadout_invalid","message":"物品 skill_straight_precise 需 common 段位"},{"where":"skills","code":"loadout_invalid","message":"物品 skill_melee_whirl 需 common 段位"},{"where":"skills","code":"loadout_invalid","message":"物品 skill_dash_bash 需 mythic 段位"},{"where":"ai:body","code":"loadout_invalid","message":"node_locked: 节点 seq 需 common 段位"},{"where":"ai:body.s[0]","code":"loadout_invalid","message":"node_locked: 节点 var 需 common 段位"},{"where":"ai:body.s[0].expr","code":"loadout_invalid","message":"node_locked: 节点 literal 需 common 段位"},{"where":"ai:body.s[1]","code":"loadout_invalid","message":"node_locked: 节点 if 需 common 段位"},{"where":"ai:body.s[1].then","code":"loadout_invalid","message":"node_locked: 节点 seq 需 common 段位"}]
-[8] POST /loadout 合法 → 200 回带深度相等=true
-[9] 400 边界：{}→400/bad_request；loadout:42→400/bad_request；坏 JSON→400/bad_json
