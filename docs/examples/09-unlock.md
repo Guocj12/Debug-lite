@@ -7,15 +7,19 @@
 
 ## 1. 各段位解锁表（`unlock.json` 驱动）
 
-| 段位 | 新解锁 | 累计可用节点数（示例表） |
-|---|---|---|
-| **绿 common** | `if/else`（条件分支）、均衡模板、基础技能 | **11** |
-| **蓝 rare** | `loop / while / break`（循环）、特化模板、进阶技能 | **14** |
-| **紫 epic** | `random`（概率随机）、`logic` 与扩展运算符、进阶技能（**D-120 已确认**） | **17** |
-| **橙 legendary** | 专家模板、高阶技能（**不新增语法节点**） | **17** |
-| **青 mythic** | `function / call`（函数）、顶级技能 | **19** |
+> **节点计数口径（已修正）**：`availableNodes(tier)` **只返回真实节点类型**——单一数据源是 `server/data/ai-nodes.json`（`base` 10 个 + `nodes` 17 类白名单）。`unlock.json` 的 `aiNodes[]` 里写的是**权限名**，其中 `while` 是别名（折叠为真实节点 `loop`，不额外授予节点）、`arith_ext` 是**未实现的预留权限**（`implemented:false` → 不授予任何节点，故 `isUnlocked(tier,'arith_ext') === false`）。因此下表按**真实节点类型**计数。
 
-> 节点数只统计语法节点；`legendary` 不新增语法（所以与 epic 同为 17），其解锁体现在**模板/技能池**。
+| 段位 | 新解锁（权限名） | 其中授予的真实节点 | 累计可用节点数（**真实节点类型**） |
+|---|---|---|---|
+| **绿 common** | `if` | `if` | **11**（10 基础 + `if`） |
+| **蓝 rare** | `loop`、`while`、`break` | `loop`、`break`（`while` 折叠为 `loop`，不新增） | **13** |
+| **紫 epic** | `random`、`logic`、`arith_ext` | `random`、`logic`（`arith_ext` 未实现 → 不授予） | **15** |
+| **橙 legendary** | —（不新增语法节点） | — | **15**（与 epic 相同） |
+| **青 mythic** | `function`、`call` | `function`、`call` | **17** |
+
+> `legendary` 不新增语法（所以与 epic 同为 15），其解锁体现在**模板/技能池**。
+> **与旧口径对照**：若不展开 `nodePermissions` 而直接累计 `unlock.json` 的权限名，会得到 11/14/17/17/19——那是**权限名个数**，不是节点类型个数；`while`（1 个）与 `arith_ext`（1 个）都不是节点，故逐段差 1~2。
+> `unlock.json` / `ai-nodes.json` 是**机制层**表；`aiNodes` 里的模板/技能清单属**内容层**（当前为示例数据，待用户设计）。
 
 ### U-1 累计与继承
 
@@ -23,8 +27,10 @@
 |---|---|---|
 | U-1a | `availableNodes('rare')` 是否含 `if` | ✅ **含**（继承低段位） |
 | U-1b | `availableNodes('common')` 是否含 `random` | ❌ 不含 |
-| U-1c | `availableNodes('mythic')` 是否含全部 | ✅ 19 个 |
+| U-1c | `availableNodes('mythic')` 是否含全部 | ✅ **17 个真实节点类型**（= `ai-nodes.json` 的 10 基础 + 7 增量） |
 | U-1d | 低段位解锁的内容在高段位 | **自动可用**（单调递增，`T-UL-2`） |
+| U-1e | `availableNodes('rare')` 是否含权限别名 `while` | ❌ **不含**（别名只作权限门，折叠为 `loop`；`isUnlocked('rare','while') === true`） |
+| U-1f | `availableNodes('epic')` 是否含 `arith_ext` | ❌ **不含**（未实现，不授予任何节点；`isUnlocked('epic','arith_ext') === false`） |
 
 ## 2. 查询 `isUnlocked(tier, key)`
 
@@ -37,6 +43,9 @@
 | U-2e | `isUnlocked('nope', 'if')` | **false** | 未知 tier → 保守拒绝 |
 | U-2f | `isUnlocked('mythic', 'no_such_node')` | **false** | 未知 key → 保守拒绝 |
 | U-2g | 物品未定义 `unlockTier` | **视为已解锁** | `09-unlock` §5 |
+| U-2h | `isUnlocked('rare', 'while')` | **true** | 权限别名：`while` 是 `loop` 的 `kind` 取值，`nodePermissions.while.grants=[loop]`，故该权限名"可用"，但**不新增节点** |
+| U-2i | `isUnlocked('epic', 'arith_ext')` | **false** | 预留权限 `implemented:false` → `grants:[]`；权限命中但未展开出任何节点 → 判 false（宁缺勿错，避免编辑器插入不可用积木） |
+| U-2j | `isUnlocked('common', 'seq')` | **true** | 基础节点恒可用（10 个） |
 
 ## 3. 过滤 `filterByTier(list, tier)`
 
@@ -75,12 +84,18 @@
 
 ## 6. 编辑器工具箱 `availableNodes(tier)`
 
+> **返回值口径**：**只含真实节点类型**（§1 说明的别名/预留权限已被 `nodePermissions` 展开剔除），可直接作为"可添加积木"清单使用，**调用方不需要再过滤**。
+
 | # | 行为 | 期望 |
 |---|---|---|
-| U-6a | 工具箱渲染 | 只列出 `availableNodes(tier)` 的积木 |
+| U-6a | 工具箱渲染 | 只列出 `availableNodes(tier)` 的真实节点类型 |
 | U-6b | 未解锁积木 | **隐藏或置灰**（P6 前端决定表现，服务端只给集合） |
 | U-6c | 实时合法性提示 | 编辑器本地调用同一套 `checkLegality`（含**分支 action** 规则），给出 `path` |
 | U-6d | 客户端与服务端一致 | 服务端**重新校验**，不信任客户端结果（`T-AP-4`） |
+| U-6e | `while` 的呈现方式 | 不作为独立节点列出——`while` 是 `loop` 节点的 `kind` 取值（`loop.kind='while'`），编辑器在 `loop` 内选项里体现 |
+| U-6f | 越界/未知段位 | `availableNodes('nope')` → 空数组（`tierIndex` 为 null，保守） |
+
+> ⏳ **计划（未实现）**：P6 编辑器尚未落地；现行前端设计为**纯 DOM 表单式 AST 编辑器**（`docs/frontend-spec.md` v3 §12），非 Blockly 工具盒。
 
 ## 7. 测试要点映射
 

@@ -7,6 +7,15 @@
 | `gate.js` | 9 项门禁（`tasks.md` §3.4），任一失败即非零退出 | P0-5 |
 | `check-arch.js` | 架构依赖方向检查（反向/循环/core 越界） | P0-5 |
 | `demo.js` | 跑一场战斗打印逐 tick 摘要；支持 `--log-level trace` | B11 |
+| `fe-spec-check.js` | 前端文档自检（`docs/frontend-spec.md` §14 的 C1–C9）：按钮↔动作表闭合、文档字段↔真实响应样本、取值↔后端实现、清单/通道规范 | P6 前端重设计 |
+
+## `fe-spec-check.js` 契约（P6 前端，独立脚本）
+
+- **定位**：让前端文档**无法写完即过期**。前两轮前端失败的根因是文档与实现/真实响应脱节（字段名不存在、按钮无动作、动作无实现），本脚本把这三类变成机器可判定的 FAIL。
+- **数据源**：`docs/frontend-spec.md` 的 ` ```json fe-spec-registry ` 注册表（唯一真相）+ `.audit/fe-samples.json`（活体响应样本，由 `node .audit/fe-samples.js` 生成）+ 后端源码（`core/unlock.js`、`ai/ast.js`、`core/engine.js`、`runner.js`、`box.js`、`shared/log.js`、数据表）。
+- **C1–C9**：注册表可解析 / 按钮动作命中动作表 / 无僵尸动作 / 七屏 goto 可达 / 文档字段命中真实样本 / 取值与后端一致 / 文件清单一致 / 日志事件与通道规范 / 实现侧 data-action·data-id 命中注册表（`public/js` 落地后自动生效）。
+- **与 gate 的关系**：**不进** `gate.js` 九项（gate 项 7 覆盖率目录为 `server/core|server/ai|shared|cli`，不含 `public/`）；由 `tests/frontend/fe-spec.test.js` 在 `npm test` 内断言（含 5 个投毒用例，防止检查空转）。
+- **维护**：改前端文档/改后端取值 → 跑 `node scripts/fe-spec-check.js`；样本过期 → 重跑 `.audit/fe-samples.js`。
 
 ---
 

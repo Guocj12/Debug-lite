@@ -1,0 +1,16 @@
+{
+  "_comment": "AI 语言节点清单（单一数据源）：base = 恒可用节点；nodes = 全部真实节点类型（与 server/ai/ast.js 白名单、runtime.js 实现一致）。段位权限名→节点类型的映射见 unlock.json 的 nodePermissions。",
+  "_contract": "docs/systems/08-ai.md §3；docs/interfaces.md §1 server/ai/ast.js",
+  "version": 1,
+  "base": ["seq", "literal", "get", "bullets", "var", "set", "getVar", "arith", "cmp", "action"],
+  "nodes": [
+    "seq", "literal", "get", "bullets", "var", "set", "getVar", "arith", "cmp", "action",
+    "if", "loop", "break", "random", "logic", "function", "call"
+  ],
+
+  "_actions": "动作名白名单（ast.js 校验期拒绝表外取值；引擎 normalizeAction 仍做运行期兜底归一化 → wait）。fixed = 固定动作名；parametric = 前缀式动作（skill:<sid>）。",
+  "actions": {
+    "fixed": ["move_left", "move_right", "dodge_left", "dodge_right", "wait", "defend", "turn"],
+    "parametric": ["skill:"]
+  }
+}

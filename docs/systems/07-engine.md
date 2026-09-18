@@ -18,7 +18,7 @@
 ## 3. 数据结构
 
 - 战场状态：`tick` / `seed` / `players{p1,p2}` / `bases` / `events[]` / `rngStreams`。
-- 玩家运行时：`x`（px）/ `facing` / `hp,mp,sp` / `maxHp,maxMp,maxSp` / `atk,def` / `regen{mp,sp}` / `special` / `cooldowns{}` / `effects[]` / `aiContext` / `defending`（本 tick 防御标记）。
+- 玩家运行时：`x`（px）/ `facing` / `hp,mp,sp` / `maxHp,maxMp,maxSp` / `atk,def` / `regen{hp,mp,sp}`（模板 `regen` + 角色插件 `hp_regen/sp_regen/mp_regen` 词条叠加；面板投影见 `server/loadout.js` 的 `buildPanel`）/ `special` / `cooldowns{}` / `effects[]` / `skills{}` / `aiContext` / **每 tick 瞬时标记** `defending`（本 tick 防御）、`dodging`（本 tick 用过 dodge）、`fullDodgeDuring`（本 tick 位移全程免疫，步骤 6 置位、步骤 1 复位）。
 
 ## 4. 核心流程（代码逻辑）
 
@@ -33,22 +33,23 @@
 
 | # | 步骤 | 内容 |
 |---|---|---|
-| 1 | `tick.begin` | `tick += 1`；派生本 tick 各用途随机流；**引擎冷却递减** `max(0, cd−1)`（D-82）；重置 `defending` 等临时标记 |
+| 1 | `tick.begin` | `tick += 1`；派生本 tick 各用途随机流；**引擎冷却递减** `max(0, cd−1)`（D-82）；重置 `defending`/`dodging`/`fullDodgeDuring` 等**每 tick 瞬时**标记（`fullDodgeDuring` 由步骤 6 置位、本步骤复位，D-72） |
 | 2 | 持续效果 | `stat += delta`；clamp；`remaining -= 1` 归零移除 |
 | 3 | AI 续执行 | 按 **p1 → p2** 各调用一次 `resume`，产出 action + trace |
-| 4 | 行动归一化 | 白名单校验；非法 → `wait`（D-80） |
+| 4 | 行动归一化 | 白名单校验；非法 → `wait`（D-80）。行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`（+ `skill:<sid>`） |
 | 5 | 控制效果 | 复写行动（眩晕 > 位移；位移取首个）；控制位移**不可穿敌**（D-71） |
-| 6 | 意图提交 | 只算意图、**不写回位置**：转向标记 / `defending` 标记（本 tick `def×1.6`，D-43）/ 移动或位移目标位置 / 技能 `canCast`→扣资源+写 CD+**生成弹幕（记录生成序号）** |
-| 7 | 角色落位与碰撞 | 统一落位 → 穿敌判定 → **角色碰撞解算与碰撞伤害**（D-10）→ `clampX` |
+| 6 | 意图提交 | 只算意图、**不写回位置**：`turn` 意图登记 / `defending` 标记（本 tick `def×1.6`，D-43）/ 移动或位移目标位置 / 位移技 `fullDodgeDuring` 置位（D-72）/ 技能 `canCast`→扣资源+写 CD+**生成弹幕（记录生成序号）**+释放类词条 `castEffects` 入效果队列（下一 tick 起效，D-70） |
+| 7 | 转向写回与落位 | **先做转向写回**（`turn` → `facing × −1`；`move`/`dodge`/位移**不改变朝向**）→ 统一落位 → 穿敌判定 → **角色碰撞解算与碰撞伤害**（D-10）→ `clampX` |
 | 8 | 弹幕解算 | 按生成顺序遍历；每枚**当 tick 飞完全射程**；与角色轨迹解方程判命中；与敌方弹幕解方程判碰撞并**递归**处理（见 `04-bullets`） |
 | 9 | 伤害结算 | 命中与碰撞伤害按 §4.3 的链路结算 |
-| 10 | 资源恢复 | `mp += regen.mp`、`sp += regen.sp`（模板 regen，D-110），上限封顶 |
+| 10 | 资源恢复 | `hp += regen.hp`（角色插件 `hp_regen` 词条；**`hp ≤ 0` 时不回复**，死亡统一在步骤 12 判定）、`mp += regen.mp`、`sp += regen.sp`（模板 regen + 词条叠加，D-110），上限封顶 |
 | 11 | 超时扣血 | `tick ≥ 48` → 双方基地与角色**同时**扣 `ceil(maxHp × 0.0625)` |
 | 12 | 结束判定 `judge` | 基地 ≤ 0 → 角色 ≤ 0；优先级基地 > 角色；同级同时 → 平局 |
 | 13 | 帧输出 | 产出 `diff`（玩家位移起止 px、朝向、资源、buff、弹幕飞行/命中/碰撞位置、基地、事件、AI 轨迹） |
 | 14 | 进入下一 tick | — |
 
 - **同时行动**：步骤 6 只算意图、步骤 7 统一落位；禁止"先移动再判定"。
+- **朝向只能通过 `turn` 改变**（用户决定 2026-09-16）：`turn` 翻转朝向（`facing × −1`），**不移动、不消耗**；引擎全程只在**开战初始化**与**步骤 7 的 turn 写回**时写 `facing`；`move_*`/`dodge_*`/位移技能**都不改变朝向**。
 - **死亡时序**：统一在步骤 12；步骤 2 被扣到 `hp ≤ 0` 的角色本 tick 仍会行动（`T-BT-*` 锁定该行为）。
 - **弹幕不跨 tick**：步骤 8 结束时存活弹幕数必须为 0。
 
@@ -65,33 +66,40 @@
 
 - **可穿过来源**：`passThroughEnemy=true` 的位移技能、`dodge`（2 格、可穿）；**普通 `move` 不可穿**；**控制类位移不可穿**。
 - **碰撞位置**：以双方本 tick 速度解连续方程（`x₁ + v₁t = x₂ + v₂t`）求得，1px 精度输出给前端。判定条件为**意图落位后的中心距 < 64px**（恰好停在 64px 视为"移动到相邻"，不算碰撞）。
-- **碰撞伤害**：双方**各受一次对方 `atk × 0.8`**，走标准减伤，**允许全部机制**（闪避/暴击/背击/吸血）。
+- **碰撞伤害**：双方**各受一次对方 `atk × collisionDmgMul`**（`collisionDmgMul = 0.8`，`battle-config.json`），走标准减伤，**允许全部机制**（闪避/暴击/背击/吸血）。
 - **位移技能的伤害（D-18 统一版）**：`dealDamage=true` 时，沿**声明的移动路径**每格放一枚 0 速弹幕（等级取模板 `bulletLevel`，D-118）——与 AOE 同构、**无特判**；**弹幕伤害与碰撞伤害分别结算，同一 tick 可能受两次**（技能伤害 + 碰撞伤害）。路径与"是否被碰撞截停"无关。
-- **闪避状态不参与判定（D-72）**：本 tick 处于 `fullDodgeDuring` 的角色在步骤 8 的命中与抵消判定中**被完全忽略**（弹幕径直穿过，不命中也不被消耗），且**免疫控制**。
+- **闪避状态不参与判定（D-72）**：本 tick 处于 `fullDodgeDuring` 的角色在步骤 8 的命中与抵消判定中**被完全忽略**（弹幕径直穿过，不命中也不被消耗）、**免疫所有伤害**（含附加真实伤害直扣）、且**免疫控制**（stun/knockback/pull/dot 均不入效果队列）——即"伤害 / 控制 / 弹幕判定"三态；该标志为**每 tick 瞬时**（步骤 6 置位、步骤 1 复位）。
 - **控制复写不扣资源（D-84）**：被步骤 5 复写掉行动的角色，其原本的技能**从未进入步骤 6**，故**不扣资源、不写冷却**；AI 的 trace 仍保留原行动以便排查。
-- **撞基地**：见 `06-field` §4.3——停在原地 + `atk × 0.8` 走基地 `def = 64` 减伤；**弹幕对基地无效**。
+- **撞基地**：见 `06-field` §4.3——停在原地 + `atk × baseHitMul`（`baseHitMul = 0.8`，`battle-config.json`；**撞基地倍率与碰撞倍率是两个独立字段**，真值当前均为 0.8，此前实现误用 `collisionDmgMul`，2026-09-16 已改为 `baseHitMul`）走基地 `def = 64` 减伤；**弹幕对基地无效**。
 
 ### 4.4 伤害链路 `dealDamage(attacker, defender, params)`
 
 ```
-1 闪避判定：defender.dodgeChance（本 tick 若用 dodge 行动则叠加 dodgeChanceBonus）
+0 位移全程免疫（D-72①）：defender.fullDodgeDuring → 直接返回 0 伤害
+     （不参与命中判定、免疫控制与附加真实伤害；标志由步骤 6 置位、步骤 1 复位）
+1 闪避判定：defender.dodgeChance（本 tick 若用 dodge 行动则叠加 dodgeChanceBonus；封顶 1）
 2 取本 tick 的攻方 atk 与受方 def
     受方本 tick defending → def × 1.6（D-43，等效临时 +60% 防御插件）
 3 基础伤害：普通 max(1, floor(atk × 倍率 × (1 − def/(def+`defK`))))（`defK=40` 自 `battle-config.json`，B21/D-128 入表）
             真实 max(1, floor(atk × 倍率))
 4 背击 ×1.5（§4.5）
-5 暴击 ×1.5（critChance，命中时消耗 crit 流）
+5 暴击 ×1.5（critChance = 面板 special.critChance + 技能插件词条 skill.specials.critChance，
+    两者累加后按 1 封顶；命中时消耗 crit 流）
 6 全部倍率相乘后**只取整一次**得 D（D-41），下限 1
-7 吸血：attacker.hp += floor(D × lifesteal)，maxHp 封顶（**不作用于基地**）
+7 吸血：attacker.hp += floor(D × lifesteal)；lifesteal = 面板 special.lifesteal +
+    技能插件词条 skill.specials.lifesteal（累加封顶 1），maxHp 封顶（**不作用于基地**）
 8 应用 D 到 defender，clamp，产出命中事件 + damage.calc（记录每步中间值）
-9 附加效果：眩晕/击退/拉近/持续伤害（伤害生效后添加）
+9 附加效果：按 `affix-registry.json` 的 hitEffect 结算命中类词条（伤害生效后添加）
 ```
 - **吸血的 base 是角色伤害**；**基地伤害不吸血**。
 - 死亡的 `hp ≤ 0` **不在链路内判定**（统一步骤 12）。
+- **命中类词条由注册表解释**：`stun`（control，位移 0，`remaining=1`）/`knockback`（control，沿来源方向 `+v` 格）/`pull`（control，沿来源方向 `−v` 格）/`dot`（continuous，`hp` 每 tick `−v`，`remaining=3`）/`true_dmg`（flatTrueDamage，直扣 `v`）均由引擎按 `hitEffect` 结算，**不按词条 id 写分支**；未登记的 `kind` 记 `damage.affix.unknown`(warn)。
+- **释放类词条**（`cast_buff`）不在本链路：由步骤 6 入效果队列（`castEffect`，`duration` 缺省取注册表 `fallbackDuration = 2`），**下一 tick 起效**（D-70）。
+- **技能插件概率类词条**（`crit_chance`/`lifesteal`）随弹幕 payload 的 `specials` 参与命中结算，叠加在面板值之上并封顶 1（D-46）。
 
 ### 4.5 背击判定（D-50/D-51）
 
-⚠️ 用**本 tick 位移后**的位置与朝向：
+⚠️ 用**本 tick 写回后**的位置与朝向（步骤 7；**只有 `turn` 会改变朝向**，`move`/`dodge`/位移技能都不改，步骤 1 也不重置朝向）：
 
 | 攻击类型 | 判定 |
 |---|---|
@@ -115,7 +123,7 @@
 
 ### 4.8 帧差异输出（供前端绘制）
 
-1. 每 tick 生成 `diff`：玩家位移起止（px）、朝向变化、资源增减、buff 增删、**弹幕飞行轨迹与命中/碰撞位置（1px）**、基地扣血、有序事件、AI 轨迹。
+1. 每 tick 生成 `diff`：`players`（**对象 `{p1,p2}`，不是数组**；各自 `fromX/toX/facing/hp/mp/sp`）、`bullets`、`bases`、`events`、`aiTrace`，另含 `collision`（碰撞位置）、`bulletHits`（命中 uid/目标/1px 命中位置）、`verdict`；位置、碰撞位置、命中位置均为 **1px** 精度。
 2. 事件带 `cid`（`t{tick}:{owner}:{seq}`），可串联 `skill.cast → bullet.spawn → bullet.collide → bullet.hit → damage.calc → effect.add → tick.end`。
 3. 前端只按 `diff` 插值绘制，不自行重模拟。
 
@@ -131,4 +139,4 @@
 
 ## 7. 测试要点（对应 `docs/tasks.md` §3.2）
 
-`T-EN-1..10`、`T-BT-1..19`（帧可重建状态、数值边界、顺序无关、64 tick 上界、同 seed 一致、背击×暴击=2.25、防御单调、弹幕上界、事件顺序、命中幂等、超时精确、位移不越界、黄金复现、走查可复算、碰撞伤害、基地规则、碰撞精度、AOE 用位移后位置、弹幕不跨 tick）。
+`T-EN-1..10`、`T-BT-1..29`（帧可重建状态、数值边界、顺序无关、64 tick 上界、同 seed 一致、背击×暴击=2.25、防御单调、弹幕上界、事件顺序、命中幂等、超时精确、位移不越界、黄金复现、走查可复算、碰撞伤害、基地规则、碰撞精度、AOE 用位移后位置、弹幕不跨 tick；含 D-72 位移三态免疫、`turn` 朝向、`cast_buff` 下一 tick 起效、`hp_regen` 逐 tick 回复）。

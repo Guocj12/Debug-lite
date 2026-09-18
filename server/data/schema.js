@@ -347,6 +347,67 @@ function validateStructure(dataDir, assetsDir) {
     }
   }
 
+  // ---------- 机制表完整性（2026-09-16 新增） ----------
+  // 目的：内容层（role/skill/plugins/qualities/items-config/unlock）引用的每个词条 id、技能类型、
+  //   节点权限都必须在机制层登记，否则运行期会"静默失效"（词条被跳过 / 类型抛错 / 编辑器插入不可用节点）。
+  //   机制层 = affix-registry.json / skill-mechanics.json / ai-nodes.json；其词汇表自描述（_opVocabulary 等）。
+  const EMIT_PATTERNS = ['cellsFromRange', 'repeatCount', 'impactCells', 'pathCells']; // 镜像 server/core/skills.js 的 EMITTERS 键
+  const PARAM_MODES = ['pair', 'intMin', 'copy'];
+  try {
+    const reg = loadJSON(dataDir, 'affix-registry.json').data;
+    const mech = loadJSON(dataDir, 'skill-mechanics.json').data;
+    const aiNodes = loadJSON(dataDir, 'ai-nodes.json').data;
+    const affixes = reg.affixes || {};
+    const OPS = reg._opVocabulary || [];
+    const HIT_KINDS = reg._hitKindVocabulary || [];
+    const CAST_KINDS = reg._castKindVocabulary || [];
+    // ① 内容表引用的词条必须登记
+    for (const p of tables.plugins || []) {
+      for (const a of p.affixes || []) {
+        if (!affixes[a.id]) problems.push(`plugins.${p.id}: 词条 ${a.id} 未登记（affix-registry.json）`);
+      }
+    }
+    // ② 注册表自身自洽
+    for (const [id, def] of Object.entries(affixes)) {
+      const destinations = ['agg', 'special', 'regen', 'skillOp', 'hitEffect', 'castEffect'].filter((k) => def[k] !== undefined);
+      if (destinations.length === 0) problems.push(`affix-registry.${id}: 未声明去向（agg/special/regen/skillOp/hitEffect/castEffect 至少一个）`);
+      if (def.roll !== undefined && !['int', 'stat'].includes(def.roll)) problems.push(`affix-registry.${id}: roll 非法 ${def.roll}`);
+      if (def.agg && !['pct', 'flat'].includes(def.agg.mode)) problems.push(`affix-registry.${id}: agg.mode 非法 ${def.agg.mode}`);
+      if (def.skillOp && !OPS.includes(def.skillOp.op)) problems.push(`affix-registry.${id}: skillOp.op ${def.skillOp.op} 未登记（_opVocabulary）`);
+      if (def.hitEffect && !HIT_KINDS.includes(def.hitEffect.kind)) problems.push(`affix-registry.${id}: hitEffect.kind ${def.hitEffect.kind} 未登记`);
+      if (def.castEffect && !CAST_KINDS.includes(def.castEffect.kind)) problems.push(`affix-registry.${id}: castEffect.kind ${def.castEffect.kind} 未登记`);
+    }
+    // ③ 技能模板类型必须在类型机制表登记；机制表自洽
+    for (const s of tables.skills || []) {
+      if (!mech.types || !mech.types[s.type]) problems.push(`skill-templates.${s.id}: 类型 ${s.type} 未登记（skill-mechanics.json）`);
+    }
+    for (const [type, def] of Object.entries(mech.types || {})) {
+      for (const [field, mode] of Object.entries(def.params || {})) {
+        if (!PARAM_MODES.includes(mode)) problems.push(`skill-mechanics.types.${type}.params.${field}: 滚动模式非法 ${mode}`);
+      }
+      if (def.emit && !EMIT_PATTERNS.includes(def.emit.pattern)) problems.push(`skill-mechanics.types.${type}.emit.pattern ${def.emit.pattern} 未登记（EMITTERS）`);
+      for (const [slot, target] of Object.entries(def.slots || {})) {
+        if (typeof target !== 'string') problems.push(`skill-mechanics.types.${type}.slots.${slot}: 必须映射到字段名字符串`);
+      }
+    }
+    // ④ AI 节点与段位权限
+    const nodeSet = new Set(aiNodes.nodes || []);
+    for (const b of aiNodes.base || []) if (!nodeSet.has(b)) problems.push(`ai-nodes.base.${b} 不在 nodes 清单中`);
+    if (!Array.isArray(aiNodes.actions && aiNodes.actions.fixed) || aiNodes.actions.fixed.length === 0) problems.push('ai-nodes.actions.fixed 缺失或为空（引擎动作词汇表）');
+    const perms = (tables.unlock && tables.unlock.nodePermissions) || {};
+    for (const u of (tables.unlock && tables.unlock.unlocks) || []) {
+      for (const perm of u.aiNodes || []) {
+        if (!nodeSet.has(perm) && !perms[perm]) problems.push(`unlock.${u.tier}: 权限/节点 ${perm} 既不是真实节点也未在 nodePermissions 登记`);
+      }
+    }
+    for (const [perm, decl] of Object.entries(perms)) {
+      for (const g of decl.grants || []) if (!nodeSet.has(g)) problems.push(`unlock.nodePermissions.${perm}: 授予了不存在的节点 ${g}`);
+      if (decl.implemented === false && Array.isArray(decl.grants) && decl.grants.length > 0) problems.push(`unlock.nodePermissions.${perm}: implemented=false 不得授予节点`);
+    }
+  } catch (e) {
+    problems.push(`机制表（affix-registry/skill-mechanics/ai-nodes）加载失败: ${e.message}`);
+  }
+
   return problemsOf(problems);
 }
 
@@ -358,13 +419,24 @@ function validateConsistency(dataDir) {
   let skills;
   let qualities;
   let plugins;
+  let sampleMode = false;
   try {
-    roles = loadJSON(dataDir, 'role-templates.json').data.roleTemplates;
-    skills = loadJSON(dataDir, 'skill-templates.json').data.skillTemplates;
-    qualities = loadJSON(dataDir, 'qualities.json').data.qualities;
-    plugins = loadJSON(dataDir, 'plugins.json').data.plugins;
+    const rawRoles = loadJSON(dataDir, 'role-templates.json').data;
+    const rawSkills = loadJSON(dataDir, 'skill-templates.json').data;
+    const rawQualities = loadJSON(dataDir, 'qualities.json').data;
+    const rawPlugins = loadJSON(dataDir, 'plugins.json').data;
+    roles = rawRoles.roleTemplates;
+    skills = rawSkills.skillTemplates;
+    qualities = rawQualities.qualities;
+    plugins = rawPlugins.plugins;
+    // 示例内容标记（2026-09-16）：内容层表标 `_sample: true` 时按"示例期望表"逐值比对；
+    //   用户正式设计内容后去掉标记（或改标记），则只做结构 + 机制完整性校验，不阻塞正式内容。
+    sampleMode = [rawRoles, rawSkills, rawQualities, rawPlugins].some((t) => t && t._sample === true);
   } catch (e) {
     return { ok: false, detail: `T-DC-2 表读取失败: ${e.message}` };
+  }
+  if (!sampleMode) {
+    return { ok: true, detail: '非示例内容（未标 _sample）：跳过示例期望表逐值比对（结构与机制完整性仍由 T-DC-1 校验）' };
   }
 
   const byId = (list) => Object.fromEntries(list.map((x) => [x.id, x]));

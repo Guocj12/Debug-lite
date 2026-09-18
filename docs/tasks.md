@@ -1,6 +1,6 @@
 # Debug-Lite v3 开发计划与任务清单
 
-> 版本：v3-plan-6　更新：2026-09-11
+> 版本：v3-plan-6　更新：2026-09-16
 > 定位：**本文件是唯一的开发计划来源**（阶段 / 批次 / 门禁 / 验收）。
 > 依据：`docs/decisions.md`（**最高权威**）、`docs/v3-design.md`、`docs/items-data.md`、`docs/systems/01~10`。
 > 状态图例：`[ ]` 未开始　`[~]` 进行中　`[x]` 已完成　`[!]` 阻塞
@@ -53,7 +53,7 @@
 
 ```bash
 npm start / npm test / npm run cov / npm run gate
-npm run demo        # 跑一场并打印逐 tick 摘要
+npm run demo        # 跑一场并打印逐 tick 摘要（`scripts/demo.js` 已落地；默认 seed 20260912，与 gate 项 8 黄金战斗同源）
 npm run demo:log    # trace 级
 npm run cli -- ...  # 后端接口客户端（唯一"操作台"）
 ```
@@ -90,12 +90,13 @@ L7  public/**（P6）
 | `core/items.js`（数值） | `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf` / `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox` / `applyAffixes` / `validateUnlock` |
 | `core/items.js`（仓库） | `createWarehouse` / `addItem` / `assemble` / `disassemble` / `buildLoadout` / 序列化往返 |
 | `core/roles.js` | `instantiateRole` / `applyTypeModifier` / `equipPlugins` / `getFinalStats` |
-| `core/skills.js` | `instantiateSkill` / `applySkillPlugins` / `canCast` / `buildSkillAction` / `coveredCellRanges` |
+| `core/skills.js` | `instantiateSkill` / `applySkillPlugins`（词条 `skillOp` 解释器 → `cost/参数/specials/castEffects/affixes`）/ `canCast` / `buildSkillAction`（发射 `pattern` 解释器）/ `coveredCellRanges` |
 | `core/bullets.js` | `spawn` / `resolveAll(bullets, actors, config)`（**当 tick 全解算**）/ `collideAt`（连续方程）/ 等级比较 |
-| `core/engine.js` | `createBattle(config)`（`config.logger` 注入）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`；`resolveActorCollision` |
-| `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateAi` / `validateLoadout` / `availableNodes` |
-| `ai/ast.js` | `validateProgram` / `checkLegality`（**含分支 action 规则 D-101**）/ `collectUsedNodeTypes` / `canonicalize` / `programHash` / `nodePathOf` / `limits` |
-| `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` |
+| `core/engine.js` | `createBattle(config)`（`config.logger` 注入）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`（行动集含 **`turn`**）；`resolveActorCollision` |
+| `core/unlock.js` | `tierIndex` / `isUnlocked` / `filterByTier` / `validateLoadout` / `availableNodes`（**只返回真实节点类型**；`validateAi` 于 B13 退役） |
+| `ai/ast.js` | `validateProgram`（含**字段枚举校验**）/ `checkLegality`（**分支 action 规则 D-101 + call 行动产出定点分析**）/ `collectUsedNodeTypes` / `canonicalize` / `programHash` / `nodePathOf` / `limits` |
+| `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `serializeContext`（`frames[].path/fnScope` + 三个 limit + `traceTruncated`）/ `restoreContext` / `destroyContext` / `STEP_LIMIT` |
+| 数据表（机制层，2026-09-16 新增） | `server/data/skill-mechanics.json`（技能类型机制：params/slots/emit pattern）/ `affix-registry.json`（词条语义：agg/skillOp/hitEffect/castEffect）/ `ai-nodes.json`（AI 真实节点 + `base` + `actions` 词汇表，单一数据源） |
 | `server/index.js` | §2.3 |
 | `cli/index.js` | §2.4 |
 
@@ -119,9 +120,16 @@ L7  public/**（P6）
 | POST | `/api/v1/ai/battle` | 用给定 AI 程序跑一场 | 400 / 409 |
 | POST | `/api/v1/battle` | 双方 loadout + AI + seed → **完整回放帧（1px 位置 + 碰撞位置）** | 409 |
 | GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 分片） | 404 |
-| POST | `/api/v1/ranked/run` | 排位：抽 10 场离线结算（段位由请求传入/回带） | 409 `no_loadout` |
-| POST | `/api/v1/ranked/promote` | 晋升 + 段位奖励 | 409 |
-| GET/POST | `/api/v1/log-level` | 日志总控（非 production） | 400 `bad_level` |
+| POST | `/api/v1/ranked/run` | 排位：服务端抽 10 场同段位快照 + **双向记账**（P7/B31，D-132） | 409 `no_opponent` / `no_active_config` |
+| POST | `/api/v1/ranked/promote` | 晋升 + 段位奖励（读档案） | 409 `already_max` |
+| POST | `/api/v1/auth/register` \| `login` \| `logout` \| `password` | 账号与会话（P7/B28，D-129） | 401 / 409 `username_taken` / 429 |
+| GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 |
+| GET/POST/PUT/DELETE | `/api/v1/me/configs[/:slotId]`（+`/activate`） | 配置槽 CRUD（≤3、唯一出战，P7/B29，D-131） | 409 `slot_limit` / `slot_locked` / `config_conflict` |
+| GET | `/api/v1/me/records` \| `/api/v1/me/defense` | 战绩与**防守战绩**（被抽场次/胜负，P7/B30） | 401 |
+| POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，P7/B32，D-133） | 409 `no_opponent` |
+| GET | `/api/v1/leaderboard` | 排行榜 | 400 `bad_scope` |
+| POST | `/api/v1/admin/bots` \| `/api/v1/admin/rebuild-index` | bot 注入 / 索引重建（需 `DL_ADMIN_TOKEN`） | 401 / 403 |
+| GET | `/api/v1/log-level` | 日志总控（非 production） | 400 `bad_level` |
 
 - **统一信封**：成功 `{ok:true,data,log:{level,events}}`；失败 `{ok:false,error:{code,message,details}}`。
 - 随机性由请求 `seed` 显式传入（缺省服务端生成并**回带**），保证可复现。
@@ -136,19 +144,22 @@ ai validate|compile|battle --file ai.json [--tier rare] [--opponent kiter]
 battle --p1 a.json --p2 b.json --seed 7 [--out replay.json]
 replay --file replay.json [--tick N]        # 文本回放（含 px 位置）
 ranked run --seed 11
+register --user dev --pass *** | login --user dev --pass *** | me | configs list|save|activate|rm
+records [--since N] | defense | quick run [--seed 7] | leaderboard [--limit 50]
+admin bot --count 10 --tier rare --points 200 | admin rebuild-index
 log --level trace --channel bullets=trace
 health | data <table>
 ```
-- 退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误。
+- 退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误 / `3` 未鉴权（P7 新增）。
 - CLI **只走 HTTP，不 require core** → 同时是接口完整性验收工具。
 
 ### 2.5 冻结的数据结构
 
-1. **BattleState**：`tick/seed/players{p1,p2}/bases/events[]/rngStreams`。
-2. **玩家运行时**：`x`（**px，1px 精度**）/`facing`/`hp,mp,sp`/`maxHp,maxMp,maxSp`/`atk,def`/`regen{mp,sp}`/`special`/`cooldowns{}/effects[]/aiContext/defending`。
-3. **回放帧 `frame`**：`tick` + `diff{players[],bullets[],bases[],events[],aiTrace[]}`；位置、**碰撞位置、命中位置均为 1px 精度**；事件带 `cid`。
+1. **BattleState**：`tick/seed/rng/players{p1,p2}/bases/bullets/verdict/queuedActions`（引擎 `createBattle` 实际产出；`events` 不挂在 state 上——整场事件由调用方注入缓冲，按 tick 切进 `frame.diff.events`）。
+2. **玩家运行时**：`x`（**px，1px 精度**）/`facing`/`hp,mp,sp`/`maxHp,maxMp,maxSp`/`atk,def`/`regen{hp,mp,sp}`（模板 regen + 角色插件 `*_regen` 词条叠加）/`special`/`cooldowns{}/effects[]/skills{}/aiContext`/每 tick 瞬时标记 `defending`/`dodging`/`fullDodgeDuring`。
+3. **回放帧 `frame`**：`{tick, diff}`；`diff` = `{players, bullets, bases, events, aiTrace, collision, bulletHits, verdict}`，其中 **`diff.players` 是对象 `{p1,p2}`（不是数组）**，各含 `fromX/toX/facing/hp/mp/sp`；位置、**碰撞位置、命中位置均为 1px 精度**；事件带 `cid`。
 4. **物品实例 / 技能实例 / loadout / AI AST**：以 `decisions.md` 与重写后的 `v3-design` §4.4/§6.3/§12.2/§11.5 为冻结版本。
-5. **AiContext**：`programHash/frames[]/vars/halted/stepCount/trace/entry`（**必须可序列化**）。
+5. **AiContext 序列化产物**（`runtime.serializeContext` 实际字段）：`programHash/entry/frames[{kind,path,childIndex,remaining,condValue,fnScope}]/vars/halted/stepCount/trace/stepLimit/traceLimit/recursionLimit/traceTruncated`（**必须可序列化**；帧存稳定 `path` 与 `fnScope`，不存 `nodeId/phase/scopeDepth`）。
 6. **LogRecord**：`seq/ts/cid/tick/level/levelValue/channel/event/msg/data`。
 7. **`battle-config.json`**（新增，D-117）：`cellPx=64`/`fieldPx=1024`/`actorHalfPx=32`/`movePx=64`/`dodgePx=128`/`collisionDmgMul=0.8`/`baseHitMul=0.8`/`baseDef=64`/`defendDefMul=1.6`/`dodgeChanceBonus=0.20`（**B21 定稿，D-127**）/`defK=40`（**B21 入表，D-128**）/`backstab=1.5`/`crit=1.5`/`overtimeStart=48`/`overtimeRatio=0.0625`/`hardCapTick=64`。
 8. **本轮 schema 变更**（D-110~D-116）：`role-templates` 增**必填** `regen{mp,sp}`；`skill-templates` 增 `slotWeights`、`falloff`，**删 `bulletSpeed`**；三表增可选 `unlockTier`；技能插件消耗统一 `costDeltaByTier` 逐档数组；角色插件按 `rp_*_pct`/`rp_*_flat` **拆独立 id**。
@@ -219,6 +230,8 @@ health | data <table>
 | T-BT-28 | **位移弹幕 + 碰撞双结算**（D-18）：路径弹幕命中（等级取模板 `bulletLevel`，D-118）+ 碰撞伤害可同 tick 各结算一次 | B9 | 边界 |
 | T-BT-29 | **位移路径与落位解耦**（D-18②）：因碰撞被截停时，路径弹幕仍按声明的完整路径放置 | B9 | 边界 |
 
+> **2026-09-16 新增用例登记**：`tests/unit/mechanics.test.js`（19 用例）覆盖 **T-BT-26（D-72 三态：伤害/控制/弹幕判定）**、`turn` 朝向写回、技能插件词条 `crit_chance`/`lifesteal`/`cast_buff` 消费、角色插件 `hp_regen` 逐 tick 回复（步骤 10）、`loadout.buildPanel` 投影（specials/castEffects/affixes + regen 叠加）、`ast` 字段枚举校验（logic.op/loop.kind/arith.op）与 call 行动产出定点分析，以及 items 侧"未登记词条"warn 分支。
+
 **T-LG 日志**：T-LG-1 级别/通道过滤｜T-LG-2 记录结构（含 `cid`）｜T-LG-3 未知通道警告｜T-LG-4 覆盖矩阵事件｜T-LG-5 **日志不改结果**（silent vs trace 逐帧一致）｜T-LG-6 环形缓冲/`suppressed`/`dump`｜T-LG-7 禁用零成本｜T-LG-8 API/CLI 日志｜T-LG-9 总控开关｜T-LG-10 前端绘制日志（P6）｜T-LG-11 **因果链完整：一次命中可从 `skill.cast` 沿同一 `cid` 追到 `tick.end`**
 
 **T-AP / T-CLI / T-PB / T-AF / T-DC**
@@ -284,16 +297,16 @@ health | data <table>
 
 | # | 步骤 | 内容 | 日志事件 |
 |---|---|---|---|
-| 1 | `tick.begin` | `tick+=1`；按 **D-91** 派生本 tick 各用途随机流；引擎冷却递减（D-82）；重置临时标记 | `tick.begin`(info) |
+| 1 | `tick.begin` | `tick+=1`；按 **D-91** 派生本 tick 各用途随机流；引擎冷却递减（D-82）；重置 `defending`/`dodging`/`fullDodgeDuring` 等**每 tick 瞬时**标记（D-72） | `tick.begin`(info) |
 | 2 | `effects.resolveContinuous` | 持续效果 `stat += delta`；clamp；`remaining-=1` 归零移除 | `effect.continuous`(trace)/`effect.expire`(debug) |
 | 3 | `ai.resume` | 按 **p1 → p2** 各调用一次，产出 action + trace | `ai.resume`(debug)/`ai.node`(trace)/`ai.action`(info) |
-| 4 | `action.normalize` | 白名单校验；非法 → **`wait`**（D-80） | `action.invalid`(**warn**) |
+| 4 | `action.normalize` | 白名单校验；非法 → **`wait`**（D-80）。行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`（+ `skill:<sid>`） | `action.invalid`(**warn**) |
 | 5 | `effects.resolveControl` | 控制效果复写行动（眩晕 > 位移；位移取首个）；控制位移不可穿敌（D-71） | `effect.control.override`(debug) |
-| 6 | `action.commit` | 只算意图：转向 / 防御标记（def×1.6，D-43）/ 目标位置 / 技能 `canCast`→扣资源+写 CD+**生成弹幕（记录生成序号）** | `skill.cast`(info)/`skill.reject`(**warn**) |
-| 7 | `move.resolve` | 统一落位 → 穿敌判定（D-11~15）→ **角色碰撞解算与碰撞伤害**（D-10，1px）→ clamp | `move.resolve`(debug)/`collision.resolve`(info) |
+| 6 | `action.commit` | 只算意图：`turn` 意图登记 / 防御标记（def×1.6，D-43）/ 目标位置 / 位移技 `fullDodgeDuring` 置位 / 技能 `canCast`→扣资源+写 CD+**生成弹幕（记录生成序号）**+释放类词条 `castEffects` 入效果队列（下一 tick 起效，D-70） | `skill.cast`(info)/`skill.reject`(**warn**) |
+| 7 | `move.resolve` | **转向写回**（`turn` → `facing×−1`；`move`/`dodge`/位移**不改变朝向**）→ 统一落位 → 穿敌判定（D-11~15）→ **角色碰撞解算与碰撞伤害**（D-10，1px）→ clamp | `move.resolve`(debug)/`collision.resolve`(info) |
 | 8 | `bullets.resolve` | 按**生成先后顺序**遍历（D-27）：每枚**当 tick 飞完全射程**（D-20），与角色轨迹**解方程**判命中（D-23），与敌方弹幕解方程判碰撞并**递归**（D-28）；AOE 用**位移后位置**（D-24） | `bullet.spawn`/`bullet.collide`/`bullet.hit`/`bullet.expire` |
 | 9 | `damage` | 按 §3.5.4 结算（闪避→基础→背击→暴击→吸血→附加效果） | `damage.dodge`/`damage.calc`/`damage.lifesteal` |
-| 10 | `regen` | `mp/sp +=` 模板 regen（D-110），封顶 | `resource.regen`(trace) |
+| 10 | `regen` | `hp/mp/sp +=` regen（模板 regen + 角色插件 `*_regen` 词条，D-110）；**`hp` 在 hp≤0 时不回复**（死亡统一在步骤 12），全部封顶 | `resource.regen`(trace) |
 | 11 | `overtime` | `tick ≥ 48` → 双方基地与角色**同时**扣 `ceil(maxHp×0.0625)` | `battle.overtime`(info) |
 | 12 | `judge` | 基地≤0 → 角色≤0；优先级基地 > 角色；同级同时 → 平局 | `battle.judge`(info)/`battle.end`(info) |
 | 13 | `diff.emit` | 产出 frame，位置/碰撞/命中均 1px 精度 | `tick.end`(info) |
@@ -301,6 +314,7 @@ health | data <table>
 
 - **弹幕不跨 tick**：步骤 8 结束时场上无存活弹幕。
 - **同时行动**：步骤 6 只算意图、步骤 7 统一落位。
+- **朝向只能通过 `turn` 改变**（用户决定 2026-09-16）：`turn` 翻转朝向（`facing×−1`）、不移动不消耗；`move`/`dodge`/位移**都不写朝向**；引擎只在开战初始化与步骤 7 的 turn 写回时写 `facing`。
 - **死亡时序**：统一在步骤 12；步骤 2 被扣到 `hp≤0` 的角色本 tick 仍会行动（测试锁定）。
 - **超时扣血**：步骤 11（regen 之后、judge 之前）。
 
@@ -325,7 +339,7 @@ health | data <table>
 | 同向移动、距离不同导致穿越/同格 | 由**后方角色**决定"穿过"或"碰撞" |
 
 - **可穿来源**：`passThroughEnemy=true` 的位移技能、`dodge`（2 格，可穿）；**普通 `move` 不可穿**；**控制类位移不可穿**。
-- **碰撞伤害**：双方各受对方 `atk×0.8`，标准减伤，允许闪避/暴击/背击/吸血；碰撞位置按速度解方程，1px 输出。
+- **碰撞伤害**：双方各受对方 `atk×collisionDmgMul`（`=0.8`），标准减伤，允许闪避/暴击/背击/吸血；碰撞位置按速度解方程，1px 输出。
 
 #### 3.5.4 弹幕模型（D-20 ~ D-31）
 
@@ -356,11 +370,12 @@ health | data <table>
 ```
 - `defend` **不是独立减伤步骤**，而是 def×1.6 代入公式；背击×暴击 = ×2.25。
 - 词条聚合 `base×(1+Σ%)+Σ数值`，最后取整一次；概率类封顶 1。
+- **技能插件词条**：`crit_chance`/`lifesteal` → `skill.specials`，随弹幕 payload 参与命中结算并**叠加在面板值上、按 1 封顶**；`cast_buff` → `skill.castEffects`，步骤 6 入效果队列、**下一 tick 起效**（D-70）、持续 `duration`（缺省 2）；命中类 `stun/knockback/pull/dot/true_dmg` 由引擎按 `affix-registry.json` 的 `hitEffect` 结算。
 
 #### 3.5.6 背击与基地（D-50 ~ D-62）
 
-- **背击**：用**本 tick 位移后**的位置与朝向；近战/位移看相对位置与朝向，平射看弹幕来向，**垂直永不触发**。
-- **基地**：⚠️ **弹幕不造成任何基地伤害**；唯一途径是"面向基地并向基地方向移动" → **停在原地** + `atk×0.8` 走基地 `def=64` 减伤；基地不反击。
+- **背击**：用**本 tick 写回后**的位置与朝向（步骤 7；**只有 `turn` 会改变朝向**，`move`/`dodge`/位移都不改）；近战/位移看相对位置与朝向，平射看弹幕来向，**垂直永不触发**。
+- **基地**：⚠️ **弹幕不造成任何基地伤害**；唯一途径是"面向基地并向基地方向移动" → **停在原地** + `atk×baseHitMul`（`=0.8`；与碰撞倍率 `collisionDmgMul` 是两个独立字段，真值当前相同）走基地 `def=64` 减伤；基地不反击。
 
 #### 3.5.7 战斗链路（可追溯，L16）
 
@@ -379,12 +394,12 @@ move.resolve┘                                            │
 
 #### 3.5.8 战斗不变量
 
-见 `§3.2` 的 **T-BT-1..19**。
+见 `§3.2` 的 **T-BT-1..29**。
 
-#### 3.5.9 战斗走查（**正在按新规范重写**）
+#### 3.5.9 战斗走查（**已按真实引擎重算，2026-09-16**）
 
-1. 按 §3.5 新规范重写整场战斗，位置用**连续 px 坐标**；
-2. 用**新的独立校验器**重新验算（含碰撞方程、命中位置、抵消链）后，方可作为 B11 黄金用例 `T-BT-13/14`；
+1. 走查 `battle-walkthrough.md` §3.1 的逐 tick 轨迹已用**真实引擎**重算：**seed 20260912 / 18 tick / p2 胜**，与 gate 项 8 依赖的 `.audit/golden-battle.json` 逐字段一致（复算命令 `node .audit/walkthrough.js`，输出 `.audit/walkthrough.json`）。
+2. 作为 B11 黄金用例 `T-BT-13/14` 的基准；`tests/regression/golden-battle.test.js` **⏳ 计划（未实现）**——`tests/regression/` 目前只有 `.gitkeep`（当前由 gate 项 8 的日志冒烟 + `.audit/walkthrough.js` 复算承担回归）。
 3. 保留同一 `cid` 的日志链样例（`T-LG-11` 参照）。
 
 ---
@@ -432,7 +447,8 @@ move.resolve┘                                            │
 #### 3.7.4 解释器：显式状态机（可序列化）
 
 ```
-AiContext = { programHash, frames[{nodeId,kind,phase,childIndex,remaining,scopeDepth}], vars, halted, stepCount, trace, entry }
+AiContext = { programHash, entry, frames[{kind,path,childIndex,remaining,condValue,fnScope}], vars, halted, stepCount, trace, stepLimit, traceLimit, recursionLimit, traceTruncated }
+（= runtime.serializeContext 实际产出；帧存稳定 path + fnScope 变量快照，不存 nodeId/phase/scopeDepth）
 ```
 - `stepOnce()` 只推进一个微步骤；`resume()` 循环直到产出 `action` 或触及 `STEP_LIMIT`（限步/trace/挂起集中一处，杜绝"每 tick 重跑"）。
 - **函数（D-102/D-103）**：= 打包代码块，**无参数无返回值**，但**拥有独立局部变量作用域与调用栈**（可读外层变量，内部 `var` 不泄漏）；进入顶层 `seq` 时先注册全部函数（hoisting）；递归深度上限 64。
@@ -442,10 +458,11 @@ AiContext = { programHash, frames[{nodeId,kind,phase,childIndex,remaining,scopeD
 
 #### 3.7.5 合法性检测（D-101）
 
-1. 结构：白名单节点、字段类型、深度/节点数/字节上限、危险键。
-2. **循环体内所有分支都必须至少包含一个 `action`**（比"循环体含 action"更严格；允许 `while(true)`）。
-3. 段位门控：用到的节点必须已解锁（紫段位解锁 `random` + 扩展运算符）。
-4. 循环外 `break`、未知函数调用等结构错误 → 拒绝并给 `path`。
+1. 结构：白名单节点、字段类型、深度/节点数/字节上限、危险键；**字段枚举校验**（表外取值校验期拒绝，避免"校验通过但运行期静默失效"）——`logic.op ∈ {and, or}`、`loop.kind ∈ {count, while}`（`count` 必填 `times`、`while` 必填 `cond`）、`arith.op ∈ {+, -, *, /}`、`cmp.op ∈ {>, <, >=, <=, ==, !=}`；错误码 `bad_enum`。
+2. **循环体必须能产出 `action`**：循环体内所有 `if` 的每个分支（含隐式空 `else`）都要能产出 `action`——直接含 `action`，或调用**行动产出函数**。行动产出函数用**调用链定点分析**判定：函数体直接含 `action`，或调用其它行动产出函数（可传递）才算；**纯检测函数不算**（因此"循环体只调用纯检测函数"会被拒，防空死循环），但纯检测函数本身**允许定义、也允许在顶层调用**。
+3. **动作名不做校验期拒绝**（D-80）：`action.name` 是自由标签，未知名由引擎 `normalizeAction` 运行期归一化为 `wait` 并记 `action.invalid`(warn)；引擎动作词汇表登记在 `server/data/ai-nodes.json` 的 `actions`（前端下拉只给词汇表内的值）。
+4. 段位门控：用到的节点必须已解锁（紫段位解锁 `random` + 扩展运算符**权限位**；`arith_ext` 尚未实现、不授予任何节点）。
+5. 循环外 `break`、未知函数调用等结构错误 → 拒绝并给 `path`。
 
 #### 3.7.6 只读快照与安全默认值
 
@@ -527,13 +544,13 @@ AiContext = { programHash, frames[{nodeId,kind,phase,childIndex,remaining,scopeD
 | L0 | `rng` | `rng.create`(info) / `rng.draw`(trace，含 purpose 与值) / `rng.stream`(debug，含 tick+purpose) |
 | L0 | `field` | `field.clamp`(trace) / `field.base`(debug，撞基地判定) |
 | L1 | `effects` | `effect.add`(debug) / `effect.continuous`(trace) / `effect.expire`(debug) / `effect.control.override`(debug) |
-| L1 | `items` | `items.roll.quality`(debug) / `items.generate`(debug) / `items.affix.apply`(trace) / `items.assemble`(info) / `items.reject`(**warn**) |
+| L1 | `items` | `items.roll.quality`(debug) / `items.generate`(debug) / `items.affix.apply`(trace) / `items.assemble`(info) / `items.reject`(**warn**) / `items.affix.unknown`(**warn**，词条注册表未登记 id) |
 | L1 | `unlock` | `unlock.check`(debug) / `unlock.reject`(**warn**) |
 | L2 | `roles` | `role.instantiate`(debug) / `role.panel`(debug) |
-| L2 | `skills` | `skill.instantiate`(debug) / `skill.plugin.apply`(debug) / `skill.cast`(info) / `skill.reject`(**warn**) / `skill.area`(trace，px 区间) |
+| L2 | `skills` | `skill.instantiate`(debug) / `skill.plugin.apply`(debug) / `skill.cast`(info) / `skill.reject`(**warn**) / `skill.area`(trace，px 区间) / `skill.plugin.unknown`(**warn**，词条或算子未登记) / `skill.emit.unknown`(**warn**，发射模式未登记) |
 | L2 | `bullets` | `bullet.spawn`(debug，含起点/方向/射程 px) / `bullet.collide`(debug，含碰撞位置与等级比较) / `bullet.hit`(debug，含 1px 命中位置与 cid) / `bullet.expire`(trace) |
 | L4 | `engine` | `battle.create`(info) / `tick.begin`(info) / `tick.step`(debug，14 步各一条) / `move.resolve`(debug) / `collision.resolve`(info，含双方速度与碰撞位置) / `resource.regen`(trace) / `battle.overtime`(info) / `tick.end`(info) / `battle.judge`(info) / `battle.end`(info) / `action.invalid`(**warn**) |
-| L4 | `damage` | `damage.calc`(debug，含每步中间值) / `damage.dodge`(debug) / `damage.lifesteal`(trace) |
+| L4 | `damage` | `damage.calc`(debug，含每步中间值) / `damage.dodge`(debug) / `damage.lifesteal`(trace) / `damage.affix.unknown`(**warn**，命中效果未登记) |
 | L5 | `ai.ast` | `ai.validate`(debug) / `ai.validate.reject`(**warn**) / `ai.compile`(debug，含 hash) / `ai.migrate`(info) |
 | L5 | `ai.runtime` | `ai.resume`(debug) / `ai.node`(trace) / `ai.action`(info) / `ai.step.limit`(**warn**) / `ai.depth.limit`(**warn**) / `trace.truncated`(**warn**) |
 | L6 | `api` | `api.req`(info) / `api.res`(info，含耗时与字节) / `api.err`(**error**) |
@@ -576,11 +593,25 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 9. **提交**：`B07 bullets: 生成/连续碰撞/等级抵消 (+18 tests, core 93.2%/branch 87%, 日志 7/7, API 2)`
 10. **记录**：更新批次状态与测试数字。
 
+### 5.1 硬性规则：提交前必须更新任务清单
+
+> 本节规则为**强制项**，与铁律 L2/L3/L10 同级。
+
+1. **任何改动代码的提交**（`server/`、`cli/`、`shared/`、`scripts/`、`tests/`，含数据表），必须在**同一提交内**更新：
+   - `docs/tasks.md` 的**批次勾选**（`[ ]`/`[~]`/`[x]`）；
+   - `docs/progress.md` 的**当前状态**对应条目（唯一状态源）。
+2. **提交信息必须写明批次号与"实跑结果"**：`npm test` 的用例数（通过/失败）与 `npm run gate` 的结果（几 PASS / 几 FAIL / 几 PEND）；只写"已测试"不算。
+3. **机器强制（⏳ 计划，未实现）**：本条规则设计上由两个检查器拦截"改了代码但没改任务清单"的提交——
+   - `.githooks/pre-commit`（提交前钩子，比对 staged 文件：有代码改动而任务清单未变 → 拒绝提交）；
+   - `scripts/check-docs.js`（文档-实现一致性检查，接入 CI 与 `npm run check:docs`）。
+   **现状（2026-09-16 实测）**：`.githooks/` 目录、`scripts/check-docs.js`、`package.json` 的 `check:docs` 脚本**均不存在**，即该机器强制**尚未落地**——在落地前本条只能靠人工执行；落地后本段须改为「已实现」并写明入口命令。
+4. **禁止放宽覆盖率阈值来通过门禁**（行 ≥90 / 分支 ≥85 / 函数 ≥90）：阈值调整属 §10 的接口级变更，必须单独 commit 并说明理由（§3.4）。
+
 ---
 
-## 6. 阶段与批次（后端优先，共 35 批）
+## 6. 阶段与批次（后端优先，共 34 批 = P0–P5 的 9+11+5+5+2+2）
 
-> **P0–P5 全为后端**；**P6 前端延后**。每批必须：① 满足 `§4.6` 事件；② 有日志断言；③ 经 `/api/v1` 或 CLI 可达。
+> **P0–P5 全为后端**（共 **34 批**，已收口）；**P6 前端**与 **P7 在线服务（B27–B33，7 批）** 均为「⏳ 计划（未实现）」，**不计入 34 批**。每批必须：① 满足 `§4.6` 事件；② 有日志断言；③ 经 `/api/v1` 或 CLI 可达。
 
 ### P0 后端基建与契约（9 批）
 
@@ -589,7 +620,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | P0-1 `[x]` | `package.json`(start/test/cov/gate/demo/cli/demo:log) + `.gitignore` + `README.md`（2026-09-12 完成；审查 `docs/reviews/P0-1.md`） |
 | P0-2 `[x]` | 目录骨架：`shared/ server/{core,ai,data} cli/ tests/{contract,unit,integration,regression,api,cli,property,log,fixtures} scripts/ assets/`（不建 `public/`；另含 `tests/helpers/`，解读见 `docs/reviews/P0-2.md`） |
 | P0-3 `[x]` | 测试基建：单进程 runner 固化、`tests/helpers/`（`gen.js` 种子化生成器、`log.js` 录制器——后者随 P0-4）、覆盖率阈值 —— 实测 §1.3 部分命令（start/gate/demo/cli 随 P0-8/P0-5/B11 落地） |
-| P0-4 | **日志子系统**：`shared/log.js` + 注入 + `DL_LOG_*` + `tests/log/*`（T-LG-1/2/3/6/7） |
+| P0-4 `[x]` | **日志子系统**：`shared/log.js`（UMD 零依赖）+ 注入 + `DL_LOG_*` + `tests/helpers/log.js` + `tests/log/*`（T-LG-1/2/3/6/7；审查 `docs/reviews/P0-4.md`） |
 | P0-5 `[x]` | `scripts/gate.js`（9 项）+ `scripts/check-arch.js` + 静态检查（T-DC-3/4/5/6/7；项 4/5/8/9 接线待激活，见 `docs/reviews/P0-5.md`） |
 | P0-6 `[x]` | `server/data/schema.js` + **`battle-config.json`** + 按 D-110~D-116 重建数据表 + `T-DC-1/2`（T-DC-2 已接线进 gate 项 5；审查 `docs/reviews/P0-6.md`） |
 | P0-7 `[x]` | `docs/interfaces.md`（模块 ICD + API/CLI 契约 v1 + **D 编号落点表** + 日志事件登记）+ 契约测试骨架（T-DC-8；审查 `docs/reviews/P0-7.md`；gate 项 5 激活→7 PASS） |
@@ -609,13 +640,13 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B5 `[x]` | `roles.js`（含模板 regen；typeModifiers L9 入表） | T-RO-1..7 | `roles.*`（审查 `docs/reviews/B5.md`，P1×1 已修） |
 | B6 `[x]` | `skills.js`（`falloff`/无 `bulletSpeed`/px 范围/四类型释放指令/路径弹幕） | T-SK-1..4 | `skills.*`（审查 `docs/reviews/B6.md`，P1×1 已修） |
 | B7 `[x]` | `bullets.js`（**当 tick 全解算 + 连续碰撞方程 + 等级抵消 + 递归**） | T-BU-1..8 + **T-BT-8/19** | `bullets.*`（审查 `docs/reviews/B7.md`，P1×2 已修） |
-| B8 `[x]` | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`）、统一落位、**角色碰撞与碰撞伤害**（基础链路）、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve`（审查 `docs/reviews/B8.md`，P1×1 已修） |
+| B8 `[x]` | `engine.js` 骨架：**§3.5.1 的 14 步管线**、行动集（含 `wait`/`defend`/`turn`）、统一落位、**角色碰撞与碰撞伤害**（基础链路）、资源恢复 | T-EN-1/10 + **T-BT-3/9/15/17** + T-LG-5 起常驻 | `engine.tick.*`/`collision.resolve`（审查 `docs/reviews/B8.md`，P1×1 已修；`turn` 为 2026-09-16 新增动作） |
 | B9 `[x]` | 伤害链路（§3.5.5 八步：闪避/背击/暴击/吸血/真实/附加效果）+ 基地（撞基地）+ AOE 基准 + 背击（追尾语义拍板 2026-09-12） | T-EN-5/6/7/8 + T-EF-6 + **T-BT-6/7/12/16/18** | `damage.*`（审查 `docs/reviews/B9.md`，P2×3 已修） |
 | B10 `[x]` | 结束判定 + 超时扣血 + `runFull`（回放一致 diffs） | T-EN-2/3/4 + **T-BT-2/4/11** | `battle.overtime/judge/end`（审查 `docs/reviews/B10.md`，P1×1 已修） |
-| B11 `[x]` | diff/events/`cid` + `.audit/golden-battle.js`（固定 loadout×AI×seed）+ `.audit/verify-rest.js` + **黄金战斗回归**（快照锚定）+ **门禁项 8 激活** | **T-BT-5/10/13/14** + T-LG-11 | `engine.tick.step` 全 14 步（审查 `docs/reviews/B11.md`，P1×1 已修） |
+| B11 `[x]` | diff/events/`cid` + `.audit/golden-battle.js|json`（固定 loadout×AI×seed；**18 tick / p2 胜**）+ `.audit/walkthrough.js`（真实引擎复算走查 §3.1）+ **门禁项 8 激活**；`tests/regression/golden-battle.test.js` **⏳ 计划（未实现）** | **T-BT-5/10/13/14** + T-LG-11 | `engine.tick.step` 全 14 步（审查 `docs/reviews/B11.md`，P1×1 已修；2026-09-16 复核：`.audit/verify-rest.js` 仍在库、黄金回归测试尚未落地） |
 
 - **门禁**：每批 gate；B8 起**常驻四条硬回归**（同种子一致 / runFull=逐tick / 64 tick 内结束 / 日志不改结果）。
-- **出口**：硬编码 AI 跑通整场（含 48→64 超时路径）；`npm run demo` 输出逐 tick 摘要（含 px 位置与碰撞）；trace 可见碰撞方程解算过程。
+- **出口（2026-09-16 复核）**：硬编码 AI 跑通整场（含 48→64 超时路径）；**`npm run demo` 已可跑**——`scripts/demo.js` 已落地（此前脚本缺失，见安全登记册 SEC-19），默认 **seed 20260912**（与 gate 项 8 黄金战斗同源），输出逐 tick 摘要（`tick | px/hp/mp/sp | 命中位置 | 事件`）与最终结果；`npm run demo:log` ≡ trace；trace 可见碰撞方程解算过程。
 
 ### P2 自定义 AI（5 批）
 
@@ -654,23 +685,43 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | B25 `[x]` | 晋升判定（x=6）+ 段位→奖励品质 + `POST /api/v1/ranked/promote` | T-RK-2/3/4 | `ranked.promote`（审查 `docs/reviews/B25.md`，PASS；P2-1/2/3 当批落实） |
 
 > ~~B26 服务端存档~~ **取消**（D-123）：存档延后到 P6（localStorage）。
+> **替代方案**：D-129 起服务端存档由 **P7（B27…B33）** 承担，见下。
 
-### P6 前端（**延后，本轮不排批次**）
+### P7 在线服务与存档（**7 批；D-129…D-136**；设计权威：`docs/systems/11-account-store.md`）
 
-无框架：纯函数 `render(state) → HTML` + 自研 store（D-124）。含 Blockly 编辑器、仓库/装配、开箱、对战回放、HUD、AI 轨迹可视化 + 前端绘制日志（T-LG-10）。
+> **⏳ 计划（未实现）**：以下 B27–B33 共 7 批代码 0 行（2026-09-16 复核：`server/store/`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`runtime/` 均不存在），**不计入 §6 的 34 批**。
+
+| 批次 | 交付物 | 必绿测试点 |
+|---|---|---|
+| B27 ⏳ | `server/store/*`：原子写（tmp→fsync→rename + Windows 重试）、append-only journal（group commit）、物化档案、索引、单进程锁、崩溃恢复、版本迁移、适配器契约 | T-ST-1~8、T-CN-1 |
+| B28 ⏳ | `server/auth.js`：注册/登录/登出/改密、scrypt、Bearer 会话、失败锁定与限速、鉴权中间件接入 `index.js` | T-AU-1~3 |
+| B29 ⏳ | `server/account.js` + 配置槽（≤3、唯一出战、默认槽不可删）+ 快照冻结与内容寻址快照库 + GC | T-AC-1~5、T-RP-3 |
+| B30 ⏳ | 战绩视图：`me/records`、`me/defense`、`records/seen`、排行榜、索引增量维护 | T-ST-5 |
+| B31 ⏳ | `ranked.js` 改造：服务端抽池（同段位 + 24h/72h 去重）、双向记账（防守方只记战绩）、晋升落盘、回放引用；`battle.js` 帧 LRU 上限 | T-RK-1~5、T-RP-4 |
+| B32 ⏳ | `server/quickmatch.js` + `rating-config.json`：积分窗口递进匹配、非对称 Elo 双向结算、leaderboard 联动 | T-QM-1~4 |
+| B33 ⏳ | 回放按需重算与 `410 replay_expired`、`admin` 端点（bot 注入/重建索引/统计）、`scripts/bench-store.js`、CLI 扩展、门禁与文档收尾 | T-RP-1~2、`npm run gate` 9 PASS |
+
+> **门禁同步（每批必查）**：`check-arch.js` 登记 `server/store/*` 与 `auth/account/quickmatch/admin`；`gate.js` 的 `PREFIX_MAP.ranked` 加 `'quick'`；项 9 接口冒烟加 `auth → me → configs → quick → replay → records` 闭环；`server/data/schema.js` 加 `service-config`/`rating-config`。**不得**修改 `server/core/*`、`server/ai/*`（战斗语义不变）。
+
+### P6 前端（**设计已重写为 v3；批次见 `docs/frontend-spec.md` §18**）
+
+无框架：纯 DOM 视图（`state → 节点描述`）+ 自研 store（D-124）。**v3 重设计的取向：可玩优先**——废弃绝对坐标盒模型与 Blockly，改成"浏览器正常布局 + 表单式 AST 编辑器"，并把按钮↔动作↔数据字段写成机器自检（`scripts/fe-spec-check.js`，`npm test` 内断言）。
 
 ---
 
-## 7. 前端架构规范（**P6 参考，本轮不实现**）
+## 7. 前端架构规范（前端实现的唯一依据：`docs/frontend-spec.md` v3）
 
-> **完整前端设计见 `docs/frontend-spec.md`**（v1，含屏幕/状态模型/视图契约/渲染层/Blockly/日志面板/API 消费映射/测试策略）——本文只保留要点索引。
+> **完整前端设计见 `docs/frontend-spec.md`**（v3：失败根因表 / 玩法主线剧本 / 布局与组件 / 状态模型 / 按钮↔动作白名单 / 七屏逐屏按钮表 / 战场渲染 / AST 表单规格 / 文档自检 / 真实响应样本附录）——本节只保留要点索引。
 
-- **屏幕**：`menu/editor/warehouse/gacha/battle/replay/settings`；切换只走 `store.dispatch({type:'goto'})`。
-- **分层**：`api/`（唯一网络出口）→ `store/`（唯一状态源）→ `views/*.render(state) → HTML`（**纯函数**）→ `mount/`（唯一 DOM 写入点）；`render/` 只消费 diff，**禁止复制战斗算法**。
-- **视觉令牌**：`public/css/tokens.css`；禁止行内样式与魔法数字。
-- **每屏出口**：四态齐全、纯函数测试、无算法复制、每次绘制有 `render.frame` 日志、截图核对。
-- Blockly 集成：由 `mount` 独占 DOM，纯函数视图不参与其内部重绘。
-- **服务器/API 使用**：见 `docs/server.md`（部署、端点速查、信封与错误码、无状态契约）。
+- **屏幕**：`menu/gacha/warehouse/editor/battle/replay/settings`；切换只走 `store.dispatch({type:'goto'})`（顶栏与屏内按钮）。
+- **分层**：`api/`（唯一网络出口）→ `store/`（唯一状态源）→ `views/*`（纯函数产出节点描述）→ `mount/`（唯一 DOM 写入点）；`render/battle.js` 只消费帧，**禁止复制战斗算法**。
+- **布局纪律**：不用坐标模型（旧 `layout(state)→Box[]` + JS 注入 `left/top` 已废弃——注入缺失即"全屏堆在左上角"，是两轮失败的根因）；绝对定位只允许出现在战场内部。
+- **按钮纪律**：每个按钮的 `data-action` 必须在动作白名单内有 reducer 分支；存在性由 `scripts/fe-spec-check.js`（C2/C9）强制——**死按钮不可能通过验收**。
+- **数据纪律**：字段名一律取自 `.audit/fe-samples.json` 的真实响应（`frontend-spec.md` 附录 A 逐字引用）；自检器 C5/C6 核对字段与取值（段位/对手/品质/AI 节点/动作名/开箱上限）。
+- **AI 编辑器**：表单式 AST 编辑（17 类节点元数据驱动），**不引入 Blockly**；`action.name` 下拉只给合法值（非法动作在引擎层会被归一化成 `wait`，表现为"程序合法但一直不动"）。
+- **日志**：前端只用已注册通道 `store/view/api/render/editor`（`ui` 通道不存在，勿写）；事件名 `<channel>.<name>`。
+- **验收**：机器 = `npm test`（含前端文档自检 9 项 + 5 个投毒用例）；人工 = `frontend-spec.md` §2.1 的 14 步剧本 + §17 截图清单。
+- **服务器/API 使用**：见 `docs/server.md`（部署、端点速查、信封与错误码、**档案契约** §6）与 `docs/systems/11-account-store.md`（**D-129 起**：登录/配置槽/战绩/积分/回放鉴权的端点与字段）。
 
 ---
 
@@ -685,6 +736,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | MS4 回放自足 | 完整帧 + 文本回放 | P4 | T-BT-1 + 帧字段审计 |
 | MS5 有排位 | 快照/匹配/晋升 | P5 | `ranked run` 闭环 |
 | MS6 有界面 | 前端全套 + 前端日志 | P6 | 待排期 |
+| MS7 有档案与在线对战 | 账号/服务端档案/异步排位双向记账/快速对战积分/回放鉴权 | P7 | `cli` 注册→保存配置→快速对战→查防守战绩闭环 + `npm run gate` 9 PASS |
 
 ---
 
@@ -696,7 +748,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | R2 | 函数参数/返回值 | ✅ **已决**：= 打包代码块，无参无返回，有独立作用域+调用栈（D-102/103） | 已决 |
 | R3 | `costDelta` 基础值 / 最大插件点数 | ✅ **已决**：统一 `costDeltaByTier` 逐档数组 + `items-data` 建议点数（D-113/116） | 已决 |
 | R4 | 晋升阈值 / 段位→品质 | ✅ **已决**：x = 6，段位序号即品质上限（D-122） | 已决 |
-| R5 | 存档位置 | ✅ **已决**：本轮不做，延后 P6（D-123） | 已决 |
+| R5 | 存档位置 | ✅ **已决**：**D-129 服务端存档**（`runtime/`，段位/积分/配置槽/战绩落盘）+ D-130 仓库仍客户端；D-123 的"不做存档"已部分推翻 | 已决 |
 | R6 | 前端框架 | ✅ **已决**：无框架（D-124） | 已决 |
 | R7 | 沙箱多进程 runner 不可用 | ✅ 已定：单进程 `--test-isolation=none` | 已决 |
 | R8 | 美术占位规格细节 | 按 `items-data` §1（本轮只作数据表） | P6 前 |
@@ -709,6 +761,9 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | **R16** | **设计文档需同步重写受影响章节**（D-126） | 我按 `decisions.md` 逐章重写 `v3-design` / `systems/*` / `items-data` | **P0-7 前** |
 | **R17** | **`dodge` 的闪避加成数值** | ✅ **已决（B21 校准，D-127）**：`dodgeChanceBonus = +20%`（叠加面板 dodgeChance，封顶 1） | 已决 |
 | **R18** | 文档编辑工具纪律 | ✅ 已加入铁律 L17（禁用 PS 5.1 读写中文文档） | 已定 |
+| **R19** | **混合权威导致段位/积分不可信**（D-130） | 已在 `11-account-store.md` §15.1 登记风险与缓解；"服务端物品账本"列为后续阶段（需重新走决策） | 已知风险 |
+| **R20** | **回放与引擎/数据版本强耦合**（D-135） | 版本不匹配返回 `410 replay_expired`；是否改存帧见 `11-account-store.md` §15.5 Q3 | 已定（可再议） |
+| **R21** | **单进程 JSON 存储的容量上限** | 实测 0.175~0.280 ms/场、索引 ~200 B/玩家；>5 万玩家或写 QPS >500 时切 `node:sqlite` 适配器（`11-account-store.md` §11.4） | 已定（有判据） |
 
 ---
 
@@ -731,10 +786,10 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 - [ ] 本阶段测试点（§3.2）全绿，无 `skip`/`todo`
 - [ ] `§4.6` 覆盖矩阵事件全部实现且有断言；`cid` 因果链可追（T-LG-11）
 - [ ] **接口自足**：能力全部经 `/api/v1` 或 CLI 可达（L14）
-- [ ] **战斗不变量 T-BT-1..19** 全绿（含连续碰撞精度与弹幕不跨 tick）
+- [ ] **战斗不变量 T-BT-1..29** 全绿（含连续碰撞精度、弹幕不跨 tick、D-72 位移三态免疫、`turn` 朝向）
 - [ ] **插件连接 T-PB-1..10**、**自定义 AI T-AF-1..11** 全绿
 - [ ] `server/core/**` 无 `console.*`/IO/`Math.random`/`eval`；战斗数值均来自 `battle-config.json`
-- [ ] AI 隐式主循环、分支 action 合法性、步数兜底（返回 `wait`）生效；未解锁内容不可用
+- [ ] AI 隐式主循环、分支 action 合法性（含"call 行动产出定点分析"）、字段枚举校验、步数兜底（返回 `wait`）生效；未解锁内容不可用
 - [ ] 控制效果在 AI 返回后复写；超时扣血精确
 - [ ] 每批都有 `docs/reviews/BXX.md` 审查记录
 - [ ] 未使用 v2 资源；未提前实现任何 UI

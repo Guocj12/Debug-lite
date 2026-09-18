@@ -1,4 +1,6 @@
 {
+  "_sample": true,
+  "_note": "示例数据（2026-09-16）：插件内容为占位示例，正式设计由用户完成。每个 affix.id 必须已在 server/data/affix-registry.json 登记（门禁项 4 会校验）。",
   "plugins": [
     { "id": "rp_atk_pct", "kind": "rolePlugin", "slot": "atk", "category": "攻击提升",
       "name": "攻击提升·百分比", "desc": "攻击提升（百分比）",

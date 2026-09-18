@@ -266,17 +266,18 @@ test('EN-15 补充分支：B 单穿目标重叠（后推停 A 身后）；defend
   assert.equal(b3.state.players.p1.defending, false, '步骤 1 重置临时标记');
 });
 
-test('EN-16 T-BT-16/M9 撞基地：停原地 + 基地 @atk×0.8 减伤（D-34/D-61）', () => {
+test('EN-16 T-BT-16/M9 撞基地：停原地 + 基地 @atk×baseHitMul 减伤（D-34/D-61）', () => {
   const b = mkBattle(mkPlayer({ x: 960, facing: 1 }), mkPlayer({ id: 'B2', owner: 'p2', x: 500, facing: -1, atk: 19, def: 9 }));
   stepActions(b, ['move_right'], ['wait']);
   assert.equal(b.state.players.p1.x, 960, 'M9 停原地（未移动）');
-  // 基地伤害：12×0.8×0.384615=3.692→3（base def 64）
-  assert.equal(b.state.bases.p2.hp, 97, 'M9 基地 −3');
+  // 基地伤害：12×baseHitMul(1.0 夹具值)×0.384615=4.615→4（base def 64）
+  // 2026-09-16 修正：此前代码误用 collisionDmgMul，与 D-61/interfaces §1 的 baseHitMul 不符（真值表两者同为 0.8，故线上无差异）
+  assert.equal(b.state.bases.p2.hp, 96, 'M9 基地 −4');
   // 反向：P2 撞自家 p1 基地
   const b2 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 500, facing: 1, atk: 12, def: 8 }), mkPlayer({ id: 'B2', owner: 'p2', x: 64, facing: -1, atk: 19, def: 9 }));
   stepActions(b2, ['wait'], ['move_left']);
   assert.equal(b2.state.players.p2.x, 64, 'P2 停原地');
-  assert.equal(b2.state.bases.p1.hp, 95, '基地 −5（19×0.8×0.384615=5.846→5）');
+  assert.equal(b2.state.bases.p1.hp, 93, '基地 −7（19×baseHitMul(1.0)×0.384615=7.307→7）');
 });
 
 test('EN-17 judge 平局：双基地同时死 / 双角色同时死', () => {

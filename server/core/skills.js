@@ -3,12 +3,19 @@
  * 依据：systems/03-skills.md；examples/03-skills.md S-1..S-9（数值期望唯一出处）；decisions D-07/D-15/D-18/D-21/D-22/D-25/D-29/D-113/D-115/D-118。
  * 纯函数内核（L11）：随机走注入 rng；canCast/applySkillPlugins 不改入参（纯函数，返回新对象）；日志经 withLogger 注入。
  * 事件：skill.instantiate(debug) / skill.plugin.apply(debug) / skill.cast(info) / skill.reject(warn)（§4.6）。
- * 语义（B6 登记）：
+ *
+ * 【数据驱动改造（2026-09-16）】本模块不再按技能类型/词条 id 写死分支：
+ *   - 类型机制（参数滚动、语义槽位、弹幕发射模式与常量）→ server/data/skill-mechanics.json
+ *   - 词条语义（skillOp 算子 / hitEffect / castEffect）      → server/data/affix-registry.json
+ *   代码只解释表里声明的 pattern / op 名称；新增类型或词条 = 改表，不改此处（未登记项由 gate 拦下）。
+ * 语义（B6 登记，未变）：
  *   - sid = templateId（物品链 B20 可另行分配实例 uid，引擎 cooldowns 键用 sid）。
  *   - instantiateSkill 复用 items.generateSkillItem 的参数随机（同构，避免双实现）。
  *   - 消耗补偿：costDeltaByTier 按**插件品质**的 costDeltaBase 缩放：档位 i 增量 = costDeltaBase[quality] × (i+1)（D-113，S-2b rare tier1=mp+3）。
  *   - 减耗类（costDeltaByTier=null）：cost × (1−v) 后 **ceil**（S-3）。
- *   - 特殊效果词条（stun/knockback/pull/dot/true_dmg/crit/lifesteal/cast_buff）只登记进 skill.affixes，命中结算（B9）读取。
+ *   - 命中类词条（stun/knockback/pull/dot/true_dmg）登记进 skill.affixes，由 engine 步骤 9 结算；
+ *     释放类词条（cast_buff）登记进 skill.castEffects，由 engine 步骤 6 入效果队列；
+ *     概率类词条（crit_chance/lifesteal）登记进 skill.specials，随弹幕 payload 传给命中结算（B9）。
  */
 const { nullLogger } = require('../../shared/log.js');
 const items = require('./items.js');
@@ -16,10 +23,34 @@ const field = require('./field.js');
 
 const QUALITIES = require('../data/qualities.json');
 const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
+const REGISTRY = require('../data/affix-registry.json');
+const MECHANICS = require('../data/skill-mechanics.json');
 const skillMap = Object.fromEntries(SKILL_TEMPLATES.map((t) => [t.id, t]));
 
-// 指定档位 → 实例化后的词条值（生成层级已缩放；本模块接收插件实例或构造插件）
-function makeSkills(logger) {
+// "rangePx" → skill.range × cellPx；其余字段名 → 原值
+function fieldValue(skill, ref) {
+  if (typeof ref !== 'string') return ref;
+  if (ref.endsWith('Px')) {
+    const base = ref.slice(0, -2);
+    return skill[base] * field.CELL_PX;
+  }
+  return skill[ref];
+}
+
+// 落点：施法者前方 rangePx（clamp 到场内），垂直类与覆盖格共用
+function impactXOf(skill, caster, emit) {
+  const reach = fieldValue(skill, emit.impactFrom);
+  return field.clampX(caster.x + caster.facing * reach);
+}
+
+function makeSkills(logger, tables) {
+  // 机制表可注入（与 logger 注入同构）：缺省用 server/data/*.json；注入用于单测覆盖防御分支与未来扩展。
+  const T = tables || {};
+  const MECHANICS_ = T.mechanics || MECHANICS;
+  const REGISTRY_ = T.registry || REGISTRY;
+  const AFFIXES_ = REGISTRY_.affixes;
+  const B = MECHANICS_.bounds;
+  const P = MECHANICS_.precision;
   const L = logger || nullLogger;
 
   // 实例化出战技能（S-1：可随机参数；复用 items.generateSkillItem 参数随机逻辑）
@@ -35,59 +66,91 @@ function makeSkills(logger) {
       bulletLevel: p.bulletLevel,
       range: p.range, bulletCount: p.bulletCount, area: p.area, distance: p.distance,
       passThroughEnemy: p.passThroughEnemy, dealDamage: p.dealDamage, fullDodgeDuring: p.fullDodgeDuring,
-      falloff: p.falloff, affixes: [],
+      falloff: p.falloff, affixes: [], specials: {}, castEffects: [],
     };
     L.debug('skills', 'skill.instantiate', `skill ${t.id} ${qualityId}`, { templateId: t.id, quality: qualityId });
     return skill;
   }
 
-  // 插件叠加（S-2/S-3/S-4；纯函数返回新实例）
+  // 词条算子解释器（op 名称取自词条注册表；未知 op → warn 并跳过）
+  function applySkillOp(skill, op, v, pluginCtx) {
+    switch (op.op) {
+      case 'scalePct': {
+        const digits = P[op.round] === undefined ? P.stat : P[op.round];
+        const scale = Math.pow(10, digits);
+        return { ...skill, [op.field]: Math.round(skill[op.field] * (1 + v) * scale) / scale };
+      }
+      case 'sub': {
+        const min = op.min === undefined ? 0 : (B[op.min] === undefined ? 0 : B[op.min]);
+        return { ...skill, [op.field]: Math.max(min, skill[op.field] - v) };
+      }
+      case 'add': {
+        if (skill[op.field] === undefined) return skill; // 该类型无此字段 → 词条不生效（如近战无弹幕数）
+        const min = op.min === undefined ? 0 : (B[op.min] === undefined ? 0 : B[op.min]);
+        return { ...skill, [op.field]: Math.max(min, skill[op.field] + v) };
+      }
+      case 'addSlot': {
+        // 语义槽位 → 具体字段由类型机制表声明；槽位缺席（如 melee 射程不可增强）= 不生效
+        const mech = MECHANICS_.types[skill.type];
+        const target = mech && mech.slots ? mech.slots[op.slot] : undefined;
+        if (!target || skill[target] === undefined) return skill;
+        return { ...skill, [target]: skill[target] + v };
+      }
+      case 'addSpecial': {
+        const cap = REGISTRY_.caps.probability;
+        const cur = (skill.specials && skill.specials[op.field]) || 0;
+        return { ...skill, specials: { ...(skill.specials || {}), [op.field]: Math.min(cap, cur + v) } };
+      }
+      case 'scaleCostCeil': {
+        if (pluginCtx && pluginCtx.costDeltaByTier !== null) return skill; // 非减耗类不应用（S-3 只对减耗类）
+        const factor = 1 - v;
+        const cost = {};
+        for (const dim of MECHANICS_.costDims) cost[dim] = Math.ceil(skill.cost[dim] * factor);
+        return { ...skill, cost };
+      }
+      default:
+        L.warn('skills', 'skill.plugin.unknown', `未登记算子 ${op.op}（affix-registry.json）`, { op: op.op });
+        return skill;
+    }
+  }
+
+  // 释放类词条 → 效果队列条目（engine 步骤 6 入队；duration 缺省取注册表 fallbackDuration）
+  function buildCastEffect(spec, params) {
+    const eff = { kind: spec.kind, stat: spec.stat };
+    if (spec.deltaFrom) eff.delta = params[spec.deltaFrom];
+    const dur = spec.durationFrom ? params[spec.durationFrom] : undefined;
+    eff.remaining = dur === undefined ? spec.fallbackDuration : dur;
+    return eff;
+  }
+
+  // 插件叠加（S-2/S-3/S-4；纯函数返回新实例）——循环体内无 id/type 分支
   function applySkillPlugins(skill, plugins) {
     let out = {
       ...skill, cost: { ...skill.cost }, affixes: [...skill.affixes],
-      multiplier: skill.multiplier, cooldown: skill.cooldown, bulletLevel: skill.bulletLevel,
+      specials: { ...(skill.specials || {}) },
+      castEffects: [...(skill.castEffects || [])],
     };
     const costBaseOf = QUALITIES.costDeltaBase;
     for (const p of (plugins || [])) {
-      // 特殊效果词条登记（命中结算 B9 读取）
-      const specials = (p.affixes || []).filter((a) => ['stun', 'knockback', 'pull', 'dot', 'true_dmg', 'crit_chance', 'lifesteal', 'cast_buff'].includes(a.id));
-      if (specials.length) out = { ...out, affixes: [...out.affixes, ...specials] };
-      // 基础类词条
-      const mult = (p.affixes || []).find((a) => a.id === 'mult_up');
-      const cdDown = (p.affixes || []).find((a) => a.id === 'cooldown_down');
-      const rangeUp = (p.affixes || []).find((a) => a.id === 'range_plus');
-      const bulletUp = (p.affixes || []).find((a) => a.id === 'bullet_plus');
-      const levelUp = (p.affixes || []).find((a) => a.id === 'level_up');
-      const distUp = (p.affixes || []).find((a) => a.id === 'distance_plus');
-      const costDown = (p.affixes || []).find((a) => a.id === 'cost_down');
-      if (mult) out.multiplier = Math.round(out.multiplier * (1 + mult.params.v) * 1000) / 1000;
-      if (cdDown) out.cooldown = Math.max(0, out.cooldown - cdDown.params.v);
-      if (rangeUp) {
-        if (out.type === 'straight') out.range = out.range + rangeUp.params.v;
-        else if (out.type === 'vertical') out.range = out.range + rangeUp.params.v;
-        else if (out.type === 'displacement') out.distance = out.distance + rangeUp.params.v;
-        // melee 范围不可增强（登记，B21 校准）
+      for (const a of (p.affixes || [])) {
+        const def = AFFIXES_[a.id];
+        const v = (a.params && a.params.v) || 0;
+        if (!def) {
+          L.warn('skills', 'skill.plugin.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
+          continue;
+        }
+        if (def.skillOp) out = applySkillOp(out, def.skillOp, v, p);
+        if (def.hitEffect) out = { ...out, affixes: [...out.affixes, { id: a.id, params: a.params }] };
+        if (def.castEffect) out = { ...out, castEffects: [...out.castEffects, buildCastEffect(def.castEffect, a.params)] };
       }
-      if (bulletUp && out.type === 'straight') out.bulletCount = out.bulletCount + bulletUp.params.v;
-      if (levelUp) out.bulletLevel = Math.max(1, out.bulletLevel - levelUp.params.v); // S-4 下限 1（D-115）
-      if (distUp && out.type === 'displacement') out.distance = out.distance + distUp.params.v;
       // 消耗补偿（D-113）：非减耗类 + costDeltaBase[quality]×tier（缺失品质 = common 基准，L9 读表）
       if (p.costDeltaByTier !== null && p.tier) {
         const base = costBaseOf[p.quality] ?? costBaseOf.common;
         const delta = base * p.tier;
         const dims = p.costDeltaByTier || {};
-        for (const dim of ['hp', 'mp', 'sp']) {
-          if (Array.isArray(dims[dim])) out.cost[dim] = out.cost[dim] + delta;
+        for (const dim of MECHANICS_.costDims) {
+          if (Array.isArray(dims[dim])) out.cost = { ...out.cost, [dim]: out.cost[dim] + delta };
         }
-      }
-      // 减耗类（costDeltaByTier=null）：ceil 应用（S-3）
-      if (costDown && p.costDeltaByTier === null) {
-        const factor = 1 - costDown.params.v;
-        out.cost = {
-          hp: Math.ceil(out.cost.hp * factor),
-          mp: Math.ceil(out.cost.mp * factor),
-          sp: Math.ceil(out.cost.sp * factor),
-        };
       }
       L.debug('skills', 'skill.plugin.apply', `plugin ${p.id || '?'} tier ${p.tier || 1}`, { pluginId: p.id, tier: p.tier });
     }
@@ -117,85 +180,117 @@ function makeSkills(logger) {
     return { ok: true, caster: next };
   }
 
-  // 覆盖格集合（T-SK-3/F-20..27 语义；melee/vertical 用；skill.area(trace) 记录 px 区间，§4.6）
+  // 覆盖格集合（T-SK-3/F-20..27 语义；由类型机制表 cellsFrom/impactFrom 决定锚点）
   function coveredCellRanges(skill, caster) {
-    if (skill.type === 'melee') {
-      const cells = field.cellRange(skill.range[0], skill.range[1], caster.facing, caster.x);
-      L.trace('skills', 'skill.area', `melee cells=${cells.join(',')}`, { type: 'melee', cells });
-      return cells;
+    const mech = MECHANICS_.types[skill.type];
+    if (!mech || !mech.emit || !mech.emit.cellsFrom) return [];
+    const span = skill[mech.emit.cellsFrom];
+    if (!Array.isArray(span)) return [];
+    const anchor = mech.emit.impactFrom ? impactXOf(skill, caster, mech.emit) : caster.x;
+    const cells = field.cellRange(span[0], span[1], caster.facing, anchor);
+    if (mech.emit.impactFrom) {
+      L.trace('skills', 'skill.area', `${skill.type} cells=${cells.join(',')} impact=${anchor}`, { type: skill.type, cells, impactX: anchor });
+    } else {
+      L.trace('skills', 'skill.area', `${skill.type} cells=${cells.join(',')}`, { type: skill.type, cells });
     }
-    if (skill.type === 'vertical') {
-      const impact = field.clampX(caster.x + caster.facing * skill.range * field.CELL_PX);
-      const cells = field.cellRange(skill.area[0], skill.area[1], caster.facing, impact);
-      L.trace('skills', 'skill.area', `vertical cells=${cells.join(',')} impact=${impact}`, { type: 'vertical', cells, impactX: impact });
-      return cells;
-    }
-    return [];
+    return cells;
   }
 
-  // 释放指令（S-6..S-9）：{type:'cast', skill, bullets, move?, impactX?}
+  // 释放指令（S-6..S-9）：{type:'cast', skill, bullets, move?, impactX?, castEffects?}
   function buildSkillAction(skill, caster) {
-    const payload = { multiplier: skill.multiplier, falloff: skill.falloff, affixes: skill.affixes };
-    const x = caster.x;
-    const dir = caster.facing;
-    const CELL = field.CELL_PX;
-    const bullets = [];
-
-    if (skill.type === 'melee') {
-      const cells = coveredCellRanges(skill, caster);
-      const originCell = field.cellOf(x);
-      for (const c of cells) {
-        bullets.push({
-          btype: 'aoe', srcType: 'melee', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
-          level: skill.bulletLevel, payload: { ...payload, distCells: Math.abs(c - originCell) },
-        });
-      }
-    } else if (skill.type === 'straight') {
-      for (let i = 0; i < skill.bulletCount; i++) {
-        bullets.push({
-          btype: 'straight', srcType: 'straight', x0: x, dir, v: skill.range * CELL, len: skill.range * CELL,
-          level: skill.bulletLevel, payload: { ...payload }, // 逐枚拷贝（审查 P2-2）
-        });
-      }
-    } else if (skill.type === 'vertical') {
-      const impact = field.clampX(x + dir * skill.range * CELL);
-      const cells = field.cellRange(skill.area[0], skill.area[1], dir, impact);
-      const impactCell = field.cellOf(impact);
-      for (const c of cells) {
-        bullets.push({
-          btype: 'aoe', srcType: 'vertical', x0: field.xCenter(c), v: 0, len: 0, dir: 0,
-          level: skill.bulletLevel, payload: { ...payload, distCells: Math.abs(c - impactCell) },
-        });
-      }
-      return { type: 'cast', skill, impactX: impact, bullets };
-    } else if (skill.type === 'displacement') {
-      // 路径弹幕（D-18/D-118）：声明路径起点格起每格一枚 0 速弹幕（与是否被碰撞截停无关）
-      if (skill.dealDamage) {
-        const targetCell = field.cellOf(field.clampX(x + dir * skill.distance * CELL));
-        const startCell = field.cellOf(x);
-        for (let c = startCell; dir > 0 ? c <= targetCell : c >= targetCell; c += dir) {
-          bullets.push({
-            btype: 'aoe', srcType: 'displacement', x0: field.xCenter(c), v: 0, len: 0, dir,
-            level: skill.bulletLevel, payload: { ...payload },
-            // 注意（审查 P2-3）：位移路径弹幕无 distCells——falloff 距离基准由 B9 命中结算时定义（当前位移技能 falloff 恒 0）
-          });
-        }
-      }
-      return {
-        type: 'cast', skill,
-        move: {
-          dir, cells: skill.distance,
-          passThroughEnemy: skill.passThroughEnemy,
-          dealDamage: skill.dealDamage,
-          fullDodgeDuring: skill.fullDodgeDuring,
-        },
-        bullets,
+    const mech = MECHANICS_.types[skill.type];
+    const payload = {
+      multiplier: skill.multiplier, falloff: skill.falloff, affixes: skill.affixes,
+      specials: skill.specials || {},
+    };
+    const action = { type: 'cast', skill, bullets: [], castEffects: skill.castEffects || [] };
+    if (mech && mech.move) {
+      action.move = {
+        dir: caster.facing,
+        cells: skill[mech.move.cellsFrom],
+        passThroughEnemy: skill.passThroughEnemy,
+        dealDamage: skill.dealDamage,
+        fullDodgeDuring: skill.fullDodgeDuring,
       };
     }
-    return { type: 'cast', skill, bullets };
+    if (!mech || !mech.emit) return action;
+    if (mech.emit.when && !skill[mech.emit.when]) return action; // 条件不满足（如位移技 dealDamage=false → 无路径弹幕）
+    const emitter = EMITTERS[mech.emit.pattern];
+    if (!emitter) {
+      L.warn('skills', 'skill.emit.unknown', `未登记发射模式 ${mech.emit.pattern}（skill-mechanics.json）`, { pattern: mech.emit.pattern });
+      return action;
+    }
+    const fired = emitter(skill, caster, mech, payload, coveredCellRanges);
+    action.bullets = fired.bullets;
+    if (mech.emit.exposeImpactX && fired.impactX !== undefined) action.impactX = fired.impactX;
+    return action;
   }
 
   return { instantiateSkill, applySkillPlugins, canCast, buildSkillAction, coveredCellRanges };
 }
 
-module.exports = Object.assign(makeSkills(), { withLogger: (logger) => makeSkills(logger) });
+// 弹幕构造：所有常量/字段名来自 skill-mechanics.json 的 bullet 描述
+function makeBullet(spec, skill, caster, ctx, payload) {
+  const bullet = {
+    btype: spec.btype,
+    srcType: spec.srcType,
+    x0: spec.origin === 'caster' ? caster.x : field.xCenter(ctx.cell),
+    v: spec.vFrom ? fieldValue(skill, spec.vFrom) : spec.v,
+    len: spec.lenFrom ? fieldValue(skill, spec.lenFrom) : spec.len,
+    dir: spec.dirFrom === 'facing' ? (ctx.dir === undefined ? caster.facing : ctx.dir) : spec.dir,
+    level: skill.bulletLevel,
+    payload: { ...payload },
+  };
+  if (spec.distCells && spec.distCells !== 'none' && ctx.distCells !== undefined) {
+    bullet.payload.distCells = ctx.distCells;
+  }
+  return bullet;
+}
+
+// 发射模式解释器（pattern 名取自 skill-mechanics.json；新增模式 = 在此登记一个函数）
+const EMITTERS = {
+  cellsFromRange(skill, caster, mech, payload, coveredCellRanges) {
+    const originCell = field.cellOf(caster.x);
+    const bullets = coveredCellRanges(skill, caster).map((c) => makeBullet(mech.emit.bullet, skill, caster, {
+      cell: c, distCells: Math.abs(c - originCell),
+    }, payload));
+    return { bullets };
+  },
+
+  repeatCount(skill, caster, mech, payload) {
+    const count = skill[mech.emit.countFrom];
+    const bullets = [];
+    for (let i = 0; i < count; i++) {
+      bullets.push(makeBullet(mech.emit.bullet, skill, caster, {}, payload)); // 逐枚拷贝（审查 P2-2）
+    }
+    return { bullets };
+  },
+
+  impactCells(skill, caster, mech, payload) {
+    const impact = impactXOf(skill, caster, mech.emit);
+    const impactCell = field.cellOf(impact);
+    const span = skill[mech.emit.cellsFrom];
+    const bullets = field.cellRange(span[0], span[1], caster.facing, impact).map((c) => makeBullet(mech.emit.bullet, skill, caster, {
+      cell: c, distCells: Math.abs(c - impactCell),
+    }, payload));
+    return { bullets, impactX: impact };
+  },
+
+  pathCells(skill, caster, mech, payload) {
+    const bullet = mech.emit.bullet;
+    const dir = bullet.dirFrom === 'facing' ? caster.facing : bullet.dir;
+    const targetCell = field.cellOf(field.clampX(caster.x + dir * skill[mech.move.cellsFrom] * field.CELL_PX));
+    const startCell = field.cellOf(caster.x);
+    const bullets = [];
+    for (let c = startCell; dir > 0 ? c <= targetCell : c >= targetCell; c += dir) {
+      bullets.push(makeBullet(bullet, skill, caster, { cell: c, dir }, payload));
+    }
+    return { bullets };
+  },
+};
+
+module.exports = Object.assign(makeSkills(), {
+  withLogger: (logger) => makeSkills(logger),
+  // 机制表注入（单测覆盖防御分支 / 未来扩展）；缺省 = server/data/*.json
+  withTables: (tables, logger) => makeSkills(logger, tables),
+});

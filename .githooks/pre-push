@@ -1,0 +1,9 @@
+#!/bin/sh
+# pre-push —— 推送前跑全量门禁（9 项：静态/架构/数据/一致性/日志/测试+覆盖率/黄金战斗/接口冒烟）
+set -e
+echo "[pre-push] 运行全量门禁：npm run gate …"
+node scripts/gate.js || {
+  echo "[pre-push] 门禁未通过（见上），推送被拒绝。禁止通过放宽阈值绕过。" >&2
+  exit 1
+}
+echo "[pre-push] 门禁通过。"

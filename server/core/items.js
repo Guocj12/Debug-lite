@@ -15,14 +15,18 @@ const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 const ITEMS_CONFIG = require('../data/items-config.json');
 
-// 概率类词条 id → special 字段（I-8d/e、R-6）
-const PROB_AFFIX_TO_SPECIAL = {
-  dodge_chance: 'dodgeChance',
-  lifesteal: 'lifesteal',
-  crit_chance: 'critChance',
-};
-const FLAT_STATS = ['hp', 'atk', 'def', 'sp', 'mp'];
-const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
+// 机制表（数据驱动）：词条语义 + 技能类型机制。代码只做解释，不按 id/类型写分支。
+const REGISTRY = require('../data/affix-registry.json');
+const MECHANICS = require('../data/skill-mechanics.json');
+const AFFIXES = REGISTRY.affixes;
+const FLAT_STATS = REGISTRY.stats;                  // 五维（面板聚合作用域）
+const TIERS = QUALITIES.qualities.map((q) => q.id); // 段位序 = 品质表顺序（单一来源，勿另立字面量）
+const STAT_PRECISION = MECHANICS.precision.stat;
+
+// 已登记词条；未登记 = 配置错误（gate 会拦；运行期记 warn 并跳过，不静默失效）
+function affixDef(id) {
+  return Object.prototype.hasOwnProperty.call(AFFIXES, id) ? AFFIXES[id] : null;
+}
 
 let uidSeq = 0;
 const qMap = Object.fromEntries(QUALITIES.qualities.map((q) => [q.id, q]));
@@ -89,9 +93,10 @@ function makeItems(logger) {
     return tierOfValue(rand(rng, q.statRange[0], q.statRange[1]), q);
   }
 
-  // 保留 2 位小数（100 = 精度常量，非战斗数值，门禁豁免见 // cl:）
+  // 保留 precision.stat 位小数（精度来自 skill-mechanics.json；非战斗数值）
   function round2(x) {
-    return Math.round(x * 100) / 100; // cl:100
+    const scale = Math.pow(10, STAT_PRECISION);
+    return Math.round(x * scale) / scale;
   }
 
   // 生成角色物品（I-2/I-4；T-RO-7：物品携带模板 regen）
@@ -124,38 +129,47 @@ function makeItems(logger) {
     return item;
   }
 
-  // 生成技能物品（S-1：可随机参数 × 系数取整 + 下限 D-115；bulletLevel/cost/falloff 不随品质）
+  // 生成技能物品（S-1）：参数滚动方式全部来自 skill-mechanics.json（types[t.type].params）
+  //   pair    = 数值对原样拷贝（melee.range / vertical.area）
+  //   intMin  = ×品质系数后取整，下限取 bounds.min<字段>
+  //   copy    = 标量/布尔原样拷贝（displacement 的 pass/dealDamage/fullDodgeDuring）
   function generateSkillItem(template, qualityId, rng) {
     const q = getQuality(qualityId);
     const t = typeof template === 'string' ? skillMap[template] : template;
+    const mech = MECHANICS.types[t.type];
+    if (!mech) throw new RangeError(`未登记技能类型 ${t.type}（skill-mechanics.json）`);
     const k = rand(rng, q.statRange[0], q.statRange[1]);
+    const cost = {};
+    for (const dim of MECHANICS.costDims) cost[dim] = t.baseCost[dim];
     const params = {
       multiplier: round2(t.baseMultiplier * k),
-      cost: { hp: t.baseCost.hp, mp: t.baseCost.mp, sp: t.baseCost.sp },
-      cooldown: Math.max(0, Math.round(t.cooldown * k)),
+      cost,
+      cooldown: Math.max(MECHANICS.bounds.minCooldown, Math.round(t.cooldown * k)),
       bulletLevel: t.bulletLevel,
     };
-    if (t.type === 'melee') params.range = [t.range[0], t.range[1]];
-    else if (t.type === 'straight') {
-      params.range = Math.max(1, Math.round(t.range * k));
-      params.bulletCount = Math.max(1, Math.round(t.bulletCount * k));
-    } else if (t.type === 'vertical') {
-      params.range = Math.max(1, Math.round(t.range * k));
-      params.area = [t.area[0], t.area[1]];
-    } else if (t.type === 'displacement') {
-      params.distance = Math.max(1, Math.round(t.distance * k));
-      params.passThroughEnemy = t.passThroughEnemy;
-      params.dealDamage = t.dealDamage;
-      params.fullDodgeDuring = t.fullDodgeDuring;
+    for (const [field, mode] of Object.entries(mech.params)) {
+      if (mode === 'pair') {
+        params[field] = [t[field][0], t[field][1]];
+      } else if (mode === 'intMin') {
+        const boundKey = `min${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+        const min = MECHANICS.bounds[boundKey] === undefined ? 1 : MECHANICS.bounds[boundKey];
+        params[field] = Math.max(min, Math.round(t[field] * k));
+      } else {
+        params[field] = t[field];
+      }
     }
     params.falloff = t.falloff;
     const slotCount = rollSlotCount('skill', qualityId, rng);
     const slots = [];
-    const totalWeight = t.slotWeights.basic + t.slotWeights.special;
+    const totalWeight = Object.values(t.slotWeights).reduce((a, b) => a + b, 0);
     while (slots.length < slotCount) {
       let r = rand(rng, 0, 1) * totalWeight;
-      const type = r < t.slotWeights.basic ? 'basic' : 'special';
-      slots.push({ type, pluginUid: null });
+      let chosen = null;
+      for (const [type, w] of Object.entries(t.slotWeights)) {
+        r -= w;
+        if (r < 0) { chosen = type; break; }
+      }
+      slots.push({ type: chosen || Object.keys(t.slotWeights)[0], pluginUid: null });
     }
     const item = {
       uid: `item_${uidSeq++}`, kind: 'skill', templateId: t.id, name: t.name, quality: qualityId,
@@ -174,11 +188,13 @@ function makeItems(logger) {
     const def = rng.pick(pool);
     const coeff = rand(rng, q.statRange[0], q.statRange[1]);
     const tier = tierOfValue(coeff, q);
-    // 词条入包：flat 类 **即时取整**（I-6b：4.48 → +4），百分比类保留 2 位（I-6a：0.096）——R-5b 聚合依赖该语义
-    const affixes = def.affixes.map((a) => ({
-      id: a.id, desc: a.desc,
-      params: { ...a.params, v: a.id.endsWith('_flat') ? Math.round(a.params.v * coeff) : round2(a.params.v * coeff) },
-    }));
+    // 词条入包：滚动方式取自词条注册表 roll（int = 即时取整 I-6b；stat = 保留 precision.stat 位 I-6a）
+    const affixes = def.affixes.map((a) => {
+      const reg = affixDef(a.id);
+      if (!reg) L.warn('items', 'items.affix.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
+      const rounded = (reg && reg.roll === 'int') ? Math.round(a.params.v * coeff) : round2(a.params.v * coeff);
+      return { id: a.id, desc: a.desc, params: { ...a.params, v: rounded } };
+    });
     const plugin = {
       uid: `item_${uidSeq++}`, kind, id: def.id, name: def.name, desc: def.desc,
       slot: def.slot, category: def.category, quality: qualityId,
@@ -220,27 +236,28 @@ function makeItems(logger) {
     return generatePlugin(kind, quality, rng, pool);
   }
 
-  // 词条聚合（D-45/D-46，I-8/R-5/R-6）：base × (1+Σpct) + Σflat → 一次取整；概率类累加封顶 1
-  // 作用域：五维百分比/数值 + 概率类；regen 词条（hp/sp/mp_regen）由 roles 层叠加到模板 regen（R-4，B5）。
+  // 词条聚合（D-45/D-46，I-8/R-5/R-6）：base × (1+Σpct) + Σflat → 一次取整；概率类累加封顶 caps.probability
+  // 词条去向全部由 affix-registry.json 声明：agg（面板）、special（概率）、regen（roles 层叠加）、
+  // skillOp/hitEffect/castEffect（技能链，由 skills/engine 消费）。代码不按 id 写分支。
   function applyAffixes(baseStats, affixes) {
     const stats = { ...baseStats };
     const pct = {};
     const flat = {};
     const special = {};
     for (const a of affixes || []) {
-      const aid = a.id;
+      const def = affixDef(a.id);
       const v = a.params ? a.params.v : 0;
-      if (PROB_AFFIX_TO_SPECIAL[aid]) {
-        const key = PROB_AFFIX_TO_SPECIAL[aid];
-        special[key] = Math.min(1, (special[key] || 0) + v);
-      } else if (aid.endsWith('_pct') || aid === 'sp_cap' || aid === 'mp_cap') {
-        const stat = aid === 'sp_cap' ? 'sp' : aid === 'mp_cap' ? 'mp' : aid.replace('_pct', '');
-        pct[stat] = (pct[stat] || 0) + v;
-      } else if (aid.endsWith('_flat')) {
-        const stat = aid.replace('_flat', '');
-        if (FLAT_STATS.includes(stat)) flat[stat] = (flat[stat] || 0) + v;
+      if (!def) {
+        L.warn('items', 'items.affix.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
+        continue;
       }
-      // 其它词条（regen/dot/stun 等特殊效果）不在五维聚合作用域内，由对应系统读取
+      if (def.agg) {
+        if (def.agg.mode === 'pct') pct[def.agg.target] = (pct[def.agg.target] || 0) + v;
+        else flat[def.agg.target] = (flat[def.agg.target] || 0) + v;
+      } else if (def.special) {
+        special[def.special] = Math.min(REGISTRY.caps.probability, (special[def.special] || 0) + v);
+      }
+      // regen 词条（def.regen）由 roles 层叠加；技能词条（def.skillOp/hitEffect/castEffect）由技能链读取
     }
     for (const stat of FLAT_STATS) {
       let base = stats[stat] === undefined ? 0 : stats[stat];

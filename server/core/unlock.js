@@ -8,14 +8,28 @@
  * 本模块保留段位原语（tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout）。
  */
 const { nullLogger } = require('../../shared/log.js');
-const UNLOCK = require('../data/unlock.json').unlocks;
+const AI_NODES = require('../data/ai-nodes.json');
+const UNLOCK_DATA = require('../data/unlock.json');
+const UNLOCK = UNLOCK_DATA.unlocks;
+const PERMISSIONS = UNLOCK_DATA.nodePermissions || {};
 const ROLE_TEMPLATES = require('../data/role-templates.json').roleTemplates;
 const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 
-const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
-// 基础节点恒可用（examples/09-unlock §1：common=10 基础 + if = 11）
-const BASE_NODES = ['seq', 'literal', 'get', 'bullets', 'var', 'set', 'getVar', 'arith', 'cmp', 'action'];
+const TIERS = require('../data/qualities.json').qualities.map((q) => q.id); // 段位序 = 品质表顺序（单一来源）
+// 基础节点恒可用（单一数据源 ai-nodes.json；examples/09-unlock §1：common=10 基础 + if = 11）
+const BASE_NODES = AI_NODES.base;
+const REAL_NODES = new Set(AI_NODES.nodes);
+
+// 权限名 → 真实节点类型（nodePermissions）：
+//   ① 显式 grants 覆盖；② implemented:false 不授予任何节点（预留权限，避免编辑器插入不可用积木）；
+//   ③ 未声明者 = 权限名本身即真实节点类型。
+function grantsOf(perm) {
+  const decl = PERMISSIONS[perm];
+  if (decl && decl.implemented === false) return [];
+  if (decl && Array.isArray(decl.grants)) return decl.grants;
+  return REAL_NODES.has(perm) ? [perm] : [];
+}
 
 const roleMap = Object.fromEntries(ROLE_TEMPLATES.map((r) => [r.id, r]));
 const skillMap = Object.fromEntries(SKILL_TEMPLATES.map((s) => [s.id, s]));
@@ -27,27 +41,40 @@ function tierIndex(tier) {
   return i === -1 ? null : i;
 }
 
-// 增量表（unlock.json 每段位新解锁的节点；10 基础 + 累计 = 该段位可用集）
+// 增量表（unlock.json 每段位新解锁的权限名；10 基础 + 累计展开 = 该段位可用**节点类型**集）
 const NODE_GAIN = Object.fromEntries(UNLOCK.map((u) => [u.tier, u.aiNodes]));
 
 function makeUnlock(logger) {
   const L = logger || nullLogger;
 
-  // 该段位可用节点全集（继承低段位）
-  function availableNodes(tier) {
+  // 累计权限名（含低段位继承）
+  function permissionsAt(tier) {
     const n = tierIndex(tier);
     if (n === null) return [];
-    const nodes = [...BASE_NODES];
+    const perms = [];
     for (let i = 0; i <= n; i++) {
-      for (const nd of NODE_GAIN[TIERS[i]] || []) nodes.push(nd);
+      for (const p of NODE_GAIN[TIERS[i]] || []) perms.push(p);
+    }
+    return perms;
+  }
+
+  // 该段位可用**节点类型**全集（继承低段位；权限名经 nodePermissions 展开并去重）
+  function availableNodes(tier) {
+    if (tierIndex(tier) === null) return [];
+    const nodes = [...BASE_NODES];
+    for (const perm of permissionsAt(tier)) {
+      for (const nd of grantsOf(perm)) if (!nodes.includes(nd)) nodes.push(nd);
     }
     return nodes;
   }
 
-  // 节点是否在该段位已解锁（U-2）
+  // 节点/权限是否在该段位已解锁（U-2）：
+  //   - 真实节点类型 → 查展开集；
+  //   - 权限别名（如 while）→ 查权限集，但必须真的展开出节点才算可用；
+  //   - implemented:false 的预留权限（arith_ext）恒为 false（宁缺勿错：不让编辑器插入不可用积木）。
   function isUnlocked(tier, key) {
-    const unlocked = availableNodes(tier);
-    const hit = unlocked.includes(key);
+    const hit = availableNodes(tier).includes(key) ||
+      (permissionsAt(tier).includes(key) && grantsOf(key).length > 0);
     L.debug('unlock', 'unlock.check', `tier=${tier} key=${key} -> ${hit}`, { tier, key, hit });
     return hit;
   }

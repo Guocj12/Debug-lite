@@ -12,8 +12,10 @@
     "test": "node --test --test-isolation=none tests/**/*.test.js",
     "cov": "node --test --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=90 --test-isolation=none tests/**/*.test.js",
     "gate": "node scripts/gate.js",
+    "check:docs": "node scripts/check-docs.js",
     "demo": "node scripts/demo.js",
     "demo:log": "node scripts/demo.js --log-level trace",
-    "cli": "node cli/index.js"
+    "cli": "node cli/index.js",
+    "hooks:install": "git config core.hooksPath .githooks"
   }
 }

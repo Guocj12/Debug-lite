@@ -16,10 +16,12 @@ const skillsMod = require('./skills.js');
 const effectsMod = require('./effects.js');
 const bulletsMod = require('./bullets.js');
 
-const ACTIONS = new Set(['move_left', 'move_right', 'dodge_left', 'dodge_right', 'wait', 'defend']);
+const ACTIONS = new Set(['move_left', 'move_right', 'dodge_left', 'dodge_right', 'wait', 'defend', 'turn']);
 const round1 = Math.round;
 // L9：全部战斗数值默认自 battle-config.json（createBattle 覆盖注入）；引擎无字面量兜底
 const DEFAULT_CFG = require('../data/battle-config.json');
+// 词条语义注册表（命中类/释放类词条由本模块按表结算，不按 id 写分支）
+const AFFIXES = require('../data/affix-registry.json').affixes;
 
 function createBattle(cfgIn, options) {
   const opts = options || {};
@@ -47,24 +49,31 @@ function createBattle(cfgIn, options) {
   const fieldApi = field.withLogger(logger);
   const CELL = cfg.cellPx;
 
-  // ---- 完整伤害链路（systems/07-engine.md §4.4 八步；§4.5 背击；D-40..D-46/D-50/D-51）----
-  // params: {mult, trueDamage, backstab, critRng, affixes, sourceDir}；defender.dodging（dodge 行动叠加 bonus）
+  // ---- 完整伤害链路（systems/07-engine.md §4.4 八步；§4.5 背击；D-40..D-46/D-50/D-51/D-72）----
+  // params: {mult, trueDamage, backstab, critRng, affixes, specials, sourceDir, hitUid}
   function dealDamage(attacker, defender, params) {
     const p = params || {};
     const rng = p.critRng || { chance: () => 0 };
+    // 步骤 0 D-72①：位移全程免疫（fullDodgeDuring 由步骤 6 置位）——不参与命中判定也不吃伤害
+    if (defender.fullDodgeDuring) {
+      logger.debug('damage', 'damage.dodge', `${defender.id} 位移全程免疫（D-72）`, { target: defender.id, fullDodgeDuring: true });
+      return { dmg: 0, dodged: true, fullDodgeDuring: true, dodgeChanceTotal: 0, lifesteal: 0 };
+    }
     // 步骤 1 闪避判定（§4.4：dodgeChance + 本 tick dodge 行动的 dodgeChanceBonus）
     const dodgeChanceTotal = Math.min(1, ((defender.special && defender.special.dodgeChance) || 0) + (defender.dodging ? cfg.dodgeChanceBonus : 0));
     if (dodgeChanceTotal > 0 && rng.chance(dodgeChanceTotal, 'dodge')) {
       logger.debug('damage', 'damage.dodge', `${defender.id} 闪避`, { target: defender.id, chance: dodgeChanceTotal });
       return { dmg: 0, dodged: true, dodgeChanceTotal };
     }
+    // 技能插件携带的概率类词条（crit_chance/lifesteal）叠加在面板值之上，累加封顶 1（D-46）
+    const skillSpecials = p.specials || {};
     // 步骤 2-3 攻防属性：defending def×1.6（D-43）；真实伤害不吃护甲（reduction=1）
     const mult = p.mult === undefined ? cfg.baseHitMul : p.mult;
     const def = defender.defending ? defender.def * cfg.defendDefMul : defender.def;
     const reduction = p.trueDamage ? 1 : 1 - def / (def + cfg.defK);
     // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击 ×1.5（critChance 消耗 crit 流）
     const backM = p.backstab ? cfg.backstab : 1;
-    const critChance = (attacker.special && attacker.special.critChance) || 0;
+    const critChance = Math.min(1, ((attacker.special && attacker.special.critChance) || 0) + (skillSpecials.critChance || 0));
     const crit = !!(critChance > 0 && rng.chance(critChance, 'crit'));
     const critM = crit ? cfg.crit : 1;
     // 步骤 6 倍率相乘后只取整一次（D-41），下限 1
@@ -72,7 +81,7 @@ function createBattle(cfgIn, options) {
     const dmg = Math.max(1, Math.floor(raw));
     // 步骤 7 吸血（角色伤害；基地不吸血由调用方不走本函数）
     let lifesteal = 0;
-    const ls = (attacker.special && attacker.special.lifesteal) || 0;
+    const ls = Math.min(1, ((attacker.special && attacker.special.lifesteal) || 0) + (skillSpecials.lifesteal || 0));
     if (ls > 0) {
       lifesteal = Math.floor(dmg * ls);
       attacker.hp = Math.min(attacker.maxHp, attacker.hp + lifesteal);
@@ -81,11 +90,11 @@ function createBattle(cfgIn, options) {
     // 步骤 8 应用 + damage.calc（每步中间值）
     defender.hp = Math.max(0, defender.hp - dmg);
     logger.debug('damage', 'damage.calc', `${attacker.id} -> ${defender.id} ${dmg}`, {
-      attacker: attacker.id, target: defender.id, mult, reduction, backM, critM,
+      attacker: attacker.id, target: defender.id, mult, reduction, backM, critM, critChance,
       backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, raw, dmg, lifesteal,
       hitUid: p.hitUid === undefined ? null : p.hitUid,
     });
-    // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害）
+    // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害/附加真实伤害）
     for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
     return { dmg, reduction, raw, mult, backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, lifesteal, dodged: false, dodgeChanceTotal };
   }
@@ -99,26 +108,37 @@ function createBattle(cfgIn, options) {
     return defender.facing > 0 ? attacker.attackerX < defender.x : attacker.attackerX > defender.x;
   }
 
-  // 附加效果入列（§4.4 步骤 9；登记：knockback/pull ±1 格、stun remaining 1、dot 持续 3 tick，B21 校准）
+  // 附加效果入列（§4.4 步骤 9）：结算规则全部来自词条注册表 hitEffect（affix-registry.json），
+  // 不再按 affix.id 写分支；D-72②：位移全程免疫期间不吃控制/持续/附加伤害。
   function addAffixEffect(attacker, defender, affix, sourceDir) {
+    const def = AFFIXES[affix.id];
+    if (!def || !def.hitEffect) return; // skillOp / castEffect 类词条不在此结算
+    const spec = def.hitEffect;
     const dir = sourceDir || attacker.facing || 1;
     const v = (affix.params && affix.params.v) || 1;
-    if (affix.id === 'stun') {
-      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: 0, remaining: 1, source: attacker.owner });
-    } else if (affix.id === 'knockback') {
-      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: dir * v, remaining: 1, source: attacker.owner });
-    } else if (affix.id === 'pull') {
-      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement: -dir * v, remaining: 1, source: attacker.owner });
-    } else if (affix.id === 'dot') {
-      effects.addEffect(battleState, { kind: 'continuous', target: defender.owner, stat: 'hp', delta: -v, remaining: 3, source: attacker.owner });
-    } else if (affix.id === 'true_dmg') {
-      const trueDmg = Math.max(0, Math.floor(v));
-      defender.hp = Math.max(0, defender.hp - trueDmg); // 附加真实伤害（登记：数值直扣，B21 校准）
+    if (defender.fullDodgeDuring) {
+      logger.debug('damage', 'damage.dodge', `${defender.id} 位移全程免疫控制（D-72）`, { target: defender.id, affixId: affix.id });
+      return;
+    }
+    if (spec.kind === 'control') {
+      const displacement = spec.displacementFrom ? (spec.sign || 1) * dir * v : (spec.displacement || 0);
+      effects.addEffect(battleState, { kind: 'control', target: defender.owner, displacement, remaining: spec.remaining, source: attacker.owner });
+      return;
+    }
+    if (spec.kind === 'continuous') {
+      const delta = (spec.sign || 1) * (spec.deltaFrom ? v : (spec.delta || 0));
+      effects.addEffect(battleState, { kind: 'continuous', target: defender.owner, stat: spec.stat, delta, remaining: spec.remaining, source: attacker.owner });
+      return;
+    }
+    if (spec.kind === 'flatTrueDamage') {
+      const trueDmg = Math.max(0, Math.floor(spec.amountFrom ? v : (spec.amount || 0)));
+      defender.hp = Math.max(0, defender.hp - trueDmg); // 附加真实伤害（数值直扣，B21 校准 D-128）
       logger.debug('damage', 'damage.calc', `${attacker.id} -> ${defender.id} ${trueDmg}（附加真实伤害）`, {
         attacker: attacker.id, target: defender.id, trueDamage: true, raw: trueDmg, dmg: trueDmg, lifesteal: 0,
       });
+      return;
     }
-    // cast_buff / crit_chance / lifesteal 词条：buff 结算属 B14 谱系，crit/lifesteal 已并入面板（B5）
+    logger.warn('damage', 'damage.affix.unknown', `未登记命中效果 ${spec.kind}（affix-registry.json）`, { affixId: affix.id, kind: spec.kind });
   }
 
   // ---- 行动归一化（D-80：白名单 + 非法 → wait）----
@@ -318,10 +338,22 @@ function createBattle(cfgIn, options) {
           plan.dir = act.move.dir;
           plan.pass = act.move.passThroughEnemy; // 看模板（D-18）
           plan.rawToX = p.x + act.move.dir * act.move.cells * CELL;
+          // D-72①②③：位移全程免疫——本 tick 生效（步骤 8 弹幕判定读该标志；步骤 9 伤害/控制免疫）
+          if (act.move.fullDodgeDuring) {
+            p.fullDodgeDuring = true;
+            logger.debug('engine', 'tick.step', `[6] ${owner} 位移全程免疫（fullDodgeDuring）`, { owner, tick });
+          }
+        }
+        // 释放类词条（castEffect，如 cast_buff）：入效果队列，下一 tick 起效（D-70）
+        for (const eff of (act.castEffects || [])) {
+          effects.addEffect(state, Object.assign({ target: owner, source: owner }, eff));
         }
       } else if (intent.type === 'defend') {
         plan.kind = 'defend';
         p.defending = true; // 本 tick def×1.6（D-43）
+      } else if (intent.type === 'turn') {
+        // 转向（06-field §4.2 / v3-design §10.2）：只翻转朝向，不移动、不消耗；写回在步骤 7 统一进行
+        plan.kind = 'turn';
       }
       plans[owner] = plan;
     }
@@ -330,6 +362,12 @@ function createBattle(cfgIn, options) {
     battleState._frameBullets = state.bullets.map((b) => ({ uid: b.uid, owner: b.owner, type: b.type, level: b.level, dir: b.dir, x: b.x0, len: b.len, v: b.v }));
 
     // 步骤 7：统一落位与角色碰撞（07 §1 五步）
+    //   转向写回（06-field §4.2：`turn` 翻转朝向；move/dodge/位移**不**改变朝向，D-50 的"位移后朝向"= 本步骤写回后的朝向）
+    for (const owner of ['p1', 'p2']) {
+      if (plans[owner].kind !== 'turn') continue;
+      players[owner].facing = -players[owner].facing;
+      logger.debug('engine', 'tick.step', `[7] ${owner} turn -> facing ${players[owner].facing}`, { owner, facing: players[owner].facing });
+    }
     const resolved = resolveActorCollision(
       { player: p1, x: p1.x, dir: plans.p1.dir, toX: plans.p1.rawToX, pass: plans.p1.pass },
       { player: p2, x: p2.x, dir: plans.p2.dir, toX: plans.p2.rawToX, pass: plans.p2.pass },
@@ -364,7 +402,8 @@ function createBattle(cfgIn, options) {
       const backstab = isBackstab({ attackerX: atk.x, attackerFacing: atk.facing }, def, h.srcType || 'aoe', h.dir);
       dealDamage(atk, def, {
         mult: h.payload.multiplier * h.falloffFactor,
-        critRng, backstab, affixes: h.payload.affixes || [], sourceDir: h.dir, hitUid: h.uid,
+        critRng, backstab, affixes: h.payload.affixes || [], specials: h.payload.specials || {},
+        sourceDir: h.dir, hitUid: h.uid,
       });
     }
     if (resolved.collision) {
@@ -373,22 +412,24 @@ function createBattle(cfgIn, options) {
       dealDamage(p2, p1, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p2.x }, p1, 'melee') });
     }
     if (resolved.baseHit) {
-      // 撞基地：atk×0.8 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）
+      // 撞基地：atk × baseHitMul 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）
       const base = battleState.bases[resolved.baseHit.owner];
       const atk = resolved.baseHit.by;
       const reduction = 1 - base.def / (base.def + cfg.defK);
-      base.hp = Math.max(0, base.hp - Math.max(1, Math.floor(atk.atk * cfg.collisionDmgMul * reduction)));
+      base.hp = Math.max(0, base.hp - Math.max(1, Math.floor(atk.atk * cfg.baseHitMul * reduction)));
     }
     stepLog(9, '伤害结算');
 
-    // 步骤 10：资源恢复（D-110 模板 regen，上限封顶）
+    // 步骤 10：资源恢复（D-110 模板 regen + 词条叠加的 hp_regen；上限封顶）
     for (const owner of ['p1', 'p2']) {
       const p = players[owner];
-      const before = { mp: p.mp, sp: p.sp };
+      const before = { hp: p.hp, mp: p.mp, sp: p.sp };
+      // hp 回复：不在 hp≤0（本 tick 已阵亡）时复活（死亡时序统一在步骤 12 判定）
+      if (p.regen.hp && p.hp > 0) p.hp = Math.min(p.maxHp, p.hp + p.regen.hp);
       p.mp = Math.min(p.maxMp, p.mp + (p.regen.mp || 0));
       p.sp = Math.min(p.maxSp, p.sp + (p.regen.sp || 0));
-      if (p.mp !== before.mp || p.sp !== before.sp) {
-        logger.trace('engine', 'resource.regen', `${owner} mp ${before.mp}->${p.mp} sp ${before.sp}->${p.sp}`, { owner, mp: p.mp, sp: p.sp });
+      if (p.hp !== before.hp || p.mp !== before.mp || p.sp !== before.sp) {
+        logger.trace('engine', 'resource.regen', `${owner} hp ${before.hp}->${p.hp} mp ${before.mp}->${p.mp} sp ${before.sp}->${p.sp}`, { owner, hp: p.hp, mp: p.mp, sp: p.sp });
       }
     }
     stepLog(10, '资源恢复');

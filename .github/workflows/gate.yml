@@ -1,0 +1,21 @@
+name: gate
+
+# CI：与本机 `npm run gate` 同一判决（零依赖、单进程，天然适配 CI）
+#   文档↔实现一致性（check-docs）单独跑一步，便于一眼看出是"代码/测试"还是"文档状态"出问题。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 文档 ↔ 实现一致性（scripts/check-docs.js）
+        run: node scripts/check-docs.js
+      - name: 全量门禁（9 项，含 478+ 用例与覆盖率阈值）
+        run: npm run gate

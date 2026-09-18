@@ -11,18 +11,25 @@ const ROLE_TEMPLATES = require('../../server/data/role-templates.json').roleTemp
 const SKILL_TEMPLATES = require('../../server/data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../../server/data/plugins.json').plugins;
 
-test('T-UL-1/U-1 累计与继承：availableNodes（mythic 全集 19；rare 含 if；common 不含 random）', () => {
+test('T-UL-1/U-1 累计与继承：availableNodes 只返回真实节点类型（mythic 全集 17；rare 含 if；common 不含 random）', () => {
   const common = ul.availableNodes('common');
   const rare = ul.availableNodes('rare');
   const mythic = ul.availableNodes('mythic');
   assert.ok(common.includes('if'), 'U-1a rare 含 if（继承在 rare 上验证）');
   assert.ok(rare.includes('if'), 'if 属于 common 基础');
   assert.ok(!common.includes('random'), 'U-1b common 不含 random');
-  assert.equal(mythic.length, 19, 'U-1c mythic 全集 19（09-unlock §1）');
+  // 2026-09-16 修正：availableNodes = **真实节点类型**（ai-nodes.json 单一数据源），
+  //   权限别名（while→loop）与未实现的预留权限（arith_ext）不再混入，避免编辑器插入服务端必拒的积木。
+  assert.equal(mythic.length, 17, 'U-1c mythic 全集 17（= ai-nodes.json nodes 长度）');
   for (const n of ['seq', 'literal', 'get', 'bullets', 'var', 'set', 'getVar', 'arith', 'cmp', 'action',
-    'if', 'loop', 'while', 'break', 'random', 'logic', 'arith_ext', 'function', 'call']) {
+    'if', 'loop', 'break', 'random', 'logic', 'function', 'call']) {
     assert.ok(mythic.includes(n), `mythic 应含 ${n}`);
   }
+  assert.ok(!mythic.includes('while'), '权限别名 while 不是节点类型');
+  assert.ok(!mythic.includes('arith_ext'), '未实现的预留权限不进入可用节点集');
+  // 权限语义：while 可用（别名折叠到 loop）；arith_ext 未实现 → 恒 false
+  assert.equal(ul.isUnlocked('rare', 'while'), true, 'while 权限在 rare 可用（折叠为 loop）');
+  assert.equal(ul.isUnlocked('epic', 'arith_ext'), false, 'arith_ext 未实现 → 不可用');
 });
 
 test('T-UL-1/U-2 isUnlocked 全分支（含未知 tier/key 保守拒绝）', () => {

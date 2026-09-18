@@ -1,0 +1,24 @@
+#!/bin/sh
+# pre-commit —— 硬性规则机器强制（docs/tasks.md §5「提交前必须更新任务清单」）
+#   规则 1：改动代码（server/ cli/ shared/ scripts/ tests/）的提交，必须在同一提交内更新
+#           docs/tasks.md（批次勾选）或 docs/progress.md（当前状态）。
+#   规则 2：提交前必须通过文档↔实现一致性检查（scripts/check-docs.js）。
+set -e
+
+code=$(git diff --cached --name-only | grep -E '^(server|cli|shared|scripts|tests)/' || true)
+docs=$(git diff --cached --name-only | grep -E '^docs/(tasks|progress)\.md$' || true)
+
+if [ -n "$code" ] && [ -z "$docs" ]; then
+  echo "[pre-commit] 拒绝提交：本次改动含代码，但没有更新任务清单。" >&2
+  echo "  规则：改代码的提交必须在同一提交内更新 docs/tasks.md（批次勾选）与/或 docs/progress.md（当前状态），" >&2
+  echo "        并在提交信息中写明批次号与实跑结果（npm test 用例数、npm run gate 结果）。" >&2
+  echo "  本次涉及的代码文件：" >&2
+  echo "$code" | sed 's/^/    /' >&2
+  echo "  （如确属无需更新清单的改动，请用 git commit --no-verify 并说明原因。）" >&2
+  exit 1
+fi
+
+node scripts/check-docs.js || {
+  echo "[pre-commit] 文档↔实现一致性检查未通过（见上），提交被拒绝。" >&2
+  exit 1
+}

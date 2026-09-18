@@ -1,37 +1,42 @@
 # 后端验收手册（给用户的检查流程）
 
-> 版本：v1　更新：2026-09-13（本次实测记录：B25 之后的全量验收）
+> 版本：v1　更新：2026-09-16（**本轮复核版本**；原 2026-09-13 记录见 §8 历史保留）
 > 用途：AI 声称"后端开发完成、测试全过"时，按本手册逐项复核并给出结论。
-> 适用对象：`dev` 分支（目前领先 `main` **36 个提交**；main 尚未合流，见 §7）。
+> 适用对象：**`main` 分支（HEAD `cee2ebf`，合流已完成）**。⚠ **`dev` 分支已不存在**（`git branch` = `main` / `deepseek-v4.1f` / `glm-5.3f`）；本文原以 `dev` 为对象，相关表述已于 2026-09-16 复核修正或降级为历史。
+> 阅读约定：**「现状」= 2026-09-16 实测；「计划中」= 未实现，不得当作可用能力验收**。
 
 ---
 
-## 0. 验收结论（2026-09-13 实测）
+## 0. 验收结论（2026-09-16 复核）
 
 | 项 | 结论 |
 |---|---|
-| 批次完成度 | ✅ 34/34 批勾选（P0~P5 全收口，`tasks.md §6`） |
+| 批次完成度 | ✅ **34 批**（P0~P5 全收口；真值 9+11+5+5+2+2 = 34。`tasks.md` 头部写"共 35 批"，与本表及 `progress.md`（已修正为 34）不一致；`tasks.md` 的修正不在本轮范围） |
 | 审查记录 | ✅ 34 份（`docs/reviews/P0-1.md … B25.md`，每批独立审查） |
-| 门禁实测 | ✅ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**（本条命令本人实跑） |
-| 测试规模 | ✅ 450 用例（B25 提交自报；gate 实测通过即含覆盖率阈值：core/ai/shared/cli 行≥90/分支≥85/函数≥90） |
-| CLI/HTTP 冒烟 | ✅ 全部符合预期（§4 记录） |
+| 门禁实测 | ✅ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**（2026-09-16 实跑） |
+| 测试规模 | ✅ **`npm test` = 459 通过 / 0 失败**（2026-09-16 实跑；gate 项 7 已含覆盖率阈值：core/ai/shared/cli 行≥90/分支≥85/函数≥90） |
+| CLI/HTTP 冒烟 | ✅ 按 §4 执行；⚠ 其中原 `ranked run --seed 11`（缺 `--loadout`）与裸 `wh list` 两个命令参数不足会以退出码 2 失败，已修正；`npm run demo` 相关步骤**不可执行**（见 §4 注） |
 | 确定性抽查 | ✅ 同 seed 内容级一致；golden 战斗 trace↔silent 逐帧一致（gate 项 8） |
-| 遗留项 | ⚠ 3 条非阻断项（§6：flake 观察中、`.review-*` 53 文件待清理、`main` 未合流） |
+| 遗留项 | ⚠ **2 条待处理 + 1 条已消解**（§6：L-1 flake 观察中、L-3 `.review-*` 53 文件待清理；L-5 `main` 合流**已完成**） |
+| 前端 / 在线服务 | ⏳ **均未开始**（P6 无任何前端代码；P7 计划中 B27–B33，代码 0 行） |
 
-**结论：可以接受。** 后端"完成"属实；建议合流 `main` 前先处理 §6 的两条仓库卫生项。
+**结论：可以接受。** 后端"完成"属实（限 P0–P5）；P6/P7 属**计划中**，不在本次验收范围。原 §8 的"前端 F0–F7 全部落地"结论已于 2026-09-16 复核判定**不成立**，降级为历史记录。
 
 ---
 
 ## 1. 证据链（先在纸上核对，10 分钟）
 
 ```bash
-git log --oneline -6 dev            # 应看到 B21…B25 收口提交，消息含用例数与 gate 结果
-git status --short                  # 工作区应干净（除进行中批次）
-Select-String docs\tasks.md -Pattern '`\[x\]`'   # 34/34 批勾选
-Get-ChildItem docs\reviews -File    # 34 份审查记录；每批应有「审查 → PASS/FAIL→PASS」结论
+git branch --show-current              # 应为 main（dev 分支已不存在）
+git log --oneline -6                   # 应看到 B25 收口提交 (6317b3f/ecdd7d4 等) 与前端相关提交；HEAD = cee2ebf
+git status --short                     # 工作区可含未提交的前端文档 v3 改动（2026-09-16 现状）
+Select-String docs\tasks.md -Pattern '\[x\]'   # 批次勾选（注意：tasks.md 头部计数"共 35 批"与实际 34 批不一致，以 §0 为准）
+Get-ChildItem docs\reviews -File       # 34 份审查记录；每批应有「审查 → PASS/FAIL→PASS」结论
 ```
 
 **判定**：提交消息、勾选数、审查记录三者齐 → PASS。
+
+> 2026-09-16 复核：`docs/reviews/` 实测 **34** 份；`git ls-files ".review-*"` 实测 **53** 个（见 §6 L-3）。
 
 ## 2. 门禁（机器判决，唯一硬指标）
 
@@ -55,7 +60,7 @@ npm run gate
 ```bash
 npm run cov        # 末尾应显示行/分支/函数覆盖（四目录达标）
 ```
-- `npm test` 与 `npm run cov` 应同为 **450 用例 / 0 失败**（B25 之后）。
+- `npm test` 与 `npm run cov` 应同为 **459 通过 / 0 失败**（2026-09-16 复核实测 `npm test` = 459/0；`cov` 本轮未单独实跑，但 gate 项 7 已含同一阈值判定）。
 - gateway 已含覆盖率判定，故 `npm run gate` 通过即可视为覆盖达标；`cov` 用于看明细。
 
 ## 4. 活体冒烟（起服务后逐条执行）
@@ -67,11 +72,15 @@ npm run cli -- data battle-config            # 返回完整数据表
 npm run cli -- box --seed 42 --tier rare --times 2   # 返回 2 件物品；重复执行仅 uid 不同（内容一致）
 npm run cli -- ai validate --file good.json --tier common    # {ok:true}
 npm run cli -- ai validate --file bad.json  --tier common    # 退出码 1，错误含 path+code+message
-npm run cli -- ai battle --file good.json --opponent kiter --seed 7   # 返回 seed/winner/ticks/frames
-npm run cli -- wh list                      # 空仓库骨架
+npm run cli -- ai battle --file good.json --opponent kiter --seed 7   # 返回 seed/programHash/winner/phase/ticks/frames（B16，已实现；与 `npm run demo` 无关）
+npm run cli -- wh list --file wh.json       # 本地仓库摘要（分桶 + 装配状态；注意 `--file` 必填，原写法的裸 `wh list` 会因参数非法退出码 2）
 npm run cli -- panel --loadout <file>       # 面板聚合（need 合法 loadout 文件）
-npm run cli -- ranked run --seed 11         # P5：10 场离线结算
+npm run cli -- battle --p1 a.json --p2 b.json --seed 20260912   # P4：双方对战 → 完整回放帧（B22，已实现）
+npm run cli -- replay --file replay.json --tick 3               # P4：文本回放（B23，本地文件）
+npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离线结算（B24，已实现；`--loadout` 必填，CLI 无独立 promote 子命令）
 ```
+
+> ⚠ **当前不可执行**：`npm run demo` / `npm run demo:log`（2026-09-16 复核：`scripts/demo.js` 全 git 历史不存在）。§5 的确定性抽查请改用上面的 `ai battle` 或直接比对帧数组。
 
 **判定**：
 - `ai validate` 的**错误信息必须精确**（示例实测：`action 缺必填字段 name`、`body 必须为 seq（隐式主循环结构契约，D-100）`，带 `path`）——这是 AI 系统质量的试金石。
@@ -79,26 +88,28 @@ npm run cli -- ranked run --seed 11         # P5：10 场离线结算
 
 ## 5. 确定性抽查（本项目灵魂）
 
-1. 同 seed 战斗两次 → `frames` 逐字节一致（golden 问题）；可用 `npm run demo -- --seed 20260912` 目测两次输出一致。
+1. 同 seed 战斗两次 → `frames` 逐字节一致（golden 问题）。**可用 `npm run cli -- ai battle --file good.json --seed 20260912` 跑两次比对 `frames` 数组**（原 `npm run demo -- --seed 20260912` 因脚本缺失当前不可用）。
 2. `--log-level trace` 的结果与 `silent` **逐帧一致**（gate 项 8 已断言，手工抽查一次即可）。
-3. 黄金战斗：`.audit/golden-battle.json`（seed 20260912，18 tick，`winner=p2`）可作基线对比。
+3. 黄金战斗：`.audit/golden-battle.json`（seed 20260912，18 tick，`winner=p2`）可作基线对比（gate 项 8 依赖，属现状）。
 
 ## 6. 已知遗留（验收时同步确认，非阻断）
 
-| # | 项 | 现状 | 建议 |
+| # | 项 | 现状（2026-09-16 复核） | 建议 |
 |---|---|---|---|
-| L-1 | gate 项 7 偶发 flake（约 1/7，未定位用例） | 本次验收 3 次实跑**未复现** | 合 main 前导入"连续 5 次全绿"作为合流条件；持续观察 |
-| L-3 | `.review-*` 探针目录 53 个文件已被 git 追踪（审查工作产物） | 仍在 dev 上 | 移出追踪 + 加入 `.gitignore`（与 `docs/reviews/` 并存即可） |
-| L-4 | `.audit/verify-rest.js`（设计期临时校验器）残留 | 仍在 | 删除（`golden-battle.*`/`replay-audit.js` 是 gate/审计依赖，保留） |
-| L-5 | `main` 落后 dev 36 提交，无自动合流 | 未合 | 合流前跑"门禁+连续复跑+文档同步"检查清单；`docs/` 冲突以 main 版（最新全套）为准 |
+| L-1 | gate 项 7 偶发 flake（约 1/7，未定位用例） | 本次复核实跑 `npm test` 459/0、`npm run gate` 9/0/0，**未复现**；根因仍未定位 | 合流前导入"连续 5 次全绿"作为条件；持续观察 |
+| L-3 | `.review-*` 探针目录 **53** 个文件已被 git 追踪（审查工作产物；分布在 `.review-b16/b17/b18/b19/b20/b22/b23/b24/b25`） | 仍在 **`main`** 上（`dev` 已不存在）；`.gitignore` 尚无 `.review-*` 条目 | 移出追踪 + 加入 `.gitignore`（与 `docs/reviews/` 并存即可） |
+| L-4 | `.audit/verify-rest.js`（设计期临时校验器）残留 | 仍在（被 git 追踪） | 删除（`golden-battle.*`/`replay-audit.js` 是 gate/审计依赖，保留） |
+| L-5 | ~~`main` 落后 dev 36 提交，无自动合流~~ | ✅ **已失效**：`dev` 分支不存在，`main` 合流已完成（HEAD `cee2ebf`） | 无需动作；清单见 §7 |
 
-## 7. 合流 main 检查清单（批准前后各一次）
+## 7. 合流 main（**已于 2026-09-16 复核确认完成**，此处仅存清单备查）
 
 1. `npm run gate` = 9/9（合流前最后跑一次）；
 2. `npm run gate` ×3 连续全绿（flake 观察）；
 3. `git log main..dev --stat` 人工过目：只应有 server/ tests/ cli/ scripts/ shared/ 与少量 docs 更新；
-4. `docs/` 冲突处理：以 **main 的文档版**为准（main 已有完整最新全套 + screens.md），dev 侧文档改动逐个核对；**前端实现代码不在本轮**（P6）；
+4. `docs/` 冲突处理：以 **main 的文档版**为准，dev 侧文档改动逐个核对；**前端实现代码不在本轮**（P6）。注意：原清单中提到的 `screens.md` **已被 `frontend-spec.md` v3 判定废弃**，不得再作为对照物；
 5. `git checkout main && git merge dev --no-ff` → 验收冒烟 §4 再跑一遍 → `git push origin main`。
+
+> **状态**：上述第 1–5 步对应的合流已完成——`dev` 分支已不存在，`main` HEAD = `cee2ebf`，`npm run gate` = 9 PASS / 0 FAIL / 0 PEND（2026-09-16 复核）。注意第 3–4 步中"dev"相关命令当前不可执行；两个未合并分支是 `deepseek-v4.1f` / `glm-5.3f`（前端实验，均未并入 main）。
 
 ---
 
@@ -111,21 +122,22 @@ npm run cli -- ranked run --seed 11         # P5：10 场离线结算
 
 ---
 
-## 8. 前端（P6）阶段验收补充（2026-09-13 实测）
+## 8. 历史记录：前端（P6）轮次已失败（原 2026-09-13 记录，**已作废**）
 
-**结论：前端 F0…F7 全部落地（42/42 批勾选，含后端 34 批）。**
+> **⚠ 2026-09-16 复核判定：本节原结论全部不成立，已降级为历史记录。**
+> 复核证据：`main`（HEAD `cee2ebf`）上**没有任何前端代码**——无 `public/` 目录，`server/index.js` 无静态托管路由（`git branch` 中两个前端分支 `deepseek-v4.1f` / `glm-5.3f` 均未合并）。前端轮次的失败根因见 `docs/frontend-spec.md` §0 与 `docs/progress.md` §3.1。
+> **现状**：P6 未开始（0 行代码）；P6 的实现应按 `docs/frontend-spec.md` **v3** 的 F1–F7 批次走。**`docs/screens.md` 已被 frontend-spec v3 判定废弃**，不得再作为验收对照物。
 
-| 检查 | 实测 |
-|---|---|
-| 前端批次 | F0 静态托管/gate 五目录阈值 → F1 布局引擎+store → F2 外壳/menu/settings → F3 gacha/warehouse → F4 battle 配置 → F5 replay（planFrame/canvas）→ F6 Blockly 编辑器 → F7 存档/AI 轨迹可视化 |
-| 门禁 | **实跑 `npm run gate` = 9 PASS / 0 FAIL / 0 PEND** |
-| 覆盖率 | F7 提交自报 cov **98.02 / 88.44 / 96.60**（含 public/js，check-arch 49 文件） |
-| 整链路冒烟（起服务实测） | `GET /`(index.html 913B)、`/js/app.js`、`/css/tokens.css`、`/shared/log.js`、`/js/editor/bridge.js`、`/assets/sprites.json`、`/api/v1/health`(ok)、`/api/v1/data/battle-config`(ok)、未知路径 404 |
-| 确定性与审查 | golden 战斗 18 tick 一致（gate 项 8）；每批审查 CONDITIONAL→修复 |
+**原记录（保留以备追查，勿作为现状引用）**：
 
-**浏览器侧手工验收建议**：
-1. 起服务后浏览器打开 `http://127.0.0.1:3000`，走一遍 菜单→开箱→装配→编辑 AI→对战→回放 闭环；
-2. 对照 `docs/screens.md` 的 7 屏示意图核对布局（重叠/越界已在每批 verifyLayout 自检暴露）；
-3. F12：`window.DLLog` 面板确认 render/ui/api 事件齐全、`dlui.exportTrace()` 可导出。
+| 检查 | 原声称 | 复核结果（2026-09-16） |
+|---|---|---|
+| 前端批次 | F0 静态托管 → F1 布局引擎+store → F2 外壳 → F3 gacha/warehouse → F4 battle → F5 replay → F6 Blockly 编辑器 → F7 存档/轨迹 | ❌ 声称的"F0…F7 全部落地（42/42 批勾选）"**不成立**；后端真值为 34 批，前端 0 批 |
+| 门禁 | 实跑 `npm run gate` = 9 PASS | ⚠ 该命令本身确实为 9 PASS（2026-09-16 复核一致），但它**不能证明前端存在** |
+| 覆盖率 | cov **98.02 / 88.44 / 96.60**（含 `public/js`，check-arch 49 文件） | ❌ 不成立：无 `public/js` |
+| 整链路冒烟 | `GET /`、`/js/app.js`、`/css/tokens.css`、`/shared/log.js`、`/js/editor/bridge.js` 全部 200 | ❌ 不成立：无静态托管路由，这些路径均会 404 |
+| 确定性与审查 | golden 战斗 18 tick 一致 | ✅ 这一条属实（gate 项 8，`.audit/golden-battle.json`） |
 
-**遗留（前端阶段后仍未处理，非阻断）**：L-1 flake（本次 3 次实跑未复现，观察中）；L-3 `.review-*` 追踪 **67** 个文件待清理；L-4 `.audit/verify-rest.js` 待删；L-5 `main` 落后 dev **44** 提交待合流。
+**原"浏览器侧手工验收建议"**：其中"对照 `docs/screens.md` 的 7 屏示意图核对布局"一条**删除**（`screens.md` 已废弃）；其余闭环流程（菜单→开箱→装配→编辑 AI→对战→回放）属 **P6 计划**，当前不可执行。
+
+**原"遗留"一行的复核**：L-1 flake 观察中（属实）；L-3 `.review-*` 原称 **67** 个文件 → 复核实测 `git ls-files ".review-*"` = **53** 个（`progress.md` 旧版曾写 24 个，亦已过期）；L-4 `.audit/verify-rest.js` 仍待删（属实）；L-5 `main` 落后 dev 44 提交 → ❌ 已失效（`dev` 不存在，合流完成）。

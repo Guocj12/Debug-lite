@@ -1,4 +1,6 @@
 {
+  "_sample": true,
+  "_note": "示例数据（2026-09-16）：品质数值为占位示例。段位序以本表顺序为准（items.TIERS / unlock.TIERS 均由此派生）。",
   "qualities": [
     { "id": "common", "name": "绿", "color": "#2ecc71", "statRange": [0.80, 1.05],
       "roleSlotRange": [1, 3], "skillSlotRange": [0, 1], "pluginPoints": 3,

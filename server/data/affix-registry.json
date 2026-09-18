@@ -1,0 +1,86 @@
+{
+  "_comment": "词条语义注册表（机制层）：每个词条 id 在此声明'它是什么、怎么滚动、聚合到哪、在技能链上做什么'。插件表只写 id 与基础值 v，不再让代码按 id 写分支。未登记的词条 id 会让 gate 失败（避免静默失效）。",
+  "_contract": "docs/systems/01-items.md §词条注册表；docs/systems/03-skills.md §词条消费；docs/interfaces.md §1",
+  "version": 1,
+
+  "stats": ["hp", "atk", "def", "sp", "mp"],
+  "caps": { "probability": 1 },
+
+  "_domains": {
+    "role": "角色插件词条：参与面板聚合（items.applyAffixes）与 regen 叠加（roles.equipPlugins）",
+    "skill": "技能插件词条：参与技能实例改写（skills.applySkillPlugins）或命中/释放结算（engine）"
+  },
+  "_roll": {
+    "int": "×品质档位系数后四舍五入取整（flat 类，I-6b）",
+    "stat": "×品质档位系数后保留 precision.stat 位（百分比类，I-6a）"
+  },
+  "_aggModes": {
+    "pct": "面板百分比：base×(1+Σv)",
+    "flat": "面板数值：base×(1+Σpct)+Σv"
+  },
+  "_opVocabulary": [
+    "scalePct", "sub", "add", "addSlot", "scaleCostCeil", "addSpecial"
+  ],
+  "_hitKindVocabulary": [
+    "control", "continuous", "flatTrueDamage"
+  ],
+  "_castKindVocabulary": [
+    "continuous"
+  ],
+
+  "affixes": {
+    "atk_pct": { "domain": "role", "roll": "stat", "agg": { "target": "atk", "mode": "pct" } },
+    "atk_flat": { "domain": "role", "roll": "int", "agg": { "target": "atk", "mode": "flat" } },
+    "def_pct": { "domain": "role", "roll": "stat", "agg": { "target": "def", "mode": "pct" } },
+    "def_flat": { "domain": "role", "roll": "int", "agg": { "target": "def", "mode": "flat" } },
+    "hp_pct": { "domain": "role", "roll": "stat", "agg": { "target": "hp", "mode": "pct" } },
+    "hp_flat": { "domain": "role", "roll": "int", "agg": { "target": "hp", "mode": "flat" } },
+    "sp_cap": { "domain": "role", "roll": "stat", "agg": { "target": "sp", "mode": "pct" } },
+    "mp_cap": { "domain": "role", "roll": "stat", "agg": { "target": "mp", "mode": "pct" } },
+    "sp_regen": { "domain": "role", "roll": "int", "regen": "sp" },
+    "mp_regen": { "domain": "role", "roll": "int", "regen": "mp" },
+    "hp_regen": { "domain": "role", "roll": "int", "regen": "hp" },
+    "dodge_chance": { "domain": "role", "roll": "stat", "special": "dodgeChance" },
+    "crit_chance": {
+      "domain": "both", "roll": "stat", "special": "critChance",
+      "skillOp": { "op": "addSpecial", "field": "critChance" }
+    },
+    "lifesteal": {
+      "domain": "both", "roll": "stat", "special": "lifesteal",
+      "skillOp": { "op": "addSpecial", "field": "lifesteal" }
+    },
+
+    "mult_up": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scalePct", "field": "multiplier", "round": "multiplier" } },
+    "cooldown_down": { "domain": "skill", "roll": "int", "skillOp": { "op": "sub", "field": "cooldown", "min": "minCooldown" } },
+    "range_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "addSlot", "slot": "range" } },
+    "bullet_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "add", "field": "bulletCount", "min": "minBulletCount" } },
+    "level_up": { "domain": "skill", "roll": "int", "skillOp": { "op": "sub", "field": "bulletLevel", "min": "minBulletLevel" } },
+    "distance_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "addSlot", "slot": "range" } },
+    "cost_down": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scaleCostCeil", "mode": "complement" } },
+
+    "stun": {
+      "domain": "skill", "roll": "int",
+      "hitEffect": { "kind": "control", "displacement": 0, "remaining": 1 }
+    },
+    "knockback": {
+      "domain": "skill", "roll": "int",
+      "hitEffect": { "kind": "control", "displacementFrom": "v", "sign": 1, "remaining": 1 }
+    },
+    "pull": {
+      "domain": "skill", "roll": "int",
+      "hitEffect": { "kind": "control", "displacementFrom": "v", "sign": -1, "remaining": 1 }
+    },
+    "dot": {
+      "domain": "skill", "roll": "int",
+      "hitEffect": { "kind": "continuous", "stat": "hp", "deltaFrom": "v", "sign": -1, "remaining": 3 }
+    },
+    "true_dmg": {
+      "domain": "skill", "roll": "int",
+      "hitEffect": { "kind": "flatTrueDamage", "amountFrom": "v" }
+    },
+    "cast_buff": {
+      "domain": "skill", "roll": "int",
+      "castEffect": { "kind": "continuous", "stat": "atk", "deltaFrom": "v", "durationFrom": "duration", "fallbackDuration": 2 }
+    }
+  }
+}

@@ -7,6 +7,8 @@
 const items = require('./core/items.js');
 const skills = require('./core/skills.js'); // B20：技能插件词条聚合（消耗补偿/减耗/倍率冷却，L2 → L6 合法）
 const ast = require('./ai/ast.js');
+// 词条注册表（regen 等词条去向的唯一来源；L6 → 数据层合法）
+const AFFIX_REGISTRY = require('./data/affix-registry.json');
 
 // 技能实例化基准 rng（面板聚合只需确定性基=1；物品参数随后覆盖）
 const STUB_RNG = { float: () => 1, int: () => 0, pick: () => 0 };
@@ -116,13 +118,19 @@ function buildPanel(loadout, opts) {
     if (p && Array.isArray(p.affixes)) rAffixes.push(...p.affixes);
   }
   const aff = items.applyAffixes(Object.assign({}, role.stats || {}), rAffixes);
+  // 角色插件 regen 词条叠加（R-4b/c）：目标维度由词条注册表 def.regen 声明（hp/sp/mp）
+  const regen = Object.assign({ mp: 0, sp: 0 }, role.regen || {});
+  for (const a of rAffixes) {
+    const def = AFFIX_REGISTRY.affixes[a.id];
+    if (def && def.regen) regen[def.regen] = (regen[def.regen] || 0) + ((a.params && a.params.v) || 0);
+  }
   return {
     ok: true,
     panel: {
       role: {
         stats: aff.stats,
         special: aff.special || {},
-        regen: Object.assign({ mp: 0, sp: 0 }, role.regen || {}),
+        regen,
         pluginPoints: role.pluginPoints === undefined ? null : role.pluginPoints,
         quality: role.quality === undefined ? null : role.quality,
       },
@@ -139,7 +147,10 @@ function buildPanel(loadout, opts) {
           const base = skills.instantiateSkill(sk.templateId, sk.quality || 'common', STUB_RNG);
           const applied = skills.applySkillPlugins(Object.assign({}, base, sk.params || {}), plugins);
           params = {};
-          for (const k of ['multiplier', 'cost', 'cooldown', 'bulletLevel', 'bulletCount', 'range', 'area', 'distance', 'passThroughEnemy', 'dealDamage', 'fullDodgeDuring', 'falloff']) {
+          // 投影白名单：含 specials/castEffects/affixes——否则技能插件的
+          //   crit_chance/lifesteal（概率类）、cast_buff（释放类）、stun/knockback/pull/dot/true_dmg（命中类）
+          //   会在 API 路径（/battle → battle.js buildPlayer 的 Object.assign）被丢掉，导致"文档已设计但实际不生效"。
+          for (const k of ['multiplier', 'cost', 'cooldown', 'bulletLevel', 'bulletCount', 'range', 'area', 'distance', 'passThroughEnemy', 'dealDamage', 'fullDodgeDuring', 'falloff', 'specials', 'castEffects', 'affixes']) {
             if (applied[k] !== undefined) params[k] = applied[k];
           }
           // P2-②：未列入白名单的自定义字段保留透传（聚合投影不丢非标准字段）

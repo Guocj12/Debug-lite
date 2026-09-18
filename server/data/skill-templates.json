@@ -1,4 +1,6 @@
 {
+  "_sample": true,
+  "_note": "示例数据（2026-09-16）：技能内容为占位示例，正式技能设计由用户完成。类型必须已在 server/data/skill-mechanics.json 登记；词条必须已在 affix-registry.json 登记（门禁会校验）。",
   "skillTemplates": [
     { "id": "skill_melee_whirl", "name": "旋风斩", "type": "melee",
       "baseMultiplier": 1.0, "baseCost": { "hp": 0, "mp": 0, "sp": 12 }, "cooldown": 2,

@@ -1,4 +1,9 @@
 {
+  "_sample": true,
+  "_comment": "段位解锁表（内容层，当前为示例数据，待用户手动完整设计）。aiNodes = 该段位新解锁的**权限名**（可为真实节点类型，也可为别名/预留权限）；别名到真实节点类型的映射见 nodePermissions（空缺 = 权限名本身就是节点类型）。",
+  "_contract": "docs/systems/09-unlock.md；server/data/ai-nodes.json（真实节点单一数据源）",
+  "version": 1,
+
   "unlocks": [
     { "tier": "common", "aiNodes": ["if"],
       "roleTemplates": ["role_bal"],
@@ -15,5 +20,17 @@
     { "tier": "mythic", "aiNodes": ["function", "call"],
       "roleTemplates": [],
       "skills": ["skill_dash_bash", "skill_dash_shadow"] }
-  ]
+  ],
+
+  "nodePermissions": {
+    "if": {},
+    "loop": {},
+    "while": { "grants": ["loop"], "note": "while 是 loop 的 kind 取值（loop.kind=while），不额外授予节点" },
+    "break": {},
+    "random": {},
+    "logic": {},
+    "arith_ext": { "implemented": false, "grants": [], "note": "扩展运算符（% 等）尚未实现，故不授予任何节点（见 systems/08-ai.md §3 与 security-backlog SEC-xx）" },
+    "function": {},
+    "call": {}
+  }
 }

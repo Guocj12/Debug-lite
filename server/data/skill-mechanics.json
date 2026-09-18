@@ -1,0 +1,103 @@
+{
+  "_comment": "技能类型机制表（机制层，非内容）。内容=skill-templates.json / plugins.json（当前为示例数据，待用户设计）。代码只按本表的 pattern/字段名做解释，不写死任何数值或字段。",
+  "_contract": "docs/systems/03-skills.md §机制表；docs/interfaces.md §1 core/skills.js",
+  "version": 1,
+
+  "costDims": ["hp", "mp", "sp"],
+  "precision": { "stat": 2, "multiplier": 3 },
+  "bounds": {
+    "minStat": 1,
+    "minSlotCount": 1,
+    "minRange": 1,
+    "minBulletCount": 1,
+    "minDistance": 1,
+    "minBulletLevel": 1,
+    "minCooldown": 0
+  },
+
+  "_paramsModes": {
+    "pair": "数值对，原样拷贝（闭区间）",
+    "intMin": "×品质系数后四舍五入取整，下限 bounds.min<字段>",
+    "copy": "布尔/标量原样拷贝"
+  },
+  "_slots": "词条作用的语义槽位 → 该类型下真实字段名；槽位缺席 = 该词条对本类型无效",
+  "_emitPatterns": {
+    "cellsFromRange": "覆盖格 = 以施法者格心为基准、range 为闭区间偏移（melee）",
+    "repeatCount": "按 countFrom 字段枚数重复同一枚弹幕，起点=origin（straight）",
+    "impactCells": "先算落点 impact=clampX(x+dir*rangePx)，覆盖格=以落点格为基准的 cellsFrom 区间（vertical）",
+    "pathCells": "按 move.distance 声明路径逐格发射（displacement，D-18/D-118）"
+  },
+  "_originModes": { "caster": "施法者当前 px 坐标", "cellCenter": "所在格中心 px" },
+  "_distCellsModes": { "fromOriginCell": "|格-施法者格|", "fromImpactCell": "|格-落点格|", "none": "不写 distCells" },
+
+  "types": {
+    "melee": {
+      "params": { "range": "pair" },
+      "slots": {},
+      "emit": {
+        "pattern": "cellsFromRange",
+        "cellsFrom": "range",
+        "bullet": {
+          "btype": "aoe", "srcType": "melee",
+          "v": 0, "len": 0, "dir": 0,
+          "origin": "cellCenter",
+          "distCells": "fromOriginCell"
+        }
+      }
+    },
+
+    "straight": {
+      "params": { "range": "intMin", "bulletCount": "intMin" },
+      "slots": { "range": "range", "bulletCount": "bulletCount" },
+      "emit": {
+        "pattern": "repeatCount",
+        "countFrom": "bulletCount",
+        "bullet": {
+          "btype": "straight", "srcType": "straight",
+          "vFrom": "rangePx", "lenFrom": "rangePx",
+          "origin": "caster",
+          "dirFrom": "facing",
+          "distCells": "none"
+        }
+      }
+    },
+
+    "vertical": {
+      "params": { "range": "intMin", "area": "pair" },
+      "slots": { "range": "range" },
+      "emit": {
+        "pattern": "impactCells",
+        "impactFrom": "rangePx",
+        "cellsFrom": "area",
+        "exposeImpactX": true,
+        "bullet": {
+          "btype": "aoe", "srcType": "vertical",
+          "v": 0, "len": 0, "dir": 0,
+          "origin": "cellCenter",
+          "distCells": "fromImpactCell"
+        }
+      }
+    },
+
+    "displacement": {
+      "params": {
+        "distance": "intMin",
+        "passThroughEnemy": "copy",
+        "dealDamage": "copy",
+        "fullDodgeDuring": "copy"
+      },
+      "slots": { "range": "distance" },
+      "move": { "cellsFrom": "distance" },
+      "emit": {
+        "pattern": "pathCells",
+        "when": "dealDamage",
+        "bullet": {
+          "btype": "aoe", "srcType": "displacement",
+          "v": 0, "len": 0, "dirFrom": "facing",
+          "origin": "cellCenter",
+          "distCells": "none"
+        }
+      }
+    }
+  }
+}

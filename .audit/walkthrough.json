@@ -1,0 +1,2492 @@
+{
+ "generatedBy": ".audit/walkthrough.js",
+ "scenario": {
+  "source": ".audit/golden-battle.js（gate 项 8 同源；§2 场景不可无歧义重建）",
+  "seed": 20260912,
+  "players": {
+   "p1": {
+    "id": "A",
+    "x0": 224,
+    "facing0": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60,
+    "atk": 12,
+    "def": 8,
+    "critChance": 0.5,
+    "skill": "skill_straight_precise（multiplier 1.0）",
+    "actionSource": "固定行动计划（p1 数组）"
+   },
+   "p2": {
+    "id": "B",
+    "x0": 800,
+    "facing0": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60,
+    "atk": 19,
+    "def": 9,
+    "critChance": 0,
+    "skill": "skill_dash_bash（multiplier 1.3 / distance 4 / passThroughEnemy false）",
+    "actionSource": "固定行动计划（p2 数组）"
+   }
+  }
+ },
+ "summary": {
+  "seed": 20260912,
+  "ticks": 18,
+  "winner": "p2",
+  "phase": "role",
+  "finalHp": {
+   "p1": 0,
+   "p2": 66
+  },
+  "collisions": 3,
+  "bulletHits": 5,
+  "bulletCollides": 2,
+  "facingChanged": false
+ },
+ "ticks": [
+  {
+   "tick": 1,
+   "rawAction": {
+    "p1": "dodge_right",
+    "p2": "move_left"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 352,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 800,
+    "x": 736,
+    "facing": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t1:8",
+     "msg": "p1 224 -> 352",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t1:9",
+     "msg": "p2 800 -> 736",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 2,
+   "rawAction": {
+    "p1": "move_left",
+    "p2": "wait"
+   },
+   "p1": {
+    "fromX": 352,
+    "x": 288,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 736,
+    "x": 736,
+    "facing": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t2:8",
+     "msg": "p1 352 -> 288",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 3,
+   "rawAction": {
+    "p1": "wait",
+    "p2": "skill:bash"
+   },
+   "p1": {
+    "fromX": 288,
+    "x": 288,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 736,
+    "x": 480,
+    "facing": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 52
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_0",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 736
+    },
+    {
+     "uid": "b_1",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 672
+    },
+    {
+     "uid": "b_2",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 608
+    },
+    {
+     "uid": "b_3",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 544
+    },
+    {
+     "uid": "b_4",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 480
+    }
+   ],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t3:7",
+     "msg": "skill skill_dash_bash cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t3:8",
+     "msg": "b_0 @736",
+     "atX": null,
+     "uid": "b_0",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t3:9",
+     "msg": "b_1 @672",
+     "atX": null,
+     "uid": "b_1",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t3:10",
+     "msg": "b_2 @608",
+     "atX": null,
+     "uid": "b_2",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t3:11",
+     "msg": "b_3 @544",
+     "atX": null,
+     "uid": "b_3",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t3:12",
+     "msg": "b_4 @480",
+     "atX": null,
+     "uid": "b_4",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t3:14",
+     "msg": "p2 736 -> 480",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t3:16",
+     "msg": "b_0 tick 末清场",
+     "atX": null,
+     "uid": "b_0",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t3:17",
+     "msg": "b_1 tick 末清场",
+     "atX": null,
+     "uid": "b_1",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t3:18",
+     "msg": "b_2 tick 末清场",
+     "atX": null,
+     "uid": "b_2",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t3:19",
+     "msg": "b_3 tick 末清场",
+     "atX": null,
+     "uid": "b_3",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t3:20",
+     "msg": "b_4 tick 末清场",
+     "atX": null,
+     "uid": "b_4",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t3:23",
+     "msg": "p2 hp 100->100 mp 40->40 sp 50->52",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 4,
+   "rawAction": {
+    "p1": "skill:precise",
+    "p2": "dodge_left"
+   },
+   "p1": {
+    "fromX": 288,
+    "x": 288,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 56
+   },
+   "p2": {
+    "fromX": 480,
+    "x": 352,
+    "facing": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 54
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_5",
+     "owner": "p1",
+     "type": "straight",
+     "level": 3,
+     "dir": 1,
+     "x0": 288
+    }
+   ],
+   "bulletHits": [
+    {
+     "uid": "b_5",
+     "target": "p2",
+     "atX": 442
+    }
+   ],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t4:7",
+     "msg": "skill skill_straight_precise cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t4:8",
+     "msg": "b_5 @288",
+     "atX": null,
+     "uid": "b_5",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t4:10",
+     "msg": "p2 480 -> 352",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.hit",
+     "cid": "t4:12",
+     "msg": "b_5 -> p2 @442",
+     "atX": 442,
+     "uid": "b_5",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t4:13",
+     "msg": "b_5 tick 末清场",
+     "atX": null,
+     "uid": "b_5",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.dodge",
+     "cid": "t4:15",
+     "msg": "B 闪避",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t4:17",
+     "msg": "p1 hp 100->100 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t4:18",
+     "msg": "p2 hp 100->100 mp 40->40 sp 52->54",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 5,
+   "rawAction": {
+    "p1": "move_right",
+    "p2": "move_right"
+   },
+   "p1": {
+    "fromX": 288,
+    "x": 352,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 58
+   },
+   "p2": {
+    "fromX": 352,
+    "x": 416,
+    "facing": -1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 56
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t5:8",
+     "msg": "p1 288 -> 352",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t5:9",
+     "msg": "p2 352 -> 416",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t5:13",
+     "msg": "p1 hp 100->100 mp 40->40 sp 56->58",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t5:14",
+     "msg": "p2 hp 100->100 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 6,
+   "rawAction": {
+    "p1": "skill:precise",
+    "p2": "wait"
+   },
+   "p1": {
+    "fromX": 352,
+    "x": 352,
+    "facing": 1,
+    "hp": 100,
+    "mp": 40,
+    "sp": 54
+   },
+   "p2": {
+    "fromX": 416,
+    "x": 416,
+    "facing": -1,
+    "hp": 91,
+    "mp": 40,
+    "sp": 58
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_6",
+     "owner": "p1",
+     "type": "straight",
+     "level": 3,
+     "dir": 1,
+     "x0": 352
+    }
+   ],
+   "bulletHits": [
+    {
+     "uid": "b_6",
+     "target": "p2",
+     "atX": 416
+    }
+   ],
+   "collision": null,
+   "damage": [
+    {
+     "attacker": "A",
+     "target": "B",
+     "mult": 1,
+     "reduction": 0.8163265306122449,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 9.795918367346939,
+     "dmg": 9,
+     "lifesteal": 0,
+     "hitUid": "b_6"
+    }
+   ],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t6:7",
+     "msg": "skill skill_straight_precise cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t6:8",
+     "msg": "b_6 @352",
+     "atX": null,
+     "uid": "b_6",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.hit",
+     "cid": "t6:11",
+     "msg": "b_6 -> p2 @416",
+     "atX": 416,
+     "uid": "b_6",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t6:12",
+     "msg": "b_6 tick 末清场",
+     "atX": null,
+     "uid": "b_6",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t6:14",
+     "msg": "A -> B 9",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t6:16",
+     "msg": "p1 hp 100->100 mp 40->40 sp 52->54",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t6:17",
+     "msg": "p2 hp 91->91 mp 40->40 sp 56->58",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 7,
+   "rawAction": {
+    "p1": "dodge_left",
+    "p2": "skill:bash"
+   },
+   "p1": {
+    "fromX": 352,
+    "x": 224,
+    "facing": 1,
+    "hp": 80,
+    "mp": 40,
+    "sp": 56
+   },
+   "p2": {
+    "fromX": 416,
+    "x": 160,
+    "facing": -1,
+    "hp": 91,
+    "mp": 40,
+    "sp": 50
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_7",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 416
+    },
+    {
+     "uid": "b_8",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 352
+    },
+    {
+     "uid": "b_9",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 288
+    },
+    {
+     "uid": "b_10",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 224
+    },
+    {
+     "uid": "b_11",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 160
+    }
+   ],
+   "bulletHits": [
+    {
+     "uid": "b_10",
+     "target": "p1",
+     "atX": 224
+    }
+   ],
+   "collision": null,
+   "damage": [
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 1.3,
+     "reduction": 0.8333333333333334,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 20.583333333333332,
+     "dmg": 20,
+     "lifesteal": 0,
+     "hitUid": "b_10"
+    }
+   ],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t7:7",
+     "msg": "skill skill_dash_bash cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t7:8",
+     "msg": "b_7 @416",
+     "atX": null,
+     "uid": "b_7",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t7:9",
+     "msg": "b_8 @352",
+     "atX": null,
+     "uid": "b_8",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t7:10",
+     "msg": "b_9 @288",
+     "atX": null,
+     "uid": "b_9",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t7:11",
+     "msg": "b_10 @224",
+     "atX": null,
+     "uid": "b_10",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t7:12",
+     "msg": "b_11 @160",
+     "atX": null,
+     "uid": "b_11",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t7:14",
+     "msg": "p1 352 -> 224",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t7:15",
+     "msg": "p2 416 -> 160",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.hit",
+     "cid": "t7:17",
+     "msg": "b_10 -> p1 @224",
+     "atX": 224,
+     "uid": "b_10",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t7:18",
+     "msg": "b_7 tick 末清场",
+     "atX": null,
+     "uid": "b_7",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t7:19",
+     "msg": "b_8 tick 末清场",
+     "atX": null,
+     "uid": "b_8",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t7:20",
+     "msg": "b_9 tick 末清场",
+     "atX": null,
+     "uid": "b_9",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t7:21",
+     "msg": "b_10 tick 末清场",
+     "atX": null,
+     "uid": "b_10",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t7:22",
+     "msg": "b_11 tick 末清场",
+     "atX": null,
+     "uid": "b_11",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t7:24",
+     "msg": "B -> A 20",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t7:26",
+     "msg": "p1 hp 80->80 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t7:27",
+     "msg": "p2 hp 91->91 mp 40->40 sp 48->50",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 8,
+   "rawAction": {
+    "p1": "wait",
+    "p2": "dodge_right"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 224,
+    "facing": 1,
+    "hp": 80,
+    "mp": 40,
+    "sp": 58
+   },
+   "p2": {
+    "fromX": 160,
+    "x": 288,
+    "facing": -1,
+    "hp": 91,
+    "mp": 40,
+    "sp": 52
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t8:8",
+     "msg": "p2 160 -> 288",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t8:12",
+     "msg": "p1 hp 80->80 mp 40->40 sp 56->58",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t8:13",
+     "msg": "p2 hp 91->91 mp 40->40 sp 50->52",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 9,
+   "rawAction": {
+    "p1": "move_right",
+    "p2": "wait"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 224,
+    "facing": 1,
+    "hp": 68,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 288,
+    "x": 288,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 54
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": 256,
+   "damage": [
+    {
+     "attacker": "A",
+     "target": "B",
+     "mult": 0.8,
+     "reduction": 0.8163265306122449,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 7.836734693877553,
+     "dmg": 7,
+     "lifesteal": 0,
+     "hitUid": null
+    },
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 0.8,
+     "reduction": 0.8333333333333334,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 12.666666666666668,
+     "dmg": 12,
+     "lifesteal": 0,
+     "hitUid": null
+    }
+   ],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "engine",
+     "event": "collision.resolve",
+     "cid": "t9:8",
+     "msg": "collision @256",
+     "atX": 256,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t9:11",
+     "msg": "A -> B 7",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t9:12",
+     "msg": "B -> A 12",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t9:14",
+     "msg": "p1 hp 68->68 mp 40->40 sp 58->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t9:15",
+     "msg": "p2 hp 84->84 mp 40->40 sp 52->54",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 10,
+   "rawAction": {
+    "p1": "move_left",
+    "p2": "move_left"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 160,
+    "facing": 1,
+    "hp": 68,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 288,
+    "x": 224,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 56
+   },
+   "bases": {
+    "p1": 100,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t10:8",
+     "msg": "p1 224 -> 160",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t10:9",
+     "msg": "p2 288 -> 224",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t10:13",
+     "msg": "p2 hp 84->84 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 11,
+   "rawAction": {
+    "p1": "skill:precise",
+    "p2": "skill:bash"
+   },
+   "p1": {
+    "fromX": 160,
+    "x": 160,
+    "facing": 1,
+    "hp": 48,
+    "mp": 40,
+    "sp": 56
+   },
+   "p2": {
+    "fromX": 224,
+    "x": 224,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 48
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_12",
+     "owner": "p1",
+     "type": "straight",
+     "level": 3,
+     "dir": 1,
+     "x0": 160
+    },
+    {
+     "uid": "b_13",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 224
+    },
+    {
+     "uid": "b_14",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 160
+    },
+    {
+     "uid": "b_15",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 96
+    },
+    {
+     "uid": "b_16",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 32
+    }
+   ],
+   "bulletHits": [
+    {
+     "uid": "b_14",
+     "target": "p1",
+     "atX": 160
+    }
+   ],
+   "collision": null,
+   "damage": [
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 1.3,
+     "reduction": 0.8333333333333334,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 20.583333333333332,
+     "dmg": 20,
+     "lifesteal": 0,
+     "hitUid": "b_14"
+    }
+   ],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t11:7",
+     "msg": "skill skill_straight_precise cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t11:8",
+     "msg": "b_12 @160",
+     "atX": null,
+     "uid": "b_12",
+     "winner": null
+    },
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t11:9",
+     "msg": "skill skill_dash_bash cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t11:10",
+     "msg": "b_13 @224",
+     "atX": null,
+     "uid": "b_13",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t11:11",
+     "msg": "b_14 @160",
+     "atX": null,
+     "uid": "b_14",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t11:12",
+     "msg": "b_15 @96",
+     "atX": null,
+     "uid": "b_15",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t11:13",
+     "msg": "b_16 @32",
+     "atX": null,
+     "uid": "b_16",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.collide",
+     "cid": "t11:16",
+     "msg": "collide b_12 vs b_14 @160",
+     "atX": 160,
+     "uid": null,
+     "winner": "b_14"
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.hit",
+     "cid": "t11:17",
+     "msg": "b_14 -> p1 @160",
+     "atX": 160,
+     "uid": "b_14",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t11:18",
+     "msg": "b_13 tick 末清场",
+     "atX": null,
+     "uid": "b_13",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t11:19",
+     "msg": "b_14 tick 末清场",
+     "atX": null,
+     "uid": "b_14",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t11:20",
+     "msg": "b_15 tick 末清场",
+     "atX": null,
+     "uid": "b_15",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t11:21",
+     "msg": "b_16 tick 末清场",
+     "atX": null,
+     "uid": "b_16",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t11:23",
+     "msg": "B -> A 20",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t11:25",
+     "msg": "p1 hp 48->48 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t11:26",
+     "msg": "p2 hp 84->84 mp 40->40 sp 46->48",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 12,
+   "rawAction": {
+    "p1": "dodge_right",
+    "p2": "wait"
+   },
+   "p1": {
+    "fromX": 160,
+    "x": 288,
+    "facing": 1,
+    "hp": 48,
+    "mp": 40,
+    "sp": 58
+   },
+   "p2": {
+    "fromX": 224,
+    "x": 224,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 50
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t12:8",
+     "msg": "p1 160 -> 288",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t12:12",
+     "msg": "p1 hp 48->48 mp 40->40 sp 56->58",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t12:13",
+     "msg": "p2 hp 84->84 mp 40->40 sp 48->50",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 13,
+   "rawAction": {
+    "p1": "wait",
+    "p2": "dodge_right"
+   },
+   "p1": {
+    "fromX": 288,
+    "x": 288,
+    "facing": 1,
+    "hp": 48,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 224,
+    "x": 352,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 52
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t13:8",
+     "msg": "p2 224 -> 352",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t13:12",
+     "msg": "p1 hp 48->48 mp 40->40 sp 58->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t13:13",
+     "msg": "p2 hp 84->84 mp 40->40 sp 50->52",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 14,
+   "rawAction": {
+    "p1": "move_left",
+    "p2": "move_left"
+   },
+   "p1": {
+    "fromX": 288,
+    "x": 224,
+    "facing": 1,
+    "hp": 48,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 352,
+    "x": 288,
+    "facing": -1,
+    "hp": 84,
+    "mp": 40,
+    "sp": 54
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t14:8",
+     "msg": "p1 288 -> 224",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t14:9",
+     "msg": "p2 352 -> 288",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t14:13",
+     "msg": "p2 hp 84->84 mp 40->40 sp 52->54",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 15,
+   "rawAction": {
+    "p1": "skill:precise",
+    "p2": "skill:bash"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 224,
+    "facing": 1,
+    "hp": 16,
+    "mp": 40,
+    "sp": 56
+   },
+   "p2": {
+    "fromX": 288,
+    "x": 288,
+    "facing": -1,
+    "hp": 77,
+    "mp": 40,
+    "sp": 46
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [
+    {
+     "uid": "b_17",
+     "owner": "p1",
+     "type": "straight",
+     "level": 3,
+     "dir": 1,
+     "x0": 224
+    },
+    {
+     "uid": "b_18",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 288
+    },
+    {
+     "uid": "b_19",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 224
+    },
+    {
+     "uid": "b_20",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 160
+    },
+    {
+     "uid": "b_21",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 96
+    },
+    {
+     "uid": "b_22",
+     "owner": "p2",
+     "type": "aoe",
+     "level": 2,
+     "dir": -1,
+     "x0": 32
+    }
+   ],
+   "bulletHits": [
+    {
+     "uid": "b_19",
+     "target": "p1",
+     "atX": 224
+    }
+   ],
+   "collision": 256,
+   "damage": [
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 1.3,
+     "reduction": 0.8333333333333334,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 20.583333333333332,
+     "dmg": 20,
+     "lifesteal": 0,
+     "hitUid": "b_19"
+    },
+    {
+     "attacker": "A",
+     "target": "B",
+     "mult": 0.8,
+     "reduction": 0.8163265306122449,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 7.836734693877553,
+     "dmg": 7,
+     "lifesteal": 0,
+     "hitUid": null
+    },
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 0.8,
+     "reduction": 0.8333333333333334,
+     "backM": 1,
+     "critM": 1,
+     "backstab": false,
+     "crit": false,
+     "raw": 12.666666666666668,
+     "dmg": 12,
+     "lifesteal": 0,
+     "hitUid": null
+    }
+   ],
+   "verdict": null,
+   "events": [
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t15:7",
+     "msg": "skill skill_straight_precise cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:8",
+     "msg": "b_17 @224",
+     "atX": null,
+     "uid": "b_17",
+     "winner": null
+    },
+    {
+     "level": "info",
+     "channel": "skills",
+     "event": "skill.cast",
+     "cid": "t15:9",
+     "msg": "skill skill_dash_bash cast",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:10",
+     "msg": "b_18 @288",
+     "atX": null,
+     "uid": "b_18",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:11",
+     "msg": "b_19 @224",
+     "atX": null,
+     "uid": "b_19",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:12",
+     "msg": "b_20 @160",
+     "atX": null,
+     "uid": "b_20",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:13",
+     "msg": "b_21 @96",
+     "atX": null,
+     "uid": "b_21",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.spawn",
+     "cid": "t15:14",
+     "msg": "b_22 @32",
+     "atX": null,
+     "uid": "b_22",
+     "winner": null
+    },
+    {
+     "level": "info",
+     "channel": "engine",
+     "event": "collision.resolve",
+     "cid": "t15:16",
+     "msg": "collision @256",
+     "atX": 256,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.collide",
+     "cid": "t15:18",
+     "msg": "collide b_17 vs b_19 @224",
+     "atX": 224,
+     "uid": null,
+     "winner": "b_19"
+    },
+    {
+     "level": "debug",
+     "channel": "bullets",
+     "event": "bullet.hit",
+     "cid": "t15:19",
+     "msg": "b_19 -> p1 @224",
+     "atX": 224,
+     "uid": "b_19",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t15:20",
+     "msg": "b_18 tick 末清场",
+     "atX": null,
+     "uid": "b_18",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t15:21",
+     "msg": "b_19 tick 末清场",
+     "atX": null,
+     "uid": "b_19",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t15:22",
+     "msg": "b_20 tick 末清场",
+     "atX": null,
+     "uid": "b_20",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t15:23",
+     "msg": "b_21 tick 末清场",
+     "atX": null,
+     "uid": "b_21",
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "bullets",
+     "event": "bullet.expire",
+     "cid": "t15:24",
+     "msg": "b_22 tick 末清场",
+     "atX": null,
+     "uid": "b_22",
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t15:26",
+     "msg": "B -> A 20",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t15:27",
+     "msg": "A -> B 7",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t15:28",
+     "msg": "B -> A 12",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t15:30",
+     "msg": "p1 hp 16->16 mp 40->40 sp 54->56",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t15:31",
+     "msg": "p2 hp 77->77 mp 40->40 sp 44->46",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 16,
+   "rawAction": {
+    "p1": "dodge_left",
+    "p2": "wait"
+   },
+   "p1": {
+    "fromX": 224,
+    "x": 96,
+    "facing": 1,
+    "hp": 16,
+    "mp": 40,
+    "sp": 58
+   },
+   "p2": {
+    "fromX": 288,
+    "x": 288,
+    "facing": -1,
+    "hp": 77,
+    "mp": 40,
+    "sp": 48
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t16:8",
+     "msg": "p1 224 -> 96",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t16:12",
+     "msg": "p1 hp 16->16 mp 40->40 sp 56->58",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t16:13",
+     "msg": "p2 hp 77->77 mp 40->40 sp 46->48",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 17,
+   "rawAction": {
+    "p1": "move_right",
+    "p2": "dodge_left"
+   },
+   "p1": {
+    "fromX": 96,
+    "x": 160,
+    "facing": 1,
+    "hp": 16,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 288,
+    "x": 96,
+    "facing": -1,
+    "hp": 77,
+    "mp": 40,
+    "sp": 50
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": null,
+   "damage": [],
+   "verdict": null,
+   "events": [
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t17:8",
+     "msg": "p1 96 -> 160",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "engine",
+     "event": "move.resolve",
+     "cid": "t17:9",
+     "msg": "p2 288 -> 96",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t17:13",
+     "msg": "p1 hp 16->16 mp 40->40 sp 58->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t17:14",
+     "msg": "p2 hp 77->77 mp 40->40 sp 48->50",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    }
+   ]
+  },
+  {
+   "tick": 18,
+   "rawAction": {
+    "p1": "wait",
+    "p2": "move_right"
+   },
+   "p1": {
+    "fromX": 160,
+    "x": 160,
+    "facing": 1,
+    "hp": 0,
+    "mp": 40,
+    "sp": 60
+   },
+   "p2": {
+    "fromX": 96,
+    "x": 96,
+    "facing": -1,
+    "hp": 66,
+    "mp": 40,
+    "sp": 52
+   },
+   "bases": {
+    "p1": 95,
+    "p2": 100
+   },
+   "bulletsOnField": [],
+   "bulletHits": [],
+   "collision": 128,
+   "damage": [
+    {
+     "attacker": "A",
+     "target": "B",
+     "mult": 0.8,
+     "reduction": 0.8163265306122449,
+     "backM": 1.5,
+     "critM": 1,
+     "backstab": true,
+     "crit": false,
+     "raw": 11.755102040816329,
+     "dmg": 11,
+     "lifesteal": 0,
+     "hitUid": null
+    },
+    {
+     "attacker": "B",
+     "target": "A",
+     "mult": 0.8,
+     "reduction": 0.8333333333333334,
+     "backM": 1.5,
+     "critM": 1,
+     "backstab": true,
+     "crit": false,
+     "raw": 19,
+     "dmg": 19,
+     "lifesteal": 0,
+     "hitUid": null
+    }
+   ],
+   "verdict": {
+    "winner": "p2",
+    "phase": "role"
+   },
+   "events": [
+    {
+     "level": "info",
+     "channel": "engine",
+     "event": "collision.resolve",
+     "cid": "t18:8",
+     "msg": "collision @128",
+     "atX": 128,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t18:11",
+     "msg": "A -> B 11",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "debug",
+     "channel": "damage",
+     "event": "damage.calc",
+     "cid": "t18:12",
+     "msg": "B -> A 19",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t18:14",
+     "msg": "p2 hp 66->66 mp 40->40 sp 50->52",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "info",
+     "channel": "engine",
+     "event": "battle.judge",
+     "cid": "t18:17",
+     "msg": "winner=p2",
+     "atX": null,
+     "uid": null,
+     "winner": "p2"
+    },
+    {
+     "level": "info",
+     "channel": "engine",
+     "event": "battle.end",
+     "cid": "t18:18",
+     "msg": "battle end @tick 18",
+     "atX": null,
+     "uid": null,
+     "winner": "p2"
+    }
+   ]
+  }
+ ],
+ "checks": {
+  "goldenSnapshot": {
+   "ok": true,
+   "reason": null
+  },
+  "fireballImpact": {
+   "template": "skill_vert_fireball",
+   "name": "火球术",
+   "type": "vertical",
+   "rangeCells": 8,
+   "area": [
+    -1,
+    1
+   ],
+   "bulletLevel": 3,
+   "p2AtDocPosition": {
+    "casterX": 800,
+    "casterFacing": -1,
+    "expression": "clampX(800 + (-1) * 8 * 64)",
+    "unclamped": 288,
+    "impactX": 288,
+    "impactCell": 4,
+    "clamped": false,
+    "xCenters": [
+     352,
+     288,
+     224
+    ]
+   },
+   "p1AtDocPosition": {
+    "casterX": 224,
+    "casterFacing": 1,
+    "expression": "clampX(224 + (1) * 8 * 64)",
+    "unclamped": 736,
+    "impactX": 736,
+    "impactCell": 11,
+    "clamped": false,
+    "xCenters": [
+     672,
+     736,
+     800
+    ]
+   }
+  },
+  "actionLegality": [
+   {
+    "raw": "move_left",
+    "normalized": {
+     "type": "move",
+     "dir": -1
+    }
+   },
+   {
+    "raw": "move_right",
+    "normalized": {
+     "type": "move",
+     "dir": 1
+    }
+   },
+   {
+    "raw": "dodge_left",
+    "normalized": {
+     "type": "dodge",
+     "dir": -1
+    }
+   },
+   {
+    "raw": "dodge_right",
+    "normalized": {
+     "type": "dodge",
+     "dir": 1
+    }
+   },
+   {
+    "raw": "wait",
+    "normalized": {
+     "type": "wait"
+    }
+   },
+   {
+    "raw": "defend",
+    "normalized": {
+     "type": "defend"
+    }
+   },
+   {
+    "raw": "turn",
+    "normalized": {
+     "type": "wait"
+    }
+   },
+   {
+    "raw": "skill:precise",
+    "normalized": {
+     "type": "skill",
+     "sid": "precise"
+    }
+   },
+   {
+    "raw": "skill:bash",
+    "normalized": {
+     "type": "skill",
+     "sid": "bash"
+    }
+   },
+   {
+    "raw": "skill1",
+    "normalized": {
+     "type": "wait"
+    }
+   }
+  ],
+  "facingConstant": true,
+  "section32Collision": {
+   "p1Skill": "突击盾",
+   "p2Skill": "火球术",
+   "p1PathCells": [
+    224,
+    288,
+    352,
+    416,
+    480
+   ],
+   "p1Move": {
+    "from": 224,
+    "to": 480,
+    "cells": 4
+   },
+   "p2ImpactX": 288,
+   "p2ImpactCell": 4,
+   "p2RangeCells": 8,
+   "p2AoeCells": [
+    352,
+    288,
+    224
+   ],
+   "spawned": [
+    {
+     "uid": "b_0",
+     "owner": "p1",
+     "level": 2,
+     "x0": 224,
+     "srcType": "displacement"
+    },
+    {
+     "uid": "b_1",
+     "owner": "p1",
+     "level": 2,
+     "x0": 288,
+     "srcType": "displacement"
+    },
+    {
+     "uid": "b_2",
+     "owner": "p1",
+     "level": 2,
+     "x0": 352,
+     "srcType": "displacement"
+    },
+    {
+     "uid": "b_3",
+     "owner": "p1",
+     "level": 2,
+     "x0": 416,
+     "srcType": "displacement"
+    },
+    {
+     "uid": "b_4",
+     "owner": "p1",
+     "level": 2,
+     "x0": 480,
+     "srcType": "displacement"
+    },
+    {
+     "uid": "b_5",
+     "owner": "p2",
+     "level": 3,
+     "x0": 352,
+     "srcType": "vertical"
+    },
+    {
+     "uid": "b_6",
+     "owner": "p2",
+     "level": 3,
+     "x0": 288,
+     "srcType": "vertical"
+    },
+    {
+     "uid": "b_7",
+     "owner": "p2",
+     "level": 3,
+     "x0": 224,
+     "srcType": "vertical"
+    }
+   ],
+   "collides": [
+    {
+     "atX": 224,
+     "a": "b_0",
+     "b": "b_7",
+     "winner": "b_0"
+    },
+    {
+     "atX": 288,
+     "a": "b_1",
+     "b": "b_6",
+     "winner": "b_1"
+    },
+    {
+     "atX": 352,
+     "a": "b_2",
+     "b": "b_5",
+     "winner": "b_2"
+    }
+   ],
+   "hits": [],
+   "stationaryHits": [],
+   "fireballOnlyHits": [
+    {
+     "uid": "b_18",
+     "owner": "p2",
+     "target": "p1",
+     "atX": 224
+    }
+   ],
+   "p1ToP2": {
+    "atk": 12,
+    "def": 9,
+    "mult": 1.3,
+    "raw": 12.734693877551022,
+    "dmg": 12
+   },
+   "p2ToP1": {
+    "atk": 19,
+    "def": 8,
+    "mult": 0.8,
+    "raw": 12.666666666666668,
+    "dmg": 12
+   }
+  }
+ }
+}

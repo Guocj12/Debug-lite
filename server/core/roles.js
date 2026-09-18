@@ -12,7 +12,8 @@
 const { nullLogger } = require('../../shared/log.js');
 const items = require('./items.js'); // validateUnlock/rollSlotCount/applyAffixes（B3；UL-7 已证与 unlock 口径一致）
 
-const FLAT_STATS = ['hp', 'atk', 'def', 'sp', 'mp'];
+const FLAT_STATS = require('../data/affix-registry.json').stats; // 五维口径单一来源（词条注册表）
+const AFFIXES = require('../data/affix-registry.json').affixes;  // regen 等词条去向由此表声明
 const QUALITIES = require('../data/qualities.json').qualities;
 const qMap = Object.fromEntries(QUALITIES.map((q) => [q.id, q]));
 // 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
@@ -112,12 +113,13 @@ function makeRoles(logger) {
       }),
       equipped: [...role.equipped, ...plan.map((x) => ({ slotIndex: x.slotIdx, plugin: x.p }))],
     };
-    // regen 词条叠加（R-4b/c）
+    // regen 词条叠加（R-4b/c）：目标维度由词条注册表 def.regen 声明（affix-registry.json）
     for (const { p } of plan) {
       for (const a of p.affixes || []) {
-        if (a.id === 'mp_regen') next.regen = { ...next.regen, mp: next.regen.mp + a.params.v };
-        if (a.id === 'sp_regen') next.regen = { ...next.regen, sp: next.regen.sp + a.params.v };
-        if (a.id === 'hp_regen') next.regen = { ...next.regen, hp: (next.regen.hp || 0) + a.params.v };
+        const def = AFFIXES[a.id];
+        if (def && def.regen) {
+          next.regen = { ...next.regen, [def.regen]: (next.regen[def.regen] || 0) + a.params.v };
+        }
       }
     }
     return { ok: true, role: next };

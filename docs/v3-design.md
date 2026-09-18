@@ -1,7 +1,7 @@
 # Debug-Lite v3 完整设计文档
 
 > 更新：2026-09-11
-> **权威顺序**：`docs/decisions.md`（已确认的决策记录 D-01…D-126）> `docs/systems/*` > 本文档 > `docs/tasks.md`。实现时若与本文档冲突，以更高权威为准，并同步更新本文档。
+> **权威顺序**：`docs/decisions.md`（已确认的决策记录 D-01…D-136）> `docs/systems/*` > 本文档 > `docs/tasks.md`。实现时若与本文档冲突，以更高权威为准，并同步更新本文档。
 > v2 代码已归档至 `legacy/`，本文档描述的是全新架构。
 
 
@@ -74,6 +74,7 @@ Debug-Lite v3 是一款「**编程式自动对战**」游戏：
 - **渲染状态差异**：引擎输出两 tick 间全局状态差异供前端绘制（§15.2）。
 - **AI 执行轨迹**：战斗中实时展示 AI 每一步判断与执行位置（§11.10）。
 - **物品数据文档**：`docs/items-data.md` 描述所有物品数值与贴图（附录 A）。
+- **在线服务与档案（P7/D-129…D-136）**：账号与会话、服务端档案（配置槽 ≤3、唯一出战、必有出战）、异步排位双向记账（防守方离线可见战绩）、快速对战非对称 Elo 积分（0 起、上限 3000）、回放只存引用按需重算 —— 详见 `docs/systems/11-account-store.md`。
 
 ---
 
@@ -117,8 +118,19 @@ Debug-lite/
 │   ├── ai/
 │   │   ├── ast.js             # AI 程序 JSON schema + 静态校验
 │   │   └── runtime.js         # 沙箱解释器
-│   ├── ranked.js              # 排位（延后实现，接口预留）
-│   └── store.js               # 存档（延后实现，接口预留）
+│   ├── store/                 # 【P7/D-129】存储层（唯一允许 fs）：原子写/journal/索引/快照库/适配器
+│   ├── auth.js                # 【P7/D-129】账号与会话（scrypt + Bearer token）
+│   ├── account.js             # 【P7/D-129】档案门面（配置槽/快照/战绩/未读）
+│   ├── quickmatch.js          # 【P7/D-133】快速对战（积分匹配 + 非对称 Elo）
+│   ├── admin.js               # 【P7】bot 注入 / 索引重建 / 统计
+│   ├── ranked.js              # 排位（批次规则 D-122；P7 改为档案驱动 D-132）
+│   └── ...
+├── runtime/                   # 【P7/D-129】运行时数据根（DL_DATA_DIR；必须 .gitignore）
+│   ├── journal/<yyyymm>.jsonl # append-only 真源（跨玩家结算）
+│   ├── players/<shard>/*.json # 物化档案（可重建）
+│   ├── snapshots/<aa>/*.json  # 内容寻址快照库（回放重算依赖）
+│   ├── index.json             # 匹配/排行榜索引
+│   └── sessions.json          # 会话表
 ├── server/data/               # 数据表（可被前端静态加载）
 │   ├── role-templates.json
 │   ├── skill-templates.json
@@ -130,7 +142,7 @@ Debug-lite/
 │   ├── css/style.css
 │   └── js/
 │       ├── render/            # 像素占位渲染器（不沿用 v2 资源）
-│       ├── editor/            # Blockly 集成 + 自定义积木 + AST 转换
+│       ├── editor/            # ~~Blockly 集成 + 自定义积木 + AST 转换~~（**已废弃**：改纯 DOM 表单式 AST 编辑器，见 `frontend-spec.md` v3 §12）
 │       └── app.js             # UI 编排
 ├── assets/                    # 占位像素资源表（将来替换为图片素材）
 │   ├── sprites.json
@@ -146,7 +158,7 @@ Debug-lite/
 ```mermaid
 flowchart LR
     subgraph 编辑器
-        B[Blockly 编辑器] -->|生成| AST[AI 程序 JSON AST]
+        B[Blockly 编辑器（已废弃）→ 表单式 AST 编辑器] -->|生成| AST[AI 程序 JSON AST]
     end
     subgraph 服务器
         AST --> RT[沙箱解释器]
@@ -559,8 +571,8 @@ flowchart LR
 | 类别 | 运算符 |
 |---|---|
 | 比较 | `>` `=` `<` `≥` `≤` `≠` |
-| 逻辑 | 与（and）、或（or）、非（not） |
-| 算术 | 加、减、乘、除 |
+| 逻辑 | 与（`and`）、或（`or`）——**现行仅此两种**；~~非（not）~~ **未实现**（`runtime.js` 对 `op` 非 `and`/`or` 一律返回 `false`，`ast.js` 暂无枚举校验；精确口径见 `systems/08-ai.md` §3） |
+| 算术 | 加、减、乘、除（`+ - * /`，无 `%`） |
 | 随机 | 概率随机（`random(p)`，返回 true 的概率为 p） |
 
 ### 11.3 循环、分支与函数
@@ -585,7 +597,9 @@ flowchart LR
 
 ### 11.5 AST 定义
 
-AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生成 AST，服务端解释器执行。
+AI 程序是一个「产出一连串行动」的协程 AST。前端生成 AST（~~Blockly~~ **已废弃**：改纯 DOM 表单式编辑器，见 `frontend-spec.md` v3 §12），服务端解释器执行。
+
+> ⚠️ **本表的字段口径已按实现修正**（依据 `server/ai/ast.js` 的 `FIELD_CHECKS` + `server/ai/runtime.js`；更权威的口径见 `systems/08-ai.md` §3）。此前版本写的 `get(target,field)` / `bullets(filter)` / `logic(op,operands)` / `var(name,init)` 与实现不符。
 
 ```jsonc
 {
@@ -600,17 +614,17 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 | 节点 | 字段 | 说明 |
 |---|---|---|
 | `literal` | `value` | 数值/布尔常量 |
-| `get` | `target`, `field` | 读取 `self`/`enemy` 的字段 |
-| `bullets` | `filter` | 读取场上弹幕（可按 owner/level/dir 过滤） |
-| `var` | `name`, `init` | 声明局部变量（跨 tick 持久） |
+| `get` | `path`（**单个字符串**，非 `target`+`field`） | 按白名单路径读取，如 `self.hp` / `enemy.x` / `bullets[0].level` / `field.cellPx` |
+| `bullets` | —（**无 `filter`**） | 读取场上弹幕数组（当 tick 全量；过滤由 `get`/`cmp` 自行表达） |
+| `var` | `name`, `value`（**非 `init`**） | 声明局部变量（跨 tick 持久；已存在则跳过赋值） |
 | `set` | `name`, `value` | 给局部变量赋值 |
 | `getVar` | `name` | 读取局部变量 |
-| `arith` | `op`, `left`, `right` | 加减乘除 |
-| `cmp` | `op`, `left`, `right` | 比较运算 |
-| `logic` | `op`, `operands` | 与/或/非 |
+| `arith` | `op`, `left`, `right` | 加减乘除（`+ - * /`，**无 `%`**） |
+| `cmp` | `op`, `left`, `right` | 比较运算（`< > <= >= == !=`） |
+| `logic` | `op`, `left`, `right`（**非 `operands`**） | `op ∈ {and, or}`（**现行仅与/或；`not` 未实现**，其它取值恒 `false`） |
 | `random` | `prob`, `then`, `else` | 概率分支 |
 | `if` | `cond`, `then`, `else` | 条件分支 |
-| `loop` | `kind`(`count`/`while`), `times`/`cond`, `body` | 循环 |
+| `loop` | `kind`(`count`/`while`)（**仅支持这两值**）, `times`/`cond`, `body` | 循环 |
 | `break` | — | 跳出循环 |
 | `function` | `name`, `body` | 函数定义（青解锁） |
 | `call` | `name` | 调用函数 |
@@ -633,12 +647,12 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 1. **允许 `while(true)`**，但**循环体内所有分支都必须至少包含一个 `action`**（D-101）：
    - `if/else` 的**每个分支**、嵌套循环、函数体内的循环都要满足；
    - 若某分支不含 `action`，一旦进入该分支就永远产不出行动 → **拒绝**。
-2. 程序整体必须存在至少一个**可达**的 `action` 节点，否则拒绝。
+2. ~~程序整体必须存在至少一个**可达**的 `action` 节点，否则拒绝。~~ ⚠️ **本条规则不存在（已删）**：`ai/ast.js` 的 `checkLegality` 只做"循环体内分支必须有 action"（规则 1）、`break` 位置、`call` 已定义三项检查，**没有**"可达 action"检查。实测**空 `body` 合法**（`{type:'program', version:1, body:{type:'seq', statements:[]}}` → `validate` 通过），因为运行时对"整 tick 无产出"有兜底 `wait`（§11.6；`tests/unit/ai-validate.test.js` T-AI-1 明确断言"空 body 合法（运行时兜底）"）。
 3. 循环外 `break`、未知函数调用、未知节点等结构错误 → 拒绝。
-4. **错误必须带节点路径 `path`**（供编辑器高亮积木）。
+4. **错误必须带节点路径 `path`**（供编辑器高亮节点）。
 5. 运行期仍有步数上限兜底（超限返回 `wait`，见 §11.6）。
 
-编辑器（Blockly）在生成 AST 时**实时**提示违反规则 1/2 的积木组合。
+编辑器在改 AST 时**实时**提示违反规则 1/3 的组合（~~Blockly 积木~~ **已废弃**：改纯 DOM 表单式 AST 编辑器，见 `frontend-spec.md` v3 §12）。
 
 ### 11.8 函数（青段位解锁）
 
@@ -672,10 +686,10 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 
 ### 11.10 执行轨迹（AI 可视化）
 
-- 解释器每求值一个节点（微步骤），向本 tick 的执行轨迹追加一条记录：节点路径、类型、求值结果（条件真假、分支走向、循环次数、最终行动）。
+- 解释器每求值一个节点（微步骤），向本 tick 的执行轨迹追加一条记录：节点路径、类型、求值结果（条件真假、分支走向、循环次数、最终行动）。**注**：条目里的 `result` 字段**只有 `action` 节点才有**（其余节点为求值记录，不带结果），见 `systems/08-ai.md` §3。
 - 单 tick 轨迹上限 2000 条，超出截断并记 `trace.truncated`(warn)。
 - 引擎把轨迹放进本 tick 的状态差异（§15.2），前端据此实时展示「某个条件是否判断成功、具体运行到哪一步」。
-- Blockly 编辑器按轨迹高亮当前执行的积木，逐节点回放 AI 的思考过程。
+- 编辑器按轨迹高亮当前执行的节点，逐节点回放 AI 的思考过程（~~Blockly 积木~~ **已废弃**：改表单式 AST 编辑器 + 节点路径高亮，见 `frontend-spec.md` v3 §12）。
 
 ---
 
@@ -695,7 +709,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 | 青 mythic | 函数（function/call） | — | 顶级技能 |
 
 - 绿→条件分支、蓝→循环、青→函数、蓝→特化模板、橙→专家模板为用户明确指定；紫段位与部分技能为设计补充，待确认（§17）。
-- 门控位置：Blockly 编辑器隐藏/禁用未解锁积木；未解锁模板/技能不进掉落池；服务端校验玩家段位与所用语法/模板/技能匹配。
+- 门控位置：编辑器隐藏/禁用未解锁节点（~~Blockly 积木~~ **已废弃**：改表单式 AST 编辑器节点菜单，见 `frontend-spec.md` v3 §12）；未解锁模板/技能不进掉落池；服务端校验玩家段位与所用语法/模板/技能匹配。
 - 技能随进度解锁：技能模板带 `unlockTier` 字段，段位不足不产出、不可装备。
 
 ### 12.2 出战配置
@@ -732,9 +746,13 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 
 ### 12.4 实现说明
 
-- **本轮（P5）实现 `ranked.js`**：快照、匹配、晋升、段位奖励；**`store.js`（存档）不做**——按 D-123 延后到 P6（localStorage）。
-- **不持久化**：段位/仓库/loadout 由请求传入并回带，服务端不落盘。
-- 快照是**不可变深拷贝**，离线运行对手 AI，不要求对手同时在线。
+- **P5 已实现 `ranked.js` 的批次规则**（快照、抽 10 场、晋升 x=6、段位奖励）。
+- **P7（D-129…D-136）新增服务端档案**：`server/store/*`（append-only journal + 物化档案 + 内容寻址快照库）、`auth.js`（账号与会话）、`account.js`（配置槽/战绩视图）、`quickmatch.js`（快速对战与非对称 Elo）、`admin.js`（bot 注入/重建索引）；运行时数据根为 `runtime/`（`DL_DATA_DIR`）。
+- **权威划分（D-130）**：段位/积分/配置槽/战绩/回放引用由服务端权威并落盘；**仓库与物品仍由客户端 localStorage 持有**，服务端只保存出战快照副本。**因此段位与积分不具备竞技可信度**（作弊面与"服务端物品账本"后续路线见 `systems/11-account-store.md` §15.1）。
+- **防守方离线可见**（D-132）：被抽取方的战绩（`record.stats.defense` + 未读红点 + 回放）由服务端在其离线时写入，下次登录即可查看。
+- **积分（D-133）**：从 0 起、上限 3000，非对称 Elo（积分越高加得越少、扣得越多），与段位双轨互不推导。
+- 快照是**不可变深拷贝**（含 AI AST 与版本戳），离线运行对手 AI，不要求对手同时在线。
+- 完整设计见 `docs/systems/11-account-store.md`（本文档 §12.4 为其摘要）。
 
 ---
 
@@ -979,10 +997,12 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 
 ### 15.5 前端编辑器
 
-- 采用 Blockly，自定义积木覆盖 §11 的全部节点。
-- 积木 ↔ AST 双向转换：编辑 → 生成 AST 存盘；载入 → AST 还原积木。
-- 编辑器按玩家段位隐藏/禁用未解锁积木（§12.1）。
-- 编辑器提供「战斗试运行」：本地/服务端跑一场战斗并回放。
+> ⚠️ **本节整体已废弃（Blockly 方案）**：现行前端设计改为**纯 DOM 表单式 AST 编辑器**（无第三方依赖、可无头测），权威规格见 `docs/frontend-spec.md` v3 §12（含 17 类节点的表单元数据）。
+
+- ~~采用 Blockly，自定义积木覆盖 §11 的全部节点。~~ **已废弃**。
+- ~~积木 ↔ AST 双向转换：编辑 → 生成 AST 存盘；载入 → AST 还原积木。~~ **已废弃**（表单式编辑器直接编辑 AST 字段；另提供 JSON 导入/导出）。
+- 编辑器按玩家段位隐藏/禁用未解锁节点（§12.1）——**该约束继续有效**（实现方式为节点菜单过滤，见 `frontend-spec.md` v3 §12.2）。
+- 编辑器提供「战斗试运行」：本地/服务端跑一场战斗并回放——**继续有效**（对应 `/ai/battle` 演练模式，注意其使用基准面板，见 `frontend-spec.md` v3 §10.5）。
 
 ### 15.6 美术与音乐
 
@@ -1000,11 +1020,12 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 |---|---|
 | P0 | 归档 v2（已完成）；后端骨架（**本轮无前端**）：``shared/ server/ cli/ tests/ scripts/ ``；日志子系统；门禁与静态检查；数据表 + `battle-config.json`；ICD |
 | P1 | 核心引擎：rng（每 tick 每用途流）、field（px）、effects、items、roles、skills、**bullets（连续碰撞）**、unlock、engine（14 步管线）；硬编码 AI 跑通整场；单测 + 种子复现 + **黄金战斗复现** |
-| P2 | **自定义 AI（后端）**：`ast.js`（结构 + 分支 action 合法性 + 稳定路径 id）、`runtime.js`（显式状态机续执行 + 独立作用域 + trace）、`/api/v1/ai/*` + CLI；**Blockly 编辑器推迟到 P6** |
+| P2 | **自定义 AI（后端）**：`ast.js`（结构 + 分支 action 合法性 + 稳定路径 id）、`runtime.js`（显式状态机续执行 + 独立作用域 + trace）、`/api/v1/ai/*` + CLI；~~Blockly 编辑器~~ **已废弃**，编辑器推迟到 P6 且改为表单式（`frontend-spec.md` v3 §12） |
 | P3 | 物品与**插件连接**：开箱、仓库、组装/拆卸、loadout、面板、属性测试；数值校准 |
 | P4 | 回放数据：完整帧（1px 位置 + 碰撞位置 + cid）、文本回放器 CLI、帧自足性审计 |
-| P5 | 排位：快照、匹配 10 场、晋升（x=6）；**不做存档**（D-123，延后 P6） |
-| P6 | 前端（**无框架**，D-124）：Blockly 编辑器、仓库/装配、开箱、对战回放、HUD、AI 轨迹可视化 + 前端绘制日志 |
+| P5 | 排位：快照、匹配 10 场、晋升（x=6）；**不做存档**（D-123，延后 P6）⚠️ **该条已被 D-129（服务端持久化档案）部分推翻**：段位/积分/配置槽/战绩改为服务端落盘（仓库仍客户端，D-130）；现行代码仍是 D-123 无状态实现，改造见 `systems/10-ranked.md` 的「⏳ 计划（未实现）」标注 |
+| P6 | 前端（**无框架**，D-124）：~~Blockly 编辑器~~ → **表单式 AST 编辑器**（Blockly 已废弃，`frontend-spec.md` v3 §12）、仓库/装配、开箱、对战回放、HUD、AI 轨迹可视化 + 前端绘制日志 |
+| P7 | ⏳ **计划（未实现）**——**在线服务（D-129…D-136）**：服务端档案与账号（`server/store/*`、`auth.js`、`account.js`）、异步排位双向记账（`ranked.js` 改造）、快速对战与非对称 Elo（`quickmatch.js`、`rating-config.json`）、回放按需重算与参与者鉴权、bot 注入接口；详见 `systems/11-account-store.md` §14（B27~B33）。**现状**：`server/ranked.js` 仍是 D-123 无状态实现（见 `systems/10-ranked.md` 文首标注） |
 
 ---
 
@@ -1017,7 +1038,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 | 3 | 紫段位解锁内容 | ✅ 已决：**概率随机 + 扩展运算符**（D-120） |
 | 4 | 函数参数与返回值 | ✅ 已决：**不支持**；函数=打包代码块，有独立作用域+调用栈（D-102/D-103） |
 | 5 | 占位美术规格 | 待定（P6 前，`items-data` §1 已有草案） |
-| 6 | 存档 schema 版本 | ✅ 已决：**本轮不做存档**，延后 P6（D-123） |
+| 6 | 存档 schema 版本 | ✅ 已决：**D-129 起服务端存档**（`runtime/` + `archiveVersion` 迁移；D-123 的"不做存档"已部分推翻）；仓库仍客户端（D-130）。见 `systems/11-account-store.md` |
 | 7 | 排位奖励品质与段位映射 | ✅ 已决：段位序号即品质上限（D-122） |
 | 8 | `dodge` 是否附带额外闪避率及其数值 | ✅ **已定（B21 校准，D-127）**：附带，`dodgeChanceBonus = +20%`，叠加于面板 dodgeChance，封顶 1 |
 | 9 | 位移技能 `dealDamage` 与 M1 碰撞伤害的叠加关系 | ✅ **已决（D-18③）**：路径弹幕伤害与碰撞伤害**分别结算**，同一 tick 可能各受一次（对应 `T-BT-20/28/29`） |
@@ -1039,6 +1060,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端 Blockly 生�
 | `07-engine.md` | 战斗引擎 |
 | `08-ai.md` | AI 系统 |
 | `09-unlock.md` | 解锁系统 |
-| `10-ranked.md` | 排位系统 |
+| `10-ranked.md` | 排位系统（批次规则；D-129 起持久化部分见 `11-account-store.md`） |
+| `11-account-store.md` | **账号与存档系统**（身份鉴权 / 配置槽 / append-only journal + 物化档案 / 异步排位双向记账 / 快速对战非对称 Elo / 回放按需重算 / 容量与数据库判据） |
 | `../items-data.md` | 物品数据文档（所有物品数值/名称/描述/贴图占位） |
 | `../tasks.md` | 构建任务清单（阶段任务 / 里程碑 / 验收） |

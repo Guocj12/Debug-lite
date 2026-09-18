@@ -11,6 +11,7 @@
 ## 2. 依赖
 
 - `field.js`：px 坐标、格↔px 换算、边界与基地区域。
+- `skills.js`：生成位置由技能系统计算（`buildSkillAction` 的 `x0` 见 §4.1），`bullets.js` 只接收 `spec.x0`，不自行换算格中心。
 - `battle-config.json`：`cellPx`、`fieldPx`、精度等。
 - 命中结算回调（引擎提供）。
 
@@ -40,12 +41,13 @@
 
 | 类型 | 生成方式 |
 |---|---|
-| `melee` | 按 `range` 相对**朝向**算出覆盖格集合；**每格生成一枚 0 速弹幕**（D-22/D-26），`x0` = 该格中心 px，`v = 0` |
-| `straight` | 按 `bulletCount` 生成 N 枚；`x0` = **释放者所在格的中心**（D-22，不在邻格），`dir` = 朝向，`v = range × cellPx` |
-| `vertical` | 落点 = `clampX(caster.x + dir × range × cellPx)`；按 `area` 相对朝向算出覆盖格集合；**每格一枚 0 速弹幕**，`x0` = 该格中心 |
+| `melee` | 按 `range` 相对**朝向**算出覆盖格集合；**每格生成一枚 0 速弹幕**（D-22/D-26），`x0` = 该**覆盖格的中心** px，`v = 0` |
+| `straight` | 按 `bulletCount` 生成 N 枚；`x0` = **释放者当前坐标 `caster.x`（px）**（D-22；不是"所在格的中心"，也不在邻格），`dir` = 朝向，`v = range × cellPx` |
+| `vertical` | 落点 = `clampX(caster.x + dir × range × cellPx)`；按 `area` 相对朝向算出覆盖格集合；**每格一枚 0 速弹幕**，`x0` = 该**覆盖格的中心** |
 
 - 生成顺序即**结算顺序**（D-27），必须记录单调递增序号。
-- 因角色永不重叠（D-06），平射的生成格内不会有敌人，故**不需要"生成格命中"特判**（D-30）。
+- 因角色永不重叠（D-06），平射的生成格内不会有敌人，故**不需要"生成格命中"特判**（D-30）。平射 `x0` 取**坐标**而非格中心，但 `cellOf(x)` 恒等于释放者所在格，故上一条"生成格内不会有敌人"的结论不变。
+- 落地位置证据（实测）：`server/core/skills.js` 中 `melee`/`vertical`/`displacement` 路径弹幕用 `field.xCenter(c)`（格中心），**仅 `straight` 用 `x0 = x`（`x = caster.x`）**；`docs/examples/03-skills.md` 的"生成位置"行与代码一致。
 
 ### 4.2 命中判定（**连续方程求交**，D-23）
 

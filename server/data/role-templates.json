@@ -1,4 +1,6 @@
 {
+  "_sample": true,
+  "_note": "示例数据（2026-09-16）：角色数值/命名为占位示例，正式设计由用户手动完成后冻结。改内容须同步 docs/items-data.md 与 schema.js 期望表；去掉 _sample 后 schema 只做结构与机制校验。",
   "typeModifiers": {
     "specialized": { "high": 1.15, "low": 0.85 },
     "expert": { "high": 1.30, "spread": [1.1, 0.7, 0.9, 1.0] }

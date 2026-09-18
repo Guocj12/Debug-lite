@@ -346,3 +346,46 @@ test('DS-11 assets 占位表（P0-9）：真实通过；缺条目/描边色漂�
   }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
   assert.equal(r5.ok, false, '缺 role.idle 应 fail');
 });
+
+// ---------- 机制表完整性（2026-09-16 新增）：投毒用例，证明检查不空转 ----------
+// 内容层引用的词条/类型/权限必须在机制层登记；否则运行期会静默失效（词条被跳过、类型抛错、编辑器插入无效节点）
+
+test('机制表完整性：内容表引用未登记词条 → FAIL 并指出 id', () => {
+  const r = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    p.plugins[0].affixes.push({ id: 'not_registered_affix', desc: 'x', params: { v: 1 } });
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r.ok, false, '未登记词条必须被拦');
+  assert.match(r.detail, /not_registered_affix/);
+});
+
+test('机制表完整性：技能模板类型未在类型机制表登记 → FAIL', () => {
+  const r = withRoot((root) => {
+    const s = readJSON(root, 'skill-templates.json');
+    s.skillTemplates[0].type = 'no_such_type';
+    writeJSON(root, 'skill-templates.json', s);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /no_such_type/);
+});
+
+test('机制表完整性：unlock 段位权限既非真实节点也未登记 → FAIL', () => {
+  const r = withRoot((root) => {
+    const u = readJSON(root, 'unlock.json');
+    u.unlocks[2].aiNodes.push('ghost_permission');
+    writeJSON(root, 'unlock.json', u);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /ghost_permission/);
+});
+
+test('机制表完整性：注册表声明未登记算子 → FAIL', () => {
+  const r = withRoot((root) => {
+    const reg = readJSON(root, 'affix-registry.json');
+    reg.affixes.mult_up.skillOp = { op: 'no_such_op', field: 'multiplier' };
+    writeJSON(root, 'affix-registry.json', reg);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /no_such_op/);
+});
