@@ -228,6 +228,53 @@ function syntheticVerifiedWarehouse(loadout) {
   return buckets.rolePlugin.length + buckets.skillPlugin.length > 0 ? { buckets } : null;
 }
 
+/* ---------- D1-residual：可用性**单一判定**（抽池与实例化共用，docs/systems/10-ranked.md §4.3 注记） ----------
+ * 背景（实测复现）：`rt.loadWarehouse` 原先按 ①账号镜像 → ②进程内缓存 → ③快照自带 取**首个非空**；
+ *   而账号级镜像可能是**陈旧子集**（先 `PUT /me/warehouse` 提交过子集镜像，之后又保存了引用更多插件的
+ *   出战配置）→ "非空但覆盖不了"的镜像遮蔽了更好的来源 → 抽池判定（非空 = 可用）与实例化
+ *   （`buildPanel` 报 `悬挂引用`）口径不一致 → `POST /quick/run` 报 `409 no_opponent`
+ *   （"抽到的对手快照无法实例化"），根因被埋在 warn 里。故本文件提供两个**纯函数**作为唯一判定：
+ *     · `warehouseCovers`  —— 镜像是否覆盖该配置的所有 `pluginUid`；
+ *     · `sideInstantiable` —— 用 `battle.buildPlayer`（与 `battleOne` **同一实现**）证明"真的能实例化"。
+ */
+
+// 镜像覆盖判定：该配置引用到的每个 pluginUid 都能在镜像桶里找到（无引用 → 恒 true，含 null 镜像）
+function warehouseCovers(loadoutObj, warehouse) {
+  const refs = archiveMod.loadoutRefs(loadoutObj);
+  if (refs.length === 0) return true;
+  const have = new Set();
+  for (const list of Object.values((warehouse && warehouse.buckets) || {})) {
+    for (const it of Array.isArray(list) ? list : []) if (it && typeof it.uid === 'string') have.add(it.uid);
+  }
+  return refs.every((uid) => have.has(uid));
+}
+
+// 缺失引用清单（诊断/日志用；顺序稳定 = loadoutRefs 顺序）
+function warehouseMissingRefs(loadoutObj, warehouse) {
+  const refs = archiveMod.loadoutRefs(loadoutObj);
+  const have = new Set();
+  for (const list of Object.values((warehouse && warehouse.buckets) || {})) {
+    for (const it of Array.isArray(list) ? list : []) if (it && typeof it.uid === 'string') have.add(it.uid);
+  }
+  return refs.filter((uid) => !have.has(uid));
+}
+
+// 可用性判定（**与 battleOne 同一实现**）：能实例化 → {ok:true}；否则回带 buildPanel 的逐条错误（可解释）。
+//   注意：buildPlayer 会创建 AI 上下文，成功路径必须销毁（不留引用/不泄漏）。
+function sideInstantiable(loadoutObj, warehouse, tier) {
+  try {
+    const built = battle.buildPlayer('p1', loadoutObj, warehouse || null, tier || 'common');
+    if (!built.ok) return { ok: false, errors: built.errors };
+    runtime.destroyContext(built.ctx);
+    return { ok: true, errors: [] };
+  } catch (err) {
+    return {
+      ok: false,
+      errors: [{ path: 'loadout', code: 'instantiate_failed', message: err && err.message ? err.message : String(err) }],
+    };
+  }
+}
+
 function battleOne(mine, opponent, wh, tier, seed) {
   const sides = warehousesOf(wh);
   const b1 = battle.buildPlayer('p1', mine, sides.p1, tier);
@@ -902,6 +949,10 @@ module.exports = Object.assign(makeRanked(), {
   loadSnapshotOf,
   loadoutKey,
   candidatesOf,
+  // D1-residual：可用性单一判定（quickmatch 抽池/自身校验与测试复用）
+  warehouseCovers,
+  warehouseMissingRefs,
+  sideInstantiable,
   RAW_SNAPSHOT_FIELD,
   // P1-4 批次级幂等（测试独立复算 batchId / 构造重发场景用）
   batchIdOf,

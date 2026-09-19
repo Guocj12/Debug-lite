@@ -209,6 +209,8 @@ health | data <table>
 | D-145 | §1 ai/ast.js 校验期四类拒绝（`get.path` 白名单 / 变量先声明 / 表达式位 / 必含 action）+ §1 ai/runtime.js 运行层兜底（缺失→0，不抛） | | D-146 | §1 ai/ast.js warnings + §2 `/ai/validate`、`/ai/compile`（响应带 `data.warnings`；非法动作名不拒绝，D-80） | | D-147 | §1 runner.js `projectSnapshot` 字段补齐（`tick`/`max*`/`cooldowns`/`effects[]`/`bases.*`）+ `baseHp` ＝ 基地当前血量（≠ 角色 `maxHp`） |
 | D-148 | §2 `/ai/battle`（`actionsEffective`/`ineffectiveActions`/`frames[].actions,events`） | | D-149 | §1 core/items.js `buildRolePanel` 单一聚合（roles/loadout 共用；regen 只叠一次） | | D-150 | §1 tests/regression/golden-battle.test.js + `docs/tasks.md §5.1` 第 5 条（阶段级代码级审查）+ `docs/plan-p7-playable.md` §0.7/§P7-7 |
 | D-151 | §2 CLI `replay`（伤害数字 + 暴击/背击标注）+ `npm run play`（`scripts/play.js` 离线文本闭环） | | D-152 | §2 ranked/run·quick/run（匹配池＝真实玩家档案；池不足回报 `shortfall`，**禁止 bot 充数**） | | D-153 | `docs/security-backlog.md`（只登记不修复；被顺手修掉的条目更新证据 + 状态） |
+| D-154 | §1 core/effects.js 持续效果双语义（面板类 atk/def 到期回滚累计实际增量；资源类 hp/mp/sp 不回滚）+ `server/data/plugins.json` `cast_buff`（每 tick +2 / duration=2 / 净 0） | | D-155 | §1 ai/ast.js 可达性收紧（字面量为假的 `if` 分支不可达 → `branch_without_action`）+ 残余：`no_action_program` 只数 action，顶层空转由步数上限兜底（D-81） | | D-156 | §1 ai/ast.js/ai/runtime.js `random` 位置语义（仅语句位适用分支行动规则；表达式位只取 `prob`）+ `random.else` 校验期必填 / 运行期容忍 |
+| D-157 | §2 ranked/run·quick/run（**匹配池筛选与最终实例化共用同一可用性判定**；不得用 bot 凑数，D-152） | | | | | |
 
 ## §6 日志事件登记（§4.6 覆盖矩阵；实现批次标注，T-LG-4 断言于此）
 

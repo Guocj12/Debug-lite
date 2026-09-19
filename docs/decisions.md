@@ -224,6 +224,17 @@
 
 > **流程补充（D-150 的落地细则）**：独立"代码级审查"的**逐条检查表**（功能完整度 / 空实现与占位 / 冲突与重合 / 副作用与回归 / 独立执行者 + 文件:行证据）见 `docs/plan-p7-playable.md` §0 第 7 条与 `docs/tasks.md` §5.1 第 5 条——**每个阶段/新功能完成后执行，问题当阶段修复**。
 
+### 14.1 P7 收口补充（2026-09-19 追加，D-154…D-157）
+
+> 用户 2026-09-19 拍板/确认的 4 条收口口径，**只追加、不改 D-137…D-153 既有条目**。其中 D-155/D-156 是 D-101/D-139 的**补充**（原条目文字保持不变）；D-154 是本次唯一的**战斗数值口径变更**。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-154** | ⚠️ **持续效果双语义定稿（面板修饰 vs 资源池流量）**：`atk`/`def` 属**面板修饰**——每 tick 累加**实际生效**增量（含 clamp 修正），到期**回滚累计增量**（下限 0，整段生效期**净 0**，严格回到施放前）；`hp`/`mp`/`sp` 属**资源池流量**——结算即生效、**到期不回滚**。`cast_buff` 因此为 **`atk` 每 tick +2、`duration=2`（生效窗口 t+1/t+2）**，到期回滚净 0，**不再是永久增益**。复算：E-2d 轨迹 8 → 12 → **20**（第二个效果到期回滚 −4）→ **8**（第一个到期回滚 +18）（`tests/unit/effects.test.js` EF-3/EF-14/EF-17/EF-18/EF-19） | `systems/05-effects.md` §3/§4.3/§5/§7、`examples/05-effects.md` E-2d、`items-data.md` §特殊词条、`systems/03-skills.md` §4.7、`server/data/plugins.json`（`cast_buff` desc）、`server/core/effects.js` |
+| **D-155** | **D-101 补充（可达性收紧）**：条件为**字面量为假**（`false`/`0`/`''`/`null`）的 `if`，其 `then` 分支**静态不可达**——其中的 `action` **不计入**可达 action，也不使所在函数成为"行动产出函数"（`function g(){ if(false){ action wait } }` + `while(true){ call g }` → 校验期 `branch_without_action`，`path` 指向循环体）；truthy 字面量与非字面量条件保持原保守口径。**D-101 的"不会出现空死循环"应理解为「循环体内不会出现无 action 的空死循环」**；**残余（不变）**：`no_action_program` 仍只数"是否存在 action"，**顶层** `if(false){action}` 空转仍通过校验，运行期由**步数上限兜底**（D-81：同 tick 返回 `wait` + `stepLimited`、trace 截断 2000） | `server/ai/ast.js`、`systems/08-ai.md` §4.2、`tests/unit/ai-validate.test.js` |
+| **D-156** | **D-139 补充（`random` 位置语义与 `else` 必填）**：**仅语句位** `random` 适用 D-101 分支行动规则（`then`/`else` 各需可达 action）；**表达式位**（`set`/`var` 的值、`if.cond`、`loop.cond`、运算子节点）只取 `prob` 求布尔，`then`/`else` **不参与求值**、**不适用**该规则（校验期仍扫描其结构错误）。`random.else` 为**校验期必填**（缺失或 `null` → `bad_field`，`path` 指向该 `random` 节点），**运行期仍容忍缺省**（按空分支跳过，与 `if` 缺 `else` 一致）——分层原则：校验层拒绝 + 运行层兜底 | `server/ai/ast.js`、`server/ai/runtime.js`、`systems/08-ai.md` §4.2/§4.3、`tests/unit/ai-validate.test.js`、`tests/unit/runtime.test.js` |
+| **D-157** | ⚠️ **匹配池与实例化必须共用同一"可用性"判定**：`/ranked/run` 与 `/quick/run` 的**抽池筛选**与**最终实例化**必须使用同一判据（快照可实例化 + 装配引用有可用仓库镜像）；两处口径不一致会产生"抽得到、打不了"的含混失败（`/quick/run` 曾在"发起者带装配引用 + 抽到默认配置对手 + 进程内镜像缓存缺失"下返回 `409 no_opponent`，已派修）。**任何情况下不得用 bot 凑数**（D-152）；池不足只如实回报 `shortfall`（排位）或 `no_opponent`（快速） | `server/quickmatch.js`（`candidatePool` / `run`）、`server/ranked.js`、`systems/10-ranked.md` §4.3、`progress.md` 待办 |
+
 ---
 
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
