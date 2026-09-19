@@ -353,3 +353,140 @@ test('B26 ⑤ warnings 通道：动作名不在引擎词汇表 → warning（不
   assert.equal(cl.warnings, undefined);
   assert.ok(Array.isArray(cl.errors));
 });
+
+// ==== 缺陷 2（P1 校验，2026-09-19）：`branchHasAction`/行动产出定点分析把"不可达的 action"当成可达 ====
+// 复现证据（修前）：`function g(){ if(false){ action wait } }` + `while(true){ call g; set c = c + 1 }`
+//   → validate ok=true，运行期 action=wait、stepLimited=true、同 tick trace 打满 2000（证伪 D-101"不会出现空死循环"）。
+// 修法：falsy 字面量 cond（false/0/''/null）的 then 分支静态不可达 → 其中的 action **不计入**"可达 action"。
+// 口径边界（刻意不收紧）：truthy 字面量与非字面量条件一律保持原保守口径；`no_action_program` 仍按
+//   "只数存在性"（B26④ 既有 contract，顶层 if(false){action} 仍算数）——见下方"口径保持"用例。
+
+test('缺陷2 定点分析可达性：falsy 字面量分支里的 action 不算"可达 action"，while(true) 空转程序校验期拒绝', () => {
+  const falsyAction = (cond) => P2(seq([
+    { type: 'function', name: 'g', body: seq([{ type: 'if', cond, then: seq([act('wait')]), else: null }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([
+      { type: 'var', name: 'c', value: { type: 'literal', value: 0 } },
+      { type: 'call', name: 'g' },
+      { type: 'set', name: 'c', value: { type: 'arith', op: '+', left: { type: 'getVar', name: 'c' }, right: { type: 'literal', value: 1 } } },
+    ]) },
+  ]));
+  // ① 缺陷原案（cond = literal false）→ 拒绝，错误码沿用 branch_without_action 且 path 精确指向循环体
+  const r = ast.validate(falsyAction({ type: 'literal', value: false }), 'mythic');
+  assert.equal(r.ok, false, `应校验期拒绝: ${JSON.stringify(r.errors)}`);
+  assert.ok(r.errors.some((e) => e.code === 'branch_without_action' && e.path === 'body.s[1].body'), JSON.stringify(r.errors));
+  // ② falsy 字面量族（false / 0 / '' / null）同口径
+  for (const v of [false, 0, '', null]) {
+    const rv = ast.validate(falsyAction({ type: 'literal', value: v }), 'mythic');
+    assert.equal(rv.ok, false, `falsy 字面量 ${JSON.stringify(v)} 应拒绝`);
+  }
+  // ③ 合法用法不误拒：真实条件（cmp）/ truthy 字面量 / 无条件的函数体 action / 传递产出
+  const realCond = P2(seq([
+    { type: 'function', name: 'g', body: seq([{ type: 'if', cond: { type: 'cmp', op: '>', left: { type: 'get', path: 'self.hp' }, right: { type: 'literal', value: 10 } }, then: seq([act('move_right')]), else: null }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'g' }]) },
+  ]));
+  assert.equal(ast.validate(realCond, 'mythic').ok, true, '真实条件分支里的 action 仍算可达');
+  const truthy = P2(seq([
+    { type: 'function', name: 'g', body: seq([{ type: 'if', cond: { type: 'literal', value: true }, then: seq([act('wait')]), else: null }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'g' }]) },
+  ]));
+  assert.equal(ast.validate(truthy, 'mythic').ok, true, 'truthy 字面量保持原保守口径（不收紧）');
+  const direct = P2(seq([
+    { type: 'function', name: 'g', body: seq([act('wait')]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'g' }]) },
+  ]));
+  assert.equal(ast.validate(direct, 'mythic').ok, true, '函数体直接含 action 仍是行动产出函数');
+  const transitive = P2(seq([
+    { type: 'function', name: 'g', body: seq([act('wait')]) },
+    { type: 'function', name: 'f', body: seq([{ type: 'call', name: 'g' }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'f' }]) },
+  ]));
+  assert.equal(ast.validate(transitive, 'mythic').ok, true, '传递产出 action 仍成立');
+  // ④ 传递链上的"不可达 action"同样不传递：f → g（g 的 action 不可达）→ 拒绝
+  const chain = P2(seq([
+    { type: 'function', name: 'g', body: seq([{ type: 'if', cond: { type: 'literal', value: false }, then: seq([act('wait')]), else: null }]) },
+    { type: 'function', name: 'f', body: seq([{ type: 'call', name: 'g' }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'f' }]) },
+  ]));
+  assert.equal(ast.validate(chain, 'mythic').ok, false, '不可达 action 不得经 call 链传递为行动产出');
+  // ⑤ falsy 条件的 else 分支若可达 → 该 if 仍能产出 action（不误拒）
+  const elseReachable = P2(seq([
+    { type: 'function', name: 'g', body: seq([{ type: 'if', cond: { type: 'literal', value: false }, then: seq([act('wait')]), else: seq([act('defend')]) }]) },
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([{ type: 'call', name: 'g' }]) },
+  ]));
+  assert.equal(ast.validate(elseReachable, 'mythic').ok, true, 'falsy 条件下 else 可达 → 仍算行动产出');
+  // ⑥ 既有口径保持（B26④）：`no_action_program` **仍**只数存在性——顶层 if(false){action} 不因此被拒
+  const looseGlobal = P2(seq([{ type: 'if', cond: { type: 'literal', value: false }, then: seq([act('wait')]), else: null }]));
+  assert.equal(ast.validate(looseGlobal, 'mythic').ok, true, 'no_action_program 口径不变（可达性收紧只作用于分支/定点分析）');
+});
+
+// ==== 缺陷 3（P1 校验，2026-09-19）：表达式位的 random 被按语句位分支规则校验 ====
+// 复现证据（修前）：loop{ if(cond: random(prob, then: literal, else: literal), then: action, else: action) }
+//   → branch_without_action（path=...expr.then/.expr.else），而运行期它按 D-139 返回布尔（校验与运行不一致）。
+// 修法：`ctx.expr` 沿表达式子节点传播；表达式位 random 只取 prob 求布尔，不适用分支行动规则。
+//   语句位 random 的 then/else 规则**原样保留**。
+test('缺陷3 表达式位 random 不适用分支行动规则；语句位 random 规则保持', () => {
+  const exprRandomInIf = P2(seq([
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([
+      { type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'literal', value: true }, else: { type: 'literal', value: false } }, then: seq([act('wait')]), else: seq([act('dodge_left')]) },
+      { type: 'break' },
+    ]) },
+  ]));
+  const r1 = ast.validate(exprRandomInIf, 'mythic');
+  assert.equal(r1.ok, true, `表达式位 random（if.cond）应通过: ${JSON.stringify(r1.errors)}`);
+  // 表达式位另外两种位置：set 值 / loop.cond（then/else 为字面量，无 action 也不得被分支规则拒）
+  const exprRandomSetAndLoop = P2(seq([
+    { type: 'var', name: 'n', value: { type: 'literal', value: 0 } },
+    { type: 'loop', kind: 'while', cond: { type: 'random', prob: { type: 'literal', value: 0.9 }, then: { type: 'literal', value: true }, else: { type: 'literal', value: false } }, body: seq([
+      { type: 'set', name: 'n', value: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'literal', value: 1 }, else: { type: 'literal', value: 0 } } },
+      act('wait'),
+    ]) },
+  ]));
+  const r2 = ast.validate(exprRandomSetAndLoop, 'mythic');
+  assert.equal(r2.ok, true, `表达式位 random（set 值 / loop.cond）应通过: ${JSON.stringify(r2.errors)}`);
+  // 表达式位 random 的 then/else 里的未定义 call 仍被抓（只免"分支行动规则"，不免其它合法性检查）
+  const exprRandomBadCall = P2(seq([
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([
+      { type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'call', name: 'ghost' }, else: { type: 'literal', value: false } }, then: seq([act('wait')]), else: seq([act('wait')]) },
+    ]) },
+  ]));
+  assert.ok(ast.checkLegality(exprRandomBadCall).errors.some((e) => e.code === 'unknown_call'), '表达式位 random 子树仍做 call 存在性检查');
+  // ② 语句位 random 的 then/else 无 action → **仍被拒**（规则保持）
+  const stmtRandomNoAction = P2(seq([
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([
+      { type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([{ type: 'set', name: 'n', value: { type: 'literal', value: 1 } }]), else: seq([{ type: 'set', name: 'n', value: { type: 'literal', value: 1 } }]) },
+    ]) },
+  ]));
+  const r3 = ast.checkLegality(stmtRandomNoAction);
+  assert.equal(r3.ok, false, '语句位 random 分支无 action 仍拒绝');
+  assert.ok(r3.errors.some((e) => e.code === 'branch_without_action' && e.path === 'body.s[0].body.s[0].then'), JSON.stringify(r3.errors));
+  assert.ok(r3.errors.some((e) => e.code === 'branch_without_action' && e.path === 'body.s[0].body.s[0].else'), JSON.stringify(r3.errors));
+  // ③ 语句位 random 两分支都有 action → 通过（既有 A-6 口径不降）
+  const stmtRandomOk = P2(seq([
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: seq([
+      { type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: seq([act('defend')]) },
+    ]) },
+  ]));
+  assert.equal(ast.validate(stmtRandomOk, 'mythic').ok, true, '语句位 random 两分支有 action → 通过');
+});
+
+// ==== 缺陷 4（P2 文档/实现不一致，2026-09-19）：`random.else` 必填 ====
+// 决策（用户口径 B：**代码为准**）：保持 `else` 必填（FIELD_CHECKS random: else 'node'），
+//   由中央把 docs/systems/08-ai.md §4.3 第 73 行（"else 缺省时视为空分支直接跳过"）改为"`else` 必填"，
+//   并说明"运行期仍容忍缺省（绕过校验直接注入时按空分支跳过）"——即既有的分层原则（校验层拒绝 + 运行层兜底）。
+//   本用例锁定代码侧不变量，避免后续被"顺手放宽"。
+test('缺陷4 random.else 必填（代码为准）：缺 else → bad_field 带精确 path；有 else 放行', () => {
+  const missingElse = P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]) }]));
+  const r = ast.validate(missingElse, 'mythic');
+  assert.equal(r.ok, false, 'random 缺 else 应被结构校验拒绝');
+  const e = r.errors.find((x) => x.code === 'bad_field');
+  assert.ok(e, JSON.stringify(r.errors));
+  assert.equal(e.path, 'body.s[0]', '错误 path 指向 random 节点');
+  assert.match(e.message, /random 缺必填字段 else/, '消息明确指向缺省字段 else');
+  // else 为 null 同样视为缺失（字段类型表 node 非 optional）
+  assert.equal(ast.validate(P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: null }])), 'mythic').ok, false, 'else=null 同样拒绝');
+  // 带 else（哪怕空 seq）→ 结构通过（空分支由分支行动规则在循环体内把关）
+  const withElse = P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: seq([act('wait')]) }]));
+  assert.equal(ast.validate(withElse, 'mythic').ok, true, '带 else 放行');
+  // fixtures 全量回归：random 夹具（coverageProgram）已带 else，不受影响
+  assert.equal(ast.validate(prog('coverageProgram'), 'mythic').ok, true, 'coverageProgram（含 random.then/else）仍通过');
+});

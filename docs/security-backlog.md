@@ -12,13 +12,15 @@
 | 项 | 值 |
 |---|---|
 | 文档性质 | 安全与防作弊问题登记册（record-only） |
-| 更新日期 | **2026-09-16** |
-| 版本基线 | Debug-Lite v3.0.0，后端 P0–P5 收口（P6 前端、P7 在线服务**均未开始**，仅设计） |
-| 适用范围 | `server/**`（HTTP 层 `server/index.js`、编排层 `battle.js`/`box.js`/`loadout.js`/`ranked.js`/`runner.js`、AI 运行时 `server/ai/**`）、`shared/log.js`、仓库工程配置（`package.json`、`node_modules`、CI） |
-| 不在范围 | P7 未实现代码（不存在，故不登记为缺陷）；产品级数值平衡；前端 UI 缺陷（另见 `docs/frontend-spec.md`） |
-| 关联设计文档 | `docs/interfaces.md` §2、`docs/server.md` §2/§4、`docs/systems/11-account-store.md`（D-129…D-136）、`docs/decisions.md`（D-122/D-123/D-135）、`docs/tasks.md`（B27–B33） |
-| 状态取值 | 本册所有条目一律 **`待处理`**（本轮不处理） |
+| 更新日期 | **2026-09-19**（P7/B27–B33 收口后的处置回填：SEC-01/SEC-03/SEC-22；SEC-19 维持"已部分处置"） |
+| 版本基线 | Debug-Lite v3.0.0，后端 P0–P5（34 批）+ **P7/B27–B33（7 批）均已收口**（2026-09-19；P6 前端未开始） |
+| 适用范围 | `server/**`（HTTP 层 `server/index.js`、编排层 `battle.js`/`box.js`/`loadout.js`/`ranked.js`/`runner.js`、**身份与档案层 `auth.js`/`account.js`/`quickmatch.js`/`admin.js`**、**存储层 `server/store/*`**、AI 运行时 `server/ai/**`）、`shared/log.js`、仓库工程配置（`package.json`、`node_modules`、CI） |
+| 不在范围 | 产品级数值平衡；前端 UI 缺陷（另见 `docs/frontend-spec.md`） |
+| 关联设计文档 | `docs/interfaces.md` §2、`docs/server.md` §2/§4、`docs/systems/11-account-store.md`（D-129…D-136）、`docs/decisions.md`（D-122/D-123/D-135/D-152）、`docs/tasks.md`（B27–B33） |
+| 状态取值 | `待处理` / `已部分处置` / `已处置`（**D-153 口径**：被顺手修掉的条目必须回填"现状证据 + 状态"） |
 | 优先级 | 高 = 可直接造成不可用/数据不可信/信息泄漏；中 = 明显放大面或违反已冻结契约；低 = 卫生问题、可复现性问题 |
+
+> **⚠ 复核提示（2026-09-19）**：本册多数条目的"现状证据"是在 **P7 代码 0 行**时登记的。P7 交付后，凡证据依赖"账号/鉴权/存储/回放改造不存在"的条目，其前提都已改变——本轮只回填了 **SEC-01/SEC-03/SEC-22**（以及既有的 SEC-17/SEC-19），**SEC-02、SEC-06、SEC-11、SEC-13、SEC-25、SEC-26、SEC-27、SEC-30 需要下一批逐条复核**（例如 SEC-26 的 `DL_ADMIN_TOKEN` 早已接线、SEC-27 的归档回放已参与者鉴权；它们的残余面与 SEC-01 的残余面相同：遗留无状态端点默认开放）。
 
 ## 处理前置条件（开工前必须先定，否则改一处破一处）
 
@@ -27,7 +29,9 @@
 3. **必须先把 HTTP 状态语义扩展落到实处**：`docs/interfaces.md:92` 已冻结 `400/401/403/404/409/410/429/500`；`413/405/415/406` 尚未纳入契约，需先在 `interfaces.md` §2 补写再改代码，避免"代码先于契约"。
 4. **必须先决定部署形态**：单机 127.0.0.1（当前默认）还是对公网/局域网暴露。暴露则 A 节全部条目优先级上浮一档，且必须同时解决 TLS 终止、反向代理、进程守护（本册不展开，属运维，仅提示）。
 5. **必须先确定存储方案**：`11-account-store.md` §6（JSON + journal + 快照 + fsatomic）还是改用 `node:sqlite`（`DL_STORE=sqlite` 已预留）。E 节条目的加固方式取决于此。
-6. **每条处置都必须带回归测试**：本仓库唯一回归防线是 `npm test`（459 通过）+ `npm run gate`（9 项，`scripts/gate.js:581-604`）。新增防护必须同时新增测试，否则下一批改动会静默回退。
+6. **每条处置都必须带回归测试**：本仓库唯一回归防线是 `npm test`（2026-09-19 实测 903 通过）+ `npm run gate`（9 项，`scripts/gate.js`）。新增防护必须同时新增测试，否则下一批改动会静默回退。
+
+> **前置条件现状（2026-09-19 复核）**：② **已满足**——账号/会话（B28）已落地，`ctx.player` 主体可用于按来源限流/配额/CORS；③ **部分满足**——`413 payload_too_large` 已实现并入契约，`405/415/406` 仍未纳入；⑤ **已定**——存储方案 = JSON + journal + 快照 + `fsatomic`（`DL_STORE=sqlite` 仍为抛错的预留适配器）；① 仍**未决**（混合权威 vs 服务端账本，见 §15.1 阶段 2）；④ 仍**未决**（部署形态，默认仍 `127.0.0.1`）。
 
 ---
 
@@ -43,7 +47,8 @@
 - **风险**：任何人（只要网络可达）可调用全部业务端点；`POST /log-level` 可被用于日志放大（见 SEC-08）；`promote` 可被匿名调用伪造晋升结果；一旦 P7 端点上线，若沿用同一 handler 风格，账号/档案端点会直接裸奔。
 - **建议处置方向**：接入统一鉴权中间件（`11-account-store.md` §4.4）；未实现账号前，先把 `POST /log-level` 等**运维端点**限制为仅本机/仅管理员 token 可达；`DL_LEGACY_STATELESS=0`（`docs/server.md:32` 已设计）用于生产关闭无状态旧端点 → `410 deprecated`。
 - **优先级**：**高**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7-4/B28/B33）**——① **鉴权中间件已落地**：`server/index.js` 读取 `Authorization: Bearer <token>`（`sha256` 查会话），`/auth/*`、`/me*`、`/quick/*`、`/leaderboard`、`/admin/*` 与归档回放均要求鉴权/参与关系（缺失/失效 → `401`，其中 `session_expired` 由 `store.sessions.peek()` 区分；越权 → `403`）；`POST /log-level` 之外**已不存在"全部端点裸奔"**。② **生产关闭开关已实现**：`DL_LEGACY_STATELESS=0` 使遗留无状态端点（`box`/`warehouse*`/`loadout`/`panel`/`ai/*`/`battle`）返回 `410 deprecated`（`server/index.js` 的 `isLegacyPath`/`legacyStatelessOf`）。
+  **残余（仍未处置）**：① `DL_LEGACY_STATELESS` **默认 `1`**，即默认仍保留无鉴权的遗留端点（设计选择：开发/CLI/测试需要；生产须显式置 `0`）；② **`GET/POST /api/v1/log-level` 仍无鉴权、且无 production 守卫**（`server/index.js`，本条目原证据中"任意人可把日志级别改成 trace"**今天仍成立**）；③ 运维端点未做"仅本机"限制。
 
 ### SEC-02 无限流、无并发闸门，唯一"防护"是单端点参数上限
 
@@ -68,7 +73,8 @@
 - **风险**：**内存耗尽型 DoS**。按实测 200 KB/场估算，1 000 场 ≈ 200 MB，10 000 场 ≈ 2 GB（帧是 JS 对象，实际常驻内存高于 JSON 字节数），足以让单进程 OOM 崩溃；由于无鉴权（SEC-01）且无限流（SEC-02），攻击成本极低。附带效应：进程重启即全丢（`D-123` 不落盘），这不是安全项，但决定了"能不能靠重启回收"。
 - **建议处置方向**：按 D-135 实现**有上限 LRU（默认 64 场）**；`REPLAYS` 改存引用（seed + 双方 `snapshotHash` + 版本戳）并按需重算，版本不匹配 → `410 replay_expired`；可选：给注册表加**总字节预算**（而非仅条数），并对超限返回 `429`/`410`。
 - **优先级**：**高**
-- **状态**：待处理（**2026-09-16 复核：未处置**——`server/battle.js:18` 仍是 `const REPLAYS = new Map();`、`:94` 直接 `REPLAYS.set(...)`，无 `maxSize`/evict/TTL，本文件上述实测结论与行号仍然成立；D-135 的"LRU 64 + 只存引用 + 按需重算 + `410 replay_expired`"已排入 `docs/plan-p7-playable.md` §P7-4，**尚未实施**）
+- **状态**：**已处置（2026-09-19，P7-4/B31，D-135）**——处置证据：`server/index.js:50` `DEFAULT_REPLAY_LRU = 64`（并被 `service-config.json` 的 `replayCacheSize: 64` 覆盖，`server/index.js:341-343`）；`pruneReplays()`（`server/index.js:664-671`）在本实例登记的帧数超过上限时 `battleApi.REPLAYS.delete(id)` 并记入 `evicted`（用于区分 410 与 404）；淘汰/版本不匹配/快照不可用 → `410 replay_expired`（`server/index.js:758-761`、`:793`/`:796`/`:803`/`:814`）。归档回放（`b_` 型）不再占用帧缓存额度（按 journal + 快照按需重算，D-135）。
+  **残余（口径提示，非缺陷）**：`server/battle.js` 的模块级 `const REPLAYS = new Map()` 本身仍无内建上限——上限由 **HTTP 层**强制。**直接调用 `battle.runBattle`（不经 HTTP，如部分单测/嵌入式调用）不受 64 上限约束**；生产路径恒经 HTTP，故原"持续请求可耗尽内存"的 DoS 路径已关闭。
 
 ### SEC-04 AI 提交无信誉约束、无按账号配额（CPU 消耗攻击面）
 
@@ -274,7 +280,8 @@
 - **风险**：运维者按 `docs/server.md` 配置**不会有任何效果**（静默失效），从而误以为"已开启 CORS 白名单/已关旧端点/已设置管理员 token"；一旦 P7 部分实现（例如只接了鉴权中间件但没接 `DL_LEGACY_STATELESS`），就会出现"文档说关了、实际还开着"的高危错配。
 - **建议处置方向**：P7 落地时**逐项实现 + 启动时打印生效配置**（`11-account-store.md:178` 已设计启动日志追加 `[store] archive=N seq=M`）；对"已文档化但未实现"的变量，在 `docs/server.md` §2 加"实现批次"列，避免读者误判；启动时对**未被读取**的已知变量发出 warn（低成本、收益高）。
 - **优先级**：**低**
-- **状态**：待处理
+- **状态**：**已处置（2026-09-19，P7-4/B27/B33）**——处置证据（逐变量读取点）：`DL_DATA_DIR` → `server/index.js` `storeWanted()` + `server/store/index.js:52` `resolveDataDir()`；`DL_STORE` → `server/store/index.js:60`（`sqlite` → `open()` 抛 `store_adapter_unavailable`）；`DL_ADMIN_TOKEN` → `server/admin.js:20`/`:75`（空 → `503 admin_token_missing`，比较用 `crypto.timingSafeEqual`）；`DL_LEGACY_STATELESS` → `server/index.js:208`（默认 `1`）；`DL_CORS_ORIGIN` → `server/index.js:241`。`docs/server.md` §2 已按实测重写（五个变量标 ✅ 已接线）。
+  **残余（仍未处置）**：`DL_LOG_CHANNELS` 仍未接线（`shared/log.js` 无生产调用者读取；`docs/server.md` §2 已标 ⏳）；"启动时打印生效配置 / 对未被读取的变量 warn"未实现。
 
 ### SEC-23 查询串解析静默吞错，可能掩盖设计外的输入
 
@@ -364,9 +371,9 @@
 
 | 编号 | 标题 | 分节 | 优先级 | 状态 |
 |---|---|---|---|---|
-| SEC-01 | 所有 `/api/v1/*` 端点无鉴权，无会话概念 | A | 高 | 待处理 |
+| SEC-01 | 所有 `/api/v1/*` 端点无鉴权，无会话概念 | A | 高 | **已部分处置（2026-09-19）**（残余：`/log-level` 无鉴权；遗留端点默认开放） |
 | SEC-02 | 无限流、无并发闸门，唯一"防护"是单端点参数上限 | A | 高 | 待处理 |
-| SEC-03 | 回放注册表 `REPLAYS` 无上限，持续请求可耗尽内存 | A | 高 | 待处理 |
+| SEC-03 | 回放注册表 `REPLAYS` 无上限，持续请求可耗尽内存 | A | 高 | **已处置（2026-09-19）**（HTTP 层 LRU 64 + 淘汰 → 410 `replay_expired`） |
 | SEC-04 | AI 提交无信誉约束、无按账号配额（CPU 消耗攻击面） | A | 中 | 待处理 |
 | SEC-05 | 无请求/连接超时，慢速请求可长期占用 socket | A | 中 | 待处理 |
 | SEC-06 | `OPTIONS` / 预检完全未处理，跨源调用行为取决于浏览器 | A | 中 | 待处理 |
@@ -385,7 +392,7 @@
 | SEC-19 | 无 CI / 无自动化门禁执行 | D | 中 | **已部分处置（2026-09-16）** |
 | SEC-20 | 绑定地址可被改成任意地址，无 TLS/无来源限制 | D | 中 | 待处理 |
 | SEC-21 | 错误响应泄漏内部信息（`e.message` 回显 + stack 落日志） | D | 中 | 待处理 |
-| SEC-22 | 文档冻结的多个环境变量在代码中不存在（配置面与实现面脱节） | D | 低 | 待处理 |
+| SEC-22 | 文档冻结的多个环境变量在代码中不存在（配置面与实现面脱节） | D | 低 | **已处置（2026-09-19）**（五个 `DL_*` 已接线；残余 `DL_LOG_CHANNELS`） |
 | SEC-23 | 查询串解析静默吞错/畸形即 500 | D | 低 | 待处理 |
 | SEC-24 | 未知路径请求仍无条件落 `api.req` 日志 | D | 低 | 待处理 |
 | SEC-25 | P7 存储设计：崩溃一致性、并发写、journal `seq` 重启来源未定义 | E | 中（若照原设计直接实现 → 高） | 待处理 |
@@ -394,10 +401,10 @@
 | SEC-28 | 跨源简单请求 + 无 CSRF 判断依据落地（组合面） | F | 中 | 待处理 |
 | SEC-29 | 日志含原始 `req.url`/`query`，日志注入与取证污染 | F | 低 | 待处理 |
 | SEC-30 | 回放注册表进程内状态，随重启丢失（设计取舍，非缺陷） | F | 低 | 待处理 |
-| | **合计** | | **高 7 / 中 16 / 低 7 = 30**（2026-09-16 复核更正：原写 6/16/8 与正文及分节统计不符） | **已处置 1（SEC-17）/ 已部分处置 1（SEC-19）/ 待处理 28**（2026-09-16 更新） |
+| | **合计** | | **高 7 / 中 16 / 低 7 = 30**（2026-09-16 复核更正：原写 6/16/8 与正文及分节统计不符） | **已处置 3（SEC-03 / SEC-17 / SEC-22）/ 已部分处置 2（SEC-01 / SEC-19）/ 待处理 25**（2026-09-19 更新） |
 
 > **状态口径（**D-153**）**：本册**只登记不修复**——不派发任务、不改门禁；但**被顺手修掉的条目必须回填"现状证据 + 状态"**（标为**已处置**/**已部分处置**，附日期与 `文件:行`/测试证据）。
-> 截至 2026-09-16：**SEC-17 已处置**（运行时 + 校验期双白名单；证据见该条）、**SEC-19 已部分处置**（CI + git 钩子 + `demo.js` 补齐；残余"门禁自身可被改写/无 CODEOWNERS"未处置）、**SEC-03 确认仍未处置**（`REPLAYS` 无上限；D-135 的 LRU 64 排入 P7-4）。
+> 截至 2026-09-19：**SEC-03 已处置**（HTTP 层 LRU 64 + 淘汰 → `410 replay_expired`；证据见该条）、**SEC-22 已处置**（五个 `DL_*` 变量均已在 `server/index.js`/`server/store/index.js`/`server/admin.js` 有读取点；残余 `DL_LOG_CHANNELS`）、**SEC-01 已部分处置**（鉴权中间件 + `DL_LEGACY_STATELESS=0` 开关已实现；残余 `/log-level` 无鉴权与遗留端点默认开放）、**SEC-17 已处置**（运行时 + 校验期双白名单）、**SEC-19 已部分处置**（CI + git 钩子 + `demo.js` 补齐；残余"门禁自身可被改写/无 CODEOWNERS"未处置）。
 
 **按分节统计**：A 网络与可用性 6 条（高 3 / 中 3 / 低 0）；B 经济与防作弊 4 条（高 2 / 中 2 / 低 0）；C 传输与配置 6 条（高 1 / 中 3 / 低 2）；D 运行时与代码面 8 条（高 0 / 中 5 / 低 3）；E 持久化与账号 2 条（高 0 / 中 2 / 低 0）；F 其他 4 条（高 1 / 中 1 / 低 2）。
 

@@ -1,20 +1,21 @@
 # 当前状态与下一步
 
-> 更新：2026-09-16（**本节复核标记均指 2026-09-16 复核**；最新一轮为「P7 冲刺启动：关段位门控 + AI 语言收口 + 文档同步」，见 **§3.4**；决策编号见 `docs/decisions.md` §14 的 **D-137…D-153**）
+> 更新：2026-09-19（**P7 在线服务（B27–B33）已全部交付并收口**；本节复核标记均指对应日期复核；决策编号见 `docs/decisions.md` §14 的 **D-137…D-153**）
 > 用途：跨会话续接，**本项目唯一状态源**。只记录**当前状态**与**待办**，不保留历史（历史仅可在带「历史记录」标注的小节中保留）。
-> 写法约定：凡"现状"必须标明复核日期与证据；凡"计划中"必须显式标注批次（如「计划中（P7/B27–B33）」），不得与现状混写。
+> 写法约定：凡"现状"必须标明复核日期与证据；凡"计划中"必须显式标注批次（如「计划中（P6/F1–F7）」），不得与现状混写。
 
 ---
 
-## 0. 本轮新增（2026-09-16）：在线服务与存档设计（D-129…D-136）
+## 0. P7 在线服务与存档（D-129…D-136）—— **✅ 已交付（2026-09-19）**
 
-> ⚠️ **本节整体为"计划中（P7/B27–B33）"，代码 0 行，任何一条当前都不可用。**
+> ✅ **本节原为"计划中（代码 0 行）"，2026-09-19 已全部落地**：B27–B33（存储层 / 身份档案 / 排位 / 快速对战 / HTTP·CLI 接线）全部实现并接线，`docs/reviews/B27.md`…`B33.md` 审查记录齐全。**交付实测**：`npm test` = 903 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`npm run check:docs` = PASS、`node scripts/fe-spec-check.js` = 9 PASS、`npm run e2e` = 22/22、`npm run load-test -- --players 50 --deep` = 7/7 完整性断言（均 exit 0）。
 
-- **新增设计文档（设计，未实现）**：`docs/systems/11-account-store.md`（账号与存档系统详细设计：身份鉴权 / 三配置槽 / append-only journal + 物化档案 / 异步排位双向记账 / 快速对战非对称 Elo / 回放只存引用按需重算 / 容量与数据库判据 / P7 批次 B27–B33）。
-- **新增决策（计划中，未实现）**：D-129 服务端持久化档案（**部分推翻 D-123**）、D-130 混合权威（段位/积分服务端、仓库仍客户端；**明确登记段位/积分不具备竞技可信度**）、D-131 配置槽规则（≤3、唯一出战、必有出战、注册即默认配置）、D-132 异步排位（保留 D-122 的 10 场 x=6；发起者同步结算 + 双向记账；防守方离线只记战绩不掉段不掉分）、D-133 积分双轨 + 非对称 Elo（0 起、上限 3000、均衡点 `R = cap×(2×胜率−1)`）、D-134 journal + 幂等 apply、D-135 回放只存引用 + 帧 LRU 上限、D-136 仅对手去重。
-- **已同步文档（按计划口径改写，内容属设计）**：`decisions.md`（§13）、`interfaces.md`（模块 ICD/端点/D 落点/日志事件/环境变量）、`server.md`（环境变量/端点/状态码/档案契约/数据表/运行时目录 —— **2026-09-16 复核已把这些重新标注为「计划中」**）、`systems/10-ranked.md`（改为档案驱动）、`v3-design.md`（目录/§1.4/§12.4/路线图 P7）、`tasks.md`（P7 批次 + MS7 + R19–R21）、`.gitignore`（`runtime/`）。
-- **待办**：`docs/frontend-spec.md` 与 `docs/screens.md` **尚未同步**（登录屏、我的战绩、防守战绩、排行榜、token 存储、启动拉取流程）；P7 代码 0 行（复核证据：`server/store/`、`server/auth.js`、`server/account.js`、`server/quickmatch.js` 均不存在；`runtime/` 目录不存在）。
+- **已实现的设计文档**：`docs/systems/11-account-store.md`（账号与存档：身份鉴权 / 三配置槽 / append-only journal + 物化档案 / 异步排位双向记账 / 快速对战非对称 Elo / 回放只存引用按需重算 / 容量与数据库判据）。
+- **已落地决策**：D-129 服务端持久化档案（**部分推翻 D-123**）、D-130 混合权威（段位/积分服务端、仓库仍客户端；**段位/积分不具备竞技可信度**已登记）、D-131 配置槽规则（≤3、唯一出战、必有出战、注册即默认配置）、D-132 异步排位（保留 D-122 的 10 场 x=6；发起者同步结算 + 双向记账；防守方离线只记战绩不掉段不掉分）、D-133 积分双轨 + 非对称 Elo（0 起、上限 3000、均衡点 `R = cap×(2×胜率−1)`，**仅在未触发 `kMin/kMax` 裁剪时精确**）、D-134 journal + 幂等 apply、D-135 回放只存引用 + 帧 LRU 上限 64、D-136 仅对手去重（24h 硬底线 / ≥72h 优先 / 24–72h 记 `relaxed:true`）、D-152 匹配池＝真实玩家档案（池不足回报 `shortfall`，**禁止 bot 充数**）。
+- **已同步文档**：`decisions.md`（§13，只追加）、`interfaces.md`（模块 ICD/端点/D 落点/日志事件/环境变量/错误码）、`server.md`（进程模型/环境变量/端点/状态码/CLI/runtime 目录 —— **2026-09-19 已由"计划中"改为"现状"**）、`systems/10-ranked.md`（档案驱动，删 `BOT_LD`）、`systems/11-account-store.md`、`tasks.md`（P7 批次勾选 + MS7）、`.gitignore`（`runtime/`）、`security-backlog.md`（SEC-01/SEC-03/SEC-22 处置回填）。
+- **仍待办（P6）**：`docs/frontend-spec.md` 与 `docs/screens.md` 的账号/战绩相关屏**尚未同步**（登录屏、我的战绩、防守战绩、排行榜、token 存储、`GET /me` 启动拉取流程）；前端代码 0 行（main 上无 `public/`）。
 - **容量结论（实测）**：单场战斗 0.175~0.280 ms、**回放帧实测 61–268 KB/场（17–63 tick，≈2.7–3.5 KB/帧；旧口径 7.0~20.5 KB 偏小约一个数量级，2026-09-16 修正）**、索引 ~200 B/玩家 → **单进程 JSON 存储在 1 万玩家量级绰绰有余，暂不需要数据库**；>5 万玩家或写 QPS >500 时切 `node:sqlite` 适配器（`11-account-store.md` §11.4）。
+- **已修正的口径漂移（2026-09-19）**：`pool.ttlDays` 与 `dailyBattleLimit` 均为"参数已留、**无消费方**"；`relaxed`/`invalids` **已落** `ranked.batch`；`nextSince` → `latestSeq`；§8.3 积分上界为 `kBase`(32)/`kMax`(64)（旧文"Δ ≤ 16"是错的，曾导致合法败局误报）。
 
 ---
 
@@ -22,7 +23,7 @@
 
 ```
 docs/decisions.md      决策记录（**D-01…D-153**；D-129…D-136 与 **D-137…D-153** 中凡标「计划中（P7）」的条目代码未实现）  ← 最高权威
-docs/systems/01~10.md  各系统实现细则（`11-account-store.md` 为**计划中 P7 设计**，未实现）
+docs/systems/01~10.md  各系统实现细则（`11-account-store.md` 为**已实现（P7/B27–B33，2026-09-19）**的账号与存档权威设计）
 docs/v3-design.md      主设计文档（架构/数据模型/数值）
 docs/items-data.md     物品数值、名称、贴图占位
 docs/interfaces.md     接口冻结（ICD v1：模块/API/CLI/数据结构/D 落点）
@@ -53,7 +54,7 @@ docs/progress.md       本文件
 | AI | 隐式不可跳出的 `while(true)`；循环体**所有分支**须含 action（`call` 按**行动产出定点分析**计入，纯检测函数不算）；函数=打包代码块（无参返回，有独立作用域+调用栈）；字段枚举校验（`logic.op`/`loop.kind`+`times`/`cond`/`arith.op`/`cmp.op`）；每 tick 每用途随机流；兜底返回 `wait`；动作名不校验期拒绝（D-80） | D-80~D-104、2026-09-16 |
 | 数据表 | 角色模板必填 `regen`；技能模板带 `slotWeights`/`falloff`/`bulletLevel`（含位移）；三表可选 `unlockTier`；`costDeltaByTier` 逐档数组；插件变体拆独立 id | D-110~D-118 |
 | 产品 | 紫段位=随机+扩展运算符；晋升 x=6；前端无框架 | D-120~D-124 |
-| 在线服务 | **计划中（P7/B27–B33，未实现）**：服务端存档（段位/积分/配置槽≤3/战绩；`runtime/` + journal + 快照库）；仓库仍客户端；异步排位双向记账（防守方离线只记战绩）；快速对战非对称 Elo（0 起/上限 3000，与段位双轨）；回放只存引用按需重算 | **D-129~D-136**（计划） |
+| 在线服务 | **✅ 已实现（P7/B27–B33，2026-09-19）**：服务端存档（段位/积分/配置槽≤3/战绩；`runtime/` + journal + 快照库）；仓库仍客户端；异步排位双向记账（防守方离线只记战绩）；快速对战非对称 Elo（0 起/上限 3000，与段位双轨）；回放只存引用按需重算 | **D-129~D-136** |
 | 门控（2026-09-16 拍板） | **默认关闭段位门控**：所有功能默认全解锁、**段位不参与判定**（内容解锁/物品级/开箱品质上限/出战配置/AI 节点/装配六处）；门控逻辑与数据字段**保留为可回退开关**（`unlock.json` 的 `gating.enabled`）；排位晋升与段位奖励暂留（属进度）；快速对战按 Elo 积分匹配 | **D-137**（执行＝P7-0，在途） |
 | AI 观测边界（2026-09-16 拍板） | **AI 无法观测弹幕是设计**：语言无 `bullets` 节点、快照不投影 `bullets`（弹幕当 tick 全解算）；节点 16 类 / `base` 9 / 段位累计 **10/12/14/14/16**；`aiTrace` **每 tick** 上限 2000 | **D-138/D-140**（已落地） |
 
@@ -97,7 +98,8 @@ docs/progress.md       本文件
 - [x] **B22（P4 首）** 回放帧契约完备性 + `POST /api/v1/battle`（双方 loadout + AI + seed → 完整帧）+ `GET /api/v1/replay/:id` 分片（server/battle.js L6：buildPlayer 面板聚合 + 双 AI 驱动 + 进程内回放注册表；engine tick/cid 感知日志装饰 + tick.end 入帧；同 seed 帧字节级复现；T-EN-9 + T-BT-1 帧可重建；P1×2 已修；427 用例；审查 `docs/reviews/B22.md`）
 - [x] **B23（P4 收尾）** 文本回放器 CLI（`replay --file/--tick` 打印 px/碰撞/命中/verdict/事件）+ 帧充分性审计（.audit/replay-audit.js：六维 + 第七维链完整性/hp 守恒；雕像局破除——技能局 11 tick/3 命中真实执行；P1×1 已修——畸形帧崩溃误报；433 用例；审查 `docs/reviews/B23.md`）—— **P4 阶段 2/2 批收口**
 - [x] **B24（P5 首）** 排位核心：快照不可变深拷贝（T-RK-5）+ 匹配 10 场（bot 补齐/排除自己/平局不计胜）+ `POST /api/v1/ranked/run` + CLI ranked run（ranked.js L6：抽签确定性、逐场派生种子、invalid 单独计数、ranked.* 日志；P1×1 已修——bot 技能不足 3 全 invalid；444 用例；审查 `docs/reviews/B24.md`）
-- [x] **B25（P5 收尾）** 晋升判定（x=6/D-122）+ 段位→奖励品质 tierReward + `POST /api/v1/ranked/promote`（ranked.promote 事件；promotedAt 顶段口径分离 + wins 上限 + 开箱上限交叉绑定；审查 PASS；450 用例；`docs/reviews/B25.md`）—— **P5 阶段 2/2 批收口，后端全量完成（P0..P5 共 34 批 = 9+11+5+5+2+2；计数经 2026-09-16 复核）**
+- [x] **B25（P5 收尾）** 晋升判定（x=6/D-122）+ 段位→奖励品质 tierReward + `POST /api/v1/ranked/promote`（ranked.promote 事件；promotedAt 顶段口径分离 + wins 上限 + 开箱上限交叉绑定；审查 PASS；450 用例；`docs/reviews/B25.md`）—— **P5 阶段 2/2 批收口；连同 P7 的 7 批，§6 全量共 41 批 = P0–P5 的 9+11+5+5+2+2 + B27–B33 的 7（计数经 2026-09-19 复核）**
+- [x] **B27–B33（P7 收尾，2026-09-19）** 在线服务与存档全部交付：B27 存储层（`server/store/*`：原子写/journal/物化档案/索引/单进程锁/崩溃恢复/两张参数表/`player.removed` 墓碑）、B28–B30 身份与档案（`auth.js`/`account.js`：账号会话、三配置槽、快照冻结、战绩与防守视图、排行榜）、B31–B33 排位/快速/接线（服务端抽池双向记账、非对称 Elo、回放鉴权 + LRU 64 + 按需重算、`admin` 端点、CLI/HTTP 接线）；同期 P7-5 e2e、P7-6 批量压测、P7-7 测试体系审查（`docs/reviews/B27.md`…`B33.md`、`docs/reviews/P7-7-test-audit.md`）。**至此 §6 批次总数 = 41 = P0–P5 的 34 + P7 的 7**（P6 前端仍为计划）
 - [x] **前端文档 v3 重设计（2026-09-15）**：旧版（v2 绝对坐标盒模型 + Blockly）被判定"按文档写出来不能玩"（两轮实现 F0–F8 / R0–R7 均失败，根因见 `frontend-spec.md` §0）。新 `docs/frontend-spec.md` v3：**可玩优先**——废弃坐标注入与 Blockly，改浏览器正常布局 + 表单式 AST 编辑器；按钮→动作→数据字段三重契约由 `scripts/fe-spec-check.js`（C1–C9，含 5 个投毒用例）机器强制；真实响应样本落盘 `.audit/fe-samples.json`（58 个）；`docs/screens.md` 标记废弃。（该项完成时实跑 459/0；**当前实跑数字见 §3.3 与 §5.3**）
 - [ ] **P6 前端实现（按 `frontend-spec.md` §18 的 F1–F7 批次；2026-09-16 复核：main 上无 `public/`、`server/index.js` 无静态托管路由，即 0 行前端代码）**：F1 静态托管+store/api/mount/顶栏 → F2 menu+gacha → F3 warehouse → F4 editor → F5 battle+排位 → F6 replay 战场 → F7 settings+存档+收尾；**每批必跑** `node scripts/fe-spec-check.js` 与 §2.1 的 14 步剧本
 - [ ] 每批按 §5 节拍：先冻结接口 → 先红 → 实现 → `npm run gate` 全绿 → 独立审查 → 一个 commit（**§5.1 硬性规则**：改代码的提交必须同提交更新 `tasks.md` 勾选 + `progress.md` 状态，提交信息写明批次号与实跑结果）
@@ -141,7 +143,7 @@ docs/progress.md       本文件
 - [x] **本轮文档同步（2026-09-16，D-137…D-153 落点）**：`docs/decisions.md` **§14 新增 D-137…D-153 共 17 条**（用户本轮全部拍板）；`docs/interfaces.md` §5 D 落点表**追加 D-137…D-153 行**（仅追加，不动既有行）；`server/data/schema.js` 增加**数据层 D 落点登记块**（gate 项 5 子 A 的可检索落点）；`docs/tasks.md` §3.7.2/§3.7.6（删 `bullets`、快照白名单）；`docs/systems/08-ai.md` §4.5（快照不投影 bullets + 字段清单）；`docs/battle-walkthrough.md` §3/§3.2（快照不含 bullets）；`docs/security-backlog.md` SEC-17（投影字段与行号）+ SEC-19/SEC-03（处置状态）；`README.md`（`npm run play`、脚本与文档索引、实测数字）；`docs/ai-handoff-prompt.md`（过期口径）。**① `docs/decisions.md` 为最高权威：只追加、不改既有 D 条目。**
 - [x] **P7-0 关闭段位门控（D-137，2026-09-16 已落地）**：`unlock.json` 新增 `gating.enabled=false` 总开关；`core/unlock.js`（`availableNodes`/`isUnlocked`/`filterByTier`/`validateLoadout`）、`core/items.js`（`validateUnlock`/`rollQuality` 品质截断）、`server/box.js`、`server/loadout.js`、`ai/ast.js`（`node_locked`）读开关；**门控逻辑与数据字段保留**（`unlockTier`/段位树作元数据），`withGating(true|false)` 使**开/关两模式都有测试**；排位晋升与段位奖励不受开关影响（属进度，不属门控）。**现状（2026-09-16 复测）**：门控相关用例全绿（D-137 的开关语义由 `withGating(true)`/`withGating(false)` 两套用例钉死）。
 - [x] **P7-1 存储层（B27，2026-09-16 已落地）**：`server/store/*`（适配器契约 + JSON 适配器原子写、append-only journal + 幂等 apply、物化档案、内容寻址快照库、索引、单进程锁、崩溃恢复）；`scripts/check-arch.js` 已登记新层；`tests/unit/store-*.test.js` + `tests/property/items-invariants.test.js`。**现状（2026-09-16 复测）**：`GX-8 check-arch` 已转绿，存储层用例全绿（其中 `AD-1`/`AD-6` 曾在途中红，已由并行改动修绿，见 §3.4 说明）。
-- [ ] **待办（下一波，2026-09-16 现状）**：**P7-2/P7-3/P7-4** 身份与会话 / 排位改造与快速对战（**禁止 bot 充数，池不足回报 `shortfall`**，D-152）/ HTTP·CLI 接线（鉴权、`410 replay_expired`、回放 LRU 64 + 参与者鉴权）；**P7-5** 全链路 e2e；**P7-6** 批量测试（真实玩家，非 bot）；**P7-7** 测试体系冗余与缺口审查（D-150③）。各阶段验收见 `docs/plan-p7-playable.md`。
+- [x] **P7-2/P7-3/P7-4/P7-5/P7-6/P7-7（2026-09-19 全部交付）**：身份与会话（`auth.js`：并发注册闭合 / `session_expired` / 启动 prune + 读时懒清理）、排位与快速对战（**去占位 bot + `shortfall`**、D-136 去重窗口裁定、双向记账、Elo 可复算与积分守恒）、HTTP·CLI 接线（Bearer/401/403/409/410/429、`DL_*` 五个变量、回放 LRU 64 + 410、CLI 退出码 3、`readBody` → 413）、P7-5 全链路 e2e（`npm run e2e` 22/22）、P7-6 批量测试（`npm run load-test`，真实玩家 + 7 条完整性断言）、P7-7 测试体系冗余与缺口审查（`docs/reviews/P7-7-test-audit.md`、`docs/reviews/P7-7-wave2-code-review-residual.md`）。**实测**：`npm test` = 903 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`check-docs` PASS、`fe-spec-check` 9 PASS。
 
 ---
 
@@ -151,7 +153,7 @@ docs/progress.md       本文件
 2. **数值必须机器复算**：示例/走查/测试断言里的每个数字都要有独立可复跑的机器计算验证（脚本或测试内的计算），不靠手算；冻结常量注明复算方式。
 3. **机制在代码、数值在表**：所有战斗数值来自 `battle-config.json` 等数据表。
 4. **计算与文档分工**：分支穷举在 `examples/`，端到端串联在 `battle-walkthrough.md`，实现细则在 `systems/`。
-5. **分支现状（2026-09-16 复核）**：`main` 是唯一主线（合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状（2026-09-16 最后实测）**：`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（683 用例 / 3 红在在途的持久化用例）；曾出现的项 7 覆盖率 FAIL 已修复（见 §5.1 L-6），阈值未放宽；**仓库处于 P7 多线并行，数字会随每轮在途改动变动**（§3.4）。
+5. **分支现状（2026-09-19 复核）**：`main` 是唯一主线（合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状（2026-09-19 最后实测）**：`npm test` = **903 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**；P7 已收口，此前的在途红项（`PS-1`/`PS-2`/`PS-4` 等持久化用例）已全部转绿（见 §3.4）。
 
 ---
 
@@ -179,13 +181,13 @@ docs/progress.md       本文件
 |---|---|---|
 | 回放：`/api/v1/battle` + `/api/v1/replay/:id` + 文本回放 CLI + 帧自足审计 | B22/B23 | ✅ **已完成**（`server/index.js` 已注册 `POST /api/v1/battle` 与 `GET /api/v1/replay/:id`，`tests/api` 覆盖，gate 项 9 冒烟通过）。~~2026-09-12 旧记录"`server/battle.js` 正在被并发实施"~~ 已过期；`server.md` §3.2 的状态同步亦已完成（端点已移入 §3.1） |
 | 排位：`/ranked/run` + `/ranked/promote`（快照/bot 池/晋升 x=6） | B24/B25 | ✅ **已完成**（`server/ranked.js` 已实现并接线 `POST /api/v1/ranked/run`、`POST /api/v1/ranked/promote`）。~~2026-09-12 旧记录"未接线；`ranked.js` 未实现"~~ 已过期 |
-| 前端全部 | P6 | **未开始（0 行代码；2026-09-16 复核：main 上无 `public/`，`server/index.js` 无静态托管路由）**；`docs/frontend-spec.md` **v3（2026-09-15 重设计：可玩优先）** 已备 —— 7 屏逐屏按钮表 + 动作白名单 + 表单式 AST 编辑器（不用 Blockly）+ 战场渲染 + 前端日志；实现按 §18 的 F1–F7 批次。仍需后端配合：静态托管（`public/`、`/shared`、`/assets`，见 spec §16）。**⚠ 计划中（其余 P7 阶段）：D-129…D-136 使"账号/段位/积分/战绩/回放鉴权"改为服务端权威，`frontend-spec.md` 尚未同步（登录屏、我的战绩、防守战绩、排行榜、token 存储、`GET /me` 启动拉取）** |
-| 在线服务（账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/非对称 Elo/回放鉴权） | **计划中（其余 P7 阶段）** | **P7-1 存储层已落地**（`server/store/*` 已提交并登记 `check-arch`；`tests/unit/store-*.test.js`、`tests/property/items-invariants.test.js` 在库）。**仍未实现（2026-09-16 复核）**：`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 不存在，HTTP 层无鉴权分支、无 `runtime/` 目录（`runtime/` 已在 `.gitignore`） |
+| 前端全部 | P6 | **未开始（0 行代码；2026-09-19 复核：main 上无 `public/`，`server/index.js` 无静态托管路由）**；`docs/frontend-spec.md` **v3（2026-09-15 重设计：可玩优先）** 已备 —— 7 屏逐屏按钮表 + 动作白名单 + 表单式 AST 编辑器（不用 Blockly）+ 战场渲染 + 前端日志；实现按 §18 的 F1–F7 批次。仍需后端配合：静态托管（`public/`、`/shared`、`/assets`，见 spec §16）。**⚠ 待同步**：P7 使"账号/段位/积分/战绩/回放鉴权"改为服务端权威，`frontend-spec.md`/`screens.md` 尚未同步（登录屏、我的战绩、防守战绩、排行榜、token 存储、`GET /me` 启动拉取） |
+| 在线服务（账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/非对称 Elo/回放鉴权） | P7（B27–B33） | ✅ **已完成（2026-09-19）**：`server/store/*`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 均已实现并接线，HTTP 层有 Bearer 鉴权分支与 `runtime/`（`DL_DATA_DIR`）。审查记录 `docs/reviews/B27.md`…`B33.md`；交付实测见 §0 与 §5.3 |
 | 数值开放项 | — | 已全部关闭（D-127 dodgeChanceBonus、D-128 defK 入表，B21 收口） |
 
 ### 5.3 说明
 
-- **门禁实测（2026-09-16；仓库处于 P7 多线并行，以当次输出为准）**：最后实测 `npm test` = **683 用例 / 680 通过 / 3 失败**（3 条红＝`PS-1`/`PS-2`/`PS-4`，在在途的持久化用例）、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**；逐条与转绿条件见 §3.4。（历史上曾因 `server/core/skills.js` 分支覆盖率 80.17% < 85% 而项 7 FAIL，已通过导出 `withTables` 注入机制表并补 6 个用例修复；根因与修法见 §5.1 **L-6**；**禁止放宽阈值**。）
+- **门禁实测（2026-09-19，P7 收口后）**：`npm test` = **903 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**（全部 exit 0）。（历史上曾因 `server/core/skills.js` 分支覆盖率 80.17% < 85% 而项 7 FAIL，已通过导出 `withTables` 注入机制表并补 6 个用例修复；根因与修法见 §5.1 **L-6**；**禁止放宽阈值**。）
 - **历史记录（B21 时期）**：`npm test` / `npm run cov` 均为 420/0；测试规模 420 用例 / 48 个测试文件。覆盖率阈值（行 90 / 分支 85 / 函数 90）持续通过。
 - **前一轮实测（2026-09-16 早期复核，本轮改动前）**：`npm run gate` = 9 PASS / 0 FAIL / 0 PEND；`npm test` = 459 通过 / 0 失败。（B25 提交时的同口径记录见 `docs/reviews/B25.md`。）
 - 黄金战斗为 gate 项 8 的冒烟基准（**18 tick，p2 胜**，seed 20260912），**B11 黄金回归测试 `tests/regression/golden-battle.test.js` 已于 2026-09-16 落地**并进入 `npm test`；走查 §3.1 已按真实引擎复算（L-2 已关闭）。
@@ -227,3 +229,7 @@ docs/progress.md       本文件
 - 终局进展（2026-09-19T05:53:05.868Z）。
 
 - 终局进展（2026-09-19T05:56:47.026Z）。
+
+- **终局文档同步（2026-09-19，中央文档批）**：`docs/systems/11-account-store.md`（§5.4 快照可选 `warehouse` 装配引用子集 / §7.4 `loadWarehouse` 三级来源 + 逐侧签名 + 归档回放按各自快照取镜像 / §7.2 `relaxed`+`invalids` 落 `ranked.batch` 与去重窗口裁定 / §4.6 限速与 §10.3 错误码 / §5.6 索引合并写语义 / §9.4 `programHash` 口径更正）、`docs/interfaces.md`（§1 补 `server/battle.js`、`server/store/archive.js`、`server/store/ledger.js` 与 `snapshotWarehouseOf`/`snapshotWarehouseRefreshed` 签名）、`docs/server.md`（§1 进程模型 / §2 环境变量 / §3 端点 / §4 状态码与错误码 / §6 状态契约 / §7 CLI / §9.1 runtime 目录全部由「计划中」改为「现状」）、`docs/tasks.md`（B27–B33 勾选 + 共 41 批 + MS7 达成）、`docs/progress.md`（本节）、`docs/security-backlog.md`（SEC-01/SEC-03/SEC-22 处置回填 + 汇总表）、`server/data/README.md`（两张参数表与 `affix-registry` 的 `domain`/`_domainOfKind` 语义）。**实测**：`node scripts/check-docs.js` = PASS（批次勾选 41 / 审查记录 41/41）、`node scripts/fe-spec-check.js` = 9 PASS、`node --test tests/integration/interfaces.test.js tests/integration/check-docs.test.js tests/frontend/fe-spec.test.js` 全绿。
+
+- 终局修复 II 与文档同步（2026-09-19T06:20:41.637Z）。

@@ -6,8 +6,11 @@
  *   表达式子节点 → .expr；其余节点为叶子。
  * B13 登记：validateAi 自 unlock.js 退役（B4→B13），段位门控由本模块 validate(program, tier) 统一承担
  *   （unlock 保留 tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout 原语；ai L5 → core L1 方向合法）。
- * 分支行动规则（D-101）：loop 体内所有 if/random（语句位概率分支）的每个分支（含隐式空 else）必须含至少一个 action
+ * 分支行动规则（D-101）：loop 体内所有 if/random（**语句位**概率分支）的每个分支（含隐式空 else）必须含至少一个 action
  *   或已定义函数 call；random 与 if 同规则（2026-09-17 随机语义修正配套）；
+ *   **表达式位**的 random 不适用本规则（缺陷 3，2026-09-19：D-139 表达式位只取 prob 求布尔、then/else 不参与求值，
+ *   校验不得与运行不一致）；**字面量为假**的 cond 之 then 分支静态不可达、不计入"可达 action"（缺陷 2，2026-09-19：
+ *   `function g(){ if(false){ action } }` 不是行动产出函数 → `while(true){ call g }` 校验期拒绝，不再"校验通过但空转"）；
  *   call 视为行动产出点（静态保守）；break 必须位于同一函数作用域内的 loop 体内（跨函数 break 拒绝）；call 必须已定义（hoisting）。
  * B26（用户决策 A：4 类"校验放过、运行期静默算错"的错误改为校验期拒绝）：
  *   bad_path（get.path 不在快照白名单；运行层 getPath 仍有"非法/缺失/越界 → 0"兜底）、
@@ -401,9 +404,38 @@ function makeAst(logger, unlockApi) {
   }
 
   // ---- B13：合法性检测（D-101）----
-  // 行动产出函数集（fixpoint，2026-09-16 补）：函数体**直接含 action**，或调用其它行动产出函数。
-  //   目的：允许"分支内只写 call"，同时保证**不会出现空死循环**——纯检测函数（无 action、无调用链）
-  //   不能用来满足"分支/循环体必须含 action"，因此 `while(true){ call 纯检测() }` 这类空转会被拒绝。
+  // 字面量条件的真值判定（缺陷 2 收紧，2026-09-19）：仅识别 `literal` 且取值为 falsy 的 cond
+  //   （false / 0 / '' / null / NaN）——此时 `then` 分支**静态不可达**，其中的 action 不得计入"可达 action"。
+  //   反之（truthy 字面量 / 非字面量条件）一律**不**做推断：保持原有保守口径，
+  //   避免把"真实条件分支里才有 action"的合法程序误拒（缺陷 2 验收②）。
+  function isFalsyLiteral(node) {
+    return !!node && typeof node === 'object' && node.type === 'literal' && !node.value;
+  }
+
+  // 可达性感知的**宽松存在性**扫描（缺陷 2）：语句位递归，跨函数定义边界停止（嵌套 function 体不属于本函数），
+  //   跳过 falsy 字面量条件的 then 分支；任一可达位置满足 cb 即短路返回 true。
+  //   与 branchHasAction 的区别：本函数问"任一可达位置是否存在"（用于"函数是否行动产出"的定点分析），
+  //   branchHasAction 问"每个出口是否都能产出"（分支完备性）。表达式位不下钻（P2-1：表达式位 call 已判非法）。
+  function someReachable(node, cb, depth) {
+    if (!node || typeof node !== 'object') return false;
+    if (depth > LIMITS.analyzeDepth) return false; // 保守上限（B13 登记：静态分析防爆炸）
+    if (cb(node)) return true;
+    if (node.type === 'function') return false; // 嵌套定义体不属于本函数
+    if (node.type === 'if' && isFalsyLiteral(node.cond)) {
+      return !!node.else && someReachable(node.else, cb, depth + 1); // then 不可达 → 只看 else
+    }
+    const ch = childList(node);
+    for (const c of (Array.isArray(ch.list) ? ch.list : [])) {
+      if (someReachable(c, cb, depth + 1)) return true;
+    }
+    return false;
+  }
+
+  // 行动产出函数集（fixpoint，2026-09-16 补；2026-09-19 缺陷 2 收紧可达性）：函数体**可达位置**直接含 action，
+  //   或调用其它行动产出函数。目的：允许"分支内只写 call"，同时保证**不会出现空死循环**——
+  //   ① 纯检测函数（无 action、无调用链）不能用来满足"分支/循环体必须含 action"；
+  //   ② **不可达的 action 不算数**：`function g(){ if(false){ action wait } }` 不是行动产出函数，
+  //      因此 `while(true){ call g }` 这类"校验通过但运行期只能空转到步数上限"的程序被拒（缺陷 2）。
   function collectActionFns(program) {
     const defs = new Map(); // name -> body（后定义覆盖同名，与 call hoisting 口径一致）
     (function walk(n) {
@@ -413,30 +445,19 @@ function makeAst(logger, unlockApi) {
       for (const c of (Array.isArray(ch.list) ? ch.list : [])) walk(c);
       for (const c of exprChildren(n)) walk(c);
     })(program.body);
-    // 语句位递归（不跨越嵌套 function 定义边界；表达式位的 call 已被 P2-1 判非法）
-    const scanBody = (root, visit) => {
-      (function walk(n) {
-        if (!n || typeof n !== 'object') return;
-        visit(n);
-        if (n.type === 'function') return; // 嵌套定义体不属于本函数
-        const ch = childList(n);
-        for (const c of (Array.isArray(ch.list) ? ch.list : [])) walk(c);
-      })(root);
-    };
     const actionFns = new Set();
     for (const [name, body] of defs) {
-      let hasAction = false;
-      scanBody(body, (n) => { if (n.type === 'action') hasAction = true; });
-      if (hasAction) actionFns.add(name);
+      if (someReachable(body, (n) => n.type === 'action', 0)) actionFns.add(name);
     }
     let changed = true;
     while (changed) {
       changed = false;
       for (const [name, body] of defs) {
         if (actionFns.has(name)) continue;
-        let callsProducer = false;
-        scanBody(body, (n) => { if (n.type === 'call' && actionFns.has(n.name)) callsProducer = true; });
-        if (callsProducer) { actionFns.add(name); changed = true; }
+        if (someReachable(body, (n) => n.type === 'call' && actionFns.has(n.name), 0)) {
+          actionFns.add(name);
+          changed = true;
+        }
       }
     }
     return actionFns;
@@ -450,7 +471,13 @@ function makeAst(logger, unlockApi) {
     if (node.type === 'action') return true;
     if (node.type === 'call') return actionFns.has(node.name); // 只有能（传递）产出 action 的函数才算
     if (node.type === 'seq') return (node.statements || []).some((s) => branchHasAction(s, fns, actionFns, depth + 1));
-    if (node.type === 'if' || node.type === 'random') return branchHasAction(node.then, fns, actionFns, depth + 1) && (!node.else || branchHasAction(node.else, fns, actionFns, depth + 1));
+    if (node.type === 'if') {
+      // 缺陷 2（2026-09-19）：falsy 字面量 cond → then 分支静态不可达、不计入可达 action，
+      //   该 if 能否产出 action 只取决于 else（缺 else = 无产出）；其余情形保持"两分支都要有"的保守口径。
+      if (isFalsyLiteral(node.cond)) return !!node.else && branchHasAction(node.else, fns, actionFns, depth + 1);
+      return branchHasAction(node.then, fns, actionFns, depth + 1) && (!node.else || branchHasAction(node.else, fns, actionFns, depth + 1));
+    }
+    if (node.type === 'random') return branchHasAction(node.then, fns, actionFns, depth + 1) && (!node.else || branchHasAction(node.else, fns, actionFns, depth + 1));
     if (node.type === 'loop') return branchHasAction(node.body, fns, actionFns, depth + 1);
     return false;
   }
@@ -476,6 +503,11 @@ function makeAst(logger, unlockApi) {
     });
     let hasAction = false;
     const actionFns = collectActionFns(program);
+    // 表达式位上下文（缺陷 3，2026-09-19）：语句位与表达式位用**同一套节点**但语义不同（D-139）——
+    //   表达式位的 `random` 只取 `prob` 求布尔，`then/else` **不参与求值**，因此不得按"语句位概率分支"
+    //   的分支行动规则要求分支含 action（否则校验与运行不一致：D-139 说它返回布尔，校验却按分支拒）。
+    //   `expr=true` 沿表达式子节点（cond/prob/value/left/right/times）传播，并在 random 的 then/else 上保持。
+    const exprCtx = (ctx) => ({ loopDepth: ctx.loopDepth, scope: ctx.scope, expr: true });
     (function scan(node, path, ctx) {
       if (!node || typeof node !== 'object') return;
       switch (node.type) {
@@ -483,31 +515,32 @@ function makeAst(logger, unlockApi) {
           if (!branchHasAction(node.body, fns, actionFns, 0)) {
             errors.push({ path: `${path}.body`, code: 'branch_without_action', message: '循环体必须至少包含一个 action（或调用会产出 action 的函数）' });
           }
-          scan(node.body, `${path}.body`, { loopDepth: ctx.loopDepth + 1, scope: ctx.scope }, fns, errors);
-          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors); // P2-1：表达式位 call/break 不逃逸
+          scan(node.body, `${path}.body`, { loopDepth: ctx.loopDepth + 1, scope: ctx.scope, expr: false }, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, exprCtx(ctx), fns, errors); // P2-1：表达式位 call/break 不逃逸
           break;
         }
         case 'if': {
-          // 仅在循环体内检查分支行动（顶层 if 允许无 else，A-1）
-          if (ctx.loopDepth > 0) {
+          // 仅在循环体内检查分支行动（顶层 if 允许无 else，A-1）；**语句位**规则，表达式位 if 已被 not_expression 拒绝
+          if (ctx.loopDepth > 0 && !ctx.expr) {
             if (!branchHasAction(node.then, fns, actionFns, 0)) errors.push({ path: `${path}.then`, code: 'branch_without_action', message: 'if 的 then 分支必须包含 action' });
             if (!node.else || !branchHasAction(node.else, fns, actionFns, 0)) errors.push({ path: `${path}.else`, code: 'branch_without_action', message: 'if 的 else 分支必须包含 action（缺 else 视为空分支）' });
           }
           if (node.then) scan(node.then, `${path}.then`, ctx, fns, errors);
           if (node.else) scan(node.else, `${path}.else`, ctx, fns, errors);
-          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors); // P2-1：cond 位不逃逸
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, exprCtx(ctx), fns, errors); // P2-1：cond 位不逃逸
           break;
         }
         case 'random': {
-          // 语句位概率分支：与 if 同规则（循环体内每个分支必须含 action；缺 else 视为空分支）；
-          //   表达式位的 random（如 set 值 / if.cond）不在此检查，仅按表达式递归（exprChildren）。
-          if (ctx.loopDepth > 0) {
+          // **语句位**概率分支：与 if 同规则（循环体内每个分支必须含 action；缺 else 视为空分支）；
+          //   缺陷 3：**表达式位**的 random（set 值 / if.cond / loop.cond / 运算子节点）按 D-139 只取 prob
+          //   求布尔，`then/else` 不参与求值 → **不**适用分支行动规则，只按表达式递归（分支规则留给语句位）。
+          if (ctx.loopDepth > 0 && !ctx.expr) {
             if (!branchHasAction(node.then, fns, actionFns, 0)) errors.push({ path: `${path}.then`, code: 'branch_without_action', message: 'random 的 then 分支必须包含 action' });
             if (!node.else || !branchHasAction(node.else, fns, actionFns, 0)) errors.push({ path: `${path}.else`, code: 'branch_without_action', message: 'random 的 else 分支必须包含 action（缺 else 视为空分支）' });
           }
           if (node.then) scan(node.then, `${path}.then`, ctx, fns, errors);
           if (node.else) scan(node.else, `${path}.else`, ctx, fns, errors);
-          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, exprCtx(ctx), fns, errors);
           break;
         }
         case 'break': {
@@ -536,11 +569,13 @@ function makeAst(logger, unlockApi) {
               scan(c, cp, ctx, fns, errors);
             });
           }
-          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, exprCtx(ctx), fns, errors);
         }
       }
-    })(program.body, 'body', { loopDepth: 0, scope: 'root' }, fns, errors);
-    // 无 action 程序（B26）：整棵程序（含空 body）不含任何 action → 运行期只能恒 wait → 校验期拒绝（不做可达性分析）
+    })(program.body, 'body', { loopDepth: 0, scope: 'root', expr: false }, fns, errors);
+    // 无 action 程序（B26）：整棵程序（含空 body）不含任何 action → 运行期只能恒 wait → 校验期拒绝
+    //   （口径保持"只数是否存在"，**不做**可达性分析：`if(false){action}` 仍算数——既有 contract 见
+    //   tests/unit/ai-validate.test.js B26④；可达性收紧只作用于"分支/循环体行动规则"与"行动产出函数集"，见缺陷 2）
     if (!hasAction) {
       errors.push({ path: '', code: 'no_action_program', message: '程序不含任何 action（含空 body）：AI 必须至少存在一个 action 节点' });
     }

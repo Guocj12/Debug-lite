@@ -373,3 +373,36 @@ test('EN-14 死亡时序：hp≤0 仍行动（T-BT-* 锁定），持续效果后
   assert.equal(b.state.players.p1.x, 464, 'hp≤0 本 tick 仍行动（死亡时序：步骤 12 才判定）');
   assert.equal(b.state.verdict.winner, 'p2', '本 tick 步骤 12 正常判定 p2 胜（角色死亡）');
 });
+
+test('EN-20 缺陷1 对局可用：带 cast_buff 词条的技能打完一场，atk 不越滚越大、到期回到面板值', () => {
+  // 词条形态取自 affix-registry.json（cast_buff → castEffect{kind:continuous, stat:atk, deltaFrom:v, fallbackDuration:2}），
+  // 与 mechanics.test.js 锚定的技能实例形态一致（{kind:'continuous', stat:'atk', delta:2, remaining:2}）。
+  const buffSkill = skillPrecise();
+  buffSkill.castEffects = [{ kind: 'continuous', stat: 'atk', delta: 2, remaining: 2 }];
+  const p1 = mkPlayer({ x: 400, facing: 1, atk: 30, mp: 40, sp: 60 });
+  const b = mkBattle(p1, mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, atk: 19, def: 9 }));
+  b.state.players.p1.skills = { buff: buffSkill };
+  const atkTrace = [b.state.players.p1.atk];
+  // tick1：释放（步骤 6 入队，下一 tick 起效 D-70）→ atk 不变
+  stepActions(b, ['skill:buff'], ['wait']);
+  atkTrace.push(b.state.players.p1.atk);
+  assert.equal(b.state.players.p1.atk, 30, 't1 释放 tick 不入账（D-70 下一 tick 起效）');
+  // tick2：首次结算 +2
+  stepActions(b, ['wait'], ['wait']);
+  atkTrace.push(b.state.players.p1.atk);
+  assert.equal(b.state.players.p1.atk, 32, 't2 生效 +2');
+  // tick3：第二次结算后到期 → 回滚，严格回到 30
+  stepActions(b, ['wait'], ['wait']);
+  atkTrace.push(b.state.players.p1.atk);
+  assert.equal(b.state.players.p1.atk, 30, 't3 到期回滚（修前为 34 且永久）');
+  // tick4：保持面板值，不继续增长
+  stepActions(b, ['wait'], ['wait']);
+  atkTrace.push(b.state.players.p1.atk);
+  assert.equal(b.state.players.p1.atk, 30, 't4 不越滚越大');
+  assert.deepEqual(atkTrace, [30, 30, 32, 30, 30], `atk 逐 tick: ${atkTrace.join(' -> ')}`);
+  assert.equal(b.state.players.p1.effects.length, 0, '效果条目已清空（快照投影一致）');
+  // 帧/快照口径：self.atk = 面板值，effects 投影为空（无残留条目）
+  const snap = require('../../server/runner.js').projectSnapshot(b.state, 'p1');
+  assert.equal(snap.self.atk, 30, '快照 self.atk = 面板值（口径不变）');
+  assert.deepEqual(snap.self.effects, [], '快照 effects 为空（无残留条目）');
+});

@@ -64,6 +64,10 @@ test('EF-2 T-EF-5 clamp：回血封顶 / 回蓝封顶 / 属性下限 0 / 负血�
 });
 
 test('EF-3 T-EF-1 同 stat 多效果独立结算、独立计时（E-2d）', () => {
+  // 缺陷 1（2026-09-19）口径变更：atk/def 面板修饰到期回滚"累计已生效增量"，
+  //   因此 E-2d 的混合 buff/debuff 在**短效果到期那一 tick**的值由 16 变为 20（b 的 -4 被加回），
+  //   全部效果到期后净 0（8）。t1=12 与 examples/05-effects.md E-2d 表内数值不变。
+  //   ⟶ docs/examples/05-effects.md E-2d 与 docs/systems/05-effects.md §4.3 需中央同步（本文件不改 docs）。
   const p1 = mkPlayer();
   const state = mkState(0, { p1, p2: mkPlayer() });
   fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'def', delta: 6, remaining: 3, source: 'a' });
@@ -71,8 +75,11 @@ test('EF-3 T-EF-1 同 stat 多效果独立结算、独立计时（E-2d）', () =
   state.tick = 1; fx.resolveContinuous(state);
   assert.equal(p1.def, 12, '8+6-2=12');
   state.tick = 2; fx.resolveContinuous(state);
-  assert.equal(p1.def, 16, '第二个到期，第一个继续：12+6-2=16');
+  assert.equal(p1.def, 20, '第二个到期回滚其累计 -4（12+6-2=16 → 回滚 +4 = 20），第一个继续');
   assert.equal(p1.effects.length, 1, '剩余 1 个');
+  state.tick = 3; fx.resolveContinuous(state);
+  assert.equal(p1.def, 8, '第一个到期回滚其累计 +18 → 严格回到施放前');
+  assert.equal(p1.effects.length, 0, '全部移除');
 });
 
 test('EF-4 E-3 untilEnd：remaining 足够大即整场持续', () => {
@@ -229,4 +236,102 @@ test('EF-11 日志：effect.continuous / effect.expire 事件与 stat/remaining 
     bare.resolveControl(p.effects, 'wait');
     bare.resolveControlMove(500, 600, 1);
   });
+});
+
+// ===== 缺陷 1（P0 游戏性，2026-09-19）：cast_buff 类 atk/def 面板修饰到期必须回滚 =====
+// 复现证据（修前）：atk 30 →32(t2) →34(t3) →34(t4) →34(t5)，净 +4 且永久。
+// 口径：hp/mp/sp 是**资源池流量**（E-1 结算即生效、到期不回滚）；atk/def 是**面板修饰**（到期回滚累计已生效增量）。
+
+test('EF-14 缺陷1 cast_buff：atk/def 面板修饰到期回滚，属性严格回到施放前（净 0）', () => {
+  const p1 = mkPlayer({ atk: 30 }); // 施放前 atk=30
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  // cast_buff 词条形态：{kind:continuous, stat:atk, delta:2, remaining:2}（mechanics.test.js 已锚定该形态）
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: 2, remaining: 2, source: 'p1' });
+  assert.equal(p1.atk, 30, '添加 tick 不结算（E-1①）');
+  state.tick = 1; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 32, 't1 结算 +2');
+  assert.equal(p1.effects.length, 1, '剩余 1（remaining 2→1）');
+  state.tick = 2; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't2 到期：回滚累计 +4，严格回到施放前');
+  assert.equal(p1.effects.length, 0, 'remaining 归零立即移除（05-effects §5 口径不变）');
+  state.tick = 3; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't3 不再变化（修前此处为 34，永久增益）');
+  state.tick = 4; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't4 不再变化（修前此处为 34）');
+});
+
+test('EF-15 缺陷1 叠加两个同类 buff：各自独立计时、到期后全部回滚到基线', () => {
+  const p1 = mkPlayer({ atk: 30 });
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: 2, remaining: 2, source: 'a' });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: 3, remaining: 4, source: 'b' });
+  // 逐步复算（同 stat 多效果按加入顺序独立结算、独立计时；各记各的 applied）
+  state.tick = 1; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 35, 't1: 30+2(a)+3(b)=35');
+  state.tick = 2; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 36, 't2: 35+2(a)=37 → a 到期回滚 4 → 33；再 +3(b)=36');
+  assert.equal(p1.effects.length, 1, 'a 已移除、b 剩余');
+  state.tick = 3; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 39, 't3: 只剩 b，36+3=39');
+  state.tick = 4; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't4: b 到期回滚累计 12 → 严格回到施放前 30');
+  state.tick = 5; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't5 稳定在基线');
+  assert.equal(p1.effects.length, 0, '两个效果都已移除');
+});
+
+test('EF-16 缺陷1 负 delta（debuff）到期同样回滚：atk/def 回到施放前', () => {
+  const p1 = mkPlayer({ atk: 30, def: 8 });
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: -3, remaining: 2, source: 'x' });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'def', delta: 4, remaining: 2, source: 'x' });
+  state.tick = 1; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 27, 't1 atk-3');
+  assert.equal(p1.def, 12, 't1 def+4');
+  state.tick = 2; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 30, 't2 atk 负增量回滚（-6 加回）');
+  assert.equal(p1.def, 8, 't2 def 正增量回滚（+8 减回）');
+});
+
+test('EF-17 缺陷1 clamp 修正后回滚：被压到 0 的属性也严格回到施放前', () => {
+  const p1 = mkPlayer({ atk: 12 });
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: -4, remaining: 2, source: 'a' });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: -20, remaining: 2, source: 'b' });
+  state.tick = 1; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 0, 't1 下限 0（实际生效增量 = -4 与 -8，非 -4 与 -20）');
+  state.tick = 2; fx.resolveContinuous(state);
+  assert.equal(p1.atk, 12, 't2 按**实际生效**增量回滚 → 严格回到 12（不是 -12 或 0）');
+});
+
+test('EF-18 缺陷1 资源类（hp/mp/sp）按 E-1 不回滚：DoT 到期后血量保持扣减结果', () => {
+  const p1 = mkPlayer();
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  fx.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'hp', delta: -3, remaining: 3, source: 'x' });
+  state.tick = 1; fx.resolveContinuous(state); assert.equal(p1.hp, 129);
+  state.tick = 2; fx.resolveContinuous(state); assert.equal(p1.hp, 126);
+  state.tick = 3; fx.resolveContinuous(state); assert.equal(p1.hp, 123);
+  state.tick = 4; fx.resolveContinuous(state);
+  assert.equal(p1.hp, 123, 'E-1 黄金口径：资源类到期**不**回滚（132 是错值）');
+  assert.equal(p1.effects.length, 0, '效果条目仍立即移除');
+});
+
+test('EF-19 缺陷1 日志：面板修饰到期在同一 effect.expire 上带 applied/reverted；资源类 reverted=0', () => {
+  const logger = createLogger({ level: 'all', ringSize: 200 });
+  const e = fx.withLogger(logger);
+  const p1 = mkPlayer({ atk: 30 });
+  const state = mkState(0, { p1, p2: mkPlayer() });
+  e.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'atk', delta: 2, remaining: 1, source: 'x' });
+  e.addEffect(state, { kind: 'continuous', target: 'p1', stat: 'hp', delta: -3, remaining: 1, source: 'x' });
+  state.tick = 1;
+  e.resolveContinuous(state);
+  const exps = logger.records.filter((r) => r.event === 'effect.expire');
+  assert.equal(exps.length, 2, '两条 expire（一个 atk、一个 hp）');
+  const atkExp = exps.find((r) => r.data.stat === 'atk');
+  const hpExp = exps.find((r) => r.data.stat === 'hp');
+  assert.equal(atkExp.data.applied, 2, 'atk 实际生效增量 +2');
+  assert.equal(atkExp.data.reverted, -2, '回滚 -2（净减回基线）');
+  assert.equal(p1.atk, 30, 'atk 回到基线');
+  assert.equal(hpExp.data.reverted, 0, '资源类不回滚');
+  assert.equal(p1.hp, 129, 'hp 保留扣减');
 });

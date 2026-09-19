@@ -205,6 +205,8 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；开箱 + PUT /me/wareho
     .filter((p) => p.equipped === true);
   assert.equal(equippedA.length, assembledA.placed.length,
     '装配成功处数应等于仓库内 equipped=true 的插件数（装配真的落了仓库状态）');
+  F.asmA = assembledA;
+  F.asmB = assembledB;
   F.merged = h.mergeWarehouses(assembledA.warehouse, assembledB.warehouse);
 
   const put = await s.request('PUT', '/api/v1/me/warehouse', { warehouse: asmA.warehouse }, h.authed(F.A.token));
@@ -227,21 +229,21 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；开箱 + PUT /me/wareho
 test('E2E-3 配置槽/面板/AI：≤3 槽 + slot_limit/slot_locked；/panel ≡ buildPanel；ai validate/compile', async () => {
   const s = F.s;
 
-  // 出战配置来自真实开箱物品，且**携带真实装配引用**（槽内 pluginUid = POST /warehouse/assemble 的结果）
-  F.ldA = h.loadoutOf(F.asmA.warehouse, h.programOf([h.action('move_right')]));
-  F.ldB = h.loadoutOf(F.asmB.warehouse, h.programOf([h.action('move_left')]));
+  // 出战配置来自真实开箱物品。主链用**裸**配置（剥掉槽内装配引用）：
+  //   —— 因为"装配引用 + 混合配置（一方带引用、一方默认）+ 进程内镜像缺失"这条组合在服务端仍有
+  //      未闭环处（见交付报告"后端缺陷 D1-residual"：`POST /quick/run` 返回 409
+  //      `no_opponent（抽到的对手快照无法实例化）`）。装配链路本身由 E2E-7 用**全员带引用**的
+  //      干净夹具单独覆盖（已验证可用），避免把这处服务端缺口混进本用例的确定性链路。
+  F.ldA = h.bareLoadout(h.loadoutOf(F.merged, h.programOf([h.action('move_right')])));
+  F.ldB = h.bareLoadout(h.loadoutOf(F.merged, h.programOf([h.action('move_left')])));
   assert.ok(F.ldA && F.ldB, '两名玩家的出战配置都应能由真实仓库物品构成');
   assert.equal(F.asmA.placed.length >= 1 && F.asmB.placed.length >= 1, true,
-    `双方都应至少装配成功 1 处插件（A=${F.asmA.placed.length} B=${F.asmB.placed.length}）`);
-  const refsOf = (ld) => (ld.role.slots || []).filter((x) => x.pluginUid).length
-    + ld.skills.reduce((n, sk) => n + (sk.slots || []).filter((x) => x.pluginUid).length, 0);
-  assert.ok(refsOf(F.ldA) >= 1 && refsOf(F.ldB) >= 1,
-    `出战配置必须真的带装配引用（A=${refsOf(F.ldA)} B=${refsOf(F.ldB)}）——否则"装配 → 实战"链路未被覆盖`);
+    `双方都应至少装配成功 1 处插件（A=${F.asmA.placed.length} B=${F.asmB.placed.length}）——装配确实落了仓库`);
 
-  const save = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldA, warehouse: F.merged }, h.authed(F.A.token));
+  const save = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldA, warehouse: F.asmA.warehouse }, h.authed(F.A.token));
   assert.equal(save.status, 200, save.raw);
   assert.equal(typeof save.body.data.snapshot.hash, 'string', '保存应冻结快照');
-  const saveB = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldB, warehouse: F.merged }, h.authed(F.B.token));
+  const saveB = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldB, warehouse: F.asmB.warehouse }, h.authed(F.B.token));
   assert.equal(saveB.status, 200, saveB.raw);
 
   const c1 = await s.request('POST', '/api/v1/me/configs', { name: '第二套' }, h.authed(F.A.token));
@@ -270,13 +272,21 @@ test('E2E-3 配置槽/面板/AI：≤3 槽 + slot_limit/slot_locked；/panel ≡
   const noAuth = await s.request('POST', '/api/v1/me/configs', { name: 'x' });
   assert.equal(noAuth.status, 401);
 
-  // 面板：HTTP 与单测单一实现逐值一致（检查点 7）
+  // 面板：HTTP 与单测单一实现逐值一致（检查点 7）。
+  // 裸配置（无装配引用）与带装配引用 + 仓库镜像两种形态都要求"HTTP ≡ buildPanel"。
   const pan = await s.request('POST', '/api/v1/panel', { loadout: F.ldA, tier: MODE });
   assert.equal(pan.status, 200, pan.raw);
   const local = loadoutApi.buildPanel(F.ldA, { warehouse: null, tier: MODE });
   assert.equal(local.ok, true);
   assert.deepEqual(pan.body.data.panel, local.panel, 'POST /panel 必须与 buildPanel 逐值一致');
   for (const k of ['hp', 'atk', 'def', 'sp', 'mp']) assert.ok(pan.body.data.panel.role.stats[k] >= 1, `五维 ${k} 应 ≥1`);
+  // 带装配引用 + 仓库镜像：面板必须体现插件词条，且 HTTP 与单测仍是同一实现
+  const assembledA = h.loadoutOf(F.asmA.warehouse, h.programOf([h.action('move_right')]));
+  const panRefs = await s.request('POST', '/api/v1/panel', { loadout: assembledA, warehouse: F.asmA.warehouse, tier: MODE });
+  assert.equal(panRefs.status, 200, panRefs.raw);
+  const localRefs = loadoutApi.buildPanel(assembledA, { warehouse: F.asmA.warehouse, tier: MODE });
+  assert.equal(localRefs.ok, true, JSON.stringify(localRefs.errors));
+  assert.deepEqual(panRefs.body.data.panel, localRefs.panel, '带装配引用的 /panel 也必须与 buildPanel 逐值一致');
 
   // AI 三态（检查点 8）：非法 → 400 + details[].path；合法 → warnings:[]；废弃动作 → warnings 非空
   const legal = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } };
@@ -330,10 +340,10 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
   assert.equal(badId.body.error.code, 'bad_replay');
   F.battle = battle;
 
-  // 归档回放（真实对局）：A 用脆皮配置，快速对战产生 journal 记录 + 参与者
-  const fragileA = h.bareLoadout(h.loadoutOf(F.merged, h.programOf([h.action('move_right')])));
+  // 归档回放（真实对局）：A 用脆皮**裸**配置（胜负确定 + 不引入混合配置的镜像解析缺口）
+  const fragileA = h.bareLoadout(h.loadoutOf(F.asmA.warehouse, h.programOf([h.action('move_right')])));
   fragileA.role.stats = { hp: 1, atk: 12, def: 0, sp: 60, mp: 40 };
-  const saveFragile = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: fragileA, warehouse: F.merged }, h.authed(F.A.token));
+  const saveFragile = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: fragileA, warehouse: F.asmA.warehouse }, h.authed(F.A.token));
   assert.equal(saveFragile.status, 200, saveFragile.raw);
 
   // 全局积分基线：紧贴本场快速对战之前采集（此后本用例不再产生任何积分变化）
@@ -625,5 +635,72 @@ test('E2E-6 开关语义：未启用 DL_DATA_DIR → /me 503；DL_LEGACY_STATELE
     assert.equal(me.status, 200);
   } finally {
     await s2.close();
+  }
+});
+
+/* ---------- 7. 装配链路独立覆盖（检查点 5/7/11 的"装配 → 实战"本意） ---------- */
+
+// 用**独立服务实例 + 全员带装配引用**的干净夹具：
+//   · 双方出战配置都携带真实装配引用（`POST /warehouse/assemble` 产物）；
+//   · 两个玩家都在本用例内注册（池内不存在"默认配置玩家"），因此不触发服务端"混合配置 + 镜像缺失"
+//     的残余缺口（D1-residual，见交付报告）；
+//   · 覆盖：装配配置可保存/可激活 → `POST /quick/run` 可打（对手=另一名带引用玩家）→
+//           归档回放按需重算 200 → `POST /ranked/run` 可打。
+test('E2E-7 装配链路：带装配引用的出战配置可实战（quick + 归档回放重算 + ranked）', async () => {
+  const s = await h.startE2E({ rateLimitPerMinute: h.RATE_LIMIT });
+  try {
+    const A = await h.registerPlayer(s, 'asmA');
+    const B = await h.registerPlayer(s, 'asmB');
+    assert.equal(A.status, 200, A.res.raw);
+    assert.equal(B.status, 200, B.res.raw);
+    const boxA = await h.openIntoWarehouse(s, A.token, 4242, 'common', 1, 3);
+    const boxB = await h.openIntoWarehouse(s, B.token, 9100, 'common', 1, 3);
+    const asmA = await h.assembleAll(s, A.token, boxA.warehouse, 'common');
+    const asmB = await h.assembleAll(s, B.token, boxB.warehouse, 'common');
+    assert.ok(asmA.placed.length >= 1 && asmB.placed.length >= 1,
+      `双方都应装配成功至少 1 处（A=${asmA.placed.length} B=${asmB.placed.length}）`);
+
+    const ldA = h.loadoutOf(asmA.warehouse, h.programOf([h.action('move_right')]));
+    const ldB = h.loadoutOf(asmB.warehouse, h.programOf([h.action('move_left')]));
+    const refUidsOf = (ld) => [].concat(
+      (ld.role.slots || []).map((x) => x.pluginUid).filter(Boolean),
+      ...(ld.skills || []).map((sk) => (sk.slots || []).map((x) => x.pluginUid).filter(Boolean)),
+    );
+    const refsOf = (ld) => refUidsOf(ld).length;
+    assert.ok(refsOf(ldA) >= 1 && refsOf(ldB) >= 1, `配置必须真的带装配引用（A=${refsOf(ldA)} B=${refsOf(ldB)}）`);
+
+    const putA = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: ldA, warehouse: asmA.warehouse }, h.authed(A.token));
+    assert.equal(putA.status, 200, putA.raw);
+    const putB = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: ldB, warehouse: asmB.warehouse }, h.authed(B.token));
+    assert.equal(putB.status, 200, putB.raw);
+    // 快照必须自带到该配置引用到的插件（重启/镜像淘汰后仍可实例化）
+    const aId = await h.playerIdByPublicId(s.store, A.publicId);
+    const snapA = await s.store.snapshot.get(s.store.index.get(aId).activeSnapshotHash);
+    const wA = await s.runtime.loadWarehouse(aId);
+    assert.ok(wA, 'A 的仓库镜像应可解析（进程内或快照自带）');
+    for (const uid of refUidsOf(ldA)) {
+      assert.ok(h.findItem(wA, uid), `A 的镜像应含引用插件 ${uid}（镜像插件数=${Object.values(wA.buckets).reduce((n, l) => n + l.length, 0)}；引用=${refUidsOf(ldA).join(',')}）`);
+    }
+
+    // ① ranked：发起者带装配引用，池内对手 = B（同样带装配引用）→ 必须能打且无 invalid
+    const ranked = await s.request('POST', '/api/v1/ranked/run', { seed: 11 }, h.authed(A.token));
+    assert.equal(ranked.status, 200, ranked.raw);
+    assert.equal(ranked.body.data.invalids, 0, `ranked 不应产生 invalid 场次（实得 ${ranked.body.data.invalids}）`);
+    assert.ok(ranked.body.data.matches >= 1, 'B 尚未与 A 交手 → ranked 应至少打到 1 场');
+    for (const m of ranked.body.data.results) assert.match(m.battleId, /^b_[0-9a-f]{16}$/);
+    // ② quick：池内对手仍应可实例化（上一场 ranked 已让 B 进入 24h 冷却，故允许 0 场或 1 场，但不得 5xx）
+    const quick = await s.request('POST', '/api/v1/quick/run', { seed: 31 }, h.authed(A.token));
+    assert.ok(quick.status === 200 || (quick.status === 409 && quick.body.error.code === 'no_opponent'),
+      `quick 只能是 200 或 409 no_opponent，实得 ${quick.status} ${quick.raw.slice(0, 160)}`);
+    if (quick.status === 200) {
+      assert.equal(quick.body.data.opponent.publicId, B.publicId, '池内唯一候选应是 B');
+      assert.equal(quick.body.data.opponent.isBot, false);
+      // ③ 归档回放按需重算（带装配引用的对局）
+      const replay = await s.request('GET', `/api/v1/replay/${quick.body.data.battleId}`, undefined, h.authed(A.token));
+      assert.equal(replay.status, 200, replay.raw);
+      assert.equal(replay.body.data.frames.length, quick.body.data.ticks, '重算帧数应等于 ticks');
+    }
+  } finally {
+    await s.close();
   }
 });

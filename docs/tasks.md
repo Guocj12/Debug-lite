@@ -120,7 +120,7 @@ L7  public/**（P6）
 | POST | `/api/v1/ai/battle` | 用给定 AI 程序跑一场 | 400 / 409 |
 | POST | `/api/v1/battle` | 双方 loadout + AI + seed → **完整回放帧（1px 位置 + 碰撞位置）** | 409 |
 | GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 分片） | 404 |
-| POST | `/api/v1/ranked/run` | 排位：服务端抽 10 场同段位快照 + **双向记账**（P7/B31，D-132） | 409 `no_opponent` / `no_active_config` |
+| POST | `/api/v1/ranked/run` | 排位：服务端抽 10 场同段位快照 + **双向记账**（P7/B31，D-132）；池不足如实回报 `shortfall` 字段 | 400 `pool_forbidden` / 409 `no_active_config` / 401 |
 | POST | `/api/v1/ranked/promote` | 晋升 + 段位奖励（读档案） | 409 `already_max` |
 | POST | `/api/v1/auth/register` \| `login` \| `logout` \| `password` | 账号与会话（P7/B28，D-129） | 401 / 409 `username_taken` / 429 |
 | GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 |
@@ -143,15 +143,14 @@ panel --loadout <file>
 ai validate|compile|battle --file ai.json [--tier rare] [--opponent kiter]
 battle --p1 a.json --p2 b.json --seed 7 [--out replay.json]
 replay --file replay.json [--tick N]        # 文本回放（含 px 位置）
-ranked run --seed 11
-register --user dev --pass *** | login --user dev --pass *** | me | configs list|save|activate|rm
-records [--since N] | defense | quick run [--seed 7] | leaderboard [--limit 50]
-admin bot --count 10 --tier rare --points 200 | admin rebuild-index
+ranked run --seed 11                  # 有 token → 档案驱动（服务端抽池）；无 token → 遗留口径
+register --user dev --pass *** | login --user dev --pass *** | me | quick run | leaderboard
 log --level trace --channel bullets=trace
 health | data <table>
 ```
 - 退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误 / `3` 未鉴权（P7 新增）。
 - CLI **只走 HTTP，不 require core** → 同时是接口完整性验收工具。
+- **未实现（后续批次，实测退出码 2）**：`configs *`、`records`、`defense`、`admin *`、`replay --battle <battleId>`（本节原列出的这些子命令当前不可用；请走 HTTP 端点，见 §2.3）。
 
 ### 2.5 冻结的数据结构
 
@@ -614,11 +613,11 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 ---
 
-## 6. 阶段与批次（后端优先，共 34 批 = P0–P5 的 9+11+5+5+2+2）
+## 6. 阶段与批次（后端优先，共 41 批 = P0–P5 的 9+11+5+5+2+2 + P7 在线服务的 7）
 
 > **P0–P5 之外的新增工作以 `docs/progress.md` 的「本轮完成项」（§3.3/§3.4）为准**；P7（在线服务）的冲刺阶段、文件所有权与验收标准见 **`docs/plan-p7-playable.md`**（本轮"完全可玩后端"的执行蓝图）。
 
-> **P0–P5 全为后端**（共 **34 批**，已收口）；**P6 前端**与 **P7 在线服务（B27–B33，7 批）** 均为「⏳ 计划（未实现）」，**不计入 34 批**。每批必须：① 满足 `§4.6` 事件；② 有日志断言；③ 经 `/api/v1` 或 CLI 可达。
+> **P0–P5 全为后端**（共 **34 批**，已收口）；**P7 在线服务（B27–B33，7 批）已于 2026-09-19 交付**（共 **41 批** = 34 + 7）；**P6 前端**为「⏳ 计划（未实现）」，不计入 41 批。每批必须：① 满足 `§4.6` 事件；② 有日志断言；③ 经 `/api/v1` 或 CLI 可达。
 
 ### P0 后端基建与契约（9 批）
 
@@ -694,19 +693,21 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 > ~~B26 服务端存档~~ **取消**（D-123）：存档延后到 P6（localStorage）。
 > **替代方案**：D-129 起服务端存档由 **P7（B27…B33）** 承担，见下。
 
-### P7 在线服务与存档（**7 批；D-129…D-136**；设计权威：`docs/systems/11-account-store.md`）
+### P7 在线服务与存档（**7 批；D-129…D-136**；设计权威：`docs/systems/11-account-store.md`）—— **✅ 已交付（2026-09-19）**
 
-> **⏳ 计划（未实现）**：以下 B27–B33 共 7 批代码 0 行（2026-09-16 复核：`server/store/`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`runtime/` 均不存在），**不计入 §6 的 34 批**。
+> **✅ 已交付（2026-09-19）**：B27–B33 共 7 批**全部落地**（`server/store/*`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js`、`runtime/` 均已在库；`docs/reviews/B27.md`…`B33.md` 审查记录齐全）。交付实测：`npm test` 903 通过 / 0 失败、`npm run gate` 9 PASS/0 FAIL、`npm run check:docs` PASS、`npm run e2e` 22/22、`npm run load-test -- --players 50 --deep` 7/7 完整性断言。**已计入 §6 的 41 批。**
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
-| B27 ⏳ | `server/store/*`：原子写（tmp→fsync→rename + Windows 重试）、append-only journal（group commit）、物化档案、索引、单进程锁、崩溃恢复、版本迁移、适配器契约 | T-ST-1~8、T-CN-1 |
-| B28 ⏳ | `server/auth.js`：注册/登录/登出/改密、scrypt、Bearer 会话、失败锁定与限速、鉴权中间件接入 `index.js` | T-AU-1~3 |
-| B29 ⏳ | `server/account.js` + 配置槽（≤3、唯一出战、默认槽不可删）+ 快照冻结与内容寻址快照库 + GC | T-AC-1~5、T-RP-3 |
-| B30 ⏳ | 战绩视图：`me/records`、`me/defense`、`records/seen`、排行榜、索引增量维护 | T-ST-5 |
-| B31 ⏳ | `ranked.js` 改造：服务端抽池（同段位 + 24h/72h 去重）、双向记账（防守方只记战绩）、晋升落盘、回放引用；`battle.js` 帧 LRU 上限 | T-RK-1~5、T-RP-4 |
-| B32 ⏳ | `server/quickmatch.js` + `rating-config.json`：积分窗口递进匹配、非对称 Elo 双向结算、leaderboard 联动 | T-QM-1~4 |
-| B33 ⏳ | 回放按需重算与 `410 replay_expired`、`admin` 端点（bot 注入/重建索引/统计）、`scripts/bench-store.js`、CLI 扩展、门禁与文档收尾 | T-RP-1~2、`npm run gate` 9 PASS |
+| B27 `[x]` | `server/store/*`：原子写（tmp→fsync→rename + Windows 重试）、append-only journal（group commit）、物化档案、索引、单进程锁、崩溃恢复、版本迁移、适配器契约（+ `service-config.json`/`rating-config.json` 两张参数表、`player.removed` 墓碑） | T-ST-1~8、T-CN-1 |
+| B28 `[x]` | `server/auth.js`：注册/登录/登出/改密、scrypt、Bearer 会话、失败锁定与限速、鉴权中间件接入 `index.js` | T-AU-1~3 |
+| B29 `[x]` | `server/account.js` + 配置槽（≤3、唯一出战、默认槽不可删）+ 快照冻结与内容寻址快照库 + GC（+ 快照自带装配引用子集） | T-AC-1~5、T-RP-3 |
+| B30 `[x]` | 战绩视图：`me/records`、`me/defense`、`records/seen`、排行榜、索引增量维护 | T-ST-5 |
+| B31 `[x]` | `ranked.js` 改造：服务端抽池（同段位 + 24h 硬底线/72h 优先去重）、双向记账（防守方只记战绩）、晋升落盘、回放引用；`battle.js` 帧 LRU 上限 | T-RK-1~5、T-RP-4 |
+| B32 `[x]` | `server/quickmatch.js` + `rating-config.json`：积分窗口递进匹配、非对称 Elo 双向结算、leaderboard 联动 | T-QM-1~4 |
+| B33 `[x]` | 回放按需重算与 `410 replay_expired`、`admin` 端点（bot 注入/重建索引/统计/封禁）、CLI 扩展、门禁与文档收尾（`scripts/bench-store.js` **未实现，后续批次**） | T-RP-1~2、`npm run gate` 9 PASS |
+
+> **P7-5/P7-6/P7-7（同轮交付）**：P7-5 全链路 e2e（`npm run e2e`，22 检查点）、P7-6 批量测试（`npm run load-test`，真实玩家 + 7 条完整性断言）、P7-7 测试体系冗余与缺口审查（D-150③，见 `docs/reviews/P7-7-test-audit.md` 与 `docs/reviews/P7-7-wave2-code-review-residual.md`）。三者的阶段定义见 `docs/plan-p7-playable.md` §P7-5/§P7-6/§P7-7。
 
 > **门禁同步（每批必查）**：`check-arch.js` 登记 `server/store/*` 与 `auth/account/quickmatch/admin`；`gate.js` 的 `PREFIX_MAP.ranked` 加 `'quick'`；项 9 接口冒烟加 `auth → me → configs → quick → replay → records` 闭环；`server/data/schema.js` 加 `service-config`/`rating-config`。**不得**修改 `server/core/*`、`server/ai/*`（战斗语义不变）。
 
@@ -743,7 +744,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | MS4 回放自足 | 完整帧 + 文本回放 | P4 | T-BT-1 + 帧字段审计 |
 | MS5 有排位 | 快照/匹配/晋升 | P5 | `ranked run` 闭环 |
 | MS6 有界面 | 前端全套 + 前端日志 | P6 | 待排期 |
-| MS7 有档案与在线对战 | 账号/服务端档案/异步排位双向记账/快速对战积分/回放鉴权 | P7 | `cli` 注册→保存配置→快速对战→查防守战绩闭环 + `npm run gate` 9 PASS |
+| MS7 有档案与在线对战 | 账号/服务端档案/异步排位双向记账/快速对战积分/回放鉴权 | P7 **✅ 已达成（2026-09-19）** | `cli` 注册→保存配置→快速对战→查防守战绩闭环 + `npm run gate` 9 PASS（**实测**：`npm run e2e` 22/22、`npm run load-test -- --players 50 --deep` 7/7） |
 
 ---
 

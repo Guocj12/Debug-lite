@@ -7,8 +7,9 @@
 | 层 | 表 | 性质 | 谁维护 |
 |---|---|---|---|
 | **机制层** | `skill-mechanics.json` | 技能**类型**机制：参数滚动模式（`pair`/`intMin`/`copy`）、语义槽位 `slots`、弹幕发射模式（`cellsFromRange`/`repeatCount`/`impactCells`/`pathCells`）与 `bullet` 描述、`costDims`、`precision`、`bounds` | 机制词汇——实现侧维护，**不是内容** |
-| **机制层** | `affix-registry.json` | 词条注册表：`domain`/`roll`/`agg`/`special`/`regen`/`skillOp`/`hitEffect`/`castEffect`、`stats`、`caps` | 机制词汇——实现侧维护，**不是内容** |
+| **机制层** | `affix-registry.json` | 词条注册表：`domain`/`roll`/`agg`/`special`/`regen`/`skillOp`/`hitEffect`/`castEffect`、`stats`、`caps`，以及 `_domainOfKind`（`kind` → 期望 `domain` 的映射） | 机制词汇——实现侧维护，**不是内容** |
 | **机制层** | `ai-nodes.json` | AI 语言的**真实节点类型**单一数据源（`base` 恒可用 + `nodes` 全量白名单） | 机制词汇——**不是内容** |
+| **参数表** | `service-config.json` / `rating-config.json` | 运行时参数（账号/会话/槽位/保留期/缓存上限/限速；积分与匹配参数 D-133）——**表为数值单一来源，代码默认值兜底**（`server/store/config.js` 的 `DEFAULT_SERVICE_CONFIG`/`DEFAULT_RATING_CONFIG`），schema 冻结值 + 跨字段不变量校验，**缺表必 FAIL** | `11-account-store.md` §10/§11、`interfaces.md` §4.11/§4.12 |
 | **内容层** | `role-templates.json` / `skill-templates.json` / `plugins.json` / `qualities.json` / `items-config.json` / `unlock.json` | 角色/技能/插件/品质/掉落/解锁的**具体条目与数值** | ⚠️ **当前全部为示例数据** |
 | **结构校验** | `schema.js` | T-DC-1（结构 + 冻结数值）+ T-DC-2（items-data 逐值一致） | 实现侧维护 |
 | 冻结配置 | `battle-config.json` | 全部战斗数值（D-117 冻结，B21 校准入表） | 实现侧维护 |
@@ -25,8 +26,10 @@
 |---|---|---|---|
 | `battle-config.json` | 冻结配置 | 全部战斗数值（D-117） | `tasks.md` §2.5.7 + `systems/06-field.md` §3 |
 | `skill-mechanics.json` | **机制** | 4 种技能类型机制（参数滚动/槽位/发射模式/bounds/precision/costDims） | `systems/03-skills.md` §2A/§3 |
-| `affix-registry.json` | **机制** | 词条注册表（27 条已登记词条：25 条单域 + 2 条 `both`；含 `caps.probability`） | `systems/01-items.md` §3A、`systems/03-skills.md` §4.2/§7 |
+| `affix-registry.json` | **机制** | 词条注册表（27 条已登记词条：25 条单域 + 2 条 `both`；含 `caps.probability` 与 `_domainOfKind`） | `systems/01-items.md` §3A、`systems/03-skills.md` §4.2/§7 |
 | `ai-nodes.json` | **机制** | AI 真实节点类型（`base` 恒可用 + `nodes` 全量白名单；**数量以此表为准，schema 不硬编码**） | `systems/08-ai.md` §3 + `examples/09-unlock.md` §1 |
+| `service-config.json` | **参数** | 运行时参数：`auth`（scrypt 参数/用户名与密码长度/失败锁定/限速）、`session`、`config`（`maxSlots:3`）、`record`、`store`（缓存上限）、`journal`、`snapshot`、`replayCacheSize`、`pool`（`ttlDays` **无消费方**、`opponentCooldownHours`） | `systems/11-account-store.md` §10/§11 |
+| `rating-config.json` | **参数** | 积分与匹配参数（D-133）：`base/cap/scale/kBase/kMin/kMax/drawFactor/matchWindow*/opponentCooldownHours/dailyBattleLimit/rounding/promoteWins/batchSize` | `systems/11-account-store.md` §8.3 |
 | `role-templates.json` | 内容（示例） | 角色模板（D-110 必填 regen）+ `typeModifiers` + 每项 `drop`/`dropWeight` | `items-data.md` §3 |
 | `skill-templates.json` | 内容（示例） | 技能模板（D-111 slotWeights / D-118 bulletLevel；**无 bulletSpeed**）+ 每项 `drop`/`dropWeight` | `items-data.md` §4 |
 | `plugins.json` | 内容（示例） | 角色/技能插件（D-113 costDeltaByTier / D-114 独立 id）+ 每项 `drop`/`dropWeight` | `items-data.md` §5/§6 |
@@ -36,6 +39,13 @@
 | `schema.js` | 校验器 | 见下 | 本 README |
 
 `schema.js`：校验器（T-DC-1 结构 + 机制自洽；T-DC-2 示例期望逐值比对**仅在对应内容表带 `_sample: true` 时执行**）。**不锁内容数量**（角色/技能/插件/品质均只要求 ≥1 项）、**不锁 sprites 形状枚举与条数**（允许多余条目，缺失不阻塞；动画只要求 `role` 组的基础六件套）。导出 `validateStructure` / `validateConsistency` / `validate`（合并）。
+
+### 词条 `domain` / `_domainOfKind` 语义（**已被真实消费**）
+
+- `affix-registry.json` 的每个词条带 `domain`（`role` / `skill` / `both`，当前 27 条 = 12 role + 13 skill + 2 `both`），表根另有 `_domainOfKind`（`{rolePlugin:'role', skillPlugin:'skill'}`）声明"某种 `kind` 的插件只该带哪个域的词条"。
+- **消费方 = `server/core/items.js` 的 `generatePlugin`**：按 `kind` 取期望域，若词条 `domain` 与期望域不符（且不是 `both`）→ **记 `items.affix.domain`(warn) 并跳过该词条**（与"未登记词条 id"同一处理路径）；因此该字段**不是文档性声明**。
+- **静态镜像**：`schema.js` 同时校验 `domain` 取值合法，并对**内容层插件**做同样的域匹配检查（不符 → T-DC-1 **FAIL**）。回归用例 `tests/unit/affix-domain.test.js`。
+- **参数表口径**：`service-config.json` / `rating-config.json` 由 `server/store/config.js` 的 `loadConfigs` 读取（去掉 `_` 前缀元键后深合并到内置默认值之上）；**表为数值单一来源、代码默认值仅在缺表/缺键时兜底**；`schema.js` 的 `SERVICE_CONFIG_FROZEN`/`RATING_CONFIG_FROZEN` 做逐值冻结比对，并校验跨字段不变量（`session.maxTotalDays ≥ ttlDays`、`kMin ≤ kBase ≤ kMax`、`promoteWins < batchSize`、`matchWindowMax ≥ matchWindowStart`、`maxSlots ∈ 1..3`）；**缺表必 FAIL**，未知键亦 FAIL。
 
 ## 节点计数口径（`availableNodes`）
 

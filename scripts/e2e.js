@@ -36,6 +36,12 @@
  *   ①进程内镜像优先 → ②已校验快照退化为基准面板 → ③从未校验则如实 `missing_warehouse`。
  *   本脚本**不再**有任何"为绕过缺陷而剥离引用"的适配。
  *
+ * ⚠️ 抽池可控性（2026-09-19 复审修正）：`/quick/run`、`/ranked/run` 的**对手**由服务端抽池决定
+ *   （池内任意真实玩家，默认配置者 0 处装配引用），故"含装配插件能出战"的判定一律**锚在发起者侧**
+ *   （第 11 步 = B、第 14/21/22 步 = A，都是 `authed(<某玩家>.token)` 的确定侧），绝不假设"抽中的是 A"。
+ *   对手抽中 A 时额外做同款全链核验；抽中默认配置玩家时**如实打印**该事实（不得伪装成已覆盖）。
+ *   另在第 21 步用 legacy `/battle`（p1=p2=含装配引用的同一配置 + 真镜像）做**双方**确定性的出战证明。
+ *
  * 用法：npm run e2e   （或 node scripts/e2e.js）
  * 退出码：0 = 22 个检查点全过；1 = 任一步失败（并打印该步上游真实响应）。
  */
@@ -261,6 +267,54 @@ function pluginRefsOf(ld) {
   const role = ld && ld.role ? inSlots(ld.role.slots) : 0;
   const skills = (ld && Array.isArray(ld.skills) ? ld.skills : []).reduce((n, sk) => n + inSlots(sk && sk.slots), 0);
   return role + skills;
+}
+
+// 快照正文里**持久化下来的仓库镜像片段**（缺口 1）含多少个插件项
+function warehouseItemsOf(snap) {
+  const bk = (snap && snap.warehouse && snap.warehouse.buckets) || {};
+  return ((bk.rolePlugin || []).length) + ((bk.skillPlugin || []).length);
+}
+
+// 玩家当前出战槽 + 其冻结快照正文（档案驱动路径的权威来源）
+async function activeSnapshotOf(store, playerId) {
+  const arch = await store.loadArchive(playerId);
+  const slot = arch.configs.slots.find((x) => x.slotId === arch.configs.activeSlotId);
+  return { slot, snap: await store.snapshot.get(slot.snapshot.hash) };
+}
+
+/* 含装配引用的出战方**机器核验**（旧 D1 缺陷的回归钉；第 11/14/21/22 步共用同一个判定，杜绝"各写一套"）。
+ *   ① 快照正文确含真实装配引用（refs>0）—— 证明 e2e 没有靠剥离 pluginUid 换绿；
+ *   ② 快照标记 `verifiedAgainstWarehouse=true` 且正文持久化了仓库镜像片段（缺口 1 的落地证据）；
+ *   ③ 面板一致性：用**快照持久化片段**算出的面板 ≡ 用**完整真镜像**算出的面板（逐值一致）；
+ *   ④ 反证：同一配置去掉 warehouse 必 `missing_warehouse` —— 证明引用是真的、校验没有空转。
+ * `fullWarehouse` 为必填：**必须**持有该玩家的完整仓库正文，否则第 ③ 条会退化成空断言。
+ * 返回 { refs, whItems, stats } 供打印。
+ */
+async function verifyPluginSide(store, label, playerId, fullWarehouse, tier) {
+  expect(fullWarehouse && typeof fullWarehouse === 'object',
+    `${label}：核验含装配引用的一侧必须提供完整仓库镜像（否则面板一致性断言会空转）`);
+  const side = await activeSnapshotOf(store, playerId);
+  const refs = pluginRefsOf(side.snap.loadout);
+  expect(refs > 0,
+    `${label} 的出战快照必须含真实装配引用（实测 ${refs} 处）——不得靠剥离 pluginUid 换绿`, j(side.slot.snapshot));
+  expect(side.slot.snapshot.verifiedAgainstWarehouse === true,
+    `${label} 保存配置时带了 warehouse → 快照应标记 verifiedAgainstWarehouse=true（缺口 1 的判定依据）`, j(side.slot.snapshot));
+  const whItems = warehouseItemsOf(side.snap);
+  expect(whItems > 0,
+    `${label} 的冻结快照应随正文持久化仓库镜像片段（缺口 1：重启后插件词条仍生效），实测 ${whItems} 项`,
+    j(Object.keys(side.snap.warehouse || {})));
+  const viaExcerpt = loadoutApi.buildPanel(side.snap.loadout, { warehouse: side.snap.warehouse, tier });
+  expect(viaExcerpt.ok === true,
+    `${label} 用持久化镜像片段必须能算出面板（缺口 1 的"足够重建"判定）`, j(viaExcerpt.errors));
+  const viaFull = loadoutApi.buildPanel(side.snap.loadout, { warehouse: fullWarehouse, tier });
+  expect(viaFull.ok === true, `${label} 用完整仓库镜像必须能算出面板`, j(viaFull.errors));
+  expect(j(viaExcerpt.panel) === j(viaFull.panel),
+    `${label} 的面板必须与"含完整真镜像时"逐值一致`,
+    `${short(j(viaExcerpt.panel), 300)} VS ${short(j(viaFull.panel), 300)}`);
+  const noWh = loadoutApi.buildPanel(side.snap.loadout, { warehouse: null, tier });
+  expect(noWh.ok === false && noWh.errors.some((e) => e.code === 'missing_warehouse'),
+    `${label} 反证：去掉 warehouse 必报 missing_warehouse → 该配置确实含装配引用（校验未空转）`, j(noWh.errors));
+  return { refs, whItems, stats: viaFull.panel.role.stats };
 }
 
 // 确定性对局剧本（只改**客户端权威**的物品字段，§15.1 混合权威）：把一方的 hp 压到 1 且双方都"一直向右"
@@ -599,35 +653,28 @@ async function main() {
       // 真的跑起来了（不是 buildPlayer 失败退化成 0 tick 的 invalid 空局）
       expect(Number.isInteger(d.ticks) && d.ticks > 0,
         `对局必须真的跑起来：ticks=${d.ticks}（0 通常意味着某方 buildPlayer 失败 → invalid 空局）`, j(d));
-      // ⭐ 本脚本最有价值的端到端验收：**含装配插件的配置真的打完了一整场对局**（旧 D1 缺陷的回归钉）。
-      //   双方快照都保留 pluginUid 引用；服务端靠「进程内仓库镜像 → 冻结快照随正文持久化的镜像片段」解析成功，
-      //   而不是靠"把引用剥离掉"绕过。以下逐条给出机器证据。
+      /* ⭐ 本脚本最有价值的端到端验收：**含装配插件的配置真的打完了一整场对局**（旧 D1 缺陷的回归钉）。
+       * ⚠️ 抽池可控性（2026-09-19 复审修正）：本场**发起者固定 = B**（`authed(B.token)`），其第 6 步快照
+       *    含真实装配引用 → **必然**进入本场战斗，故把"含装配引用能出战"的判定**锚在发起者侧**（确定性）；
+       *    被抽中的对手是池内任意真实玩家（默认配置者 0 处引用）——对手侧按**实际抽中结果**分支核验，
+       *    绝不假设"抽中的一定是 A"（旧写法假定了这点：抽到默认配置玩家就会假红/间歇红）。
+       * 判定链由 `verifyPluginSide` 统一实现（引用为真 + 缺口 1 持久化 + 面板 ≡ 真镜像 + 去 warehouse 反证）。
+       */
+      const selfSide = await verifyPluginSide(s.store, '发起者 B（本场 p1，确定性进入战斗）',
+        state.facts.B.playerId, state.facts.asmB.warehouse, MODE);
       const foeIdA = await playerIdByPublicId(s.store, d.opponent.publicId);
-      const snapOf = async (playerId) => {
-        const arch = await s.store.loadArchive(playerId);
-        const slot = arch.configs.slots.find((x) => x.slotId === arch.configs.activeSlotId);
-        return { slot, snap: await s.store.snapshot.get(slot.snapshot.hash) };
-      };
-      const bSide = await snapOf(state.facts.B.playerId);   // 发起者（本场 p1）
-      const aSide = await snapOf(foeIdA);                   // 被抽中的对手（本场 p2）
-      const bRefs = pluginRefsOf(bSide.snap.loadout);
-      const aRefs = pluginRefsOf(aSide.snap.loadout);
-      expect(bRefs > 0, `发起者 B 的出战快照必须含真实装配引用（实测 ${bRefs} 处）`, j(bSide.slot.snapshot));
-      expect(aRefs > 0,
-        `被抽中对手 A 的出战快照必须含真实装配引用（实测 ${aRefs} 处）——为 0 则本场并未验证"含插件能出战"`, j(aSide.slot.snapshot));
-      expect(bSide.slot.snapshot.verifiedAgainstWarehouse === true && aSide.slot.snapshot.verifiedAgainstWarehouse === true,
-        '保存配置时带 warehouse → 快照应标记 verifiedAgainstWarehouse=true（缺口 1 的判定依据）',
-        j([bSide.slot.snapshot, aSide.slot.snapshot]));
-      const whCount = (snap) => {
-        const b = (snap.warehouse && snap.warehouse.buckets) || {};
-        return ((b.rolePlugin || []).length) + ((b.skillPlugin || []).length);
-      };
-      expect(whCount(aSide.snap) > 0 && whCount(bSide.snap) > 0,
-        `冻结快照应随正文持久化仓库镜像片段（缺口 1：重启后插件词条仍生效）：A=${whCount(aSide.snap)} / B=${whCount(bSide.snap)} 个插件项`,
-        j([Object.keys(aSide.snap.warehouse || {}), Object.keys(bSide.snap.warehouse || {})]));
-      state.facts.refs = { a: aRefs, b: bRefs, whA: whCount(aSide.snap), whB: whCount(bSide.snap) };
+      const foeIsA = d.opponent.publicId === state.facts.A.publicId;
+      // 对手侧：抽中 A（夹具里唯一另一个持装配引用的玩家）→ 同样做全链核验；抽中默认配置玩家 → 如实记录
+      const foeSide = foeIsA
+        ? await verifyPluginSide(s.store, `对手 A（本场 p2，publicId=${state.facts.A.publicId}）`, foeIdA, state.facts.asmA.warehouse, MODE)
+        : null;
+      const foeSnap = foeIsA ? null : (await activeSnapshotOf(s.store, foeIdA)).snap;
+      const foeNote = foeSide
+        ? `抽中对手 = A → **双方**快照均含真实装配引用（A ${foeSide.refs} / B ${selfSide.refs} 处，镜像片段 ${foeSide.whItems}/${selfSide.whItems} 项），两侧面板均 ≡ 完整真镜像`
+        : `抽中对手 = ${d.opponent.publicId}（默认配置：${pluginRefsOf(foeSnap.loadout)} 处装配引用）→ 抽池不受控，本项验收锚在**发起者 B**（${selfSide.refs} 处引用 / 镜像片段 ${selfSide.whItems} 项；面板 ≡ 真镜像 hp${selfSide.stats.hp}/atk${selfSide.stats.atk}/def${selfSide.stats.def}/sp${selfSide.stats.sp}/mp${selfSide.stats.mp}）`;
+      state.facts.refs = { b: selfSide.refs, bWh: selfSide.whItems, foeIsA, aRefs: foeSide ? foeSide.refs : null };
       state.facts.quick1 = d;
-      okLine(11, 'quick/run 双方都是真实玩家（含装配插件出战 ✔）', `发起者 ${state.facts.B.publicId}(${state.facts.B.playerId}) vs 对手 ${d.opponent.publicId} → 档案库回查 OK（isBot=false，出战快照可用）；battleId=${d.battleId}；响应无 pl_；**双方快照各含真实装配引用 ${bRefs}/${aRefs} 处 + 持久化镜像片段 ${whCount(bSide.snap)}/${whCount(aSide.snap)} 项 → 含装配插件的配置成功出战**`);
+      okLine(11, 'quick/run 双方都是真实玩家（含装配插件出战 ✔）', `发起者 ${state.facts.B.publicId}(${state.facts.B.playerId}) vs 对手 ${d.opponent.publicId} → 档案库回查 OK（isBot=false，出战快照可用）；battleId=${d.battleId}；ticks=${d.ticks}>0；响应无 pl_；**${foeNote}**`);
       return `对手=${d.opponent.publicId}`;
     });
 
@@ -682,6 +729,11 @@ async function main() {
         if (e && e.publicId) pointsBeforeRanked[e.publicId] = e.points;
       }
       state.facts.pointsBeforeRanked = pointsBeforeRanked;
+      // 排位发起者固定 = A（`authed(A.token)`）→ A 必然作为 p1 进入本批次**每一场**对局。
+      //   故这里做一次**确定性**的"含装配引用的一侧确实出战"核验（不依赖任何抽池结果）：
+      //   若本批次 matches>0 而 A 的快照不含装配引用，那"含插件能出战"就没有被验证过。
+      const rankedSide = await verifyPluginSide(s.store, '排位发起者 A（本批次每场 p1）',
+        state.facts.A.playerId, state.facts.asmA.warehouse, MODE);
       const r = await request(port, 'POST', '/api/v1/ranked/run', { seed: 11 }, authed(state.facts.A.token));
       expect(r.status === 200, `排位应 200，实得 ${r.status}`, r.raw);
       const d = r.body.data;
@@ -705,7 +757,7 @@ async function main() {
       expect(r2.body.data.matches === 0 && r2.body.data.shortfall === 10,
         `24h 去重后应 0 场 / shortfall 10，实得 ${r2.body.data.matches} 场 / shortfall ${r2.body.data.shortfall}（D-136）`, r2.raw);
       state.facts.ranked2 = r2.body.data;
-      okLine(14, 'ranked/run 抽池与 shortfall', `第 1 轮：matches=${d.matches} shortfall=${d.shortfall}（对手 ${foes.join(',')} 全部回查档案库 OK，未抽自己）invalid=${d.invalids}；第 2 轮：matches=${r2.body.data.matches} shortfall=${r2.body.data.shortfall} → 24h 去重生效，**未用 bot 凑满 10 场**（D-152）；发起者 A 的配置含真实装配引用 ${state.facts.pluginRefsA} 处 → 0 场 invalid`);
+      okLine(14, 'ranked/run 抽池与 shortfall', `第 1 轮：matches=${d.matches} shortfall=${d.shortfall}（对手 ${foes.join(',')} 全部回查档案库 OK，未抽自己）invalid=${d.invalids}；第 2 轮：matches=${r2.body.data.matches} shortfall=${r2.body.data.shortfall} → 24h 去重生效，**未用 bot 凑满 10 场**（D-152）；发起者 A 的配置含真实装配引用 ${rankedSide.refs} 处（镜像片段 ${rankedSide.whItems} 项，面板 ≡ 真镜像 hp${rankedSide.stats.hp}/sp${rankedSide.stats.sp}）→ 0 场 invalid`);
       return `shortfall=${d.shortfall}`;
     });
 
@@ -917,6 +969,11 @@ async function main() {
       const bat = await request(port, 'POST', '/api/v1/battle', { p1: state.facts.ldA, p2: state.facts.ldA, warehouse: state.facts.asmA.warehouse, seed: 5, tier: MODE });
       expect(bat.status === 200, `legacy battle 应 200，实得 ${bat.status}`, bat.raw);
       expect(/^r\d+$/.test(bat.body.data.id), '遗留回放 id 应为 r<seq>', bat.raw);
+      // 双方都是**含装配引用**的同一份配置（确定性：不依赖抽池）→ 必须真的跑完（ticks>0、帧数 == ticks）
+      expect(Number.isInteger(bat.body.data.ticks) && bat.body.data.ticks > 0,
+        `含装配引用的双方对战必须真的跑完（ticks=${bat.body.data.ticks}；0 通常意味着 buildPlayer 失败）`, short(bat.raw, 400));
+      expect(Array.isArray(bat.body.data.frames) && bat.body.data.frames.length === bat.body.data.ticks,
+        `回放帧数应等于 ticks（${bat.body.data.ticks}），实得 ${bat.body.data.frames && bat.body.data.frames.length}`, short(bat.raw, 300));
       const legacyReplay = await request(port, 'GET', `/api/v1/replay/${bat.body.data.id}`);
       expect(legacyReplay.status === 200, `遗留回放（无 token）应 200，实得 ${legacyReplay.status}`, legacyReplay.raw);
 
@@ -935,7 +992,7 @@ async function main() {
         if (s2) await s2.close();
         fs.rmSync(dir2, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
       }
-      okLine(21, 'DL_LEGACY_STATELESS 兼容口径', `=1（默认）：box/warehouse/loadout/battle/replay(r…) 全 200 零回归；=0（另起实例）：旧端点 410 deprecated、health 仍 200`);
+      okLine(21, 'DL_LEGACY_STATELESS 兼容口径', `=1（默认）：box/warehouse/loadout/battle/replay(r…) 全 200 零回归（/battle 双方均为含装配引用的配置：ticks=${bat.body.data.ticks}>0、帧数=${bat.body.data.frames.length}）；=0（另起实例）：旧端点 410 deprecated、health 仍 200`);
       return 'legacy 零回归 + 410 deprecated';
     });
 
@@ -955,6 +1012,11 @@ async function main() {
       const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(state.facts.A.token));
       expect(r.status === 200, `A 的快速对战应 200（已清冷却，池中有真实候选），实得 ${r.status}`, r.raw);
       const d = r.body.data;
+      // 发起者固定 = A（其第 21 步刚恢复的配置含真实装配引用）→ 又一次**确定性**的"含插件能出战"核验
+      const eloSide = await verifyPluginSide(s.store, '第 22 步发起者 A（本场 p1）',
+        state.facts.A.playerId, state.facts.asmA.warehouse, MODE);
+      expect(Number.isInteger(d.ticks) && d.ticks > 0,
+        `含装配引用的 A 出战必须真的跑起来：ticks=${d.ticks}`, j(d));
       await assertReal(s.store, [state.facts.A.publicId, d.opponent.publicId], 'quick/run#2');
       const selfCalc = quickmatch.ratingDelta({
         points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore,
@@ -1036,7 +1098,7 @@ async function main() {
       const sumAfter = d.self.pointsAfter + d.opponent.pointsAfter;
       expect(sumBefore + d.self.delta + d.opponent.delta === sumAfter,
         `本场守恒式不成立：${sumBefore} + ${d.self.delta} + ${d.opponent.delta} ≠ ${sumAfter}`, j(d));
-      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${state.facts.A.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、方向正确、守恒式 ${sumBefore}+(${d.self.delta}${d.opponent.delta >= 0 ? '+' : ''}${d.opponent.delta})=${sumAfter} ✔、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
+      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${state.facts.A.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}，含装配引用 ${eloSide.refs} 处、ticks=${d.ticks}>0）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、方向正确、守恒式 ${sumBefore}+(${d.self.delta}${d.opponent.delta >= 0 ? '+' : ''}${d.opponent.delta})=${sumAfter} ✔、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
       return `Δ ${d.self.delta}/${d.opponent.delta}；CLI 0/3`;
     });
 
@@ -1056,10 +1118,12 @@ async function main() {
     out('');
     out('✅ 装配引用端到端（旧 D1 注记已删除）：第 5 步装配成功 ' + state.facts.asmA.placed.length + ' 处（A）/ '
       + state.facts.asmB.placed.length + ' 处（B）；第 6 步出战配置**原样保留 pluginUid**（A/B 各 '
-      + state.facts.pluginRefsA + '/' + state.facts.pluginRefsB + ' 处引用），冻结快照随正文持久化镜像片段（A/B 各 '
-      + state.facts.refs.whA + '/' + state.facts.refs.whB + ' 项）。');
-    out('   → /panel 用真镜像聚合 ≡ 单测 buildPanel（去掉 warehouse 必 missing_warehouse，反证引用为真）；'
-      + 'quick/run 与 ranked/run 均以含装配插件的配置成功出战（invalids=0）。');
+      + state.facts.pluginRefsA + '/' + state.facts.pluginRefsB + ' 处引用）。');
+    out('   → 含装配引用的出战方逐条核验：快照 refs>0 + verifiedAgainstWarehouse=true + 正文持久化仓库镜像片段'
+      + '（发起者 B ' + state.facts.refs.b + ' 处引用 / 片段 ' + state.facts.refs.bWh + ' 项；'
+      + (state.facts.refs.foeIsA ? 'quick/run 抽中 A → 双方均为含插件配置' : 'quick/run 抽中默认配置玩家 → 验收锚在发起者侧（抽池不受控）')
+      + '）；面板 ≡ 完整真镜像（去 warehouse 必 missing_warehouse 反证引用为真）；'
+      + 'quick/run、ranked/run 与 legacy /battle 均以含装配插件的配置成功出战（ticks>0、invalids=0）。');
     out('   旧注记「已知后端缺陷 D1 → 第 6 步剥离装配引用 / missing_warehouse」已失效并移除：'
       + '缺陷 B（进程内镜像 + 已校验快照退化）与缺口 1（快照持久化仓库镜像片段）均已修复。');
     out(`摘要行：e2e PASS 检查点=22/22 步=${passed} 用时=${ms}ms 端口=${port} 数据根=${path.basename(dataDir)}`);

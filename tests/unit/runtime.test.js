@@ -501,3 +501,47 @@ test('RT-18 random 两用法：语句位真执行分支（prob=1 必 then、prob
   assert.strictEqual(runtime.getVar(ctxE0, 'r'), false, '表达式位 prob=0 → 布尔 false（旧实现返回 {type:"literal",value:222}）');
   assert.deepEqual(exprDraws, ['ai', 'ai'], '表达式位每次求值消费一次 ai 流（purpose=ai）');
 });
+
+// ---- RT-19（缺陷 3，2026-09-19）：表达式位 random 的运行期行为与校验口径必须一致（D-139）----
+// 复现证据（修前）：`loop{ if(cond: random(prob, then: literal, else: literal), then: action, else: action) }`
+//   被校验期以 branch_without_action 拒绝（把表达式位当语句位），而运行期它按布尔分支正常执行 →
+//   校验与运行不一致。修法：校验侧给表达式位 random 免掉分支行动规则（语句位规则保持）。
+// 本用例锁定**运行期**侧：表达式位 random 两分支都与同 prob 的语句位 random 一致（纯布尔分支）。
+test('RT-19 缺陷3 表达式位 random（if.cond）运行期按布尔分支；与语句位 random 同 prob 序列一致', () => {
+  const exprCondProg = { type: 'program', version: 2, body: { type: 'seq', statements: [
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: { type: 'seq', statements: [
+      { type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'literal', value: true }, else: { type: 'literal', value: false } },
+        then: seqOf('expr_then'), else: seqOf('expr_else') },
+      { type: 'break' },
+    ] } },
+  ] } };
+  const stmtProg = { type: 'program', version: 2, body: { type: 'seq', statements: [
+    { type: 'loop', kind: 'while', cond: { type: 'literal', value: true }, body: { type: 'seq', statements: [
+      { type: 'random', prob: { type: 'literal', value: 0.5 }, then: seqOf('expr_then'), else: seqOf('expr_else') },
+      { type: 'break' },
+    ] } },
+  ] } };
+  // 真实 ai 流（每 tick 派生，D-91）：两个程序在**每次求值**处消费同一位置的一次随机 → 分支序列应逐 tick 相同
+  const ctxExpr = runtime.createContext(exprCondProg);
+  const ctxStmt = runtime.createContext(stmtProg);
+  const rngExpr = createRng(20260912);
+  const rngStmt = createRng(20260912);
+  const exprSeq = [];
+  const stmtSeq = [];
+  for (let t = 1; t <= 8; t++) {
+    exprSeq.push(runtime.resume(ctxExpr, mkSnapshot(), rngExpr.deriveStream(t, 'ai')).action);
+    stmtSeq.push(runtime.resume(ctxStmt, mkSnapshot(), rngStmt.deriveStream(t, 'ai')).action);
+  }
+  assert.deepEqual(exprSeq, stmtSeq, `表达式位按布尔分支，与语句位同 prob 序列一致（实测: ${exprSeq.join(' | ')}）`);
+  assert.ok(exprSeq.every((a) => a === 'expr_then' || a === 'expr_else'), '只产出 then/else 两个分支的行动');
+  assert.ok(exprSeq.includes('expr_then') && exprSeq.includes('expr_else'), `两分支都被走到过: ${exprSeq.join(' | ')}`);
+  // 表达式位 random 的 then/else 字段**不参与求值**：其中的 action 名不会出现在产出里
+  const untouched = runtime.createContext({ type: 'program', version: 2, body: { type: 'seq', statements: [
+    { type: 'var', name: 'n', value: { type: 'literal', value: 0 } },
+    { type: 'loop', kind: 'while', cond: { type: 'random', prob: { type: 'literal', value: 0 }, then: { type: 'literal', value: true }, else: { type: 'literal', value: false } }, body: { type: 'seq', statements: [seqOf('never')] } },
+  ] } });
+  untouched.stepLimit = 50;
+  const r = runtime.resume(untouched, mkSnapshot(), createRng(3));
+  assert.notEqual(r.action, 'never', 'prob=0 的表达式位条件 → while 不进入（空转至步数兜底），不产出循环体行动');
+  assert.equal(r.action, 'wait', '步数兜底 wait（D-81/A-9a）');
+});

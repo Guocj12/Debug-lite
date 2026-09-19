@@ -237,7 +237,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | 项 | 措施 |
 |---|---|
 | 请求体上限 | 沿用 `readBody` 的 1MB（AI AST 上限更小：`ai/ast.limits`） |
-| 限速 | 登录/注册：10 次/分/IP；匹配与对战：见 §8.5；全局：600 次/分/token |
+| 限速 | 登录/注册：10 次/分/IP（`auth.rateLimitPerMinute`，账号失败锁定另见 §4.2）；匹配与对战：见 §8.5；**全局：600 次/分/principal —— 已实现于 P7-4 的 HTTP 中间件**（进程内滑动窗口，按 `playerId`，未登录按 IP；命中 → `429 rate_limited`） |
 | CORS | 默认**不发送** `Access-Control-Allow-Origin`（同源部署）；若前端分离，由 `DL_CORS_ORIGIN` 显式白名单 |
 | CSRF | 无 cookie、纯 Bearer + JSON → 天然免疫；文档记录该判断依据 |
 | 错误信息 | 登录失败统一 `invalid_credentials`（不区分"用户不存在/密码错误"） |
@@ -364,6 +364,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
   "dataVersion": "b25",          // 数据表指纹 = sha256(role-templates|skill-templates|plugins|qualities|battle-config)[0..7]
   "configHash": "sha256:…",      // 由上面两者 + canonical loadout 合成，作为"可复现性三元组"的单一标识
   "loadout": { … },
+  "warehouse": { "buckets": { … } },   // **可选字段**（缺口 1，2026-09-19 已实现）：装配引用子集
   "frozenAt": 1790000000000
 }
 ```
@@ -371,6 +372,12 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 - `dataVersion` 在启动时计算一次并常驻；**对局记录里必须带 `configHash`**，否则回放无法判定可复现性（§9.3）。
 - 快照库写入是**内容寻址 + 幂等**：`hash` 相同则不重复写（同一配置被多次冻结只占一份）。
 - 快照 GC：见 §9.2（引用计数 + 保留期）。
+- **可选字段 `warehouse` = 装配引用子集（2026-09-19 已实现，缺口 1）**：只包含**该 `loadout` 实际引用到的插件项**（按原桶 `roles/skills/rolePlugins/skillPlugins` 分组，`archive.warehouseExcerpt`），**不是整仓**。口径：
+  1. **不参与 `hash`/`configHash`**——内容寻址键恒为 `loadout` 本体（`snapshot-store.js` 的 `buildSnapshot` 只对 `loadout`/`{engineVersion,dataVersion,loadout}` 求 hash），因此同一配置加不加该子集都是同一个快照 hash；
+  2. **同 hash 再次冻结且带新子集** → 只改写该附加字段（**最后写入者胜**），快照正文仍只有一份（`amendWarehouse`）；
+  3. **旧快照无该字段** → 读取路径完全不变，走**既有退化路径**（"已校验 → 基准面板退化"）并**记 warn**；
+  4. 用途：进程重启/进程内镜像缓存淘汰后，对局与回放重算仍能拿到足以重建面板的镜像（§7.4）。
+- **磁盘文件名口径（实现注记）**：hash 字符串形如 `sha256:<64hex>`，而 **Windows 文件名不允许 `:`**，故落盘时**去掉 `sha256:` 前缀**、只留纯 hex，分片目录 = 纯 hex 的前 2 字符（`server/store/canonical.js` 的 `digestOf` + `server/store/snapshot-store.js` 的 `snapshotPath`）；档案里保存的引用仍是带前缀的 `sha256:<hex>`（与 §9.2 同口径）。
 
 ### 5.5 段位与积分字段
 
@@ -406,6 +413,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 - 索引**只放匹配/排行榜/登录必需字段**（约 200 B/玩家），常驻内存（§11.3）。
 - `byTier` 与 `leaderboard` 在启动时重建；运行期增量维护（升段/积分变化时移动元素）。
 - 索引损坏 → `store.index.rebuild` 事件 + 从 `players/*` 重建（§6.4）。
+- **合并写语义（2026-09-19 实现注记）**：运行期 `index.json` 采用**"标脏 + 微任务合并落盘"**（`saveIndex()` 置脏，`setImmediate` 里一次原子写），因为单次原子写实测 ≈7 ms、占单场结算成本一半以上；`open()`/`close()`/显式 `index.save()`/`rebuildIndex()`/`recover()` 仍**立即落盘**。因此**崩溃可能丢掉最后一次 `index.json` 更新**——这是可接受的：索引是**派生数据**，journal + 档案才是真源，`open()` 按 §6.4 的恢复流程补放/重建（写失败也不阻断，只记 `store.error`）。
 
 ### 5.7 版本迁移
 
@@ -550,7 +558,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | 同段位 | 只从 `progress.tier == 发起者 tier` 取（沿用 D-122/RK 语义） |
 | 排除自己 | 按 `playerId` 排除（比现实现的 JSON 深等更严格且更快） |
 | 池有效期 | `pool.ttlDays`（默认 **0 = 不过期**，符合用户口径）；置为 >0 时，`lastSeenAt` 超期的玩家退出抽取但不退池。**现状：参数已留、未启用**（代码不消费该值，退出抽取的分支不可达） |
-| 跨批去重（**用户 2026-09-16 裁定**） | `pool.opponentCooldownHours`（默认 **24**，"仅对手去重"）：`strict` = 同一对手**间隔 ≥ 72h**（优先）；`relaxed` = **24h ≤ 间隔 < 72h**（仅当 strict 候选凑不满本轮所需场次时启用，响应记 `relaxed:true`）；**间隔 < 24h 两池皆拒 —— 24h 是硬底线，永不"允许重复"**；仍不足 → `shortfall`。`relaxed` **不落 journal**（抽取窗口细节不可复原） |
+| 跨批去重（**用户 2026-09-16 裁定**） | `pool.opponentCooldownHours`（默认 **24**，"仅对手去重"）：`strict` = 同一对手**间隔 ≥ 72h**（优先）；`relaxed` = **24h ≤ 间隔 < 72h**（仅当 strict 候选凑不满本轮所需场次时启用，响应记 `relaxed:true`）；**间隔 < 24h 两池皆拒 —— 24h 是硬底线，永不"允许重复"**；仍不足 → `shortfall`。**`relaxed` 已落 journal（2026-09-19 修正，旧文"不落 journal"已过时）**：`ranked.batch` 记录现带 `relaxed`(bool) + `invalids`(int)，使"同 seed 重发命中既有批次"时能给出与首次**逐值一致**的响应；**旧记录缺这两个字段 → 回放回落 `relaxed=null` / `invalids=0`** 并在日志中标注为不可复原（`server/store/ledger.js:253-265`、`server/ranked.js:412-438`） |
 | 抽样 | 批次内不重复（`splice` 语义）；用种子派生 RNG，可复现 |
 | 数量不足 | 候选 < 10 → **本轮不注入 bot**（用户口径："暂不考虑，开发完成后我会自行注入 bot 用户"）；只打实际可用场次，响应 `matches` 与 **`shortfall`**（**字段名就是 `shortfall`，不是 `no_opponent`**）如实告知，**不伪造对局**（§7.7）；`shortfall > 0` 的批次**不判晋升** |
 | 并发安全 | 抽池只读索引快照；对手档案在结算时才落盘 |
@@ -570,7 +578,11 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 
 - 复用现有 `ranked.battleOne(mine, opponent, wh, tier, seed)`（含 `engine.createBattle` + 双 AI 驱动 + `runFull`）。
 - **增强点**：返回 `frames`（不是只返回 `{winner,ticks}`），交给 §9 的回放注册（有上限 LRU + 引用），供双方按需取帧。
-- `warehouse` 参数：排位结算**不再依赖客户端提交的仓库**（对手配置来自服务端快照，其仓库镜像与快照一同保存在快照库里）。发起者自己的引用完整性在"保存配置"时已校验（§5.4），此处只做 `validateLoadout` 的结构与门控复查。
+- `warehouse` 参数：排位结算**不再依赖客户端提交的仓库**（对手配置来自服务端快照，**其仓库镜像与快照一同保存在快照库里 —— 2026-09-19 已实现**，见 §5.4 的 `warehouse` 装配引用子集）。
+  - **`loadWarehouse` 的三级来源（`server/index.js`，2026-09-19 实现）**：① account 模块镜像（`PUT /me/warehouse` 的显式提交）→ ② 进程内缓存（配置保存请求登记的镜像，有上限 LRU）→ ③ **快照自带镜像**（`snapshotWarehouseOf(playerId)`：读该玩家出战快照的 `warehouse` 字段）。三级皆空 → `null`，上层走 §5.4 的退化路径（记 warn）。
+  - **逐侧签名（2026-09-19 实现）**：`battle.runBattle` 接受 `p1Warehouse`/`p2Warehouse`（也可传 `{p1,p2}` 形态的 `warehouse`），旧的单个 `warehouse` 视为**双方共用**（`battle.sideWarehouses` 导出该解析）。匹配路径双方是不同玩家，各自镜像必须独立。
+  - **归档回放重算按各自快照取镜像（修前会 410 的根因）**：`GET /replay/:battleId` 的**按需重算路径**（§9.3）在两侧分别用**自己**快照自带的镜像（`sideWarehouses` 的逐侧口径 + `loadWarehouse` 的第 ③ 级）；修前只接受单个 `warehouse`，含装配引用的一侧拿不到镜像 → `buildPanel` 报 `missing_warehouse` → 回放被误判为 `410 replay_expired`。
+- 发起者自己的引用完整性在"保存配置"时已校验（§5.4/§5.1），此处只做 `validateLoadout` 的结构与门控复查。
 - 平局：`wins` 不计（沿用现实现与 D-122 口径），但记入 `draws` 与战绩。
 
 ### 7.5 登录视图与未读（对应 R2 的"下次登录能看到"）
@@ -734,9 +746,9 @@ GET /api/v1/replay/:battleId
 | 非参与者 | `403 replay_forbidden` |
 | 返回内容 | 帧内 `players/bullets/bases/events` 为**双方完整信息**（引擎语义决定，无法隐藏） |
 | `aiTrace` | **按 side 过滤（P1-1 修复后，已实现）**：`?trace=self`（默认）时**逐帧保留 `diff.aiTrace` 中 `owner === 请求者 side` 的条目**（`p1`/`p2` 由 `participants` 推出），避免把对手 AI 的逐步决策喂给玩家；`?trace=all` 需**管理员令牌**通过（否则 403/503）；未知 `trace` 值 → 400 `bad_request`。**两条归档路径（帧缓存命中 / 按 journal+快照重算）都裁剪**；遗留 `r<seq>` 回放**不裁剪**（双方 loadout 与 AI 均由调用方自备，侧别未知 → 保持旧语义零回归） |
-| `programHash` | 只返回自己的 |
+| `programHash` | **回放响应内不含 `programHash`**（回放数据 = `id/seed/tier/winner/phase/ticks` + `frames`），因此不存在"按侧过滤"的实现点——**旧文"只返回自己的"没有对应代码，已按实测更正**（2026-09-19）。仅 `/ai/compile`、`/ai/battle` 回带 `programHash`，那是**调用方自己提交的程序** |
 | 对手 `loadout` | **永不返回**（无论何种角色）；只给 `opponent.publicId/nickname/tier/points` |
-| 进程内 `REPLAYS` | **替换**为有上限 LRU（默认 64 场）+ 持久化引用；修掉现状 `battle.js:18` 无上限增长 |
+| 进程内 `REPLAYS` | **有上限 LRU（默认 64 场，`service-config.replayCacheSize`）**：帧仍登记在模块级 `battle.REPLAYS`，但由 HTTP 层 `pruneReplays()` 按 LRU 淘汰并 `REPLAYS.delete(id)`，淘汰 → `410 replay_expired`；归档回放另有"只存引用 + 按需重算"路径（不占帧缓存额度）。直接调用 `battle.runBattle`（不经 HTTP，如部分单测）不受该上限约束 |
 
 > 说明：用户确认"游戏设计为选定我方配置后再匹配对手，因此不存在针对性命中问题"。即便如此，**对手 AI 源码与帧内对手 aiTrace 仍属额外信息**，上表按最小暴露原则处理；若将来需要"学习对手配置"的社交玩法，再单独放开（§15.5 Q5）。
 
@@ -843,6 +855,7 @@ GET /api/v1/replay/:battleId
 | `slot_limit` | 409 | 配置槽已达 3 |
 | `slot_locked` | 409 | 删除默认槽或当前出战槽 |
 | `slot_not_found` | 404 | `slotId` 不存在 |
+| `warehouse_missing` | 404 | `GET /me/warehouse`：本进程内没有该玩家的仓库镜像（仓库由客户端权威持有，D-130；重启后为空） |
 | `no_active_config` | 409 | 出战配置缺失/快照缺失（不应发生，属不变量破损） |
 | `config_conflict` | 409 | 乐观锁冲突（`baseUpdatedAt` 不匹配） |
 | `no_opponent` | 409 | **快速对战**匹配不到对手（候选不足/窗口用尽） |
@@ -1004,7 +1017,7 @@ admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 | T-RK-1 | 排位批次 | 抽 10 场、同段位、排除自己、批次内不重复（沿用 `tests/unit/ranked.test.js` 断言） |
 | T-RK-2 | 晋升 | `wins > 6` → `tier+1` 落盘；`mythic` 不晋升 |
 | T-RK-3 | 防守记账 | 被抽方离线 → 档案 `stats.defense` 与 `recent`、`unread.defense` 正确；**段位/积分不变** |
-| T-RK-4 | 去重窗口 | 24h 内同一对手不重复；候选不足时放宽到 72h 并记 `relaxed:true` |
+| T-RK-4 | 去重窗口 | **24h 内同一对手不重复（硬底线，两池皆拒）**；严格候选（间隔 ≥72h）优先；严格候选不足时启用 24–72h 并记 `relaxed:true`；仍不足 → `shortfall`（`relaxed`/`invalids` 已落 `ranked.batch`，旧记录回落 `null`/`0`） |
 | T-RK-5 | 单场隔离 | 一个对手快照损坏 → 该场 `invalid`，其余照常（批次不整体失败） |
 | T-QM-1 | 匹配窗口 | 无同窗候选 → 逐级放宽到 600；仍无 → `no_opponent` |
 | T-QM-2 | 积分公式 | 表驱动断言：`R=0` 对称；`R=1500` 时加分 < 扣分；`r = 2p−1` 均衡点解析值一致 |

@@ -62,8 +62,14 @@
   已校验快照退化口径，`server/ranked.js` / `server/quickmatch.js`）与缺口 1（冻结快照随正文持久化
   `archive.warehouseExcerpt` 镜像片段）均已修复，故 e2e 第 6 步**回收**了"剥离 `pluginUid`"的适配：
   出战配置原样保留真实装配引用，第 7 步用真镜像 `POST /panel ≡ buildPanel`（并以"去掉 warehouse 必
-  `missing_warehouse`"作反证），第 11/14/22 步以含装配插件的配置真的打完对局（`invalids=0`）。
-  仍然 `PASS 检查点=22/22`。
+  `missing_warehouse`"作反证）。
+- **抽池可控性（同日复审修正）**：`/quick/run`、`/ranked/run` 的**对手**由服务端抽池决定（池内任意真实
+  玩家，默认配置者 0 处装配引用），因此"含装配插件的配置能出战"的判定**一律锚在发起者侧**（第 11 步 = B、
+  第 14/21/22 步 = A，都是 `authed(<玩家>.token)` 的确定侧），**不得**假设"抽中的一定是 A"（该假设会间歇假红）。
+  对手抽中 A 时额外做同款全链核验；抽中默认配置玩家时**如实打印**该事实。第 21 步另用 legacy `/battle`
+  （p1 = p2 = 含装配引用的同一配置 + 真镜像）做**双方**确定性的出战证明（`ticks>0`、帧数 == ticks）。
+  统一判定实现在 `scripts/e2e.js` 的 `verifyPluginSide()`（引用为真 + 缺口 1 持久化 + 面板 ≡ 真镜像 +
+  去 warehouse 反证）。仍然 `PASS 检查点=22/22`。
 
 ### P7-6　批量测试（用户要求：注册大量玩家、多段位并发在线、匹配、战斗）
 - 交付：`scripts/load-test.js`（`npm run load-test`），要求：
