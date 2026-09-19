@@ -569,9 +569,11 @@ async function checkApiSmoke(options) {
 
   const getJson = (port, urlPath) => new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: urlPath }, (res) => {
-      let d = '';
-      res.on('data', (c) => { d += c; });
+      // 跨 chunk 多字节字符必须按 Buffer 累积后整段解码（`d += c` 逐 chunk toString → U+FFFD）
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const d = Buffer.concat(chunks).toString('utf8');
         let j = null;
         try { j = JSON.parse(d); } catch (e) { /* 非 JSON */ }
         resolve({ status: res.statusCode, body: j });

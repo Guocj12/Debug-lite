@@ -178,9 +178,11 @@ function request(port, method, urlPath, body, headers) {
     const h = { ...(headers || {}) };
     if (body !== undefined && h['content-type'] === undefined) h['content-type'] = 'application/json';
     const req = httpMod.request({ host: '127.0.0.1', port, method, path: urlPath, headers: h }, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
+      // 跨 chunk 多字节字符必须按 Buffer 累积后整段解码（`data += c` 逐 chunk toString → U+FFFD）
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(data); } catch (e) { /* 非 JSON */ }
         resolve({ status: res.statusCode, body: json, raw: data });

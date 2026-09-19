@@ -51,9 +51,13 @@ function httpJson(baseUrl, method, urlPath, body, token) {
       path: u.pathname + u.search,
       headers,
     }, (res) => {
-      let d = '';
-      res.on('data', (c) => { d += c; });
+      // 跨 chunk 多字节字符（中文）必须按 Buffer 累积后**整段**解码：
+      //   `d += c` 会对每个 TCP chunk 各自 toString('utf8')，字符跨 chunk 边界时被解成 U+FFFD
+      //   （与 server/index.js 的 readBody、tests/helpers/http.js 同源修复）。
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const d = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(d); } catch (e) { /* 非 JSON 响应 */ }
         resolve({ status: res.statusCode, body: json, raw: d });

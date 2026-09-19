@@ -236,9 +236,11 @@ function httpRequest(port, method, urlPath, payload, headers) {
       if (h['content-type'] === undefined) h['content-type'] = 'application/json';
     }
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, headers: h }, (res) => {
-      let raw = '';
-      res.on('data', (c) => { raw += c; });
+      // 跨 chunk 多字节字符必须整段解码（`raw += chunk` 会对每个 chunk 各自 toString → U+FFFD 假红）
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(raw); } catch (e) { /* 非 JSON 响应（保留 raw 供诊断） */ }
         resolve({ status: res.statusCode, body: json, raw });
