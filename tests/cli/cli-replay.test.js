@@ -1,6 +1,10 @@
 'use strict';
 // B23 文本回放器 CLI + 帧充分性审计 —— 契约 docs/interfaces.md §3（replay --file/--tick）；
 // tasks §6 B23 行（replay 文本回放含 px 位置与碰撞 + 帧数据充分性审计；T-CLI-1/2）。
+//
+// P7-7 §R5 重构：本地 `quiet()` / `capture()` / `makeReplayFile()` 换成 `tests/helpers/cli.js`
+//   （三者在 7 个 CLI 测试里各有一份）；"缺 --file / 文件不存在 / --tick 越界 / 无 frames / 畸形帧 /
+//   未知旗标 → 2"全部移入 tests/cli/cli-usage-rc2.test.js 的表驱动用例。本文件保留 0 与审计语义。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -8,58 +12,25 @@ const fs = require('node:fs');
 const os = require('node:os');
 const cli = require('../../cli/index.js');
 const { auditFrames } = require('../../.audit/replay-audit.js');
+const c = require('../helpers/cli.js');
 
 const LD_FILE = path.join(__dirname, '..', 'fixtures', 'loadout-ok.json');
 
-// 生成一份回放文件（直接调用 battle 模块，不经 HTTP——replay 子命令本身不碰服务端）
-function makeReplayFile() {
-  const battle = require('../../server/battle.js');
-  const LD = require('../fixtures/loadout-ok.json');
-  const r = battle.runBattle({ p1: LD.loadout, p2: LD.loadout, warehouse: LD.warehouse, seed: 20260913, tier: 'mythic' });
-  assert.equal(r.status, 200);
-  const file = path.join(os.tmpdir(), `b23-replay-${Date.now()}.json`);
-  fs.writeFileSync(file, JSON.stringify({ summary: { winner: r.data.winner, ticks: r.data.ticks }, frames: r.data.frames }));
-  return { file, ticks: r.data.ticks };
-}
-
-async function quiet(fn) {
-  const origLog = console.log;
-  const origErr = console.error;
-  console.log = () => {};
-  console.error = () => {};
-  try {
-    return await fn();
-  } finally {
-    console.log = origLog;
-    console.error = origErr;
-  }
-}
+// 原实现把 stdout/stderr 合并成一个数组断言；helpers/cli.js 分开两个通道 → 这里保持合并口径
+const merged = (r) => r.log.concat(r.err).join('\n');
 
 test('CLI replay：--tick 单帧文本（px/碰撞/事件）→ 0；全量时间线 → 0', async () => {
-  const { file, ticks } = makeReplayFile();
-  const a = await quiet(() => cli.main(['replay', '--file', file, '--tick', '1'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(a, 0, '单帧文本回放 → 0（本地文件，不碰服务端）');
-  const b = await quiet(() => cli.main(['replay', '--file', file, '--tick', String(ticks)], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(b, 0, '终帧（含 verdict）→ 0');
-  const c = await quiet(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(c, 0, '全量时间线 → 0');
-  fs.unlinkSync(file);
-});
-
-test('CLI replay 失败路径：无 --file/缺 frames/tick 越界/文件缺失 → 2', async () => {
-  const { file } = makeReplayFile();
-  const noFile = await quiet(() => cli.main(['replay'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(noFile, 2, '缺 --file → 2');
-  const missing = await quiet(() => cli.main(['replay', '--file', path.join(__dirname, 'no.json')], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(missing, 2, '文件不存在 → 2');
-  const badTick = await quiet(() => cli.main(['replay', '--file', file, '--tick', '999'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(badTick, 2, 'tick 越界 → 2');
-  const noFrames = path.join(os.tmpdir(), `b23-noframes-${Date.now()}.json`);
-  fs.writeFileSync(noFrames, JSON.stringify({ foo: 1 }));
-  const badData = await quiet(() => cli.main(['replay', '--file', noFrames], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(badData, 2, '无 frames → 2');
-  fs.unlinkSync(file);
-  fs.unlinkSync(noFrames);
+  const { file, ticks, dir } = c.makeReplayFile();
+  try {
+    const a = await c.quiet(() => cli.main(['replay', '--file', file, '--tick', '1'], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(a, 0, '单帧文本回放 → 0（本地文件，不碰服务端）');
+    const b = await c.quiet(() => cli.main(['replay', '--file', file, '--tick', String(ticks)], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(b, 0, '终帧（含 verdict）→ 0');
+    const full = await c.quiet(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(full, 0, '全量时间线 → 0');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('帧充分性审计（auditFrames）：字段/1px/tick 连续/事件 cid/帧间衔接/终帧 verdict 全过', () => {
@@ -86,24 +57,6 @@ function skillAi(LD) {
   for (const s of elseStmts) if (s && s.type === 'action' && s.name === 'skill1') s.name = 'skill:skill1';
   return ld;
 }
-
-test('B23 P1-1 回归：畸形帧不抛穿（[{}]/缺 players/diff null/frames null）→ 2', async () => {
-  const cases = [
-    { frames: [{}] },
-    { frames: [{ tick: 1, diff: { players: { p1: { fromX: 1, toX: 2 } }, events: [] } }] },
-    { frames: [{ tick: 1, diff: null }] },
-    { frames: null },
-  ];
-  for (const [i, data] of cases.entries()) {
-    const file = path.join(os.tmpdir(), `b23-malformed-${i}-${Date.now()}.json`);
-    fs.writeFileSync(file, JSON.stringify(data));
-    const code = await quiet(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
-    assert.equal(code, 2, `畸形帧变体 ${i} → 2（非 1）`);
-    fs.unlinkSync(file);
-  }
-  const flag = await quiet(() => cli.main(['replay', '--file', 'x.json', '--bogus'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(flag, 2, '未知旗标 → 2');
-});
 
 // p2 独立追击 loadout（相向才产生碰撞/命中）
 function chaserLoadout(LD) {
@@ -141,31 +94,16 @@ test('B23 audit 第七维：技能局 hits>0 且链序/守恒通过（雕像局�
 // ================= B23 可读性增强（用户 2026-09-19 勾选项 2）：伤害值 + 暴击/背击标注 =================
 // 素材：帧 events[] 的 damage.calc（hitUid/dmg/crit/critM/backstab/backM）——只读帧，不改退出码契约（0/1/2）。
 
-// stdout 捕获（CLI 经 console.log 输出文本行）
-async function capture(fn) {
-  const log = [];
-  const origLog = console.log;
-  const origErr = console.error;
-  console.log = (...a) => log.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
-  console.error = (...a) => log.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
-  try {
-    const result = await fn();
-    return { log, result };
-  } finally {
-    console.log = origLog;
-    console.error = origErr;
-  }
-}
-
 // 有命中的真实回放（skillAi vs 追击者：seed 20260913 稳定产生 bulletHits）
 function makeHitReplayFile() {
   const battle = require('../../server/battle.js');
   const LD = require('../fixtures/loadout-ok.json');
   const r = battle.runBattle({ p1: skillAi(LD), p2: chaserLoadout(LD), warehouse: LD.warehouse, seed: 20260913, tier: 'mythic' });
   assert.equal(r.status, 200);
-  const file = path.join(os.tmpdir(), `b23-replay-dmg-${Date.now()}.json`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-b23-dmg-'));
+  const file = path.join(dir, 'replay.json');
   fs.writeFileSync(file, JSON.stringify({ summary: { winner: r.data.winner, ticks: r.data.ticks }, frames: r.data.frames }));
-  return { file, frames: r.data.frames };
+  return { file, frames: r.data.frames, dir };
 }
 
 // 手工帧：精确覆盖 暴击/背击/无标注/护栏 四个渲染分支（真实战斗不一定每次掷出暴击）
@@ -215,57 +153,64 @@ function makeSyntheticReplayFile() {
       verdict: { winner: 'p1', phase: 'role' },
     },
   };
-  const file = path.join(os.tmpdir(), `b23-replay-syn-${Date.now()}.json`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-b23-syn-'));
+  const file = path.join(dir, 'replay.json');
   fs.writeFileSync(file, JSON.stringify({ summary: { winner: 'p1', ticks: 3 }, frames: [frame1, frame2, frame3] }));
-  return file;
+  return { file, dir };
 }
 
 test('B23 增强：真实战斗回放逐帧命中带伤害归属与数值（hitUid 对照）', async () => {
-  const { file, frames } = makeHitReplayFile();
-  const { log, result } = await capture(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(result, 0, '全量时间线 → 0（契约不变）');
-  const out = log.join('\n');
-  const hits = frames.flatMap((f) => (f.diff.bulletHits || []).map((h) => ({ ...h })));
-  assert.ok(hits.length > 0, '夹具局应有命中（否则本用例空转）');
-  const dmgUids = new Set(frames.flatMap((f) => (f.diff.events || [])
-    .filter((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.hitUid)
-    .map((e) => e.data.hitUid)));
-  assert.ok(dmgUids.size > 0, '夹具局应有带 hitUid 的伤害事件');
-  for (const h of hits) {
-    const base = `${h.uid}->${h.target}@${h.atX}`;
-    assert.ok(out.includes(base), `回放应含命中坐标 ${base}`);
-    if (dmgUids.has(h.uid)) assert.ok(out.includes(`${base}->`), `命中 ${h.uid} 应带伤害归属（uid->目标@坐标->攻方->受方 数值）`);
-    else assert.ok(!out.includes(`${base}->`), `命中 ${h.uid} 无 damage.calc → 不应伪造伤害数字`);
+  const { file, frames, dir } = makeHitReplayFile();
+  try {
+    const { result, ...rest } = await c.capture(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(result, 0, '全量时间线 → 0（契约不变）');
+    const outText = rest.log.concat(rest.err).join('\n');
+    const hits = frames.flatMap((f) => (f.diff.bulletHits || []).map((h) => ({ ...h })));
+    assert.ok(hits.length > 0, '夹具局应有命中（否则本用例空转）');
+    const dmgUids = new Set(frames.flatMap((f) => (f.diff.events || [])
+      .filter((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.hitUid)
+      .map((e) => e.data.hitUid)));
+    assert.ok(dmgUids.size > 0, '夹具局应有带 hitUid 的伤害事件');
+    for (const h of hits) {
+      const base = `${h.uid}->${h.target}@${h.atX}`;
+      assert.ok(outText.includes(base), `回放应含命中坐标 ${base}`);
+      if (dmgUids.has(h.uid)) assert.ok(outText.includes(`${base}->`), `命中 ${h.uid} 应带伤害归属（uid->目标@坐标->攻方->受方 数值）`);
+      else assert.ok(!outText.includes(`${base}->`), `命中 ${h.uid} 无 damage.calc → 不应伪造伤害数字`);
+    }
+    // 帧里出现暴击/背击时，输出必须标注（条件断言；绝对值由下一条合成帧用例钉死）
+    const evs = frames.flatMap((f) => f.diff.events || []);
+    if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.crit)) {
+      assert.ok(outText.includes('暴击×'), '存在暴击事件 → 输出应标注暴击');
+    }
+    if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.backstab)) {
+      assert.ok(outText.includes('背击×'), '存在背击事件 → 输出应标注背击');
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  // 帧里出现暴击/背击时，输出必须标注（条件断言；绝对值由下一条合成帧用例钉死）
-  const evs = frames.flatMap((f) => f.diff.events || []);
-  if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.crit)) {
-    assert.ok(out.includes('暴击×'), '存在暴击事件 → 输出应标注暴击');
-  }
-  if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.backstab)) {
-    assert.ok(out.includes('背击×'), '存在背击事件 → 输出应标注背击');
-  }
-  fs.unlinkSync(file);
 });
 
 test('B23 增强：渲染分支钉死（暴击/背击/无标注/无 hitUid 伤害/缺 data 护栏）且退出码不变', async () => {
-  const file = makeSyntheticReplayFile();
-  const all = await capture(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(all.result, 0, '全量时间线 → 0');
-  const out = all.log.join('\n');
-  assert.ok(out.includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), `暴击+背击应标注：${out}`);
-  assert.ok(out.includes('b_2->p1@400->B->A 7'), '无暴击/背击 → 只有数值，无括号标注');
-  assert.ok(!out.includes('B->A 7 ('), '无标注时不得输出括号尾巴');
-  assert.ok(out.includes('| 伤害[A->B 5 (背击×1.5)]'), '无 hitUid 的伤害（碰撞/附加）归入「伤害[]」段');
-  assert.ok(out.includes('| 伤害[A->B 3]'), '第 3 帧无 hitUid 伤害同样渲染');
-  assert.ok(out.includes('| 命中[b_9->p2@50]'), '命中无对应伤害事件 → 只显示坐标（不伪造数字）');
-  assert.ok(out.includes('tick 2: p1 288->288'), '帧 2 缺 events 字段不抛（护栏）');
-  assert.ok(out.includes('verdict: winner=p1 phase=role（3 tick）'), '终帧 verdict 行保持');
-  // 单帧路径（--tick 1）同样带伤害标注
-  const one = await capture(() => cli.main(['replay', '--file', file, '--tick', '1'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(one.result, 0, '--tick 1 → 0');
-  assert.ok(one.log.join('\n').includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), '单帧路径同样标注伤害');
-  const two = await capture(() => cli.main(['replay', '--file', file, '--tick', '2'], { baseUrl: 'http://127.0.0.1:1' }));
-  assert.equal(two.result, 0, '--tick 2（缺 events 字段）→ 0 不抛');
-  fs.unlinkSync(file);
+  const { file, dir } = makeSyntheticReplayFile();
+  try {
+    const all = await c.capture(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(all.result, 0, '全量时间线 → 0');
+    const outText = merged(all);
+    assert.ok(outText.includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), `暴击+背击应标注：${outText}`);
+    assert.ok(outText.includes('b_2->p1@400->B->A 7'), '无暴击/背击 → 只有数值，无括号标注');
+    assert.ok(!outText.includes('B->A 7 ('), '无标注时不得输出括号尾巴');
+    assert.ok(outText.includes('| 伤害[A->B 5 (背击×1.5)]'), '无 hitUid 的伤害（碰撞/附加）归入「伤害[]」段');
+    assert.ok(outText.includes('| 伤害[A->B 3]'), '第 3 帧无 hitUid 伤害同样渲染');
+    assert.ok(outText.includes('| 命中[b_9->p2@50]'), '命中无对应伤害事件 → 只显示坐标（不伪造数字）');
+    assert.ok(outText.includes('tick 2: p1 288->288'), '帧 2 缺 events 字段不抛（护栏）');
+    assert.ok(outText.includes('verdict: winner=p1 phase=role（3 tick）'), '终帧 verdict 行保持');
+    // 单帧路径（--tick 1）同样带伤害标注
+    const one = await c.capture(() => cli.main(['replay', '--file', file, '--tick', '1'], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(one.result, 0, '--tick 1 → 0');
+    assert.ok(merged(one).includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), '单帧路径同样标注伤害');
+    const two = await c.capture(() => cli.main(['replay', '--file', file, '--tick', '2'], { baseUrl: 'http://127.0.0.1:1' }));
+    assert.equal(two.result, 0, '--tick 2（缺 events 字段）→ 0 不抛');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

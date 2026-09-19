@@ -4,7 +4,11 @@
  * 契约：docs/systems/11-account-store.md §10.4（CLI 扩展 + 退出码 0/1/2/3 + token 来源）
  *      docs/interfaces.md §3（CLI 契约：只走 HTTP）
  * 覆盖：auth register|login|logout|change-password、me、quick run、leaderboard、ranked promote
- *      的正例 + 负例（用法错误 2 / 业务拒绝 1 / 未鉴权 3）+ --save-token 文件写入（0600 语义）。
+ *      的正例 + 负例（业务拒绝 1 / 未鉴权 3）+ --save-token 文件写入（0600 语义）。
+ *
+ * P7-7 §R5 重构：本文件原先自建第 4 种 console 包装 `cli()`，现统一走 `tests/helpers/cli.js` 的
+ *   `runCli()`；原先散落在 CLI-2/5/6/7/8/10 的"用法/参数错误 → 2"断言（共 12 条）
+ *   集中到 tests/cli/cli-usage-rc2.test.js 的表驱动用例。本文件保留 0/1/3 全部语义。
  */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,25 +16,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const h = require('../helpers/http.js');
-const { main: cliMain } = require('../../cli/index.js');
+const c = require('../helpers/cli.js');
 
 const PW = h.PASSWORD;
 
-// 捕获 stdout/stderr 后执行 CLI（门禁/测试输出不被污染）
+// 进程内调用 CLI 并捕获输出（统一实现见 helpers/cli.js）
 async function cli(s, argv, options) {
-  const logs = [];
-  const errs = [];
-  const origLog = console.log;
-  const origErr = console.error;
-  console.log = (...a) => logs.push(a.join(' '));
-  console.error = (...a) => errs.push(a.join(' '));
-  try {
-    const code = await cliMain(argv, { baseUrl: s.baseUrl, ...(options || {}) });
-    return { code, out: logs.join('\n'), err: errs.join('\n') };
-  } finally {
-    console.log = origLog;
-    console.error = origErr;
-  }
+  return c.runCli(argv, { baseUrl: s.baseUrl, ...(options || {}) });
 }
 
 function tmpFile(name) {
@@ -57,7 +49,7 @@ test('CLI-1 auth register --save-token：退出码 0 + token 落盘 + 可直接�
   });
 });
 
-test('CLI-2 auth 用法与业务负例：重名/弱密码 → 1；缺旗标/未知子命令/未知旗标 → 2', async () => {
+test('CLI-2 auth 业务负例：重名/弱密码 → 1（用法负例见表驱动用例）', async () => {
   await h.withServer(null, async (s) => {
     const u = await h.register(s.port, h.uniqueName('clidup'));
     const dup = await cli(s, ['auth', 'register', '--user', u.username, '--pass', PW]);
@@ -65,16 +57,6 @@ test('CLI-2 auth 用法与业务负例：重名/弱密码 → 1；缺旗标/未�
     assert.match(dup.err, /username_taken/);
     const weak = await cli(s, ['auth', 'register', '--user', h.uniqueName('cliweak'), '--pass', 'short']);
     assert.equal(weak.code, 1);
-    const missing = await cli(s, ['auth', 'register', '--user', u.username]);
-    assert.equal(missing.code, 2);
-    const noSub = await cli(s, ['auth']);
-    assert.equal(noSub.code, 2);
-    const bogusFlag = await cli(s, ['auth', 'login', '--user', u.username, '--pass', PW, '--oops', '1']);
-    assert.equal(bogusFlag.code, 2);
-    const noValue = await cli(s, ['auth', 'login', '--user', u.username, '--pass']);
-    assert.equal(noValue.code, 2);
-    const cpMissing = await cli(s, ['auth', 'change-password', '--old', PW]);
-    assert.equal(cpMissing.code, 2);
   });
 });
 
@@ -133,8 +115,6 @@ test('CLI-5 me：缺 token 本地即 3；坏 token 服务端 401 → 3；DL_TOKE
     // 选项注入（进程内调用）优先于环境变量
     const viaOpts = await cli(s, ['me'], { token: u.token });
     assert.equal(viaOpts.code, 0, viaOpts.err);
-    const usage = await cli(s, ['me', '--bogus', 'x']);
-    assert.equal(usage.code, 2);
   });
 });
 
@@ -146,10 +126,6 @@ test('CLI-6 quick run：无对手 409 → 1；缺 token → 3；双人池 → 0 
     assert.match(alone.err, /no_opponent/);
     const none = await cli(s, ['quick', 'run']);
     assert.equal(none.code, 3);
-    const badSub = await cli(s, ['quick', 'fly', '--token', a.token]);
-    assert.equal(badSub.code, 2);
-    const badFlag = await cli(s, ['quick', 'run', '--token', a.token, '--x', '1']);
-    assert.equal(badFlag.code, 2);
     await h.register(s.port, h.uniqueName('cliq'));
     const ok = await cli(s, ['quick', 'run', '--seed', '4242', '--token', a.token]);
     assert.equal(ok.code, 0, ok.err);
@@ -163,7 +139,7 @@ test('CLI-6 quick run：无对手 409 → 1；缺 token → 3；双人池 → 0 
   });
 });
 
-test('CLI-7 leaderboard：正例 0（无需 token）+ limit/scope 负例 → 1 + 未知旗标 → 2', async () => {
+test('CLI-7 leaderboard：正例 0（无需 token）+ limit/scope 业务负例 → 1', async () => {
   await h.withServer(null, async (s) => {
     await h.register(s.port, h.uniqueName('clilb'));
     const ok = await cli(s, ['leaderboard']);
@@ -181,12 +157,10 @@ test('CLI-7 leaderboard：正例 0（无需 token）+ limit/scope 负例 → 1 +
     const badScope = await cli(s, ['leaderboard', '--scope', 'nope']);
     assert.equal(badScope.code, 1);
     assert.match(badScope.err, /bad_scope/);
-    const usage = await cli(s, ['leaderboard', '--nope', '1']);
-    assert.equal(usage.code, 2);
   });
 });
 
-test('CLI-8 ranked promote：遗留 --tier 口径 0 / 登录时读档案 0 / 段位不一致 403 → 1 / 缺 --tier 且未登录 → 2', async () => {
+test('CLI-8 ranked promote：遗留 --tier 口径 0 / 登录时读档案 0 / 段位不一致 403 → 1', async () => {
   await h.withServer(null, async (s) => {
     const u = await h.register(s.port, h.uniqueName('clipr'));
     const legacy = await cli(s, ['ranked', 'promote', '--tier', 'common', '--wins', '7']);
@@ -198,13 +172,9 @@ test('CLI-8 ranked promote：遗留 --tier 口径 0 / 登录时读档案 0 / 段
     const mismatch = await cli(s, ['ranked', 'promote', '--tier', 'mythic', '--wins', '7', '--token', u.token]);
     assert.equal(mismatch.code, 1, mismatch.err);
     assert.match(mismatch.err, /forbidden/);
-    const noTier = await cli(s, ['ranked', 'promote', '--wins', '7']);
-    assert.equal(noTier.code, 2, noTier.err);
     const badWins = await cli(s, ['ranked', 'promote', '--tier', 'common', '--wins', 'x']);
     assert.equal(badWins.code, 1);
     assert.match(badWins.err, /bad_wins/);
-    const noSub = await cli(s, ['ranked', 'fly']);
-    assert.equal(noSub.code, 2);
   });
 });
 
@@ -217,25 +187,11 @@ test('CLI-9 --save-token 写失败 → 1（不静默成功）', async () => {
   });
 });
 
-test('CLI-10 连接失败（服务未运行）→ 1；未知命令 → 2', async () => {
+test('CLI-10 连接失败（服务未运行）→ 1（未知命令 → 2 见表驱动用例）', async () => {
   await h.withServer(null, async (s) => {
     const dead = { baseUrl: `http://127.0.0.1:${s.port + 1}` };
-    const logs = [];
-    const errs = [];
-    const origLog = console.log;
-    const origErr = console.error;
-    console.log = (...a) => logs.push(a.join(' '));
-    console.error = (...a) => errs.push(a.join(' '));
-    let code;
-    try {
-      code = await cliMain(['me', '--token', 'x'], dead);
-    } finally {
-      console.log = origLog;
-      console.error = origErr;
-    }
-    assert.equal(code, 1, errs.join('\n'));
-    assert.match(errs.join('\n'), /连接失败/);
-    const unknown = await cli(s, ['bogus-command']);
-    assert.equal(unknown.code, 2);
+    const r = await c.runCli(['me', '--token', 'x'], dead);
+    assert.equal(r.code, 1, r.err);
+    assert.match(r.err, /连接失败/);
   });
 });
