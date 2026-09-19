@@ -35,6 +35,8 @@ async function main() {
     }
     const qp = await s.runtime.quick.candidatePool(await h.playerIdByPublicId(s.store, A.publicId));
     process.stdout.write(`candidatePool(A) = ${JSON.stringify({ pool: qp.pool.map((x) => ({ publicId: x.publicId, hasWh: !!x.warehouse })), skipped: qp.skipped, poolSize: qp.poolSize })}\n`);
+    const fo = await s.runtime.quick.findOpponent({ playerId: await h.playerIdByPublicId(s.store, A.publicId), seed: 20 });
+    process.stdout.write(`findOpponent(A) = ${JSON.stringify(fo && fo.status !== undefined ? fo : { seed: fo.seed, found: { ok: fo.found && fo.found.ok, window: fo.found && fo.found.window, relaxed: fo.found && fo.found.relaxed, cooldown: fo.found && fo.found.cooldown, candidateCount: fo.found && fo.found.candidateCount, opponent: fo.found && fo.found.opponent && fo.found.opponent.publicId }, poolInfo: fo.poolInfo && { pool: fo.poolInfo.pool.length, skipped: fo.poolInfo.skipped, poolSize: fo.poolInfo.poolSize } })}\n`);
   } finally {
     await s.close();
   }
