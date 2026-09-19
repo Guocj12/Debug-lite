@@ -1,7 +1,7 @@
 # 示例集 · 效果系统（全分支）
 
 > 依据：`decisions.md`（D-70/D-71/D-83，以及 D-35/D-45）；实现细则见 `systems/05-effects.md`。
-> 数值由 `.audit/verify-rest.js` 复算。
+> 数值由 `tests/unit/effects.test.js`（EF-1…EF-19）机器复算（设计期的 `.audit/verify-rest.js` 已删除；本文件数值以测试断言为准）。
 
 ---
 

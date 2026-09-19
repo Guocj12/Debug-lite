@@ -695,7 +695,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 ### P7 在线服务与存档（**7 批；D-129…D-136**；设计权威：`docs/systems/11-account-store.md`）—— **✅ 已交付（2026-09-19）**
 
-> **✅ 已交付（2026-09-19）**：B27–B33 共 7 批**全部落地**（`server/store/*`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js`、`runtime/` 均已在库；`docs/reviews/B27.md`…`B33.md` 审查记录齐全）。交付实测：`npm test` 903 通过 / 0 失败、`npm run gate` 9 PASS/0 FAIL、`npm run check:docs` PASS、`npm run e2e` 22/22、`npm run load-test -- --players 50 --deep` 7/7 完整性断言。**已计入 §6 的 41 批。**
+> **✅ 已交付（2026-09-19）**：B27–B33 共 7 批**全部落地**（`server/store/*`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js`、`runtime/` 均已在库；`docs/reviews/B27.md`…`B33.md` 审查记录齐全）。交付实测：`npm test` 915 通过 / 0 失败、`npm run gate` 9 PASS/0 FAIL、`npm run check:docs` PASS、`npm run e2e` 22/22、`npm run load-test -- --players 50 --deep` 7/7 完整性断言。**已计入 §6 的 41 批。**
 
 | 批次 | 交付物 | 必绿测试点 |
 |---|---|---|
