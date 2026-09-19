@@ -143,8 +143,8 @@ test('BR-4 journal：空 flush、默认区间、compact 无 aggregate、未 open
     await j.append({ type: 'player.pool.changed', playerId: 'pl_1111111111111111', at: 0 });
     assert.equal(j.readAll().length, 1, 'readAll 无参默认全量');
     assert.equal(j.readAll({ fromSeq: 999 }).length, 0);
-    const res = j.compact({ appliedSeq: j.maxSeq(), retentionDays: 0, at: 0 });
-    assert.deepEqual(res.compacted.length, 1);
+    const res = j.compact({ appliedSeq: j.maxSeq(), retentionDays: 0, at: Date.UTC(2100, 0, 1) });
+    assert.equal(res.compacted.length, 1);
     await j.close();
     await j.close(); // 二次 close 幂等
     const fresh = journalMod.createJournal({ dir: path.join(dir, 'other'), logger: nullLogger, config: {} });
@@ -182,18 +182,23 @@ test('BR-6 adapter：出战槽无 loadout（快照正文缺失）→ 新建槽�
   try {
     await store.open();
     const snap = store.freezeSnapshot(loadout('ghost'));
-    // 删除快照正文 → 冻结引用仍在，但正文不可用（模拟快照被 GC/人为删除）
+    await store.close();
+    // 删除快照正文 → 新开的 store 缓存为空，引用仍在但正文不可用（模拟快照被 GC/人为删除）
     const hex = require('../../server/store/canonical.js').digestOf(snap.hash);
     fs.rmSync(path.join(dir, 'snapshots', hex.slice(0, 2), `${hex}.json`));
-    const acc = await store.createAccount({
+    const store2 = createStore({ dataDir: dir, versions: VERSIONS, logger: nullLogger });
+    await store2.open();
+    const acc = await store2.createAccount({
       username: 'ghost', nickname: 'ghost', auth: { hash: 'g' },
       slot: { slotId: 'slot1', snapshotHash: snap.hash, configHash: snap.configHash, versions: VERSIONS },
     });
     assert.equal(acc.configs.slots[0].loadout, null, '快照正文缺失 → loadout 缺失（结构仍在）');
-    await assert.rejects(() => store.createConfigSlot({ playerId: acc.playerId, name: '复制' }),
+    await assert.rejects(() => store2.createConfigSlot({ playerId: acc.playerId, name: '复制' }),
       (e) => e.code === 'loadout_invalid');
-    await assert.rejects(() => store.activateConfigSlot({ playerId: acc.playerId, slotId: 'slot1' }),
-      (e) => e.code === 'no_active_config');
+    // 激活仍可行（快照 hash 引用有效，仅正文暂缺 → 由回放/实例化侧判 replay_expired / no_active_config）
+    const activated = await store2.activateConfigSlot({ playerId: acc.playerId, slotId: 'slot1' });
+    assert.equal(activated.archive.configs.activeSnapshotHash, snap.hash);
+    await store2.close();
   } finally {
     await store.close();
     rmTmp(dir);

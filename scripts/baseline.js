@@ -300,7 +300,7 @@ async function main(argv) {
     process.stdout.write(`${usage()}\n`);
     return EXIT.OK;
   }
-  const unknown = args.filter((a) => !['--write', '--compare', '--help', '-h'].includes(a));
+  const unknown = args.filter((a) => !['--write', '--compare', '--force', '--help', '-h'].includes(a));
   if (unknown.length > 0) {
     process.stdout.write(`[FAIL] 未知参数：${unknown.join(' ')}\n${usage()}\n`);
     return EXIT.USAGE;
@@ -329,8 +329,16 @@ async function main(argv) {
   process.stdout.write(`${JSON.stringify(fp, null, 2)}\n`);
   process.stdout.write(`${formatSummary(fp)}\n`);
   if (wantWrite) {
+    // 护栏（2026-09-16 实测事故）：基线只能锚定在**绿色**状态。此前有并行任务在"红"的状态下
+    //   跑了 --write，把绿锚点（643/0）覆写成红快照（665/5），使 --compare 永远报"已修复"，
+    //   护栏形同虚设。现在：有失败就拒绝覆写，除非显式 --force（仅用于"确认当前红是已知基线"的场景）。
+    if (fp.failed > 0 && !args.includes('--force')) {
+      process.stdout.write(`[FAIL] 拒绝写入基线：当前有 ${fp.failed} 个失败用例（基线只能锚定绿色状态）。\n`);
+      process.stdout.write(`        若确认这是"已知红"，请显式使用 --force；否则先修好失败再 --write。\n`);
+      return EXIT.USAGE; // 3
+    }
     const p = writeBaseline(fp);
-    process.stdout.write(`已写入基线：${toPosix(path.relative(REPO, p))}\n`);
+    process.stdout.write(`已写入基线：${toPosix(path.relative(REPO, p))}${fp.failed > 0 ? '（--force：已锚定含失败的基线）' : ''}\n`);
   }
   return EXIT.OK;
 }

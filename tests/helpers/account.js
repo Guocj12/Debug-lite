@@ -57,7 +57,9 @@ async function openFixture(options) {
   });
   await store.open();
   const account = createAccount({ store, logger, now: clock });
-  const auth = createAuth({ store, logger, now: clock, account, config: o.config === undefined ? FAST_AUTH : o.config });
+  // config: 省略 → 测试用快速 scrypt；显式 `null` → 用 store.config.auth（默认 N=16384）
+  const authConfig = o.config === undefined ? FAST_AUTH : (o.config === null ? undefined : o.config);
+  const auth = createAuth({ store, logger, now: clock, account, config: authConfig });
   return {
     dir,
     store,

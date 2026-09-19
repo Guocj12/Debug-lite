@@ -128,9 +128,9 @@ docs/progress.md       本文件
 
 > **实测（2026-09-16 收尾；本波各项的决策编号见 `decisions.md` §14 的 D-137…D-153）**：
 > · 本波代码落地时曾实测 `npm test` = 505 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`npm run check:docs` = PASS、`node scripts/fe-spec-check.js` = 9 PASS。
-> · **最近一次复测（2026-09-16；仓库处于 P7 多线并行状态，数字会随每一轮在途改动变动，**以你实测的当次输出为准**）**：`npm test` = **643 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（**项 5 文档↔数据一致性 + D 编号落点 = PASS**）、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**；D 落点相关 `tests/integration/interfaces.test.js` = **6/6 绿**。
-> · **本轮中途的 2 条红已消失（说明，不是现状）**：`AD-1 updateArchive` 与 `AD-6 档案 LRU 上限（archiveCacheSize）`（`server/store/archive.js`、P7-1 在途）——由并行改动修绿，未经放宽阈值。
-> · **更早的瞬时状态（仅说明历史）**：文档同步之初曾测到 `npm test` = 517 用例 / 502 通过 / 15 失败（P7-0 门控与 P7-1 `check-arch` 未登记的瞬时红），该批红随 P7-0/P7-1 首次合入（commit `948ae6e`）消失。
+> · **最近一次复测（2026-09-16；仓库处于 P7 多线并行状态——**用例数与红项每轮在途改动都在变，以你实测的当次输出为准**）**：`npm test` = **668 用例 / 667 通过 / 1 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**；D 落点相关 `tests/integration/interfaces.test.js` = **6/6 绿**，**项 5 文档↔数据一致性 + D 编号落点 = PASS（含 D-137…D-153 落点）**。
+> · **当次唯一红的归属（不是本轮文档同步引入的）**：`LIM-2 同一 IP 每分钟超限 → too_many_attempts（滑动窗口）`——**P7-2 身份与会话在途**（`server/auth.js` 限流）。**转绿条件**：P7-2 收敛（**不是放宽阈值**）。
+> · **更早的中间态（仅说明历史）**：① 文档同步之初曾测到 517 用例 / 502 通过 / 15 失败（P7-0 门控与 P7-1 `check-arch` 未登记的瞬时红），随首次合入（commit `948ae6e`）消失；② 其后测到 643 用例 / 641 通过 / 2 失败（`AD-1`/`AD-6`）、以及 665 用例 / 661 通过 / 4 失败（`AU-5`/`AU-6`/`AU-7`/`BR-6`），均由并行改动自行收敛。**以上各批红均非本轮文档同步引入。**
 
 - [x] **核心/数据重构（D-141/D-142/D-143/D-144/D-149）**：超时扣血改为**基地按自身 maxHp** 扣（**D-141**，消除"变强即变弱"）；`typeModifiers` 接入开箱生成路径（**D-142**，11 角色不再数值同质）；掉落改为**每项可控**（`drop`/`dropWeight`/`unlockTier`，**D-143**）；`schema.js` 去掉硬编码数量（改机制自洽校验，`_sample` 仅控示例期望表比对，**D-144**）；合并 `roles.equipPlugins/getFinalStats` 与 `loadout.buildPanel` 双实现（**D-149**，消除 regen 双写与角色 shape 分歧）。
 - [x] **AI 语言修正（D-138/D-139/D-140）**：`random` 双语义修复（语句位执行 then/else 分支 + 表达式位返回布尔；**D-139**）；**删除 `bullets` 节点与 `bullets[i].*` 路径、快照不再投影 bullets**（**D-138**："AI 不可观测弹幕"＝设计而非缺陷，弹幕当 tick 全解算；节点 **16 类** / `base` **9**；段位累计 **10/12/14/14/16**；旧口径 17 类 / base 10 / 11/13/15/15/17 **已作废**）；`aiTrace` 改为**每 tick**重置（单 tick 上限 2000；**D-140**）；`server/battle.js` 的 trace 司机同步修正，并在 `tests/api/api-battle.test.js` 增加"**每帧 aiTrace 非空且归属各自 tick**"的契约断言。
@@ -151,7 +151,7 @@ docs/progress.md       本文件
 2. **数值必须机器复算**：示例/走查/测试断言里的每个数字都要有独立可复跑的机器计算验证（脚本或测试内的计算），不靠手算；冻结常量注明复算方式。
 3. **机制在代码、数值在表**：所有战斗数值来自 `battle-config.json` 等数据表。
 4. **计算与文档分工**：分支穷举在 `examples/`，端到端串联在 `battle-walkthrough.md`，实现细则在 `systems/`。
-5. **分支现状（2026-09-16 复核）**：`main` 是唯一主线（合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状（2026-09-16 最后实测）**：`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（643 用例）；曾出现的项 7 覆盖率 FAIL 已修复（见 §5.1 L-6），阈值未放宽；**仓库处于 P7 多线并行，数字会随每轮在途改动变动**（§3.4）。
+5. **分支现状（2026-09-16 复核）**：`main` 是唯一主线（合流已完成）；**`dev` 分支已不存在**。现存分支仅 `main` / `deepseek-v4.1f` / `glm-5.3f`（后两个为前端实验分支，未合并）。下文 §5.1 L-5、§5.2 中凡以 `dev` 为对象的表述均已失效，仅作历史记录保留。⚠ **门禁现状（2026-09-16 最后实测）**：`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（668 用例 / 1 红在在途的 `server/auth.js`）；曾出现的项 7 覆盖率 FAIL 已修复（见 §5.1 L-6），阈值未放宽；**仓库处于 P7 多线并行，数字会随每轮在途改动变动**（§3.4）。
 
 ---
 
@@ -185,7 +185,7 @@ docs/progress.md       本文件
 
 ### 5.3 说明
 
-- **门禁实测（2026-09-16；仓库处于 P7 多线并行，以当次输出为准）**：最后实测 `npm test` = **643 用例 / 641 通过 / 2 失败**（2 条红＝`AD-1`/`AD-6`，在在途的 `server/store/archive.js`）、`npm run gate` = **8 PASS / 1 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**；逐条与转绿条件见 §3.4。（历史上曾因 `server/core/skills.js` 分支覆盖率 80.17% < 85% 而项 7 FAIL，已通过导出 `withTables` 注入机制表并补 6 个用例修复；根因与修法见 §5.1 **L-6**；**禁止放宽阈值**。）
+- **门禁实测（2026-09-16；仓库处于 P7 多线并行，以当次输出为准）**：最后实测 `npm test` = **668 用例 / 667 通过 / 1 失败**（唯一红＝`LIM-2`，在在途的 `server/auth.js`）、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**；逐条与转绿条件见 §3.4。（历史上曾因 `server/core/skills.js` 分支覆盖率 80.17% < 85% 而项 7 FAIL，已通过导出 `withTables` 注入机制表并补 6 个用例修复；根因与修法见 §5.1 **L-6**；**禁止放宽阈值**。）
 - **历史记录（B21 时期）**：`npm test` / `npm run cov` 均为 420/0；测试规模 420 用例 / 48 个测试文件。覆盖率阈值（行 90 / 分支 85 / 函数 90）持续通过。
 - **前一轮实测（2026-09-16 早期复核，本轮改动前）**：`npm run gate` = 9 PASS / 0 FAIL / 0 PEND；`npm test` = 459 通过 / 0 失败。（B25 提交时的同口径记录见 `docs/reviews/B25.md`。）
 - 黄金战斗为 gate 项 8 的冒烟基准（**18 tick，p2 胜**，seed 20260912），**B11 黄金回归测试 `tests/regression/golden-battle.test.js` 已于 2026-09-16 落地**并进入 `npm test`；走查 §3.1 已按真实引擎复算（L-2 已关闭）。

@@ -1,7 +1,7 @@
 # 实现期交接提示词（交给新 AI）
 
 > 用法：把本文件**整篇**作为新会话的第一条消息内容（或说「读 `docs/ai-handoff-prompt.md` 并严格执行」）。
-> **阶段现状（2026-09-16 复核，P7 冲刺启动后）**：本项目**设计阶段已完成**；编码阶段中 **P0–P5（后端）已完成**（34 批 = 9+11+5+5+2+2），**P6 前端未开始**，**P7 在线服务已启动**（`docs/plan-p7-playable.md` 为执行蓝图：**P7-0 关段位门控与 P7-1 存储层已在 `main` 落地**，其余 P7-2…P7-7 待做）。**仓库正处于 P7 多线并行**，`npm test` / `npm run gate` 的数字每轮在途改动都会变——**最后实测**：`npm test` = 643 用例 / 641 通过 / 2 失败（2 条红在在途的 `server/store/archive.js`：`AD-1`/`AD-6`）、`npm run gate` = 8 PASS / 1 FAIL / 0 PEND、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**。**以你实测的当次输出与 `docs/progress.md` §3.4 为准。不要重复实现已收口的批次，也不要把 D-129…D-153 中标「计划中」的条目当作已实现能力。**
+> **阶段现状（2026-09-16 复核，P7 冲刺启动后）**：本项目**设计阶段已完成**；编码阶段中 **P0–P5（后端）已完成**（34 批 = 9+11+5+5+2+2），**P6 前端未开始**，**P7 在线服务已启动**（`docs/plan-p7-playable.md` 为执行蓝图：**P7-0 关段位门控与 P7-1 存储层已在 `main` 落地**，其余 P7-2…P7-7 待做）。**仓库正处于 P7 多线并行**，`npm test` / `npm run gate` 的数字每轮在途改动都会变——**最后实测**：`npm test` = 668 用例 / 667 通过 / 1 失败（唯一红＝`LIM-2`，在在途的 `server/auth.js` 限流）、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**。**以你实测的当次输出与 `docs/progress.md` §3.4 为准。不要重复实现已收口的批次，也不要把 D-129…D-153 中标「计划中」的条目当作已实现能力。**
 
 ---
 

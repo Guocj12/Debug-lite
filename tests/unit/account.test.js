@@ -1,0 +1,389 @@
+'use strict';
+/* tests/unit/account.test.js —— 玩家档案门面（P7-2/B29+B30；D-129 §5.2/§5.3/§5.4/§7.5）
+ * 覆盖：摘要视图 · 配置槽四条规则（≤3 / 唯一出战 / 必有出战 / 默认与出战不可删）· 快照冻结与内容寻址
+ *      · 乐观锁 config_conflict · loadout 校验 · 仓库镜像引用校验 · 战绩 since 增量与未读游标
+ *      · 防守战绩汇总 · 昵称 · 文件所有权（本层不得直接 IO）。
+ */
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { openFixture, registerPlayer, sampleLoadout, quickRecord } = require('../helpers/account.js');
+
+const REPO = path.join(__dirname, '..', '..');
+
+async function playerFacts(fx, playerId) {
+  const archive = await fx.store.loadArchive(playerId);
+  const active = archive.configs.slots.find((s) => s.slotId === archive.configs.activeSlotId);
+  return {
+    playerId,
+    publicId: archive.publicId,
+    snapshotHash: active.snapshot.hash,
+    configHash: active.snapshot.configHash,
+  };
+}
+
+// 结算一场（B 类跨玩家写：journal + 幂等 apply，D-134）
+async function settle(fx, a, b, overrides) {
+  const pa = await playerFacts(fx, a.playerId);
+  const pb = await playerFacts(fx, b.playerId);
+  return fx.store.settleBattle(quickRecord(pa, pb, overrides));
+}
+
+async function activeOf(fx, playerId) {
+  const res = await fx.account.listConfigs(playerId);
+  return res.data;
+}
+
+test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；未知档案 404；非法 playerId 400', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Sum_1', nickname: '摘要' });
+    const res = await fx.account.getSummary(u.playerId);
+    assert.equal(res.ok, true);
+    assert.deepEqual(Object.keys(res.data).sort(), [
+      'activeSlotId', 'activeSlotName', 'activeSnapshotHash', 'flags', 'nickname', 'pool',
+      'progress', 'publicId', 'rating', 'record', 'slots',
+    ]);
+    assert.equal(res.data.nickname, '摘要');
+    assert.match(res.data.publicId, /^u_[0-9a-f]{8}$/);
+    assert.deepEqual(res.data.progress, { tier: 'common', peakTier: 'common', batchesPlayed: 0, batchesPromoted: 0 });
+    assert.deepEqual(res.data.rating, { points: 0, peakPoints: 0, games: 0, wins: 0, losses: 0, draws: 0 });
+    assert.equal(res.data.slots.length, 1);
+    assert.equal(res.data.slots[0].slotId, 'slot1');
+    assert.equal(res.data.slots[0].isDefault, true);
+    assert.equal(res.data.slots[0].name, '默认配置');
+    assert.equal(res.data.slots[0].snapshotHash, res.data.activeSnapshotHash);
+    assert.ok(res.data.slots[0].updatedAt > 0);
+    assert.equal(res.data.activeSlotId, 'slot1');
+    assert.deepEqual(res.data.pool, { inPool: true, drawnCount: 0 });
+    assert.deepEqual(res.data.record.unread, { attack: 0, defense: 0, fromSeq: 0 });
+    assert.equal(res.data.playerId, undefined, '摘要**不返回** playerId（§4.5）');
+    // 幂等：连续两次逐值一致（无副作用）
+    const again = await fx.account.getSummary(u.playerId);
+    assert.deepEqual(again.data, res.data, 'GET /me 幂等');
+    const missing = await fx.account.getSummary('pl_0000000000000000');
+    assert.equal(missing.code, 'store_not_found');
+    assert.equal(missing.status, 404);
+    assert.equal((await fx.account.getSummary('')).code, 'bad_request');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-2 配置槽：最多 3 套（第 4 个 409 slot_limit）、唯一出战、必有出战（D-131）', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Slot_1' });
+    const first = await activeOf(fx, u.playerId);
+    assert.equal(first.slots.length, 1);
+    assert.equal(first.maxSlots, 3);
+    const s2 = await fx.account.createSlot({ playerId: u.playerId, name: '二套' });
+    assert.equal(s2.ok, true);
+    assert.equal(s2.data.slotId, 'slot2');
+    assert.equal(s2.data.slot.isDefault, false);
+    assert.equal(s2.data.activeSlotId, 'slot1', '新建槽默认不改变出战');
+    const s3 = await fx.account.createSlot({ playerId: u.playerId });
+    assert.equal(s3.data.slotId, 'slot3');
+    const s4 = await fx.account.createSlot({ playerId: u.playerId });
+    assert.equal(s4.ok, false);
+    assert.equal(s4.code, 'slot_limit');
+    assert.equal(s4.status, 409);
+    assert.equal(s4.details[0].code, 'slot_limit');
+    // 必有出战：每一步 activeSlotId 都指向存在且唯一的槽
+    const three = await activeOf(fx, u.playerId);
+    assert.equal(three.slots.length, 3);
+    assert.equal(three.slots.filter((s) => s.slotId === three.activeSlotId).length, 1);
+    // 唯一出战：切换只有一个生效，且 activeSnapshotHash 跟随
+    const act = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
+    assert.equal(act.ok, true);
+    assert.equal(act.data.activeSlotId, 'slot2');
+    assert.equal(act.data.activeSnapshotHash, act.data.slot.snapshot.hash);
+    const after = await activeOf(fx, u.playerId);
+    assert.equal(after.slots.filter((s) => s.slotId === after.activeSlotId).length, 1);
+    assert.equal(after.activeSlotId, 'slot2');
+    assert.equal(after.activeSnapshotHash, after.slots.find((s) => s.slotId === 'slot2').snapshot.hash);
+    const missing = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot9' });
+    assert.equal(missing.code, 'slot_not_found');
+    assert.equal(missing.status, 404);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-3 删除保护：默认槽 / 出战槽 → 409 slot_locked；切换后可删旧槽（T-AC-3）', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Del_1' });
+    await fx.account.createSlot({ playerId: u.playerId });
+    await fx.account.createSlot({ playerId: u.playerId });
+    const delDefault = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot1' });
+    assert.equal(delDefault.code, 'slot_locked');
+    assert.equal(delDefault.status, 409);
+    // slot1 既是默认槽又是出战槽：切到 slot2 后仍不可删（默认槽语义，§5.3）
+    await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
+    const delDefaultActive = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot1' });
+    assert.equal(delDefaultActive.code, 'slot_locked', '默认槽可改不可删');
+    const delActiveNow = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot2' });
+    assert.equal(delActiveNow.code, 'slot_locked', '出战槽不可删（提示先切换）');
+    const del3 = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot3' });
+    assert.equal(del3.ok, true);
+    assert.deepEqual(del3.data.slots.map((s) => s.slotId), ['slot1', 'slot2']);
+    assert.equal(del3.data.activeSlotId, 'slot2');
+    // 必有出战：删掉非出战槽后出战槽仍在
+    const now = await activeOf(fx, u.playerId);
+    assert.ok(now.slots.some((s) => s.slotId === now.activeSlotId));
+    const unknown = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'nope' });
+    assert.equal(unknown.code, 'slot_not_found');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-4 快照冻结（T-AC-4）：保存后改客户端对象不影响已冻结快照；内容寻址去重', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Snap_1' });
+    const ld = sampleLoadout(fx.account);
+    const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld });
+    assert.equal(saved.ok, true);
+    const hash1 = saved.data.snapshot.hash;
+    assert.match(hash1, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(saved.data.activeSnapshotHash, hash1, '出战槽保存后 activeSnapshotHash 跟随');
+    assert.equal(fx.store.snapshot.has(hash1), true);
+    // 客户端对象被后续修改 → 档案与快照库都不变（深拷贝冻结）
+    ld.skills[0].params.cooldown = 99;
+    ld.skills[0].templateId = 'tampered';
+    const after = await activeOf(fx, u.playerId);
+    assert.equal(after.slots[0].loadout.skills[0].params.cooldown, 3);
+    assert.notEqual(after.slots[0].loadout.skills[0].templateId, 'tampered');
+    const snap = fx.store.snapshot.get(hash1);
+    assert.equal(snap.loadout.skills[0].params.cooldown, 3);
+    assert.equal(snap.engineVersion, '3.0.0');
+    assert.equal(snap.dataVersion, 'b25');
+    // 同内容重复保存 → 同 hash（内容寻址幂等）；不同内容 → 不同 hash
+    const sameAgain = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: sampleLoadout(fx.account) });
+    assert.equal(sameAgain.data.snapshot.hash, hash1, '同内容 → 同快照 hash');
+    const other = sampleLoadout(fx.account, (l) => { l.skills[1].params = Object.assign({}, l.skills[1].params, { cooldown: 9 }); });
+    const saved2 = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: other });
+    assert.notEqual(saved2.data.snapshot.hash, hash1, '不同内容 → 不同快照 hash');
+    assert.equal(saved2.data.activeSnapshotHash, saved2.data.snapshot.hash);
+    // 新槽复制出战配置 → 快照 hash 与出战槽一致（复用同一份快照）
+    const s2 = await fx.account.createSlot({ playerId: u.playerId });
+    assert.equal(s2.data.slot.snapshot.hash, saved2.data.snapshot.hash);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-5 乐观锁：baseUpdatedAt 不匹配 → 409 config_conflict（T-AC-5）；缺省不校验', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Lock_2' });
+    const ld = sampleLoadout(fx.account);
+    const first = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld });
+    assert.equal(first.ok, true);
+    const stamp = first.data.slotUpdatedAt;
+    const second = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld, baseUpdatedAt: stamp });
+    assert.equal(second.ok, true, '携带最新 baseUpdatedAt → 通过');
+    const stale = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld, baseUpdatedAt: stamp });
+    assert.equal(stale.ok, false);
+    assert.equal(stale.code, 'config_conflict');
+    assert.equal(stale.status, 409);
+    assert.equal(stale.details[0].path, 'baseUpdatedAt');
+    const noLock = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld });
+    assert.equal(noLock.ok, true, '不传 baseUpdatedAt = 不做乐观锁');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-6 loadout 校验：非法 → 409 loadout_invalid（带 details.path）；缺 loadout → 400；未知槽 404', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Valid_1' });
+    const bad = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: { role: null, skills: [], ai: null } });
+    assert.equal(bad.code, 'loadout_invalid');
+    assert.equal(bad.status, 409);
+    assert.ok(bad.details.length > 0);
+    assert.ok(bad.details.every((d) => typeof d.path === 'string' && typeof d.code === 'string'));
+    assert.ok(bad.details.some((d) => d.path === 'skills'));
+    const noLoadout = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1' });
+    assert.equal(noLoadout.code, 'bad_request');
+    assert.equal(noLoadout.status, 400);
+    const unknownSlot = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot9', loadout: sampleLoadout(fx.account) });
+    assert.equal(unknownSlot.code, 'slot_not_found');
+    const badSlotCreate = await fx.account.createSlot({ playerId: u.playerId, loadout: { role: null, skills: [], ai: null } });
+    assert.equal(badSlotCreate.code, 'loadout_invalid');
+    // 引用完整性：有装配引用但没给仓库镜像 → loadout_invalid（missing_warehouse，I-12d/T-PB-9）
+    const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
+    const noWh = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef });
+    assert.equal(noWh.code, 'loadout_invalid');
+    assert.ok(noWh.details.some((d) => d.code === 'missing_warehouse'));
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-7 仓库镜像：形状校验 400；与出战配置一致才 verified（并清 unverifiedLoadout）；回读一致', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Wh_1' });
+    assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, true, '注册未提交仓库镜像 → 标记未校验');
+    // 形状非法
+    for (const bad of [null, [], {}, { buckets: [] }, { buckets: { role: 'nope' } }]) {
+      const res = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: bad });
+      assert.equal(res.code, 'bad_request', JSON.stringify(bad));
+      assert.equal(res.status, 400);
+      assert.ok(res.details[0].path.startsWith('warehouse'));
+    }
+    // 把带装配引用的配置存起来（必须同时给仓库镜像才能通过引用校验）
+    const wh = { buckets: { skillPlugin: [{ uid: 'plg1', kind: 'skillPlugin', equipped: true, tier: 2, unlockTier: 'common' }], role: [], skill: [] } };
+    const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
+    const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef, warehouse: wh });
+    assert.equal(saved.ok, true, JSON.stringify(saved.details));
+    assert.equal(saved.data.unverifiedLoadout, false, '提交仓库镜像 → verifiedAgainstWarehouse');
+    // 空镜像与出战配置不一致 → loadout_invalid
+    const mismatched = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: { buckets: { skillPlugin: [] } } });
+    assert.equal(mismatched.code, 'loadout_invalid');
+    assert.equal(mismatched.status, 409);
+    assert.ok(mismatched.details.some((d) => d.code === 'loadout_invalid'));
+    // 一致的镜像 → verified，并回读一致（round-trip）
+    const good = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: wh });
+    assert.equal(good.ok, true);
+    assert.equal(good.data.verified, true);
+    assert.equal(good.data.unverifiedLoadout, false);
+    assert.deepEqual(good.data.buckets, { skillPlugin: 1, role: 0, skill: 0 });
+    assert.match(good.data.warehouseHash, /^sha256:[0-9a-f]{64}$/);
+    const back = await fx.account.getWarehouseMirror(u.playerId);
+    assert.equal(back.ok, true);
+    assert.deepEqual(back.data.warehouse, wh, 'PUT/GET 往返一致');
+    assert.equal(back.data.warehouseHash, good.data.warehouseHash);
+    assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, false);
+    // 未提交过镜像的玩家 → warehouse_missing
+    const other = await registerPlayer(fx.auth, { username: 'Wh_2' });
+    assert.equal((await fx.account.getWarehouseMirror(other.playerId)).code, 'warehouse_missing');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-8 战绩 since 增量游标 + 未读游标 + markSeen（T-AU 覆盖点 16）', async () => {
+  const fx = await openFixture({});
+  try {
+    const a = await registerPlayer(fx.auth, { username: 'Rec_A' });
+    const b = await registerPlayer(fx.auth, { username: 'Rec_B' });
+    const r1 = await settle(fx, a, b, { seed: 11 });
+    const r2 = await settle(fx, a, b, { seed: 12, p1Result: 'loss', p2Result: 'win', winner: 'p2' });
+    assert.equal(r1.duplicate, false);
+    assert.equal(r2.duplicate, false);
+    const seq1 = r1.record.seq;
+    const seq2 = r2.record.seq;
+    assert.ok(seq2 > seq1);
+    // 进攻方：2 条进攻战绩、未读 2、角色 attacker
+    const all = await fx.account.records({ playerId: a.playerId });
+    assert.equal(all.ok, true);
+    assert.equal(all.data.records.length, 2);
+    assert.deepEqual(all.data.records.map((e) => e.role), ['attacker', 'attacker']);
+    assert.deepEqual(all.data.records.map((e) => e.result), ['win', 'loss']);
+    assert.equal(all.data.unread.attack, 2);
+    assert.equal(all.data.unread.defense, 0);
+    assert.equal(all.data.nextSince, seq2);
+    assert.equal(all.data.maxSeq >= seq2, true);
+    assert.equal(all.data.records[0].opponentPublicId, b.publicId);
+    assert.equal(all.data.records[0].seed, 11);
+    assert.equal(all.data.records[0].ticks, 23);
+    // since 增量
+    const inc = await fx.account.records({ playerId: a.playerId, since: seq1 });
+    assert.equal(inc.data.records.length, 1);
+    assert.equal(inc.data.records[0].seq, seq2);
+    assert.equal(inc.data.nextSince, seq2);
+    const none = await fx.account.records({ playerId: a.playerId, since: seq2 });
+    assert.equal(none.data.records.length, 0);
+    assert.equal(none.data.nextSince, seq2);
+    // role 过滤
+    assert.equal((await fx.account.records({ playerId: a.playerId, role: 'defense' })).data.records.length, 0);
+    assert.equal((await fx.account.records({ playerId: a.playerId, limit: 1 })).data.records.length, 1);
+    // 防守方（离线也产生，§7.3）
+    const def = await fx.account.records({ playerId: b.playerId, role: 'defense' });
+    assert.equal(def.data.records.length, 2);
+    assert.deepEqual(def.data.records.map((e) => e.role), ['defender', 'defender']);
+    assert.equal(def.data.unread.defense, 2);
+    // markSeen 推进游标 → 红点清零；已读条目标记 seen
+    const seen = await fx.account.markSeen({ playerId: a.playerId, uptoSeq: seq2 });
+    assert.equal(seen.ok, true);
+    assert.deepEqual(seen.data.unread, { attack: 0, defense: 0, fromSeq: seq2 });
+    const afterSeen = await fx.account.records({ playerId: a.playerId, since: 0 });
+    assert.deepEqual(afterSeen.data.records.map((e) => e.seen), [true, true]);
+    // 参数校验
+    assert.equal((await fx.account.records({ playerId: a.playerId, since: -1 })).code, 'bad_request');
+    assert.equal((await fx.account.records({ playerId: a.playerId, limit: 0 })).code, 'bad_request');
+    assert.equal((await fx.account.records({ playerId: a.playerId, limit: 101 })).code, 'bad_request');
+    assert.equal((await fx.account.records({ playerId: a.playerId, role: 'both' })).code, 'bad_request');
+    assert.equal((await fx.account.markSeen({ playerId: a.playerId, uptoSeq: 'x' })).code, 'bad_request');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-9 防守战绩汇总：被抽场次 / 胜负 / 最近列表 / 未读（T-RK-3 视图侧）', async () => {
+  const fx = await openFixture({});
+  try {
+    const a = await registerPlayer(fx.auth, { username: 'Def_A' });
+    const b = await registerPlayer(fx.auth, { username: 'Def_B' });
+    await settle(fx, a, b, { seed: 21 });
+    await settle(fx, a, b, { seed: 22, p1Result: 'draw', p2Result: 'draw', winner: 'draw' });
+    const res = await fx.account.defenseSummary({ playerId: b.playerId });
+    assert.equal(res.ok, true);
+    assert.equal(res.data.drawnCount, 2, '被抽 2 场');
+    assert.deepEqual(res.data.stats, { wins: 0, losses: 1, draws: 1 });
+    assert.equal(res.data.recent.length, 2);
+    assert.equal(res.data.unread, 2);
+    for (const e of res.data.recent) {
+      assert.equal(e.opponentPublicId, a.publicId);
+      assert.equal(typeof e.battleId, 'string');
+      assert.equal(e.seen, false);
+    }
+    const limited = await fx.account.defenseSummary({ playerId: b.playerId, limit: 1 });
+    assert.equal(limited.data.recent.length, 1);
+    assert.equal((await fx.account.defenseSummary({ playerId: b.playerId, limit: 0 })).code, 'bad_request');
+    // 进攻方没有防守战绩
+    const attacker = await fx.account.defenseSummary({ playerId: a.playerId });
+    assert.equal(attacker.data.drawnCount, 0);
+    assert.deepEqual(attacker.data.stats, { wins: 0, losses: 0, draws: 0 });
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-10 昵称：合法落盘（journal player.nickname.changed）；非法 1~16 校验', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'Nick_2' });
+    assert.equal(u.res.data.nickname, 'Nick_2', '缺省昵称 = 用户名');
+    const okRes = await fx.account.setNickname({ playerId: u.playerId, nickname: '调试员🎮' });
+    assert.equal(okRes.ok, true);
+    assert.equal(okRes.data.nickname, '调试员🎮');
+    assert.equal((await fx.account.getSummary(u.playerId)).data.nickname, '调试员🎮');
+    assert.equal((await fx.account.setNickname({ playerId: u.playerId, nickname: '' })).code, 'bad_request');
+    assert.equal((await fx.account.setNickname({ playerId: u.playerId, nickname: 'x'.repeat(17) })).code, 'bad_request');
+    const journal = fx.store.readRecords({ includeCheckpoints: false });
+    assert.ok(journal.some((r) => r.type === 'player.nickname.changed' && r.nickname === '调试员🎮'));
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('ACC-11 文件所有权：auth.js/account.js 不直接 IO / 不 spawn / 不用 Math.random（D-92/§3.1）', () => {
+  for (const rel of ['server/auth.js', 'server/account.js']) {
+    const src = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    assert.equal(/require\(\s*['"]node:fs['"]\s*\)/.test(src), false, `${rel} 不得 require node:fs（唯一允许 fs 的是 server/store/*）`);
+    assert.equal(/require\(\s*['"](node:)?child_process['"]\s*\)/.test(src), false, `${rel} 不得 require child_process`);
+    assert.equal(/Math\s*\.\s*random\s*\(/.test(src), false, `${rel} 不得用 Math.random（D-92）`);
+  }
+  // 账号层是唯一需要密码学随机的地方：必须经 node:crypto
+  const authSrc = fs.readFileSync(path.join(REPO, 'server/auth.js'), 'utf8');
+  assert.ok(/require\(\s*['"]node:crypto['"]\s*\)/.test(authSrc), 'auth.js 的随机/哈希经 node:crypto');
+  assert.ok(/crypto\.randomBytes\(/.test(authSrc), 'token/盐使用 crypto.randomBytes');
+  assert.ok(/scryptSync/.test(authSrc), '密码使用 scryptSync 加盐哈希');
+});

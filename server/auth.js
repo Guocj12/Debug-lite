@@ -179,9 +179,12 @@ function createFailureLimiter(options) {
     if (userKey === null) return null;
     const rec = failures.get(userKey);
     if (!rec) return null;
-    if (rec.lockedUntil > now) return rec;
-    failures.delete(userKey); // 锁已过期 → 连续失败计数清零
-    return null;
+    if (rec.lockedUntil > 0) {
+      if (rec.lockedUntil > now) return rec;
+      failures.delete(userKey); // 锁已过期 → 连续失败计数清零
+      return null;
+    }
+    return null; // 有失败计数但尚未触发锁定
   }
 
   // 尝试入口：先查 IP 限速，再查用户名锁定；通过则记一次尝试

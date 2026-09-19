@@ -46,8 +46,11 @@ test('AU-2 密码与用户名规则（§4.2）：长度 8~72、UTF-8 ≤256B、�
   assert.equal(authMod.validatePassword('12345678', {}).ok, true);
   assert.equal(authMod.validatePassword('x'.repeat(72), {}).ok, true);
   assert.equal(authMod.validatePassword('x'.repeat(73), {}).code, 'weak_password');
-  assert.equal(authMod.validatePassword('中'.repeat(80), {}).code, 'weak_password', '80 个中文 = 240B 合法');
-  assert.equal(authMod.validatePassword('中'.repeat(100), {}).code, 'weak_password', '100 个中文 = 300B > 256B');
+  assert.equal(authMod.validatePassword('中'.repeat(66), {}).ok, true, '66 个中文 = 198B ≤ 256B');
+  // 字节上限是**独立**于字符数的防线（默认 72 字符时不可达；passwordMax 放宽后生效）
+  assert.equal(authMod.validatePassword('中'.repeat(100), { passwordMax: 200 }).code, 'weak_password', '300B > 256B');
+  assert.equal(authMod.validatePassword('中'.repeat(80), { passwordMax: 200 }).ok, true, '240B ≤ 256B');
+  assert.equal(authMod.validatePassword('x'.repeat(73), {}).code, 'weak_password');
   assert.equal(authMod.validatePassword(undefined, {}).code, 'weak_password');
   assert.equal(authMod.validateUsername('ab').ok, false);
   assert.equal(authMod.validateUsername('abc').ok, true);
@@ -160,7 +163,7 @@ test('AU-4 注册拒绝：重名（大小写不敏感）409 / 弱密码 400 / �
 });
 
 test('AU-5 默认 scrypt 参数（N=16384/r=8/p=1）真实可用：注册即写入默认参数并可登录', async () => {
-  const fx = await openFixture({ config: undefined }); // 不覆盖 → 用 store.config.auth（service-config 缺省）
+  const fx = await openFixture({ config: null }); // config:null → 不覆盖，用 service-config 缺省（N=16384）
   try {
     const u = await registerPlayer(fx.auth, { username: 'Default_1' });
     assert.equal(u.res.ok, true);
@@ -223,9 +226,7 @@ test('AU-7 成功后失败计数清零；锁定到期自动解锁（注入时钟
     assert.equal((await fx.auth.login({ username: 'Clear_1', password: 'bad-pass-3' })).code, 'invalid_credentials');
     assert.equal((await fx.auth.login({ username: 'Clear_1', password: PASSWORD })).code, 'too_many_attempts');
     // 把时钟推过锁定窗口（5 分钟）→ 解锁
-    clock.now.bypass = true;
-    const jump = () => { for (let i = 0; i < 400; i += 1) clock(); };
-    jump();
+    for (let i = 0; i < 400; i += 1) clock(); // 400s = 6.7min > 5min
     const after = await fx.auth.login({ username: 'Clear_1', password: PASSWORD });
     assert.equal(after.ok, true, '锁定期满后正确密码可登录');
   } finally {
@@ -342,8 +343,7 @@ test('AU-11 会话滑动续期：TTL 内每次鉴权延长 expiresAt，但不超
     assert.equal(first.ok, true);
     const created = first.data.session.createdAt;
     const before = first.data.session.expiresAt;
-    for (let i = 0; i < 10; i += 1) clock();          // 推进 10s（> 60s 节流需更多次）
-    for (let i = 0; i < 70; i += 1) clock();
+    for (let i = 0; i < 80; i += 1) clock(); // 推进 80s（超过 60s 续期节流）
     const second = await fx.auth.authenticate(u.token);
     assert.equal(second.ok, true);
     assert.ok(second.data.session.expiresAt > before, '滑动续期延长 expiresAt');

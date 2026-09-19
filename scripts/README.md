@@ -106,7 +106,7 @@
 
 `analyze({projectRoot})` → `{violations: [{file, rule, detail}], files: n}`；`main` 对仓库实跑，任一违例 → 退出码 1。
 
-**分层（按路径）**：`shared/*` L-1（唯一跨层共享）｜`server/data/*` 数据层（任何 server 模块可读）｜`server/core/{rng,field}` L0｜`server/core/{effects,items,unlock}` L1｜`server/core/{roles,skills,bullets}` L2｜`server/core/engine.js` L4｜`server/ai/*` L5｜`server/{index,ranked}.js` `cli/**` L6。
+**分层（按路径）**：`shared/*` L-1（唯一跨层共享）｜`server/data/*` 数据层（任何 server 模块可读）｜`server/core/{rng,field}` L0｜`server/core/{effects,items,unlock}` L1｜`server/core/{roles,skills,bullets}` L2｜`server/core/engine.js` L4｜`server/ai/*` L5｜`server/store/*` L6（存储层，D-129）｜`server/{index,ranked,runner,box,loadout,battle,auth,account,quickmatch,admin}.js` `cli/**` L6。
 
 **规则**：
 1. 依赖方向：模块只能依赖**同层或更低层** + `shared/log.js`（**唯一跨层共享单文件**，其它 shared/* 一律 unknown-layer）+ `server/data/*.json`（core/ai 不得依赖更高层：engine 不得 require `ai/*`（L5 由 server 层注入）、ai 不得 require `engine.js`/更高）。
@@ -115,5 +115,10 @@
 4. `cli/**` 不得 require `server/core` / `server/ai`（L14：CLI 只走 HTTP）。
 5. `tests/**` 不参与分层检查（可用一切）。
 6. **L3 落地策略（登记）**：L3（items 仓库/装配层、skills 释放/canCast）与 L1/L2 共用同一文件，文件级分层取较低层；若未来 L3 专属逻辑需要跨层门控，再拆文件并登记新层号。
+7. **`server/store/*` 存储层（L6，D-129 登记）**：与 `server/index.js` 同为 L6，可被 L6 依赖；**L0~L5 不得反向依赖它**（由规则 1 的 `依赖了更高层` 分支拦截，无需额外规则）。其专属约束（`store-forbidden` 违规）：
+   - 外部模块**只允许** `node:fs` / `node:path` / `node:crypto`（本目录是唯一允许 `node:fs` 的目录，`11-account-store §3.1` 硬约束）；
+   - **禁** `child_process` / `worker_threads` / `cluster` / `vm`（单进程为唯一支持形态，`11-account-store §1.3-6`）/ `http` / `https` / `net` / `express`；
+   - **禁** `Math.random` / `eval(` / `new Function(`（D-92 铁律在 L6 同样成立；存储层的随机只用 `node:crypto`）。
+   扫描根沿用 `SCAN_ROOTS = ['server','cli','shared']`（`server/store/**` 已被 `server` 根覆盖，无需单独登记）。
 
 **实现要点**：require 用正则提取（`require('…')`），先剥注释；相对路径解析到真实文件后映射层号；外部模块（builtin/node_modules）不参加层比较与成环。core 里 `require('../data/x.json')` 与 `require('../../…/shared/log.js')` 放行。
