@@ -219,22 +219,76 @@ test('T-QM-4 去重窗口（纯函数）：<24h 两池皆拒；24–72h 进 rela
   assert.deepEqual(qm.splitByCooldown(pool, old3, 24, 72, now), { strict: [], relaxed: [] });
 });
 
-test('T-QM-4b 最久未对战优先（§8.2 步骤 3）：strict 内选最久未打的', () => {
+test('T-QM-4b 最久未对战优先（§8.2 步骤 3 / P1-2）：先取 lastOpponentAt 的 argmin 组，再**仅组内**随机', () => {
   const hour = 3600 * 1000;
   const now = 1_800_000_000_000;
-  const foe = { pool: { lastOpponentAt: { a: now - 100 * hour, b: now - 200 * hour } } };
-  const pool = poolOf([{ playerId: 'a', points: 1500 }, { playerId: 'b', points: 1500 }]);
-  // 注入固定 rng：即使排序相等也不会抖动；此处断言"最久未对战"胜出
-  const rng = { int: (lo, hi) => (lo + hi) >> 1 };
-  const found = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 7, at: now, foeArchive: foe, isEligible: () => true, rng });
-  assert.equal(found.ok, true);
-  assert.equal(found.opponent.playerId, 'b', 'b 更久未对战（200h）→ 优先');
-  // 反向：把 a 调成更久 → 首选 a
-  const foe2 = { pool: { lastOpponentAt: { a: now - 300 * hour, b: now - 10 * hour } } };
-  const rng2 = { int: (lo, hi) => (lo + hi) >> 1 };
-  const found2 = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 7, at: now, foeArchive: foe2, isEligible: () => true, rng: rng2 });
-  assert.equal(found2.opponent.playerId, 'a', 'a 更久未对战（300h，但仍 ≥72h）→ 优先');
+  const pool = poolOf([{ playerId: 'a', points: 1500 }, { playerId: 'b', points: 1500 }, { playerId: 'c', points: 1500 }]);
+  // 3 候选：a = 100h 前、b = 80h 前、c = 76h 前（都 ≥72h → strict 池）→ **恒选 a**（唯一 argmin）
+  const foe = { pool: { lastOpponentAt: { a: now - 100 * hour, b: now - 80 * hour, c: now - 76 * hour } } };
+  const picked = new Set();
+  for (let seed = 1; seed <= 24; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe, isEligible: () => true });
+    assert.equal(f.ok, true);
+    assert.equal(f.argminGroup, 1, `seed ${seed}: argmin 组恰 1 个`);
+    assert.equal(f.opponent.playerId, 'a', `seed ${seed}: 恒选最久未对战者（100h）`);
+    picked.add(f.opponent.playerId);
+  }
+  assert.deepEqual([...picked], ['a'], '选中集合 ⊆ argmin 组 = {a}（修前"全池均匀随机"会命中 b/c）');
+  // 并列 argmin 组：a/b 均 100h、c = 76h → 只在 {a,b} 内随机；c **从不**出现，且组内两成员都被抽到（随机仍在生效）
+  const foe2 = { pool: { lastOpponentAt: { a: now - 100 * hour, b: now - 100 * hour, c: now - 76 * hour } } };
+  const picked2 = new Set();
+  for (let seed = 1; seed <= 60; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe2, isEligible: () => true });
+    assert.equal(f.argminGroup, 2, `seed ${seed}: argmin 组 2 个`);
+    assert.ok(['a', 'b'].includes(f.opponent.playerId), `seed ${seed}: 只能抽 argmin 组（实得 ${f.opponent.playerId}）`);
+    picked2.add(f.opponent.playerId);
+  }
+  assert.deepEqual([...picked2].sort(), ['a', 'b'], '选中集合恰为 argmin 组（c 从不出现 / 组内两成员均被抽到）');
+  // 反向：把 a 调成 300h 前 → 首选 a；再把 b 调成唯一最久 → 首选 b
+  const foe3 = { pool: { lastOpponentAt: { a: now - 300 * hour, b: now - 10 * hour, c: now - 200 * hour } } };
+  for (let seed = 1; seed <= 8; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe3, isEligible: () => true });
+    assert.equal(f.opponent.playerId, 'a', `seed ${seed}: a（300h）唯一最久 → 恒选`);
+  }
+  // 从未对战（不在 map 里 → lastOpponentAt=0）优先于任何"打过"的候选
+  const foe4 = { pool: { lastOpponentAt: { a: now - 100 * hour } } };
+  for (let seed = 1; seed <= 8; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe4, isEligible: () => true });
+    assert.ok(['b', 'c'].includes(f.opponent.playerId), `seed ${seed}: 未对战者优先（实得 ${f.opponent.playerId}）`);
+  }
 });
+
+test('T-QM-2h 突变告警判据 = 单场真实上界 max(kBase, kMax)（P1-3）：不再把合法败局判成突变', () => {
+  // 文档 §8.3 旧表述"Δ ≤ kBase/2 = 16"只对"同分对手的加分"成立；实现曾据此设 16 的上限 → 合法败局误报
+  const bound = qm.maxSingleMatchDelta(CFG);
+  assert.equal(bound, CFG.kMax, '上界 = max(K_gain(base)=kBase, K_loss(cap)=kMax) = 64');
+  // 全网格复算：任何合法 (R, R_opp, 结果) 的 |Δ| 都不超过该界，且**存在**超过旧阈值 16 的合法值
+  let worstGain = 0;
+  let worstLoss = 0;
+  for (let points = 0; points <= CFG.cap; points += 25) {
+    for (const opponentPoints of [0, 500, 1500, 2500, CFG.cap]) {
+      for (const result of ['win', 'loss', 'draw']) {
+        const d = qm.ratingDelta({ points, opponentPoints, result, config: CFG }).delta;
+        if (d > worstGain) worstGain = d;
+        if (-d > worstLoss) worstLoss = -d;
+        assert.ok(Math.abs(d) <= bound, `|Δ| ≤ ${bound}（R=${points} R_opp=${opponentPoints} ${result} → ${d}）`);
+      }
+    }
+  }
+  assert.equal(worstGain, CFG.kBase, '加分上界 = kBase = 32（低分赢满积分对手）');
+  assert.equal(worstLoss, CFG.kMax, '扣分上界 = kMax = 64（满积分输 0 分对手）');
+  assert.ok(worstLoss > CFG.kMax / 2, 'kMax/2 根本不是上界（旧口径错处）');
+  // 审查实测的两个"合法却被旧阈值误报"的场景
+  const loss2900 = qm.ratingDelta({ points: 2900, opponentPoints: 2900, result: 'loss', config: CFG });
+  assert.equal(loss2900.delta, -31, 'R=2900 输同分对手 → Δ=-31（旧阈值 16 会误报突变）');
+  assert.ok(Math.abs(loss2900.delta) > CFG.kBase / 2 && Math.abs(loss2900.delta) <= bound, '不再误报：16 < 31 ≤ 64');
+  const win0 = qm.ratingDelta({ points: 0, opponentPoints: CFG.cap, result: 'win', config: CFG });
+  assert.equal(win0.delta, 32, 'R=0 胜满积分对手 → Δ=+32（旧阈值 16 会误报）');
+  assert.ok(win0.delta > CFG.kBase / 2 && win0.delta <= bound, '不再误报：16 < 32 ≤ 64');
+  // 真异常仍抓得住：同一判据（Math.abs(Δ) > bound）对篡改值成立
+  assert.ok(Math.abs(bound + 1) > bound && Math.abs(200) > bound, '超过真实上界的篡改 Δ 仍会触发 store.abuse.suspect');
+});
+
 
 test('T-QM-1c 匹配参数：matchWindowConfig 缺省与非法值兜底', () => {
   const cfg = qm.matchWindowConfig({ matchWindowStart: 0, matchWindowStep: 0, matchWindowMax: 0, opponentCooldownHours: 0 });

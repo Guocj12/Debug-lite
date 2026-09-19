@@ -17,16 +17,29 @@ test('AD-1 DL_ADMIN_TOKEN 未配置：管理端整体不可用（503 admin_token
     const r = await h.request(s.port, 'POST', '/api/v1/admin/rebuild-index', {});
     assert.equal(r.status, 503);
     assert.equal(r.body.error.code, 'admin_token_missing');
-    // 注意顺序：调试注入先过 DL_DEBUG_BOTS 门控（默认关闭）→ 403 debug_bots_disabled，早于 token 校验
+    // P2-7：**令牌校验前置**——未配置 DL_ADMIN_TOKEN 时 /admin/bots 也必须先返回 503（而不是 403 debug_bots_disabled）
     const bots = await h.request(s.port, 'POST', '/api/v1/admin/bots', { count: 1 });
-    assert.equal(bots.status, 403);
-    assert.equal(bots.body.error.code, 'debug_bots_disabled');
-    // stats 走 token 校验 → 503 admin_token_missing
+    assert.equal(bots.status, 503, '令牌未配置 → 503（修前先撞 debug 门控 → 403）');
+    assert.equal(bots.body.error.code, 'admin_token_missing');
+    // 令牌已配置但错误 → 403 forbidden（同样先于 debug 门控）
     const stats = await h.request(s.port, 'POST', '/api/v1/admin/stats', {});
     assert.equal(stats.status, 503);
     assert.equal(stats.body.error.code, 'admin_token_missing');
   }, { server: { adminToken: '' } });
+  await h.withServer(null, async (s) => {
+    const wrong = await h.request(s.port, 'POST', '/api/v1/admin/bots', { count: 1 }, { 'x-admin-token': 'nope' });
+    assert.equal(wrong.status, 403, '令牌错误 → 403 forbidden（早于 debug 门控）');
+    assert.equal(wrong.body.error.code, 'forbidden');
+    const noToken = await h.request(s.port, 'POST', '/api/v1/admin/bots', { count: 1 });
+    assert.equal(noToken.status, 403);
+    assert.equal(noToken.body.error.code, 'forbidden');
+    // 令牌正确 + DL_DEBUG_BOTS 未开 → 才是 403 debug_bots_disabled（保留双门控语义）
+    const okToken = await h.request(s.port, 'POST', '/api/v1/admin/bots', { count: 1 }, { 'x-admin-token': ADMIN });
+    assert.equal(okToken.status, 403);
+    assert.equal(okToken.body.error.code, 'debug_bots_disabled');
+  }, { server: { adminToken: ADMIN, env: { ...process.env, DL_DEBUG_BOTS: '' } } });
 });
+
 
 test('AD-2 缺 token / 错 token → 403 forbidden（不泄露 token 是否配置）', async () => {
   await h.withServer(null, async (s) => {

@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { nullLogger } = require('../../shared/log.js');
 const { StoreError } = require('./errors.js');
+const { deepClone } = require('./canonical.js');
 const fsatomic = require('./fsatomic.js');
 
 const RECORD_VERSION = 1;
@@ -83,6 +84,7 @@ function createJournal(options) {
   let segments = [];     // [{key, file, maxSeq, count, bytes}]
   let checkpoints = [];  // [{key, file, seq, at, perPlayer}]
   const battles = new Map(); // battleId → record（最近一次为准；用于回放定位）
+  let fullyIndexed = false;  // load() 是否已把**全部段**的 battleId 收进内存索引（见 findBattle）
 
   const segmentFileOf = (key) => path.join(dir, `${key}.jsonl`);
   const checkpointFileOf = (key) => path.join(dir, `${key}.checkpoint.json`);
@@ -109,9 +111,13 @@ function createJournal(options) {
     return parsed.records;
   }
 
+  // 内存 battle 索引：**存深拷贝**（P7-6 修复的防御项）。
+  // 理由：append 会把调用方的记录对象交回调用方（settleBattle 的返回值），若索引共享该引用，
+  //   调用方改写返回值就会污染进程内 `findBattle` 的结果（回放/参与者校验读到被改的记录），
+  //   直到重启才消失。这里存副本、取出时也给副本，杜绝双向污染。
   function trackRecord(rec) {
     if (Number.isInteger(rec.seq) && rec.seq > seq) seq = rec.seq;
-    if (typeof rec.battleId === 'string' && rec.type === 'battle.recorded') battles.set(rec.battleId, rec);
+    if (typeof rec.battleId === 'string' && rec.type === 'battle.recorded') battles.set(rec.battleId, deepClone(rec));
   }
 
   // 启动加载：扫全部分段与检查点 → 计算 maxSeq（seq 的**唯一权威来源**）→ 截断半写尾行
@@ -157,6 +163,7 @@ function createJournal(options) {
       checkpoints.push({ key, file, seq: cp.seq, at: cp.at || null, perPlayer: cp.perPlayer || {} });
     }
     opened = true;
+    fullyIndexed = true; // 全量段已扫完：此后"内存索引未命中"即"磁盘上也不存在"
     return { seq, segments: segments.length, checkpoints: checkpoints.length, truncatedSegments, battles: battles.size };
   }
 
@@ -333,12 +340,16 @@ function createJournal(options) {
 
   function findBattle(battleId) {
     const hit = battles.get(battleId);
-    if (hit) return hit;
+    if (hit) return deepClone(hit);
+    // P7-6 性能：load() 已把全部段的 battleId 收进 `battles`（此后每个 append 也经 trackRecord 入索引），
+    //   故"内存索引未命中"即"journal 里不存在"。原实现对每次未命中都**重读并重解析全部段**
+    //   （50 人压测下每次结算都是未命中 → 每次重解析 ~600KB journal，是结算成本的一大块）。
+    if (fullyIndexed) return null;
     for (const seg of [...segments].sort((a, b) => (a.key < b.key ? 1 : -1))) {
       for (const rec of readSegmentRecords(seg.key)) {
         if (rec.type === 'battle.recorded' && rec.battleId === battleId) {
-          battles.set(battleId, rec);
-          return rec;
+          battles.set(battleId, deepClone(rec));
+          return deepClone(rec);
         }
       }
     }

@@ -25,7 +25,15 @@ const path = require('node:path');
 const itemsCore = require('../../server/core/items.js');
 const serverMod = require('../../server/index.js');
 
-const FAST_AUTH = Object.freeze({ auth: { scrypt: { N: 1024, r: 8, p: 1 } } });
+// 端到端夹具默认鉴权配置：
+//   · scrypt N=1024（生产 16384 每次约 60ms，端到端无需承担）；
+//   · `rateLimitPerMinute` 放宽——本夹具的**同一 IP** 会注册/登录 8~10 次，会撞上生产默认的
+//     "10 次/分/IP" 防护。该防护本身由 `tests/api/api-auth.test.js` AU-8 与 `server/auth.js`
+//     的 `createFailureLimiter` 单测覆盖；夹具保留的是**锁定**语义（`maxFailures`/`lockMinutes`
+//     仍为生产默认 5/5，故"连错 5 次 → 429 too_many_attempts"依旧是真的业务锁定）。
+const FAST_AUTH = Object.freeze({
+  auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 1000 },
+});
 const PASSWORD = 'pw12345678';
 const RATE_LIMIT = 100000000; // 等价关闭全局限速（见文件头说明）
 const BOX_TIMES_MAX = 100;    // server/box.js 上限（单次请求）

@@ -11,6 +11,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const ranked = require('../../server/ranked.js');
 const archiveMod = require('../../server/store/archive.js');
+const ledger = require('../../server/store/ledger.js');
 const h = require('../helpers/ranked.js');
 const LD = require('../fixtures/loadout-ok.json');
 const ld = () => JSON.parse(JSON.stringify(LD.loadout));
@@ -353,6 +354,127 @@ test('DL_DEBUG_BOTS 默认关闭：inspectDebugBots 只有显式 1/true 才启�
   assert.equal(ranked.inspectDebugBots({ DL_DEBUG_BOTS: '1' }).enabled, true);
   assert.equal(ranked.inspectDebugBots({ DL_DEBUG_BOTS: 'true' }).enabled, true);
   assert.equal(ranked.inspectDebugBots(undefined).enabled, process.env.DL_DEBUG_BOTS === '1' || process.env.DL_DEBUG_BOTS === 'true');
+});
+
+test('P2-3 晋升单一真源：端点 promote 与批次路径 promoteAfterBatch 同输入同结果（含 ratingConfig 覆盖）', () => {
+  // 默认配置（promoteWins 缺省 6）：两路径逐档一致
+  for (const tier of ranked.TIERS) {
+    for (const wins of [0, 5, 6, 7, 8, 9, 10]) {
+      const endpoint = ranked.promote(tier, wins);
+      const batch = ledger.promoteAfterBatch({ tier, wins, config: undefined });
+      if (endpoint.status === 409) {
+        assert.equal(batch.promoted, false, `${tier}/${wins}: 端点为 already_max ⇒ 批次不晋升`);
+        continue;
+      }
+      assert.equal(endpoint.data.promoted, batch.promoted, `${tier}/${wins}: promoted 同源`);
+      assert.equal(endpoint.data.tier, batch.promoted ? batch.tierAfter : tier, `${tier}/${wins}: tierAfter 同源`);
+    }
+  }
+  // 覆盖 ratingConfig（batchSize=5 / promoteWins=4）：**两条路径都必须读到同一配置**
+  const cfg = { ...h.RATING, batchSize: 5, promoteWins: 4 };
+  assert.equal(ledger.promoteAfterBatch({ tier: 'common', wins: 5, config: cfg }).promoted, true, '批次口径：wins=5 > 4 → 晋升');
+  const ep = ranked.promote('common', 5, null, cfg);
+  assert.equal(ep.status, 200);
+  assert.deepEqual(ep.data, { tier: 'rare', promoted: true, reward: 'rare', wins: 5 }, '端点口径与批次一致（修前端点硬编码 6 → promoted:false）');
+  assert.deepEqual(ranked.promote('common', 4, null, cfg).data, { tier: 'common', promoted: false, reward: 'common', wins: 4 });
+  // withLogger 注入 deps.ratingConfig（index.js 的接线口径）
+  const viaWithLogger = ranked.withLogger(null, { ratingConfig: cfg }).promote('common', 5);
+  assert.equal(viaWithLogger.data.promoted, true, 'withLogger({ratingConfig}) 生效');
+  // 默认（无 ratingConfig）仍为 wins>6
+  assert.equal(ranked.promote('common', 6).data.promoted, false);
+  assert.equal(ranked.promote('common', 7).data.promoted, true);
+});
+
+test('P2-5 默认出战配置按身份派生 3 族 × 3 子变体：AST 合法、无身份确定性、跨变体可分出胜负', () => {
+  // ① 9 个程序都能被身份哈希取到（覆盖全 9 变体）
+  const byProgram = new Map();
+  for (let i = 1; i <= 500 && byProgram.size < 9; i++) {
+    const playerId = h.makePlayerId(i);
+    const def = ranked.buildDefaultLoadout(playerId);
+    byProgram.set(JSON.stringify(def.ai), { playerId, variant: ranked.variantOf(playerId) });
+  }
+  assert.equal(byProgram.size, 9, `9 个子变体都应可达（实得 ${byProgram.size}）`);
+  // ② 每个默认 AI 都通过 ast.validate（/ai/validate 同源）
+  const astApi = require('../../server/ai/ast.js');
+  for (const key of byProgram.keys()) {
+    const v = astApi.validate(JSON.parse(key));
+    assert.equal(v.ok, true, `默认 AI 必须合法：${JSON.stringify(v.errors).slice(0, 160)}`);
+  }
+  // ③ 无身份（旧调用点：account.defaultLoadout / scripts/play.js）→ 确定性且仍是"会交战"的 steady/0
+  assert.deepEqual(ranked.buildDefaultLoadout(), ranked.buildDefaultLoadout(), '无身份 → 同内容（确定性）');
+  assert.equal(ranked.presetOf(undefined), 'steady');
+  assert.equal(ranked.variantOf(undefined).sub, 0);
+  assert.equal(ranked.buildDefaultLoadout().skills.length, 3, '默认配置 3 技能满槽');
+  // ④ 交战证据：9 个程序两两对战，非平局占多数（修前 move_left vs move_left 恒平）
+  const programs = [...byProgram.values()].map((x) => x.playerId);
+  let draws = 0;
+  let total = 0;
+  for (const a of programs) {
+    for (const b of programs) {
+      const r = ranked.battleOne(ranked.buildDefaultLoadout(a), ranked.buildDefaultLoadout(b), null, 'common', 7919);
+      assert.ok(r.invalid !== true, `默认配置必须可实例化（buildPlayer ok）：${JSON.stringify((r.errors || []).slice(0, 2))}`);
+      total += 1;
+      if (r.winner === 'draw') draws += 1;
+    }
+  }
+  assert.ok(total - draws >= 50, `81 组两两对战应多为可分胜负（实得非平局 ${total - draws}/${total}）`);
+});
+
+test('P1-4 批次级幂等：同 (playerId, seed) 重发 → 同 batchId、batchesPlayed 仅 +1、journal 零新增', async (t) => {
+  const fx = await h.openFixture();
+  t.after(() => fx.cleanup());
+  const players = await fx.registerPlayers(3);
+  const me = players[0];
+  const countBattles = async (batchId) => {
+    const ids = [];
+    await fx.store.replayJournal({ fromSeq: 0 }, (rec) => {
+      if (rec.type === 'battle.recorded' && rec.batchId === batchId) ids.push(rec.battleId);
+    });
+    return ids;
+  };
+  const first = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260919 });
+  assert.equal(first.status, 200, JSON.stringify(first));
+  assert.match(first.data.batchId, /^bt_[0-9a-f]{16}$/, 'batchId 形状不变（bt_ + 16 hex）');
+  assert.equal(first.data.matches, 2, '同段位其他真实玩家 2 个 → 2 场');
+  assert.equal(first.data.duplicate, undefined, '首次不是重放');
+  assert.equal(ranked.batchIdOf(me.playerId, 20260919), first.data.batchId, 'batchId 由 (playerId, seed) 确定性派生');
+  const batchBattles = await countBattles(first.data.batchId);
+  assert.equal(batchBattles.length, 2, '批次内 2 条 battle.recorded');
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 1);
+  const seqAfterFirst = fx.store.maxSeq();
+
+  // 同 seed 重发 → 回放该批结果：不重复结算、不重复写 journal
+  const again = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260919 });
+  assert.equal(again.status, 200, JSON.stringify(again));
+  assert.equal(again.data.batchId, first.data.batchId, '同 seed → 同 batchId');
+  assert.equal(again.data.duplicate, true, '标注为重放');
+  assert.equal(again.data.replayed, true);
+  assert.equal(again.data.matches, first.data.matches, '回放场次数与首次一致');
+  assert.equal(again.data.wins, first.data.wins);
+  assert.equal(again.data.tierAfter, first.data.tierAfter);
+  assert.deepEqual(again.data.results.map((x) => x.battleId), first.data.results.map((x) => x.battleId), '逐场 battleId 一致');
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 1, 'batchesPlayed 不再 +1（修前 1→2）');
+  assert.equal(fx.store.maxSeq(), seqAfterFirst, 'journal 无任何新增记录（修前会新增 battle.recorded + ranked.batch）');
+  assert.equal((await countBattles(first.data.batchId)).length, 2, 'battle.recorded 无新增');
+
+  // 不同 seed → 新批次（batchId 不同）
+  const other = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260920 });
+  assert.notEqual(other.data.batchId, first.data.batchId);
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 2, '新 seed 才 +1');
+});
+
+test('P2-5 默认出战配置全同 + 兜底 AI 只 move_left → 真实玩家池几乎恒平局（回归防护：至少 3 族差异）', () => {
+  // 修前：所有玩家的默认 AI 都是 `move_left`（全同）→ 6/6 平。此处钉死"默认 AI 分族 + 会开火"
+  const families = new Set();
+  for (let i = 1; i <= 60; i++) families.add(ranked.presetOf(h.makePlayerId(i)));
+  assert.deepEqual([...families].sort(), ['aggressive', 'kite', 'steady'], '3 族都应出现（身份哈希分布）');
+  for (const preset of ranked.DEFAULT_AI_PRESETS) {
+    const program = JSON.stringify(ranked.buildDefaultLoadout(`probe-${preset}`).ai);
+    assert.ok(!program.includes('move_left') || program.includes('skill:'), `${preset}: 默认 AI 必须包含技能动作（不是只走位）`);
+  }
+  // 至少一个默认变体直接开火（skill:skillN 出现在程序里）
+  const fireCount = ranked.DEFAULT_AI_PRESETS.filter((p) => JSON.stringify(ranked.buildDefaultLoadout(`x-${p}`).ai).includes('skill:')).length;
+  assert.equal(fireCount, 3, '3 族的默认 AI 都会释放技能');
 });
 
 test('无 BOT_LD 导出（占位 bot 补齐逻辑已删除）；buildDefaultLoadout 仍为"新玩家默认配置"构造器', () => {

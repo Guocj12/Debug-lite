@@ -1,6 +1,6 @@
 # Debug-Lite v3 接口冻结（ICD v1）
 
-> 版本：v1　创建：2026-09-12（P0-7）　更新：2026-09-16（数据驱动改造 / `turn` 动作 / 枚举校验 / 计划项显式标注）　**本文件是接口唯一权威**（L1）；接口变更走 `docs/tasks.md` §10。
+> 版本：v1　创建：2026-09-12（P0-7）　更新：2026-09-19（**P7 已落地同步**：§0/§1/§2/§3/§4/§6/§7 按 `server/{index,auth,account,quickmatch,ranked,admin}.js` 与 `server/store/*` 实测口径改写；§2 端点状态 B27–B33 → ✅ 已实现 + 新增 §2.1 错误码表）　**本文件是接口唯一权威**（L1）；接口变更走 `docs/tasks.md` §10。
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > 本文件 > `docs/tasks.md`。
 > 落点约定：每条 D-编号在本文件**至少出现一次**（T-DC-8 机器核对，见 §5 与 `tests/integration/interfaces.test.js`）。
 
@@ -8,8 +8,8 @@
 
 ## §0 文档体系与同步约定
 
-- `decisions.md`（D-01…D-136）为最高权威；本文件与 `systems/*`、`v3-design.md`、`tasks.md` 冲突时按权威链修正（D-126 同步重写）。
-- **D-129 起服务端持久化玩家档案（⏳ 计划（P7/B27–B33），未实现）**：账号/配置槽/段位/积分/战绩/回放引用**设计为**服务端权威（`11-account-store.md`）；**仓库与物品仍由客户端 localStorage 持有**（D-130，混合权威，作弊面已在 `11-account-store §15.1` 登记）。**现状（2026-09-16 实测）**：`server/store/`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`runtime/` 均不存在；现行 P5 段位/仓库口径仍是 D-123 的"请求传入并回带、不持久化"。
+- `decisions.md`（D-01…D-153）为最高权威；本文件与 `systems/*`、`v3-design.md`、`tasks.md` 冲突时按权威链修正（D-126 同步重写）。
+- **D-129 起服务端持久化玩家档案（✅ 已实现，P7/B27–B33；2026-09-19 复核）**：账号/配置槽/段位/积分/战绩/回放引用为**服务端权威**（`11-account-store.md`）；**仓库与物品仍由客户端 localStorage 持有**（D-130，混合权威，作弊面已在 `11-account-store §15.1` 登记）。**现状（2026-09-19 实测）**：`server/store/`（15 文件）、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 均已实现并接线；运行时数据根 = `DL_DATA_DIR`（默认 `<repo>/runtime`，已在 `.gitignore`）。P5 的 D-123"请求传入并回带、不持久化"口径**仅保留在 `DL_LEGACY_STATELESS=1`（默认）的遗留路径**（§2 双轨说明）。
 - `battle-walkthrough.md` 只讲系统间数值与状态传递（六条边界，D-125）；计算细节由 `examples/*` 负责。
 
 ---
@@ -31,17 +31,17 @@
 | `core/engine.js` | `createBattle(config)`（`config.logger` 注入；数值读 battle-config，含 B21 校准 `dodgeChanceBonus`(D-127)/`defK`(D-128)/`baseHitMul`）；battle：`step/runFull/judge/state`；`dealDamage`；`normalizeAction`（**行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`**，非法 → `wait` D-80）；`resolveActorCollision`。**2026-09-16 接线**：`turn` 在步骤 7 写回朝向（move/dodge/位移不改朝向）、`fullDodgeDuring` 三态（步骤 6 置位/步骤 1 复位）、`castEffects` 步骤 6 入队（下一 tick 起效 D-70）、步骤 10 `regen.hp`、撞基地用 `baseHitMul` | L4（编排 L0~L2，不依赖 L5；AI 由 server 层注入） | B8~B11/B21 |
 | `ai/ast.js` | `validateProgram`（结构 + **字段枚举校验**：`logic.op∈{and,or}`、`loop.kind∈{count,while}` 且 count 必填 `times`/while 必填 `cond`、`arith.op∈{+,-,*,/}`、`cmp.op∈{>,<,>=,<=,==,!=}` → `bad_enum`）/ `checkLegality`（分支 action 规则 D-101 + **call 行动产出定点分析**）/ `collectUsedNodeTypes` / **`validate(program, tier)`（结构+合法性+门控三段合一，B13）** / `canonicalize` / `programHash`（纯 JS sha256） / `statsOf` / `getNodeAtPath` / `migrateProgram` / `nodePathOf` / `limits` / `CURRENT_VERSION` / `MIGRATIONS`。**动作名不做校验期拒绝**（D-80：`action.name` 是自由标签，词汇表见 `ai-nodes.json` 的 `actions`） | L5（只依赖 L0/L1） | B12~B16 ✅ |
 | `ai/runtime.js` | `createContext` / `resume(ctx,snapshot,rng)` / `getVar` / `serializeContext` / `restoreContext` / `destroyContext` / `STEP_LIMIT` / `TRACE_LIMIT` / `RECURSION_LIMIT`。**序列化产物**（§4.5）：`programHash/entry/frames[{kind,path,childIndex,remaining,condValue,fnScope}]/vars/halted/stepCount/trace/stepLimit/traceLimit/recursionLimit/traceTruncated` | L5 | B14~B16 ✅ |
-| `server/index.js` | `/api/v1`（§2） | L6 | P0-8 |
+| `server/index.js` | `/api/v1`（§2）；**P7-4 新增**：Bearer 鉴权中间件（`Authorization: Bearer <token>`）、回放 LRU 64 + 参与者鉴权 + `410 replay_expired`、`DL_LEGACY_STATELESS` 双轨分派、`readBody` 超限 → `413 payload_too_large`、CORS 白名单 | L6 | P0-8 / P7-4 ✅ |
 | `server/runner.js` | `compileAi(program, logger)` / `runAiBattle({program,seed,tier,opponent,logger})` / `projectSnapshot(state,owner)` / `OPPONENTS` / `baselinePlayer` | L6 | B16 ✅ |
 | `server/box.js` | `openBoxes({seed,tier,times,items?,logger})`（校验 + 每箱独立 rng 流 + 409 映射）/ `BOX_TIMES_MAX` | L6 | B17 ✅ |
 | `server/loadout.js` | `EMPTY_LOADOUT` / `validateLoadout(loadout,{warehouse,tier})`（I-12 全案 + T-PB-9 引用完整 + T-PB-8 双引用 + 门控）/ `buildPanel`（五维/regen/special/技能参数聚合）。**2026-09-16 修复**：面板投影白名单补 `specials`/`castEffects`/`affixes`，并叠加角色插件 `hp_regen/sp_regen/mp_regen` 到 `regen`（此前 API 路径会静默丢失这些机制） | L6 | B19 |
-| `server/ranked.js` | `submitLoadout` / `takeSnapshot` / `runRankedBattle` / `promote` / `tierReward`（现行 = 无状态：段位由入参传入/回带、`pool` 由请求提供；**⏳ 计划（B31，未实现）**：D-129 起改为档案驱动——服务端抽池 + 双向记账，见 `11-account-store §7`） | L6 | P5 ✅ / B31 ⏳ |
-| `server/store/*`（L6 新增） | `store.open/close`；`store.loadArchive/saveArchive`（原子写）；`store.append(record)`（journal，group commit）；`store.applyRecord(record)`（幂等 apply）；`store.recover()`；`store.index.*`（load/rebuild/byTier/leaderboard）；`store.snapshot.*`（put/get/gc，内容寻址）；`store.sessions.*`。**唯一允许 `node:fs` 的目录** | L6 | ⏳ 计划（B27，未实现） |
-| `server/auth.js`（L6 新增） | `register` / `login` / `logout` / `changePassword` / `authenticate(token)` / 限速与失败锁定（D-129§4） | L6 + store | ⏳ 计划（B28，未实现） |
-| `server/account.js`（L6 新增） | `getSummary` / `listConfigs` / `saveConfig` / `activateConfig` / `createSlot` / `deleteSlot` / `saveWarehouseMirror` / `records(since)` / `markSeen` / `defenseSummary`（D-131/D-134） | L6 + store | ⏳ 计划（B29/B30，未实现） |
-| `server/quickmatch.js`（L6 新增） | `runQuickMatch({playerId,seed})` / `match(points)`（窗口递进 + 对手去重）/ `settle(record)`（非对称 Elo，D-133） | L6 + engine + store | ⏳ 计划（B32，未实现） |
-| `server/admin.js`（L6 新增） | `injectBots(opts)`（bot 档案，D-132§7.6）/ `rebuildIndex` / `stats` / `ban`；需 `DL_ADMIN_TOKEN` | L6 + store | ⏳ 计划（B33，未实现） |
-| `cli/index.js` | 子命令（§3）；**只走 HTTP 不 require core**（L14） | L6 | P0-8 |
+| `server/ranked.js`（P7-3 改造） | **实际实现（2026-09-19 实测）**：`takeSnapshot` / `runRankedBattle({loadout?,warehouse?,pool?,seed?,tier?,store?,playerId?})`（**档案驱动**：服务端抽池 + 双向记账；显式标注 D-132/D-136；`BOT_LD` **已删除**，`ranked.BOT_LD === undefined`）/ `promote(tier,wins)`（**只判定不落盘**；晋升在 `/ranked/run` 内落地）/ `tierReward` / `promotedAt` / `battleOne` / `batchIdOf` / `X_PROMOTE` / `TIERS`。**不存在** `submitLoadout`；`pool` 入参 → 400 `pool_forbidden`。池不足如实回报 `shortfall` | L6 + store + engine | P5 ✅ / B31 ✅ |
+| `server/store/*`（L6；✅ 已实现，B27） | 工厂 `createStore({logger,dataDir,adapter,config,ratingConfig,versions,now})` / `openStore`；适配器契约（json 与 sqlite 逐项等价）：生命周期 `open/close/isOpen`；档案 `loadArchive/saveArchive/updateArchive/listPlayerIds/getSummary`；账号 `createAccount/setPasswordHash/setBanned/setNickname/setPool/touchLastSeen/markRecordsSeen`；配置槽 `saveConfigSlot/createConfigSlot/activateConfigSlot/deleteConfigSlot/freezeSnapshot`；journal `append/appendMany/applyRecord/applyRecords/settleBattle/readRecords/findBattleRecord/replayJournal/maxSeq/compactJournal`；`index.{snapshot,get,byTier,leaderboard,rank,rebuild,save,stats}`；`snapshot.{freeze,put,get,has,list,ref,refCount,gc,stats}`；`sessions.{put,get,touch,revoke,revokePlayer,list,prune,size}`；维护 `recover/rebuildIndex/gc/stats`。**唯一允许 `node:fs` 的目录**；json 适配器实现原子写/journal 分段+group commit/物化档案/内容寻址快照库/单进程锁/崩溃恢复五步/迁移钩子 | L6 | B27 ✅（15 文件；128 用例实测） |
+| `server/auth.js`（L6；✅ 已实现，B28） | `createAuth({store,account?,logger?,now?,config?})` → `register/login/logout/changePassword/authenticate/listSessions/revokeAllSessions`；纯函数 `hashPassword/verifyPassword/validatePassword/validateUsername/randomToken/tokenHashOf/hash16/createFailureLimiter/normalizeScrypt`。并发注册经 `withRegisterLock`（8 并发同名 → 1×200 + 7×409）；`session_expired` 可达；会话**启动 prune + 读时懒清理**（无定时器）；`usernameMin/usernameMax/nicknameMax` 已消费（`nicknameMax` 夹到 ≤16） | L6 + store | B28 ✅ |
+| `server/account.js`（L6；✅ 已实现，B29/B30） | `createAccount({store,logger?,now?})` → `getSummary/listConfigs/createSlot/saveConfig/activateConfig/deleteSlot/saveWarehouseMirror/getWarehouseMirror/records({playerId,since?,limit?,role?})/markSeen/defenseSummary/setNickname/createPlayerArchive`；纯函数 `defaultLoadout/validateLoadoutOf/validateWarehouseMirror/ok/fail/statusOf/detailOf/toFailure`。`records` 返回 `records/since/latestSeq/limit/role/unread/maxSeq`（`nextSince` 已改名 **`latestSeq`**，游标推进只由 `records/seen` 负责） | L6 + store | B29/B30 ✅ |
+| `server/quickmatch.js`（L6；✅ 已实现，B32） | `createQuickMatch({store,config?,logger?,now?,runBattle?})` → `run({playerId,seed?,battleSeed?})/findOpponent/loadLeaderboard/candidatePool`；**实际匹配/结算入口 = `findMatch(input)` 与 `settle({p1Points,p2Points,winner,config})`**（纯函数，测试可独立复算）；另有 `matchCandidates/splitByCooldown/matchWindowConfig/maxSingleMatchDelta/expectedScore/ratingDelta`。非对称 Elo（0 起/cap 3000/`E=1/(1+10^((Ropp−Rself)/scale))`/`K_gain`·`K_loss` 裁剪/平局项）；窗口递进 100→600；`zeroSum` + **`nonZeroSumByDesign:true`**（D-133 有意非零和）。**不存在** `runQuickMatch({playerId,seed})/match(points)` 这两个 ICD 名（`runQuickMatch(options,input)` 仅是便捷包装） | L6 + engine + store | B32 ✅ |
+| `server/admin.js`（L6；✅ 已实现，B33） | `createAdmin({store,env,logger,now})` → `injectDebugBots/clearDebugBots/rebuildIndex/stats/ban`（`ban` 覆盖封禁与解封，写 journal `account.banned/account.unbanned`）；**令牌 + `DL_DEBUG_BOTS` 双门控**（token 缺失 → 503 `admin_token_missing`，未开调试 → 403 `debug_bots_disabled`）；`tokenEquals` 用 `crypto.timingSafeEqual` | L6 + store | B33 ✅ |
+| `cli/index.js` | 子命令（§3）；**P7-4 新增** `auth register\|login\|logout\|change-password` / `me` / `quick run` / `leaderboard` / `ranked promote`；**退出码 3 = 未鉴权**；token 来源 `--token` > `options.token` > `DL_TOKEN`。**只走 HTTP 不 require core**（L14） | L6 | P0-8 / P7-4 ✅ |
 | `server/data/schema.js` | `validateStructure(dataDir, assetsDir?)`（T-DC-1，assets 占位表经可选 assetsDir 校验，缺省推导 `<repo>/assets`）/ `validateConsistency(dataDir)`（T-DC-2）/ `validate` | 数据层 | P0-6 ✅（P0-9 扩展） |
 | `server/data/{skill-mechanics,affix-registry,ai-nodes}.json`（2026-09-16 新增机制表） | 技能类型机制（params/slots/`emit.pattern`/`_emitPatterns`）/ 词条语义（`agg`/`skillOp`/`hitEffect`/`castEffect`，未登记 id 由 gate 拦下）/ AI 真实节点 `nodes`(16)+`base`(9)+`actions` 词汇表（`bullets` 已于 2026-09-17 按用户决策移除——AI 无法观测弹幕，弹幕当 tick 全解算）。三表是 `core/skills.js`、`core/engine.js`、`core/unlock.js`、`ai/ast.js` 的**单一数据源**（代码不再按类型/词条 id 写分支） | 数据层 | 2026-09-16 数据驱动改造 |
 
@@ -51,7 +51,7 @@
 - `server/auth.js`：`createAuth({store, account?, logger?, now?, config?})` → `register({username,password,nickname?,ip?,userAgent?,warehouse?})` / `login({username,password,ip?,userAgent?})` / `logout({token})` / `changePassword({token,playerId?,oldPassword,newPassword})` / `authenticate(token)`（返回 `ctx.player`，含 `playerId/publicId/tier/points/slots`）/ `listSessions(playerId)` / `revokeAllSessions(playerId)`；纯函数导出 `hashPassword` / `verifyPassword` / `validatePassword` / `validateUsername` / `randomToken` / `tokenHashOf` / `hash16` / `createFailureLimiter` / `normalizeScrypt`。错误码：`bad_request`(400) / `weak_password`(400) / `username_taken`(409) / `invalid_credentials`(401) / `unauthorized`(401) / `too_many_attempts`(429) / `banned`(403) / `forbidden`(403)。凭据为 `{algo:'scrypt',N,r,p,salt,hash,username,usernameLower}`（`username` 原大小写、索引键 lowercase；§5.2 无 username 字段，故随 `auth` 落档）。
 - `server/account.js`：`createAccount({store, logger?, now?})` → `getSummary` / `listConfigs` / `createSlot` / `saveConfig` / `activateConfig` / `deleteSlot` / `saveWarehouseMirror({playerId,warehouse})` / `getWarehouseMirror(playerId)` / `records({playerId,since?,limit?,role?})` / `markSeen({playerId,uptoSeq})` / `defenseSummary({playerId,limit?})` / `setNickname({playerId,nickname})` / `createPlayerArchive({nickname,auth,loadout?,warehouse?,tier?})`（注册事务：冻结默认快照 → `store.createAccount`）；纯函数导出 `defaultLoadout` / `validateLoadoutOf` / `validateWarehouseMirror` / `ok` / `fail` / `statusOf`。错误码：`bad_request`(400) / `slot_not_found`(404) / `store_not_found`(404) / `slot_limit`(409) / `slot_locked`(409) / `loadout_invalid`(409) / `config_conflict`(409) / `no_active_config`(409) / `warehouse_missing`(404)。
 - 持久化路径：两文件**无任何 `node:fs`**，状态变更一律经 `server/store`（A 类 `updateArchive/saveArchive` 原子写；B 类 `createAccount/setPasswordHash/setNickname/createConfigSlot/saveConfigSlot/activateConfigSlot/deleteConfigSlot/settleBattle/markRecordsSeen` = journal append → 幂等 apply，D-134）；会话经 `store.sessions.*`（只存 `sha256(token)`）。
-- 本次交付**不含** HTTP 路由与鉴权中间件（属 P7-4），故 §2 中 `/auth/*`、`/me*` 各行的状态列与 §0 第 2 条"未实现"陈述仍待中央同步。
+- **P7-4 已接线（2026-09-19）**：HTTP 路由与 Bearer 鉴权中间件落在 `server/index.js`（§2 各行状态列为 **✅ 已实现**）；结果信封 `{ok,status,code,message,data,details}` 经 `respond()` 直接映射 HTTP；路径别名 `/auth/change-password` ≡ `/auth/password`、`/me/records/seen` ≡ `/me/seen`。P7 之前登记的两个**死码已删**（`rate_limited` 曾在旧信封里无产生点、`warehouse_invalid` 无触发点）；`rate_limited` **现已由 P7-4 的全局限速中间件真实产生**（429，600 次/分），详见 `docs/security-backlog.md` SEC-02。
 
 ## §2 HTTP API 契约 v1（`/api/v1`；唯一将来 UI 数据源，L15）
 
@@ -70,34 +70,63 @@
 | POST | `/api/v1/ai/compile` | 规范化 + programHash + 统计 | 400 `ai_too_large` | B16 ✅ 已实现 |
 | POST | `/api/v1/ai/battle` | 给定 AI 跑一场（服务端重新执行，T-AP-4） | 400 / 409 | B16 ✅ 已实现 |
 | POST | `/api/v1/battle` | 双方 loadout + AI + seed → 完整回放帧（1px 位置 + 碰撞位置；服务端重执行） | 400 `bad_request`/`bad_seed`/`bad_tier`；409 `loadout_invalid` | B22 ✅ 已实现 |
-| GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 1-based 含端分片；进程内注册表，D-123 不落盘） | 404 `unknown_replay` | B22 ✅ 已实现（**参与者鉴权 / 按需重算 / 410 `replay_expired` 为 ⏳ 计划（B31/B33，未实现）**，D-135） |
-| POST | `/api/v1/ranked/run` | 排位：抽 10 场离线结算（段位由请求传入/回带，平局不计胜；`pool` 由请求提供，池空用内置 bot 补齐） | 400 `bad_seed`/`bad_pool`/`bad_tier`；409 `no_loadout`/`loadout_invalid` | B24 ✅ 已实现（**服务端抽池 + 同段位快照 + 双向记账 D-132 为 ⏳ 计划（B31，未实现）**） |
-| POST | `/api/v1/ranked/promote` | 晋升（x=6，D-122）+ 段位奖励品质（`tier`/`wins` 由请求传入，不持久化） | 400 `bad_tier`/`bad_wins`；409 `already_max` | B25 ✅ 已实现（**读档案 / 落盘为 ⏳ 计划（B31，未实现）**） |
-| POST | `/api/v1/auth/register` | 注册（下发默认配置 + token，D-131） | 409 `username_taken` / 400 `weak_password` | ⏳ 计划（B28，未实现） |
-| POST | `/api/v1/auth/login` | 登录发 token | 401 `invalid_credentials` / 429 `too_many_attempts` | ⏳ 计划（B28，未实现） |
-| POST | `/api/v1/auth/logout` | 撤销当前会话 | 401 `unauthorized` | ⏳ 计划（B28，未实现） |
-| POST | `/api/v1/auth/password` | 改密（撤销其他会话） | 401 / 400 `weak_password` | ⏳ 计划（B28，未实现） |
-| GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 | ⏳ 计划（B29，未实现） |
-| GET | `/api/v1/me/configs` | 3 套配置全文 | 401 | ⏳ 计划（B29，未实现） |
-| POST | `/api/v1/me/configs` | 新建配置槽 | 409 `slot_limit` | ⏳ 计划（B29，未实现） |
-| PUT | `/api/v1/me/configs/:slotId` | 保存配置（校验 + 冻结快照，D-131） | 409 `loadout_invalid`/`config_conflict` | ⏳ 计划（B29，未实现） |
-| POST | `/api/v1/me/configs/:slotId/activate` | 设为出战配置 | 404 `slot_not_found` | ⏳ 计划（B29，未实现） |
-| DELETE | `/api/v1/me/configs/:slotId` | 删除槽（默认/出战槽禁止） | 409 `slot_locked` | ⏳ 计划（B29，未实现） |
-| PUT | `/api/v1/me/nickname` | 改昵称 | 400 `bad_request` | ⏳ 计划（B29，未实现） |
-| PUT | `/api/v1/me/warehouse` | 提交仓库镜像（引用校验用；非权威） | 400 | ⏳ 计划（B29，未实现） |
-| GET | `/api/v1/me/records` | 战绩（`?since=&limit=&role=`） | 401 | ⏳ 计划（B30，未实现） |
-| POST | `/api/v1/me/records/seen` | 推进未读游标 | 400 | ⏳ 计划（B30，未实现） |
-| GET | `/api/v1/me/defense` | 防守战绩汇总（被抽场次/胜负/最近） | 401 | ⏳ 计划（B30，未实现） |
-| POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，D-133） | 409 `no_opponent`/`no_active_config` | ⏳ 计划（B32，未实现） |
-| GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`） | 400 `bad_scope` | ⏳ 计划（B32，未实现） |
-| POST | `/api/v1/admin/bots` | 注入 bot 档案（`DL_ADMIN_TOKEN`） | 401/403 | ⏳ 计划（B33，未实现） |
-| POST | `/api/v1/admin/rebuild-index` | 重建索引 | 401/403 | ⏳ 计划（B33，未实现） |
+| GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 1-based 含端分片）。**P7-4 已实现**：参与者鉴权 + 进程内 **LRU 64**（`service-config.replayCacheSize`）+ 淘汰/版本不匹配/快照失效 → 410；`b_` 型归档回放**按需重算**（不受 `DL_LEGACY_STATELESS` 影响） | 403 `replay_forbidden`；404 `unknown_replay`；410 `replay_expired` | B22 ✅ / P7-4 ✅（D-135） |
+| POST | `/api/v1/ranked/run` | 排位：**双轨（P7-4）**。① 有 Bearer token → **档案驱动**：服务端抽池（`byTier ∩ 可用快照 ∩ 未封禁 ∩ 在池 ∩ 排除自己`）、双向记账（发起者 attack 同步结算；防守方离线只记 `defense`，**不掉段不掉分**）、去重裁定（`strict` ≥72h 优先 / `relaxed` 24–72h 启用并记 `relaxed:true` / **间隔 <24h 两池皆拒——24h 硬底线**）、池不足**如实回报 `shortfall`**（**禁止 bot 充数**，D-152）、`batchId = f(playerId,seed)` 幂等、晋升在此落地。② 无 token 且 `DL_LEGACY_STATELESS=1`（默认）→ 遗留无状态（`loadout/warehouse/pool/tier` 由请求传入）；`=0` → 401 | 400 `bad_seed`/`bad_tier`/`pool_forbidden`（**传入 `pool` → 服务端抽池不接受**）/`bad_pool`（遗留路径）；401 `unauthorized`；409 `no_loadout`/`loadout_invalid`/`no_active_config`/`store_not_found`；503 `store_unavailable` | B24 ✅ / B31 ✅（D-132/D-136） |
+| POST | `/api/v1/ranked/promote` | 晋升（x=6，D-122）+ 段位奖励品质。有 token → **段位以档案为准**（入参 `tier` 不一致 → 403）；**只判定不落盘**（落盘在 `/ranked/run`）；无 token → 遗留口径（`tier`/`wins` 由请求传入） | 400 `bad_tier`/`bad_wins`；401 `unauthorized`；403 `forbidden`；409 `already_max` | B25 ✅ / B31 ✅ |
+| POST | `/api/v1/auth/register` | 注册（下发默认配置 + token，D-131）；**并发同名注册闭合**（`withRegisterLock`） | 400 `weak_password`/`bad_request`；409 `username_taken` | B28 ✅ 已实现 |
+| POST | `/api/v1/auth/login` | 登录发 token | 401 `invalid_credentials`；429 `too_many_attempts` | B28 ✅ 已实现 |
+| POST | `/api/v1/auth/logout` | 撤销当前会话 | 401 `unauthorized` | B28 ✅ 已实现 |
+| POST | `/api/v1/auth/password` | 改密（撤销其他会话）；**别名** `/auth/change-password` ≡ 本行 | 401 / 400 `weak_password` | B28 ✅ 已实现 |
+| GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 | B29 ✅ 已实现 |
+| GET | `/api/v1/me/configs` | 3 套配置全文 | 401 | B29 ✅ 已实现 |
+| POST | `/api/v1/me/configs` | 新建配置槽 | 401；409 `slot_limit` | B29 ✅ 已实现 |
+| PUT | `/api/v1/me/configs/:slotId` | 保存配置（校验 + 冻结快照，D-131） | 401；409 `loadout_invalid`/`config_conflict` | B29 ✅ 已实现 |
+| POST | `/api/v1/me/configs/:slotId/activate` | 设为出战配置 | 401；404 `slot_not_found` | B29 ✅ 已实现 |
+| DELETE | `/api/v1/me/configs/:slotId` | 删除槽（默认/出战槽禁止） | 401；409 `slot_locked` | B29 ✅ 已实现 |
+| PUT | `/api/v1/me/nickname` | 改昵称（`nicknameMax` 夹到 ≤16） | 400 `bad_request` | B29 ✅ 已实现 |
+| PUT | `/api/v1/me/warehouse` | 提交仓库镜像（引用校验用；非权威） | 400 | B29 ✅ 已实现 |
+| GET | `/api/v1/me/records` | 战绩（`?since=&limit=&role=`）；返回 `records/since/latestSeq/limit/role/unread/maxSeq` | 400 `bad_request`；401 | B30 ✅ 已实现 |
+| POST | `/api/v1/me/records/seen` | 推进未读游标（**游标推进的唯一入口**）；**别名** `/me/seen` ≡ 本行 | 400 `bad_request`；401 | B30 ✅ 已实现 |
+| GET | `/api/v1/me/defense` | 防守战绩汇总（被抽场次/胜负/最近） | 401 | B30 ✅ 已实现 |
+| POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，D-133）；响应 `seed` = **对局种子**（入参 `seed` 只影响匹配抽选） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`/`no_active_config`/`store_not_found` | B32 ✅ 已实现 |
+| GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`；只回 `publicId/nickname/points/tier`，**不回 `playerId`**） | 400 `bad_scope` | B30/B32 ✅ 已实现 |
+| POST | `/api/v1/admin/bots` | 注入调试 bot 档案（**双门控**：`DL_ADMIN_TOKEN` + `DL_DEBUG_BOTS=1`） | 401/403 `forbidden`；403 `debug_bots_disabled`；503 `admin_token_missing` | B33 ✅ 已实现 |
+| POST | `/api/v1/admin/rebuild-index` | 重建索引 | 401/403；503 `admin_token_missing` | B33 ✅ 已实现 |
+| POST | `/api/v1/admin/stats` \| `/clear-bots` \| `/ban` \| `/unban` | 运维：统计 / 清调试 bot / 封禁 / 解封（**封禁与解封写 journal** `account.banned`/`account.unbanned`） | 400 `bad_request`；404 `store_not_found`；503 `admin_token_missing` | B33 ✅ 已实现 |
 | GET/POST | `/api/v1/log-level` | 日志总控（非 production） | 400 `bad_level` | P0-8 ✅ 已实现 |
 
 - 统一信封：成功 `{ok:true, data, log:{level,events}}`；失败 `{ok:false, error:{code,message,details}}`。
 - 随机性由请求 `seed` 显式传入（缺省服务端生成并**回带**）（T-AP-5，D-90/D-91）。
-- **鉴权（⏳ 计划，未实现）**：设计口径为 `Authorization: Bearer <token>`；需鉴权端点缺失/失效 → `401`，越权 → `403`（D-129§4）。HTTP 状态语义扩展为 `400/401/403/404/409/410/429/500`。**现状（2026-09-16 实测）**：全链路无鉴权分支（`server/index.js` 不读 `Authorization`；`server/auth.js` 不存在），已登记于 `docs/security-backlog.md` SEC-01。
-- **兼容（⏳ 计划，未实现）**：设计口径为既有无状态端点（`box`/`warehouse*`/`loadout`/`panel`/`ai/*`/`battle`）保留不变，由 `DL_LEGACY_STATELESS`（默认 `1`）控制、置 `0` 返回 `410 deprecated`；**该环境变量当前未被代码读取**（SEC-22）。
+- **鉴权（✅ 已实现，P7-4）**：`Authorization: Bearer <token>`；需鉴权端点缺失/失效 → `401`（含 `session_expired`），越权 → `403`（D-129§4）。HTTP 状态语义为 `400/401/403/404/409/410/413/429/500/503`（**实测可达**）。`server/index.js` 的 `authenticate()` 用 `store.sessions.peek()` 区分"不存在"与"刚过期"；`playerId` **不回带**（admin 运维通道除外）。
+- **兼容与双轨（✅ 已实现，P7-4）**：既有无状态端点（`box`/`warehouse*`/`loadout`/`panel`/`ai/*`/`battle`）保留不变，由 **`DL_LEGACY_STATELESS`（默认 `1`）** 控制；置 `0` → 这些遗留端点返回 `410 deprecated`（`ranked/run|promote` 两行在无 token 时改为 `401 unauthorized`，不走 410）。`b_` 型归档回放**不受该开关影响**。
+- **路径别名（两条都注册，✅ 已实现）**：`/api/v1/auth/change-password` ≡ `/api/v1/auth/password`；`/api/v1/me/seen` ≡ `/api/v1/me/records/seen`。
+
+### §2.1 P7 新增错误码（✅ 已实现并实测）
+
+| code | HTTP | 触发 |
+|---|---|---|
+| `unauthorized` | 401 | 缺 token / token 无效 |
+| `session_expired` | 401 | 会话过期（`peek()` 判定） |
+| `invalid_credentials` | 401 | 用户名或密码错误（不区分） |
+| `too_many_attempts` | 429 | 登录失败锁定 |
+| `rate_limited` | 429 | 全局限速命中（**已实现**：默认 600 次/分，登录按 `playerId`、未登录按 IP；昂贵端点并发闸门仍未实现，见 SEC-02） |
+| `forbidden` | 403 | 越权 / 段位与档案不一致 / 非管理员 |
+| `banned` | 403 | `flags.banned` |
+| `replay_forbidden` | 403 | 非该场参与者 |
+| `weak_password` | 400 | 密码长度/字符不满足 |
+| `payload_too_large` | 413 | 请求体超 1MB（**原为 500 `internal_error`**） |
+| `deprecated` | 410 | 遗留无状态端点被 `DL_LEGACY_STATELESS=0` 关闭 |
+| `replay_expired` | 410 | 帧 LRU 淘汰 / 引擎或数据版本不匹配 / 快照不可用 |
+| `username_taken` | 409 | 用户名已存在（大小写不敏感） |
+| `slot_limit` / `slot_locked` / `slot_not_found` | 409 / 409 / 404 | 槽位上限 / 默认或出战槽禁删 / 槽不存在 |
+| `config_conflict` | 409 | 乐观锁冲突（`baseUpdatedAt` 不匹配） |
+| `no_active_config` | 409 | 出战配置或快照缺失（不变量破损） |
+| `no_opponent` | 409 | 快速对战匹配不到对手（候选不足/窗口用尽） |
+| `pool_forbidden` | 400 | 排位请求传入 `pool`（服务端抽池，D-136） |
+| `store_unavailable` | 503 | 未装配档案存储（`DL_DATA_DIR` 未启用） |
+| `admin_token_missing` | 503 | `DL_ADMIN_TOKEN` 未配置（管理端整体不可用） |
+| `debug_bots_disabled` | 403 | 未设 `DL_DEBUG_BOTS=1`（调试注入默认关闭） |
+| `store_adapter_unavailable` | — | `DL_STORE=sqlite`（`open()` 抛错，不静默退回 json） |
 
 ## §3 CLI 契约 v1（本轮唯一"操作台"，L14）
 
@@ -108,12 +137,19 @@ panel --loadout <file>
 ai validate|compile|battle --file ai.json [--tier rare] [--opponent kiter]
 battle --p1 a.json --p2 b.json --seed 7 [--out replay.json]
 replay --file replay.json [--tick N]        # 文本回放（含 px 位置）
-ranked run --seed 11                        # D-123：不持久化
+ranked run --seed 11 [--tier <t>] [--loadout <file>] [--pool <file>]
+                                            # 有 token → 档案驱动；无 token → 遗留口径（P7-3/P7-4 双轨）
+ranked promote [--wins <n>] [--tier <t>] [--token <t>]   # 晋升判定（登录时读档案）
+auth register|login|logout|change-password  # P7-4：账号与会话
+me [--token <t>]                            # P7-4：档案摘要（段位/积分/未读/槽位）
+quick run [--seed <n>] [--token <t>]        # P7-4：快速对战（非对称 Elo 双向结算）
+leaderboard [--limit <n>] [--scope global|tier:<t>]       # P7-4：排行榜
 log --level trace --channel bullets=trace
 health | data <table>
 ```
-- 退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误（T-CLI-2）。
-- **只走 HTTP，不 require core**；同时是接口完整性验收工具（T-CLI-1 闭环）。
+- 退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误（T-CLI-2）；**P7-4 新增 `3` = 未鉴权**（401 → 3，便于脚本区分）。
+- **token 来源优先级（P7-4）**：`--token <t>` > `options.token`（进程内调用）> 环境变量 `DL_TOKEN`；`--save-token` 写文件时权限 0600。
+- **只走 HTTP，不 require core**；同时是接口完整性验收工具（T-CLI-1 闭环）。**未实现（后续批次）**：`configs *`、`records`、`defense`、`admin *`、`replay --battle <battleId>`。
 
 ## §4 冻结数据结构（v1）
 
@@ -124,11 +160,12 @@ health | data <table>
 5. **AiContext 序列化产物**（`runtime.serializeContext` 实际字段）：`programHash/entry/frames[{kind,path,childIndex,remaining,condValue,fnScope}]/vars/halted/stepCount/trace/stepLimit/traceLimit/recursionLimit/traceTruncated`（**可序列化**；帧存稳定 `path` + `fnScope` 快照，**不含** `nodeId/phase/scopeDepth`）。
 6. **LogRecord**：`seq/ts/cid/tick/level/levelValue/channel/event/msg/data`（§6 登记）。
 7. **battle-config.json**（D-117）：§2.5.7 冻结值逐值校验（T-DC-1，schema.js）。
-8. **PlayerArchive（D-129/D-131）**：`archiveVersion/playerId/publicId/nickname/auth/progress{tier,peakTier}/rating{points,peakPoints,games,wins,losses,draws}/configs{slots[≤3],activeSlotId,activeSnapshotHash}/pool/record{appliedSeq,recent[],stats{attack,defense},unread}/flags`；字段详见 `11-account-store §5.2`。`playerId` **不对外返回**（只暴露 `publicId`）。
+8. **PlayerArchive（D-129/D-131，✅ 已实现）**：`archiveVersion/playerId/publicId/nickname/auth/progress{tier,peakTier,lastBatchId}/rating{points,peakPoints,games,wins,losses,draws}/configs{slots[≤3],activeSlotId,activeSnapshotHash}/pool{inPool,enteredAt,lastDrawnAt,drawnCount,lastOpponentAt}/record{appliedSeq,recent[],stats{attack,defense},unread}/flags{banned,banReason,isBot,cheatSuspect,unverifiedLoadout,rebuiltFromCheckpoint}`；字段全表详见 `11-account-store §5.2`（含**文档外补录 5 字段**：`auth.username`/`auth.usernameLower`、`progress.lastBatchId`、`flags.banReason`、`flags.rebuiltFromCheckpoint`、`pool.lastOpponentAt`）。`playerId` **不对外返回**（只暴露 `publicId`）；**每档案 `appliedSeq` ≠ 全局 `index.seq`**。
 9. **Snapshot（D-135）**：`{hash, engineVersion, dataVersion, configHash, loadout, frozenAt}`；内容寻址存于 `runtime/snapshots/`，不可变，冻结后深拷贝 + canonical hash。
 10. **BattleRecord（D-134/D-135）**：journal 行 `{seq,at,v,type:'battle.recorded',battleId,mode,batchId,matchIndex,seed,p1{},p2{},verdict{},versions{},replay{}}`；**不含帧**，回放按需重算。
-11. **rating-config.json（D-133）**：`{base,cap,scale,kBase,kMin,kMax,drawFactor,matchWindowStart,matchWindowStep,matchWindowMax,opponentCooldownHours,dailyBattleLimit,rounding}`。
-12. **service-config.json（D-129）**：`{auth{...},session{ttlDays,maxPerPlayer},config{maxSlots:3},record{recentLimit},store{archiveCacheSize,snapshotCacheSize},journal{fsyncMode,compactAfterDays},snapshot{retentionDays},replayCacheSize,pool{ttlDays,opponentCooldownHours}}`。
+11. **rating-config.json（D-133，✅ 已存在）**：`{base:0,cap:3000,scale:400,kBase:32,kMin:8,kMax:64,drawFactor:0.5,matchWindowStart:100,matchWindowStep:100,matchWindowMax:600,opponentCooldownHours:24,dailyBattleLimit:0,rounding:'half_up',promoteWins:6,batchSize:10}`。**表为数值单一来源**，代码默认值兜底 = `server/store/config.js` 的 `DEFAULT_RATING_CONFIG`，schema 冻结值 `RATING_CONFIG_FROZEN` + 跨字段不变量校验，**缺表必 FAIL**。
+12. **service-config.json（D-129，✅ 已存在）**：`{auth{scrypt{N,r,p},saltBytes,hashBytes,usernameMin:3,usernameMax:24,nicknameMax:16,passwordMin,passwordMax,passwordMaxBytes,maxFailures,lockMinutes,rateLimitPerMinute},session{ttlDays,maxPerPlayer,maxTotalDays},config{maxSlots:3,slotIdPrefix},record{recentLimit:100},store{archiveCacheSize,snapshotCacheSize},journal{fsyncMode,compactAfterDays,bufferBytes},snapshot{retentionDays},replayCacheSize:64,pool{ttlDays,opponentCooldownHours}}`。`usernameMin/usernameMax/nicknameMax` **已被消费**（`nicknameMax` 在写入时夹到 ≤16）；`pool.ttlDays` 参数已留、**未启用**（默认 0 = 不过期）。校验与兜底同 §4.11。
+13. **战绩视图响应（`GET /api/v1/me/records`，✅ 已实现，B30）**：`{records[], since, latestSeq, limit, role, unread{attack,defense,fromSeq}, maxSeq}`。**字段口径**：`since` = 本次查询起点（缺省 = 档案未读游标 `unread.fromSeq`）；`latestSeq` = **本次返回里最大的 seq**（**原名 `nextSince` 已弃用**；展示/去重用途，**不可当 `since` 回传**——`limit` 截断时会跳过更早的未读战绩）；`maxSeq` = 全局 journal 水位（`store.maxSeq()`）；`role` = `attacker`/`defender` 过滤（缺省 `null`）。**游标推进只由 `POST /me/records/seen` 负责**。`GET /me/defense` 返回 `{drawnCount, stats, recent[], unread}`。
 
 ## §5 D 编号落点表（T-DC-8 机器核对：每条 D-xx 在本文件或数据表文本中出现）
 
@@ -188,18 +225,18 @@ health | data <table>
 | L5 | ai.runtime | `ai.resume`(debug) / `ai.node`(trace) / `ai.action`(info) / `ai.step.limit`(warn) / `ai.depth.limit`(warn) / `trace.truncated`(warn) / `ai.error`(err) | B14~B15 |
 | L6 | api | `api.req`(info) / `api.res`(info) / `api.err`(error) / `api.reject`(warn，业务拒绝带 count/errors，B19) | P0-8/B19 |
 | L6 | cli | `cli.invoke`(info) / `cli.result`(info) | P0-8 |
-| L6 | ranked | `ranked.snapshot`(debug) / `ranked.match`(info) / `ranked.promote`(info) / `ranked.pool`(debug) / `quick.match`(info) / `quick.settle`(info) | B24~B25/B31/B32 |
-| L6 | store | `store.open/close`(info) / `store.read`(trace) / `store.write`(debug) / `store.journal.append`(debug) / `store.journal.flush`(trace) / `store.journal.truncate`(warn) / `store.journal.compact`(info) / `store.recover`(info) / `store.index.rebuild`(info) / `store.migrate`(info) / `store.snapshot.write`(debug) / `store.snapshot.gc`(info) / `store.snapshot.missing`(warn) / `store.auth.register`(info) / `store.auth.login`(info) / `store.auth.reject`(warn) / `store.auth.lock`(warn) / `store.abuse.suspect`(warn) / `store.error`(error) | B27~B33 |
+| L6 | ranked | `ranked.snapshot`(debug) / `ranked.match`(info) / `ranked.promote`(info) / `ranked.pool`(debug) / `quick.match`(info) / `quick.settle`(info) | B24~B25 ✅ / B31 ✅ / B32 ✅（`quick.*` **已生效**：`PREFIX_MAP.ranked` 已含 `'quick'`） |
+| L6 | store | `store.open/close`(info) / `store.read`(trace) / `store.write`(debug) / `store.journal.append`(debug) / `store.journal.flush`(trace) / `store.journal.truncate`(warn) / `store.journal.compact`(info) / `store.recover`(info) / `store.index.rebuild`(info) / `store.migrate`(info) / `store.snapshot.write`(debug) / `store.snapshot.gc`(info) / `store.snapshot.missing`(warn) / `store.auth.register`(info) / `store.auth.login`(info) / `store.auth.reject`(warn) / `store.auth.lock`(warn) / `store.abuse.suspect`(warn) / **`store.player.removed`(info，墓碑删除 `player.removed`，2026-09-19)** / `store.error`(error) | B27~B33 ✅ |
 | P6 | store/view/render/editor | `store.dispatch` / `view.render` / `render.frame` / `render.sprite` / `editor.ast.*` —— 仅登记 | P6 |
 
 - 跨系统边界事件统一 `debug` 级：`{dir:'in'|'out', fn, args:摘要, result:摘要}`（§4.6 注）。
 - 命名规范由 `scripts/gate.js` 项 6① 强制（通道注册表 + 前缀映射，T-DC-6）。
-- **D-129 新增事件的落点要求**：`store.*` 复用既有 `store` 通道（无需改注册表）；`quick.*` 必须把 `'quick'` 加入 `scripts/gate.js` 的 `PREFIX_MAP.ranked` 数组，否则门禁项 6 失败（`11-account-store §12.1`）。
+- **D-129 新增事件的落点要求（✅ 已生效）**：`store.*` 复用既有 `store` 通道（无需改注册表）；`quick.*` 必须把 `'quick'` 加入 `scripts/gate.js` 的 `PREFIX_MAP.ranked` 数组，否则门禁项 6 失败（`11-account-store §12.1`）——**已加入，`quick.match`/`quick.settle` 已实际产生**。
 
 ## §7 环境与门禁契约（引用）
 
 - 测试 runner / 覆盖率 / 嵌套 run() 限制：`tests/README.md` + `scripts/README.md`（**4 条实测机制**，勿违反）。
-- 数据表契约与冻结数值：`server/data/README.md`（新增 `service-config.json`、`rating-config.json`，须同步 `schema.js` 与门禁项 4/5）。
-- 目录分层与架构检查：`scripts/README.md`「check-arch.js 契约」。**D-129 新增文件必须登记**：`/^server\/store\//` → 6、`/^server\/(auth|account|quickmatch|admin)\.js$/` → 6（否则 `unknown-layer` 违规）。
-- 新增环境变量（**⏳ 计划（B27–B33），未实现**）：`DL_DATA_DIR`（运行时数据根，默认 `<repo>/runtime`）、`DL_STORE`（`json`|`sqlite`，默认 `json`）、`DL_ADMIN_TOKEN`、`DL_LEGACY_STATELESS`（默认 `1`）、`DL_CORS_ORIGIN`（默认空）。**现状（2026-09-16 实测）**：代码只读 `DL_PORT`/`DL_HOST`（`server/index.js`）与 `DL_LOG_LEVEL`/`DL_LOG_CHANNELS`（`shared/log.js`），上述五个变量零读取点（`docs/security-backlog.md` SEC-22）。
-- 运行时数据目录 `runtime/` **必须** `.gitignore`；测试用 `DL_DATA_DIR` 指向临时目录（`tests/helpers/store.js`）。**该目录与 helper 当前均不存在（同上：计划未实现）。**
+- 数据表契约与冻结数值：`server/data/README.md`（`service-config.json`、`rating-config.json` **已落地**，schema 冻结值 + 跨字段不变量，缺表必 FAIL；见门禁项 4/5）。
+- 目录分层与架构检查：`scripts/README.md`「check-arch.js 契约」。**D-129 新增文件必须登记**：`/^server\/store\//` → 6、`/^server\/(auth|account|quickmatch|admin)\.js$/` → 6（否则 `unknown-layer` 违规）。**已登记。**
+- 新增环境变量（**✅ 已接线，P7-4**）：`DL_DATA_DIR`（运行时数据根，默认 `<repo>/runtime`）、`DL_STORE`（`json`|`sqlite`，默认 `json`；`sqlite` 适配器 `open()` 抛 `store_adapter_unavailable`）、`DL_ADMIN_TOKEN`、`DL_LEGACY_STATELESS`（默认 `1`）、`DL_CORS_ORIGIN`（默认空）。另有 `DL_DEBUG_BOTS`（调试 bot 注入第二道门控，默认关闭）。**现状（2026-09-19 实测）**：五个变量均已在 `server/index.js` / `server/store/index.js` / `server/admin.js` 有真实读取点（`docs/security-backlog.md` SEC-22 已回填处置）。
+- 运行时数据目录 `runtime/` **必须** `.gitignore`（已加入）；测试用 `DL_DATA_DIR` 指向临时目录（`tests/helpers/store.js`）。**该目录与 helper 均已在库**；目录布局含 `lock`、`index.json`、`sessions.json`、`players/<shard>/`、`snapshots/`、`journal/*.jsonl` 与 `journal/*.checkpoint.json`（`docs/server.md` §9.1）。

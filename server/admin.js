@@ -146,16 +146,17 @@ function createAdmin(options) {
   }
 
   // 注水调试账号（真实档案）：需要 token + DL_DEBUG_BOTS=1 双门控
+  // P2-7：**令牌校验前置**——未配置/错误 `DL_ADMIN_TOKEN` 时先返回 503/403，而不是先撞 debug 门控
+  //   得到含混的 403 debug_bots_disabled（那会让"管理面不可用"看起来像"调试开关没开"）。
   async function injectDebugBots(input) {
-    const o = input || {};
-    if (!debugEnabled()) {
-      return {
-        status: 403,
-        code: 'debug_bots_disabled',
-        message: `调试注入默认关闭：需显式设置 ${DEBUG_ENV}=1（占位 bot 不参与正常路径，见 plan-p7-playable §P7-3）`,
-      };
-    }
-    return withToken(o, 'injectDebugBots', async () => {
+    return withToken(input, 'injectDebugBots', async (o) => {
+      if (!debugEnabled()) {
+        return {
+          status: 403,
+          code: 'debug_bots_disabled',
+          message: `调试注入默认关闭：需显式设置 ${DEBUG_ENV}=1（占位 bot 不参与正常路径，见 plan-p7-playable §P7-3）`,
+        };
+      }
       const tier = o.tier === undefined ? 'common' : o.tier;
       if (!TIERS.includes(tier)) {
         return { status: 400, code: 'bad_tier', message: `非法段位 ${tier}（可选: ${TIERS.join('/')}）` };

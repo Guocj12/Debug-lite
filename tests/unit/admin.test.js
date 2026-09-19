@@ -90,6 +90,16 @@ test('T-AD-4 调试注入双门控：DL_DEBUG_BOTS 未开 → 403（即使令牌
   assert.equal(disabled.code, 'debug_bots_disabled');
   assert.equal((await fx.store.listPlayerIds()).length, 0, '门控关闭时一个档案都不建');
 
+  // P2-7：令牌校验前置——未配置/错误令牌必须先返回 503/403，而不是含混的 403 debug_bots_disabled
+  const noToken = makeAdmin(fx, {}); // 未配置 DL_ADMIN_TOKEN（debug 也未开）
+  const noTokenRes = await noToken.injectDebugBots({ count: 1 });
+  assert.equal(noTokenRes.status, 503, '令牌未配置 → 503（修前 403 debug_bots_disabled）');
+  assert.equal(noTokenRes.code, 'admin_token_missing');
+  const wrongToken = await off.injectDebugBots({ adminToken: 'wrong', count: 1 });
+  assert.equal(wrongToken.status, 403);
+  assert.equal(wrongToken.code, 'forbidden', '令牌错误 → 403 forbidden（修前 debug_bots_disabled）');
+  assert.equal((await fx.store.listPlayerIds()).length, 0, '被拒时一个档案都不建');
+
   const admin = makeAdmin(fx, { DL_ADMIN_TOKEN: TOKEN, DL_DEBUG_BOTS: '1' });
   assert.equal(admin.debugEnabled(), true);
   const res = await admin.injectDebugBots({ adminToken: TOKEN, count: 2, tier: 'common', points: 100, botKey: 'k1' });

@@ -544,7 +544,8 @@ function validateStructure(dataDir, assetsDir) {
     if (!isNum(sc.snapshot && sc.snapshot.retentionDays) || sc.snapshot.retentionDays < 0) problems.push('service-config.snapshot.retentionDays 应为 ≥0 的数');
     if (!isInt(sc.replayCacheSize) || sc.replayCacheSize < 1) problems.push('service-config.replayCacheSize 应为正整数（帧 LRU 上限）');
     const pl = sc.pool || {};
-    if (!isNum(pl.ttlDays) || pl.ttlDays < 0) problems.push('service-config.pool.ttlDays 应为 ≥0 的数（0 = 池不过期）');
+    // P2-8：`pool.ttlDays` 只做形状校验 —— 当前**无任何消费方**（参数已留、未启用，与 rating.dailyBattleLimit 同口径）
+    if (!isNum(pl.ttlDays) || pl.ttlDays < 0) problems.push('service-config.pool.ttlDays 应为 ≥0 的数（0 = 池不过期；当前参数已留、未启用）');
     if (!isNum(pl.opponentCooldownHours) || pl.opponentCooldownHours < 0) problems.push('service-config.pool.opponentCooldownHours 应为 ≥0 的数');
   }
 

@@ -7,7 +7,8 @@
  *    - 池 = `store.index.byTier(tier)` ∩ 有可用快照 ∩ 未封禁 ∩ 在池内（服务端抽池，客户端不得自选对手 D-136）；
  *    - 候选不足 N 场 → **少打几场并如实回报 `shortfall`**（不注入 bot 充数）；
  *    - 内置 bot 补齐逻辑已删除；仅保留 `DL_DEBUG_BOTS=1` 的**显式调试开关**（默认关闭），
- *      且开启时响应 `debugBots:true` + 事件 `ranked.pool` 标注 `debug:true`（见 inspectDebugBots）。
+ *      且开启时经事件 `ranked.pool`（debug 级）与启动 warn 标注 `debug:true`（见 inspectDebugBots）；
+ *      **响应体不含 `debugBots` 字段**（P2-2：旧注释声称响应含 `debugBots:true`，实际从不产生 → 注释已对齐实现）。
  *
  * 结算（D-132/D-134）：发起者同步结算；每场经 `store.settleBattle` 先写 journal（battle.recorded）再 apply **双方**档案：
  *    - 发起者 = attacker（stats.attack/recent/unread.attack）；
@@ -28,7 +29,8 @@ const archiveMod = require('./store/archive.js');
 const ledger = require('./store/ledger.js');
 
 const TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
-const X_PROMOTE = 6; // D-122：wins > 6（10 场胜 7）晋升
+const X_PROMOTE = 6; // D-122 旧阈值常量（wins > 6 = 10 场胜 7 晋升）。P2-3 起判定单一真源 = `rating-config.promoteWins`
+//   （ledger.promoteAfterBatch，缺省 6）；本常量仅保留导出兼容（文档 §10-ranked 仍登记该导出），不再参与判定。
 const DEFAULT_BATCH_SIZE = 10; // §7.2：一轮排位批次 10 场（rating-config.batchSize 可覆盖）
 const REQUESTED_MIN = 1;
 const REQUESTED_MAX = 10;
@@ -52,14 +54,105 @@ function takeSnapshot(loadoutObj, L) {
 /* ---------- 默认出战配置构造（§5.3 注册即默认配置：role_bal + 3 个 common 技能 + 兜底 AI）
  * 说明：本函数**不是**"占位 bot 补齐"，而是"新玩家默认配置"的构造器（account.defaultLoadout 用它）。
  * B24 审查 P1-1：common 技能模板实际仅 2 个 —— 循环取满 3 槽（validateLoadout 不查 templateId 唯一）。
+ *
+ * P2-5（2026-09-19）：旧默认 AI 只有 `move_left` → 双方永不攻击 → 真实玩家池**几乎恒平局**
+ *（审查 probe R1 5/5 平、R6 6/6 平）→ Elo 无区分度、P7-6 的"自然积分分布"不成立。
+ * 现改为 **3 族 × 3 子变体 = 9 个交战程序**，按玩家身份稳定哈希派生（无身份 → steady/0，保持旧调用点确定性）：
+ *   steady     稳健：残血先防 → 拉到中距 → 背后转身 → 主技能开火（远程位 = 槽 1）
+ *   aggressive 激进：贴脸（64 = minGapPx）→ 近战位/点射位开火
+ *   kite       风筝：中远距（288/320/448 < 射程 512px）开火；过远才靠近（不后退 → 不背身空放）
+ * 子变体不改"会交战"这一事实，只打破"同族完全对称 → 恒平局"（实测：9 程序两两 72 有序对中仅 10 对恒平局）。
  ---------- */
-function buildDefaultLoadout() {
+
+// AI 程序构造小工具（只用 base 节点 + if：任意段位可校验通过；version 2 = 当前 AST 版本）
+const aiLit = (value) => ({ type: 'literal', value });
+const aiGet = (path) => ({ type: 'get', path });
+const aiAct = (name) => ({ type: 'action', name });
+const aiSeq = (statements) => ({ type: 'seq', statements });
+const aiCmp = (op, left, right) => ({ type: 'cmp', op, left, right });
+const aiArith = (op, left, right) => ({ type: 'arith', op, left, right });
+const aiIf = (cond, thenNode, elseNode) => ({ type: 'if', cond, then: thenNode, else: elseNode });
+const aiGap = () => aiArith('-', aiGet('enemy.x'), aiGet('self.x')); // 敌我 x 差（正 = 敌在右）
+
+const DEFAULT_AI_PRESETS = Object.freeze(['steady', 'aggressive', 'kite']);
+
+// 预设 → 技能槽模板顺序（槽位 = AI 里的 `skill:skillN`；顺序即"主武器位"）
+const PRESET_SKILL_ORDER = Object.freeze({
+  steady: Object.freeze(['skill_straight_precise', 'skill_melee_whirl', 'skill_melee_whirl']),
+  aggressive: Object.freeze(['skill_melee_whirl', 'skill_straight_precise', 'skill_melee_whirl']),
+  kite: Object.freeze(['skill_straight_precise', 'skill_straight_precise', 'skill_melee_whirl']),
+});
+
+// 族 × 子变体 → 参数（阈值/开火槽/残血防守线）。参数**由探针实测选定**（同族子变体必须打破
+// "完全对称 → 恒平局"：见报告 P2-5 实测矩阵；当前 9 个程序两两 36 对中仅 5 对恒平局）。
+const AI_VARIANT_PARAMS = Object.freeze({
+  steady: Object.freeze([
+    Object.freeze({ threshold: 160, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 192, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 320, slot: 'skill:skill1', defendHp: 30 }),
+  ]),
+  kite: Object.freeze([
+    Object.freeze({ threshold: 288, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 320, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 448, slot: 'skill:skill1', defendHp: null }),
+  ]),
+  aggressive: Object.freeze([
+    Object.freeze({ threshold: 64, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 64, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 64, slot: 'skill:skill2', defendHp: 30 }),
+  ]),
+});
+
+// 预设 → AI 程序（每次调用返回**新对象**：调用方修改不得污染其它玩家/后续调用）
+// 统一形状：`近身后退? ↔ 过远前进? ↔ 否则开火`（自下而上构造，避免深嵌套）。
+// `sub`（0..2）= 同一族内的**子变体**（阈值/开火槽/防守线不同）：仅靠 3 族时"同族对同族"完全对称 → 恒平局，
+//   故身份哈希再选一档子变体（共 9 个程序），把同族镜像的对称性也打破。
+function aiProgramOf(preset, sub) {
+  const table = AI_VARIANT_PARAMS[preset] || AI_VARIANT_PARAMS.steady;
+  const params = table[Number.isInteger(sub) && sub >= 0 && sub < table.length ? sub : 0];
+  const fire = aiSeq([aiAct(params.slot)]);
+  const stepBack = aiIf(aiCmp('<', aiGap(), aiLit(-params.threshold)), aiSeq([aiAct('move_left')]), fire);
+  const stepForward = aiIf(aiCmp('>', aiGap(), aiLit(params.threshold)), aiSeq([aiAct('move_right')]), stepBack);
+  const body = params.defendHp === null
+    ? aiSeq([stepForward])
+    : aiSeq([aiIf(aiCmp('<', aiGet('self.hp'), aiLit(params.defendHp)), aiSeq([aiAct('defend')]), stepForward)]);
+  return { type: 'program', version: 2, body };
+}
+
+// 身份 → 预设族 + 子变体（稳定哈希：同玩家恒定；无身份 → steady/0，保持旧调用点确定性）
+function identityKeyOf(identity) {
+  if (typeof identity === 'string' && identity !== '') return identity;
+  if (identity && typeof identity === 'object') {
+    for (const k of ['publicId', 'playerId', 'botKey', 'username']) {
+      if (typeof identity[k] === 'string' && identity[k] !== '') return identity[k];
+    }
+  }
+  return null;
+}
+
+function variantOf(identity) {
+  const key = identityKeyOf(identity);
+  if (key === null) return { preset: DEFAULT_AI_PRESETS[0], sub: 0, hashed: false };
+  const digest = crypto.createHash('sha256').update(`dl-default-ai|${key}`).digest();
+  return {
+    preset: DEFAULT_AI_PRESETS[digest.readUInt32BE(0) % DEFAULT_AI_PRESETS.length],
+    sub: (digest.readUInt32BE(4) >>> 0) % 3,
+    hashed: true,
+  };
+}
+
+function presetOf(identity) {
+  return variantOf(identity).preset;
+}
+
+function buildDefaultLoadout(identity) {
   const ROLE = require('./data/role-templates.json').roleTemplates.find((r) => r.id === 'role_bal');
-  const COMMON_SKILLS = require('./data/skill-templates.json').skillTemplates
-    .filter((t) => !t.unlockTier || t.unlockTier === 'common');
+  const TEMPLATES = require('./data/skill-templates.json').skillTemplates;
+  const variant = variantOf(identity);
+  const order = PRESET_SKILL_ORDER[variant.preset] || PRESET_SKILL_ORDER.steady;
   const skillItems = [];
   for (let i = 0; i < 3; i++) {
-    const t = COMMON_SKILLS[i % COMMON_SKILLS.length]; // 循环取满 3 槽（技能实例允许同模板二号位）
+    const t = TEMPLATES.find((x) => x.id === order[i % order.length]) || TEMPLATES.filter((x) => !x.unlockTier || x.unlockTier === 'common')[i % 2];
     skillItems.push({
       uid: `bot_skill${i + 1}`, kind: 'skill', templateId: t.id, quality: 'common', slotCount: 0, slots: [],
       params: { multiplier: 1, cost: { hp: t.baseCost.hp, mp: t.baseCost.mp, sp: t.baseCost.sp }, cooldown: t.cooldown, bulletLevel: t.bulletLevel },
@@ -73,15 +166,73 @@ function buildDefaultLoadout() {
       regen: ROLE.regen, pluginPoints: ROLE.pluginPoints || 3, unlockTier: 'common',
     },
     skills: skillItems,
-    ai: { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'action', name: 'move_left' }] } },
+    ai: aiProgramOf(variant.preset, variant.sub),
   };
 }
 
 /* ---------- 单场离线对战：p1=发起者快照 vs p2=对手快照 → {winner, ticks}（平局 winner='draw'） ---------- */
+
+// 仓库镜像解析（缺陷 B 修复）：`wh` 可以是单个仓库（双方共用 = 旧签名，文档 §7.4 不变）
+//   或 `{p1, p2}` 逐侧仓库（匹配路径：双方是不同玩家，镜像各自独立）。
+//   `loadout.buildPanel` 对"槽内含 pluginUid"的配置**必需**仓库正文，否则 missing_warehouse → 该场 invalid。
+function warehousesOf(wh) {
+  if (wh && wh.buckets === undefined && (wh.p1 !== undefined || wh.p2 !== undefined)) {
+    return { p1: wh.p1 || null, p2: wh.p2 || null };
+  }
+  return { p1: wh || null, p2: wh || null };
+}
+
+// 该出战配置是否需要仓库正文（任一槽有 pluginUid 引用）
+function needsWarehouse(ld) {
+  if (!ld || typeof ld !== 'object') return false;
+  const hasRef = (slots) => Array.isArray(slots) && slots.some((s) => s && s.pluginUid);
+  if (hasRef(ld.role && ld.role.slots)) return true;
+  return (Array.isArray(ld.skills) ? ld.skills : []).some((sk) => hasRef(sk && sk.slots));
+}
+
+/* ---------- 缺陷 B：装配引用（pluginUid）与仓库镜像 ----------
+ * 背景：仓库由客户端权威持有（D-130），服务端只保留**进程内**镜像缓存（`PUT /me/warehouse` / 带 warehouse
+ *   的配置保存）。对局路径原先一律传 `warehouse: null` → 任何"槽内含 pluginUid"的配置在 `buildPanel`
+ *   阶段被 `missing_warehouse` 拒绝：快速对战 409 `no_opponent`、排位 409 `loadout_invalid`（实测复现）。
+ * 口径（本批裁定）：
+ *   ① 镜像在进程内可用 → 用**真镜像**（插件词条正常生效，校验完整）；
+ *   ② 镜像不可用但该配置**已校验过**（`flags.unverifiedLoadout === false` 或槽快照
+ *      `verifiedAgainstWarehouse === true`）→ 视为"提交时已校验"，**跳过需要仓库正文的引用校验**：
+ *      用"占位 no-op 插件"（空词条/0 点数）满足结构校验收，退化为**基准面板**（插件词条不生效）并记 warn；
+ *   ③ 两者都不成立（从未校验）→ 如实报 `missing_warehouse`（绝不放宽成"永远放行"）。
+ */
+
+// 该档案的出战配置是否"已对仓库校验过"
+function isWarehouseVerified(archive, activeSlot) {
+  const flags = (archive && archive.flags) || {};
+  if (flags.unverifiedLoadout === false) return true;
+  const ref = activeSlot && activeSlot.snapshot;
+  return !!(ref && ref.verifiedAgainstWarehouse === true);
+}
+
+// 把装配引用物化为 no-op 占位项（`affixes: []` → 面板与源配置的"基准值"一致，无词条加成）
+function syntheticVerifiedWarehouse(loadout) {
+  const buckets = { role: [], skill: [], rolePlugin: [], skillPlugin: [] };
+  const pushRefs = (slots, kind, bucket) => {
+    for (const s of Array.isArray(slots) ? slots : []) {
+      if (!s || !s.pluginUid) continue;
+      buckets[bucket].push({
+        uid: s.pluginUid, id: 'verified_noop', kind, slot: s.type === undefined ? null : s.type,
+        equipped: true, tier: 1, unlockTier: 'common', affixes: [], pointCost: 0,
+      });
+    }
+  };
+  const ld = loadout || {};
+  pushRefs(ld.role && ld.role.slots, 'rolePlugin', 'rolePlugin');
+  for (const sk of Array.isArray(ld.skills) ? ld.skills : []) pushRefs(sk && sk.slots, 'skillPlugin', 'skillPlugin');
+  return buckets.rolePlugin.length + buckets.skillPlugin.length > 0 ? { buckets } : null;
+}
+
 function battleOne(mine, opponent, wh, tier, seed) {
-  const b1 = battle.buildPlayer('p1', mine, wh, tier);
+  const sides = warehousesOf(wh);
+  const b1 = battle.buildPlayer('p1', mine, sides.p1, tier);
   if (!b1.ok) return { winner: 'draw', ticks: 0, invalid: true, errors: b1.errors };
-  const b2 = battle.buildPlayer('p2', opponent, wh, tier);
+  const b2 = battle.buildPlayer('p2', opponent, sides.p2, tier);
   if (!b2.ok) {
     runtime.destroyContext(b1.ctx);
     return { winner: 'draw', ticks: 0, invalid: true, errors: b2.errors };
@@ -141,11 +292,15 @@ async function loadSnapshotOf(store, hash) {
 }
 
 // 服务端抽池（D-132/D-136）：byTier ∩ 有可用快照 ∩ 未封禁 ∩ 在池内 ∩ 非自己
-// 返回 { candidates:[{playerId,entry}], unusable:[playerId] }——`unusable` 是"档案在池内但快照不可用"
-async function candidatesOf(store, tier, excludeId, L) {
+// 返回 { candidates:[{playerId,entry,warehouse}], unusable:[playerId] }——`unusable` 是"档案在池内但快照/仓库不可用"。
+// 缺陷 B：槽内含 pluginUid 的对手需要**其仓库镜像**才能实例化（D-130 不落盘、只在本进程内）——
+//   镜像缺失 → 该对手不可实例化，直接跳过（不占场次、不产生 invalid 场），而不是抽中后才失败。
+async function candidatesOf(store, tier, excludeId, L, resolveWarehouse) {
   const ids = store.index.byTier(tier) || [];
   const candidates = [];
   const unusable = [];
+  const noWarehouse = [];
+  const degraded = [];
   let banned = 0;
   let outOfPool = 0;
   for (const playerId of ids) {
@@ -156,14 +311,38 @@ async function candidatesOf(store, tier, excludeId, L) {
     if (!entry.inPool) { outOfPool += 1; continue; }
     const snapshot = await loadSnapshotOf(store, entry.activeSnapshotHash);
     if (!isUsableSnapshot(snapshot)) { unusable.push(playerId); continue; }
-    candidates.push({ playerId, entry });
+    let warehouse = null;
+    if (needsWarehouse(snapshot[RAW_SNAPSHOT_FIELD])) {
+      warehouse = typeof resolveWarehouse === 'function' ? await resolveWarehouse(playerId) : null;
+      if (!warehouse) {
+        // 退化路径：已校验过（但镜像不在本进程）→ 用 no-op 占位项满足结构校验；未校验 → 跳过该候选
+        const foeArchive = typeof store.loadArchive === 'function' ? await store.loadArchive(playerId) : null;
+        const active = foeArchive ? archiveMod.activeSlot(foeArchive) : null;
+        warehouse = isWarehouseVerified(foeArchive, active)
+          ? syntheticVerifiedWarehouse(snapshot[RAW_SNAPSHOT_FIELD])
+          : null;
+        if (!warehouse) { noWarehouse.push(playerId); continue; }
+        degraded.push(playerId);
+      }
+    }
+    candidates.push({ playerId, entry, warehouse });
   }
   if (unusable.length > 0) {
     L && L.warn('store', 'store.snapshot.missing',
       `同段位 ${tier} 有 ${unusable.length} 个候选快照缺失/不可用（已跳过，不占场次）`,
       { tier, count: unusable.length, sample: unusable.slice(0, 3) });
   }
-  return { candidates, unusable, banned, outOfPool, poolSize: ids.length };
+  if (noWarehouse.length > 0) {
+    L && L.warn('store', 'store.snapshot.missing',
+      `同段位 ${tier} 有 ${noWarehouse.length} 个候选的仓库镜像不在本进程内（含装配引用且未校验过 → 跳过）`,
+      { tier, count: noWarehouse.length, sample: noWarehouse.slice(0, 3), reason: 'warehouse_mirror_absent' });
+  }
+  if (degraded.length > 0) {
+    L && L.warn('store', 'store.snapshot.missing',
+      `同段位 ${tier} 有 ${degraded.length} 个候选的仓库镜像不在本进程内（已校验过 → 以基准面板退化对局）`,
+      { tier, count: degraded.length, sample: degraded.slice(0, 3), reason: 'warehouse_mirror_degraded' });
+  }
+  return { candidates, unusable, noWarehouse, degraded, banned, outOfPool, poolSize: ids.length };
 }
 
 // D-136 去重窗口（裁定口径）：24h 是**硬底线**（间隔 < 24h 的对手任何池都不接纳），72h 是**偏好间隔**。
@@ -197,7 +376,72 @@ function logPool(L, data) {
     data);
 }
 
-let batchSeq = 0; // 批次序号（仅用于让 batchId 在同一毫秒 + 同 seed 下仍唯一）
+/* ---------- 批次级幂等（P1-4） ---------- */
+
+// batchId 由 `(playerId, seed)` **确定性派生**（不含 `at`/进程内序号）：同 seed 重发 → 同 batchId。
+// 旧口径 `playerId|seed|at|++batchSeq` 让每次重发都得到新 batchId → `batchesPlayed` 递增、可重复触发晋升
+//（记录级幂等 ≠ 批次级幂等：battleId 只覆盖单场）。
+function batchIdOf(playerId, seed) {
+  return `bt_${ledger.battleIdOf({
+    batchId: `${playerId}|${seed}`, matchIndex: 0, seed, p1SnapshotHash: '', p2SnapshotHash: '',
+  }).slice(2)}`;
+}
+
+// 该批次是否已落 journal（`ranked.batch` + 其下的 `battle.recorded` + `ranked.promoted`）。
+// 命中 → 调用方**回放结果**，不重复结算、不重复写 journal（`store.append` 不会去重：必须在此拦截）。
+async function findPriorBatch(store, playerId, batchId) {
+  if (typeof store.replayJournal !== 'function') return null;
+  let batch = null;
+  let promote = null;
+  const battles = [];
+  await store.replayJournal({ fromSeq: 0 }, (rec) => {
+    if (!rec || typeof rec.type !== 'string') return;
+    if (rec.type === 'battle.recorded') {
+      if (rec.batchId === batchId && rec.p1 && rec.p1.playerId === playerId && rec.battleId) battles.push(rec);
+      return;
+    }
+    if (rec.batchId !== batchId || rec.playerId !== playerId) return;
+    if (rec.type === 'ranked.batch') batch = rec;
+    else if (rec.type === 'ranked.promoted') promote = rec;
+  });
+  if (!batch) return null;
+  return { batch, promote, battles };
+}
+
+// 回放既有批次的结果（P1-4）。**逐场结果来自 journal 原记录**，故与首次响应一致；
+// 两处不可复原、显式标注：`invalids`（invalid 场不进 journal）记 0；`relaxed`（抽取窗口细节不落 journal）记 null。
+function replayBatchPayload(input) {
+  const { prior, batchId, seed, requested, tier } = input;
+  const battles = prior.battles.slice().sort((a, b) => (a.matchIndex || 0) - (b.matchIndex || 0));
+  const results = battles.map((rec) => ({
+    match: rec.matchIndex,
+    opponentPlayerId: rec.p2.playerId,
+    opponentPublicId: rec.p2.publicId,
+    winner: rec.verdict ? rec.verdict.winner : 'draw',
+    ticks: rec.verdict ? rec.verdict.ticks : null,
+    battleId: rec.battleId,
+    duplicate: true,
+  }));
+  const wins = battles.filter((rec) => rec.p1 && rec.p1.result === 'win').length;
+  const draws = battles.filter((rec) => rec.p1 && rec.p1.result === 'draw').length;
+  const losses = battles.filter((rec) => rec.p1 && rec.p1.result === 'loss').length;
+  const matches = battles.length;
+  const promoted = prior.promote !== null;
+  const tierAfter = promoted ? prior.promote.tierAfter : (prior.batch.tier || tier);
+  return {
+    batchId, seed, tier: prior.batch.tier || tier,
+    requested, matches, shortfall: Math.max(0, requested - matches),
+    wins, draws, losses, invalids: 0,
+    relaxed: null,
+    promoted,
+    tierAfter,
+    reward: tierReward(tierAfter),
+    opponentsDrawn: results.map((r) => r.opponentPlayerId),
+    results,
+    duplicate: true,
+    replayed: true,
+  };
+}
 
 /* ---------- 档案驱动排位（P7-3 主路径） ---------- */
 
@@ -210,7 +454,18 @@ async function runFromStore(o, deps) {
   const relaxHours = cooldownHours * COOLDOWN_RELAX_MULT;
   const at = nowFn();
 
-  const pool = await candidatesOf(store, tier, o.playerId, L);
+  // 批次级幂等（P1-4）：同 (playerId, seed) 的既有批次 → 直接回放，不再抽池/结算/写 journal
+  const batchId = batchIdOf(o.playerId, seed);
+  const prior = await findPriorBatch(store, o.playerId, batchId);
+  if (prior) {
+    L && L.info('ranked', 'ranked.match',
+      `批次重发：命中既有 ranked.batch ${batchId}（回放 ${prior.battles.length} 场，不重复结算）`, {
+        playerId: o.playerId, batchId, seed, mode: 'ranked', replayed: true, matches: prior.battles.length,
+      });
+    return { status: 200, data: replayBatchPayload({ prior, batchId, seed, requested, tier }) };
+  }
+
+  const pool = await candidatesOf(store, tier, o.playerId, L, deps.loadWarehouse);
   const split = splitByCooldown(pool.candidates, o.archive, cooldownHours, relaxHours, at);
   // D-136 口径：同一对手 24h 去重；**候选不足**（严格窗口凑不满本轮场次）时放宽到 72h。
   //   `relaxed:true` ⟺ 本轮**实际启用**了放宽窗口（有"仅放宽窗口可用"的对手被加入抽取池）；
@@ -222,15 +477,13 @@ async function runFromStore(o, deps) {
   const ordered = shuffleByRng(usable, rng);
   const drawn = ordered.slice(0, Math.min(requested, ordered.length));
   const shortfall = requested - drawn.length;
-  const batchId = `bt_${ledger.battleIdOf({
-    batchId: `${o.playerId}|${seed}|${at}|${++batchSeq}`, matchIndex: 0, seed,
-    p1SnapshotHash: o.snapshotHash, p2SnapshotHash: '',
-  }).slice(2)}`;
 
   logPool(L, {
     tier, seed, poolSize: pool.poolSize, candidates: pool.candidates.length,
     cooldown: cooldownHours, relaxHours, relaxed, drawn: drawn.length, shortfall,
     unusable: pool.unusable.length, banned: pool.banned, outOfPool: pool.outOfPool,
+    noWarehouse: pool.noWarehouse ? pool.noWarehouse.length : 0,
+    warehouseDegraded: (o.warehouseDegraded ? 1 : 0) + (pool.degraded ? pool.degraded.length : 0),
     debug: deps.debugBots === true,
   });
 
@@ -239,6 +492,12 @@ async function runFromStore(o, deps) {
   let draws = 0;
   let losses = 0;
   let invalids = 0;
+  // P7-6 修复 2（store 侧批量原语接入）：本轮 10 场的结算**不再逐场发起**，而是收集成一批，
+  //   循环结束后用 `store.settleBatch(records)` 一次提交 —— 一次参与集合加锁 + 一次 appendMany
+  //   + 每参与玩家档案只落盘一次。逐场 `settleBattle` 在并发 24 下会退化成"每场一次 fsync 串行"，
+  //   实测 50 轮 × 10 场：逐场 P95=5190ms → 批量 P95=305ms（store 层探针，同一数据根）。
+  //   无 `settleBatch` 的 store（测试替身/旧适配器）自动回落到逐场路径。
+  const pendingSettlements = [];
   for (let i = 0; i < drawn.length; i++) {
     const foe = drawn[i];
     const matchIndex = i + 1;
@@ -252,9 +511,15 @@ async function runFromStore(o, deps) {
       });
       continue;
     }
+    const foeWarehouse = foe.warehouse === undefined ? null : foe.warehouse;
     const r = o.runBattle
-      ? o.runBattle({ p1: o.loadout, p2: foeSnapshot[RAW_SNAPSHOT_FIELD], tier, seed: matchSeed, warehouse: null })
-      : battleOne(o.loadout, foeSnapshot[RAW_SNAPSHOT_FIELD], null, tier, matchSeed);
+      ? o.runBattle({
+        p1: o.loadout, p2: foeSnapshot[RAW_SNAPSHOT_FIELD], tier, seed: matchSeed,
+        warehouse: o.warehouse === undefined ? null : o.warehouse,
+        p1Warehouse: o.warehouse === undefined ? null : o.warehouse,
+        p2Warehouse: foeWarehouse,
+      })
+      : battleOne(o.loadout, foeSnapshot[RAW_SNAPSHOT_FIELD], { p1: o.warehouse, p2: foeWarehouse }, tier, matchSeed);
     if (r.invalid) {
       invalids += 1;
       results.push({ match: matchIndex, opponentPlayerId: foe.playerId, opponentPublicId: foe.entry.publicId, winner: 'invalid', ticks: 0, battleId: null });
@@ -268,51 +533,70 @@ async function runFromStore(o, deps) {
     else if (winner === 'draw') draws += 1;
     else losses += 1;
     // 双向记账（D-132/D-134）：先 journal（一次落盘即成立）→ apply 发起者（attacker）与被抽取方（defender）
-    const settled = await store.settleBattle({
-      mode: 'ranked',
-      batchId,
-      matchIndex,
-      seed: matchSeed,
-      at,
-      p1: {
-        playerId: o.playerId,
-        publicId: o.archive.publicId,
-        role: 'attacker',
-        snapshotHash: o.snapshotHash,
-        configHash: o.configHash,
-        pointsBefore: o.archive.rating.points,
-        pointsAfter: o.archive.rating.points, // 排位不改积分（D-133 双轨）
-        result: winner === 'p1' ? 'win' : winner === 'p2' ? 'loss' : 'draw',
-        tierBefore: tier,
-        tierAfter: tier, // 段位变化只由 ranked.promoted 驱动（D-122/D-132）
-      },
-      p2: {
-        playerId: foe.playerId,
-        publicId: foe.entry.publicId,
-        role: 'defender',
-        snapshotHash: foe.entry.activeSnapshotHash,
-        configHash: foeSnapshot.configHash,
-        pointsBefore: foe.entry.points,
-        pointsAfter: foe.entry.points,
-        result: winner === 'p2' ? 'win' : winner === 'p1' ? 'loss' : 'draw',
-        tierBefore: foe.entry.tier,
-        tierAfter: foe.entry.tier,
-      },
-      verdict: { winner, reason: null, ticks: r.ticks },
-      versions: { engine: store.versions.engine, data: store.versions.data },
-    });
+    //   入参先入队，循环结束后由 `store.settleBatch` 一次提交（见上方说明）
+    const slot = results.length;
     results.push({
-      match: matchIndex,
-      opponentPlayerId: foe.playerId,
-      opponentPublicId: foe.entry.publicId,
-      winner,
-      ticks: r.ticks,
-      battleId: settled.record ? settled.record.battleId : null,
-      duplicate: settled.duplicate === true,
+      match: matchIndex, opponentPlayerId: foe.playerId, opponentPublicId: foe.entry.publicId,
+      winner, ticks: r.ticks, battleId: null, duplicate: false,
     });
-    L && L.info('ranked', 'ranked.match', `match ${matchIndex}: ${winner}（${r.ticks} tick）`, {
-      match: matchIndex, winner, ticks: r.ticks, opponentPublicId: foe.entry.publicId,
-      battleId: settled.record ? settled.record.battleId : null, mode: 'ranked',
+    pendingSettlements.push({
+      slot, matchIndex, opponentPlayerId: foe.playerId, opponentPublicId: foe.entry.publicId, ticks: r.ticks,
+      input: {
+        mode: 'ranked',
+        batchId,
+        matchIndex,
+        seed: matchSeed,
+        at,
+        p1: {
+          playerId: o.playerId,
+          publicId: o.archive.publicId,
+          role: 'attacker',
+          snapshotHash: o.snapshotHash,
+          configHash: o.configHash,
+          pointsBefore: o.archive.rating.points,
+          pointsAfter: o.archive.rating.points, // 排位不改积分（D-133 双轨）
+          result: winner === 'p1' ? 'win' : winner === 'p2' ? 'loss' : 'draw',
+          tierBefore: tier,
+          tierAfter: tier, // 段位变化只由 ranked.promoted 驱动（D-122/D-132）
+        },
+        p2: {
+          playerId: foe.playerId,
+          publicId: foe.entry.publicId,
+          role: 'defender',
+          snapshotHash: foe.entry.activeSnapshotHash,
+          configHash: foeSnapshot.configHash,
+          pointsBefore: foe.entry.points,
+          pointsAfter: foe.entry.points,
+          result: winner === 'p2' ? 'win' : winner === 'p1' ? 'loss' : 'draw',
+          tierBefore: foe.entry.tier,
+          tierAfter: foe.entry.tier,
+        },
+        verdict: { winner, reason: null, ticks: r.ticks },
+        versions: { engine: store.versions.engine, data: store.versions.data },
+      },
+    });
+  }
+
+  // 一轮一次批量结算（store 侧 `settleBatch`：一次加锁 + 一次 appendMany + 每玩家档案一次落盘）
+  if (typeof store.settleBatch === 'function' && pendingSettlements.length > 0) {
+    const batchRes = await store.settleBatch(pendingSettlements.map((p) => p.input));
+    for (let k = 0; k < pendingSettlements.length; k += 1) {
+      const rec = batchRes.records[k];
+      results[pendingSettlements[k].slot].battleId = rec ? rec.battleId : null;
+      results[pendingSettlements[k].slot].duplicate = batchRes.duplicateFlags[k] === true;
+    }
+  } else {
+    for (const p of pendingSettlements) {
+      const settled = await store.settleBattle(p.input);
+      results[p.slot].battleId = settled.record ? settled.record.battleId : null;
+      results[p.slot].duplicate = settled.duplicate === true;
+    }
+  }
+  for (const p of pendingSettlements) {
+    const entry = results[p.slot];
+    L && L.info('ranked', 'ranked.match', `match ${p.matchIndex}: ${entry.winner}（${p.ticks} tick）`, {
+      match: p.matchIndex, winner: entry.winner, ticks: p.ticks, opponentPublicId: p.opponentPublicId,
+      battleId: entry.battleId, mode: 'ranked',
     });
   }
 
@@ -402,8 +686,25 @@ async function runArchiveDriven(opts, L, deps) {
   if (!isUsableSnapshot(snapshot)) {
     return { status: 409, code: 'no_active_config', message: `出战快照正文缺失/不一致 ${active.snapshot.hash}（不变量破损）` };
   }
-  // 出战配置结构与门控复查（§7.4：不依赖客户端仓库，引用完整性在保存配置时已校验）
-  const v = loadout.validateLoadout(snapshot[RAW_SNAPSHOT_FIELD], { warehouse: null, tier: archive.progress.tier });
+  // 出战配置结构与门控复查（§7.4）＋缺陷 B：装配引用需要仓库正文 → 先取本进程镜像；
+  //   镜像不可用但该配置**已校验过** → 用 no-op 占位项跳过"需要仓库的引用校验"（退化基准面板）；
+  //   从未校验 → 保持 warehouse=null，validateLoadout 如实报 missing_warehouse（不放宽）。
+  const myLoadout = snapshot[RAW_SNAPSHOT_FIELD];
+  let myWarehouse = typeof deps.loadWarehouse === 'function' ? await deps.loadWarehouse(playerId) : null;
+  let warehouseDegraded = false;
+  if (!myWarehouse && needsWarehouse(myLoadout)) {
+    if (isWarehouseVerified(archive, active)) {
+      myWarehouse = syntheticVerifiedWarehouse(myLoadout);
+      warehouseDegraded = myWarehouse !== null;
+      if (warehouseDegraded) {
+        log.warn('store', 'store.snapshot.missing',
+          '出战配置含装配引用但仓库镜像不在本进程内（已校验过 → 基准面板退化对局，插件词条不生效）', {
+            playerId, reason: 'warehouse_mirror_degraded', snapshotHash: active.snapshot.hash,
+          });
+      }
+    }
+  }
+  const v = loadout.validateLoadout(myLoadout, { warehouse: myWarehouse, tier: archive.progress.tier });
   if (!v.ok) return { status: 409, code: 'loadout_invalid', details: v.errors, message: '出战快照不合法' };
   // DL_DEBUG_BOTS=1：仅显式调试开关（默认关闭）——只补齐**调试 bot 档案**，绝不伪造对局
   const debug = inspectDebugBots(deps.env);
@@ -416,9 +717,11 @@ async function runArchiveDriven(opts, L, deps) {
     archive, playerId, seed,
     snapshotHash: active.snapshot.hash,
     configHash: active.snapshot.configHash,
-    loadout: snapshot[RAW_SNAPSHOT_FIELD],
+    loadout: myLoadout,
+    warehouse: myWarehouse,
+    warehouseDegraded,
     runBattle: deps.runBattle,
-  }, { store, L: log, nowFn, ratingConfig, debugBots: debug.enabled });
+  }, { store, L: log, nowFn, ratingConfig, debugBots: debug.enabled, loadWarehouse: deps.loadWarehouse });
 }
 
 // 显式调试开关（默认关闭）：`DL_DEBUG_BOTS=1`。
@@ -506,28 +809,30 @@ function tierReward(tier) {
   return idx === -1 ? null : TIERS[idx];
 }
 
-// 晋升判定（D-122：x=6，wins > 6 即 10 场胜 7 晋升；最高段位不再晋升 → 409 already_max）
-function promotedAt(tier, wins) {
-  return wins > X_PROMOTE && TIERS.indexOf(tier) < TIERS.length - 1;
+// 晋升判定**单一真源** = `ledger.promoteAfterBatch`（P2-3）：端点 `/ranked/promote` 与批次路径
+// （runFromStore）同输入 → 同结果，阈值一律读 `rating-config.promoteWins`（缺省 6 = 旧 X_PROMOTE）。
+// 旧实现本模块另有 `X_PROMOTE = 6` 硬编码 + 自写分支，与 ledger 口径双源（wins 相同、结果可能不同）。
+function promotedAt(tier, wins, ratingConfig) {
+  return ledger.promoteAfterBatch({ tier, wins, config: ratingConfig }).promoted;
 }
 
-function promote(tier, wins, L) {
+function promote(tier, wins, L, ratingConfig) {
   if (tier === undefined || !TIERS.includes(tier)) {
     return { status: 400, code: 'bad_tier', message: `非法段位 ${tier}（可选: ${TIERS.join('/')}）` };
   }
   if (typeof wins !== 'number' || !Number.isInteger(wins) || wins < 0 || wins > DEFAULT_BATCH_SIZE) {
     return { status: 400, code: 'bad_wins', message: `非法 wins ${wins}（必须是非负整数且 ≤ ${DEFAULT_BATCH_SIZE}，P2-2 上限）` };
   }
-  const idx = TIERS.indexOf(tier);
-  const willPromote = wins > X_PROMOTE;
-  if (!willPromote) {
+  const p = ledger.promoteAfterBatch({ tier, wins, config: ratingConfig });
+  if (!p.promoted) {
+    if (wins > p.threshold) {
+      // 达阈值但已是最高段位（nextTier === null）
+      L && L.warn('ranked', 'ranked.promote', `最高段位不再晋升: ${tier}`, { tier, wins });
+      return { status: 409, code: 'already_max', message: `${tier} 已是最高段位` };
+    }
     return { status: 200, data: { tier, promoted: false, reward: tierReward(tier), wins } };
   }
-  if (idx === TIERS.length - 1) {
-    L && L.warn('ranked', 'ranked.promote', `最高段位不再晋升: ${tier}`, { tier, wins });
-    return { status: 409, code: 'already_max', message: `${tier} 已是最高段位` };
-  }
-  const next = TIERS[idx + 1];
+  const next = p.tierAfter;
   L && L.info('ranked', 'ranked.promote', `${tier} → ${next}（wins=${wins}）`, { from: tier, to: next, wins });
   return { status: 200, data: { tier: next, promoted: true, reward: tierReward(next), wins } };
 }
@@ -538,7 +843,7 @@ function makeRanked(logger, options) {
   return {
     takeSnapshot: (ld) => takeSnapshot(ld, L),
     runRankedBattle: (opts) => runRankedBattle(opts, L, deps),
-    promote: (tier, wins) => promote(tier, wins, L),
+    promote: (tier, wins) => promote(tier, wins, L, deps.ratingConfig),
     tierReward,
   };
 }
@@ -567,4 +872,16 @@ module.exports = Object.assign(makeRanked(), {
   loadoutKey,
   candidatesOf,
   RAW_SNAPSHOT_FIELD,
+  // P1-4 批次级幂等（测试独立复算 batchId / 构造重发场景用）
+  batchIdOf,
+  findPriorBatch,
+  // 缺陷 B：装配引用 × 仓库镜像（quickmatch/admin/测试复用）
+  needsWarehouse,
+  isWarehouseVerified,
+  syntheticVerifiedWarehouse,
+  warehousesOf,
+  // P2-5 默认出战配置的 AI 预设表（测试可断言变体集合 / 按身份复算变体）
+  DEFAULT_AI_PRESETS,
+  presetOf,
+  variantOf,
 });

@@ -70,7 +70,7 @@ const short = (v, n) => {
 
 /* ---------- 运行框架：任一步失败 → 打印上游真实响应 + 非零退出 ---------- */
 
-const state = { step: 0, steps: [], facts: {} };
+const state = { step: 0, steps: [], facts: { tokens: {} } }; // tokens: publicId → 会话 token（夹具持有全部注册玩家）
 const noBotLog = [];
 
 function fail(msg, upstream) {
@@ -878,6 +878,7 @@ async function main() {
       const initPlayer = { token: init.body.data.token, publicId: init.body.data.publicId, playerId: await playerIdByPublicId(s.store, init.body.data.publicId) };
       expect(typeof initPlayer.playerId === 'string', '新玩家档案应可回查', init.raw);
       state.facts.eloPlayer = initPlayer;
+      state.facts.tokens[initPlayer.publicId] = initPlayer.token;
       await clearOpponentHistory(s.store, state.facts.A.playerId);
       // 每一步的真实对局使用**互不相同**的 seed：quick 的 battleId 由 seed + 双方快照内容寻址（§9.1），
       // 跨步骤复用同 seed 会命中同一 battleId（幂等去重），使 Δ 落盘值与本次 winner 不一致（缺陷 D2）。
@@ -913,11 +914,8 @@ async function main() {
       const zeroLoss = quickmatch.ratingDelta({ points: 0, opponentPoints: 0, result: 'loss', config: RATING });
       expect(zeroLoss.pointsAfter === 0, `0 分玩家输球结果积分应仍为 0，实得 ${zeroLoss.pointsAfter}`, j(zeroLoss));
       expect(zeroLoss.pointsAfter - 0 === 0, '0 分玩家负场的**落盘 Δ** 应为 0（clamp 保护）', j(zeroLoss));
-      const foeToken = d.opponent.publicId === state.facts.B.publicId ? state.facts.B.token
-        : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token
-          : d.opponent.publicId === state.facts.victim.publicId ? state.facts.victim.token
-            : d.opponent.publicId === state.facts.cliPlayer.publicId ? state.facts.cliPlayer.token
-              : d.opponent.publicId === state.facts.A.publicId ? state.facts.A.token : state.facts.eloPlayer.token;
+      const foeToken = state.facts.tokens[d.opponent.publicId];
+      expect(typeof foeToken === 'string', `缺少对手 ${d.opponent.publicId} 的会话 token（夹具应持有全部注册玩家）`);
       const foeMe = await request(port, 'GET', '/api/v1/me', undefined, authed(foeToken));
       expect(foeMe.status === 200, '对手档案可读', foeMe.raw);
       expect(foeMe.body.data.rating.points === d.opponent.pointsAfter,

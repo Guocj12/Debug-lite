@@ -46,7 +46,9 @@ function checkDocs() {
   // D1：npm 脚本双向一致
   const mentioned = new Set();
   for (const [f, text] of Object.entries(texts)) {
-    for (const m of text.matchAll(/npm run ([a-z:_-]+)/g)) mentioned.add(m[1]);
+    // 2026-09-16 修复（检查器自身缺陷，独立审查已预警）：脚本名允许数字与点，
+    //   否则 `npm run e2e` 会被截成 `e`，导致 D1 双向错报（README 引用不存在脚本 + package.json 未登记）。
+    for (const m of text.matchAll(/npm run ([a-z0-9:_.-]+)/g)) mentioned.add(m[1]);
     for (const m of text.matchAll(/`npm (start|test)`/g)) mentioned.add(m[1]);
   }
   for (const name of mentioned) {

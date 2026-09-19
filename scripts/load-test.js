@@ -34,6 +34,7 @@ const USAGE = `用法：node scripts/load-test.js [选项]
   --seed <n>           种子（默认 20260918；一切随机性由它派生）
   --deep               开启索引重建比对（大 N 下较慢；默认关闭）
   --fast-auth          用 scrypt N=1024（压缩时长；默认 N=16384 = 生产真实成本）
+  --interleave         同一玩家内部**并发**发起排位/快速（用于复现后端缺陷 DEF-1；默认串行）
   --out <file>         报告路径（默认 runtime/load-report.json）
   --keep-data          保留临时数据根（诊断用）
   --quiet              只打印最终摘要
@@ -53,6 +54,7 @@ function parseArgs(argv) {
     slotsMax: load.DEFAULTS.slotsMax,
     deep: false,
     fastAuth: false,
+    interleave: false,
     out: null,
     keepDataDir: false,
     quiet: false,
@@ -78,6 +80,7 @@ function parseArgs(argv) {
     else if (a === '--out') out.out = String(argv[++i]);
     else if (a === '--deep') out.deep = true;
     else if (a === '--fast-auth') out.fastAuth = true;
+    else if (a === '--interleave') out.interleave = true;
     else if (a === '--keep-data') out.keepDataDir = true;
     else if (a === '--quiet') out.quiet = true;
     else out.bad = `未知参数 ${a}`;
@@ -156,6 +159,7 @@ async function main() {
     slotsMax: args.slotsMax,
     deep: args.deep,
     fastAuth: args.fastAuth,
+    serializePerPlayer: !args.interleave,
     keepDataDir: args.keepDataDir,
     level: args.quiet ? 'error' : 'warn',
   });
@@ -166,7 +170,8 @@ async function main() {
   } catch (e) {
     process.stderr.write(`报告写入失败：${e && e.message}\n`);
   }
-  if (report.dataDir) process.stdout.write(`[load-test] 数据根保留于 ${report.dataDir}\n`);
+  await load.closeReport(report); // 关闭进程内服务；非 --keep-data 时删除临时数据根
+  if (report.dataDirKept && report.dataDir) process.stdout.write(`[load-test] 数据根保留于 ${report.dataDir}\n`);
   printSummary(report, outFile);
   process.stdout.write(`[load-test] 总墙钟 ${Date.now() - t0}ms\n`);
   return report.ok ? 0 : 1;

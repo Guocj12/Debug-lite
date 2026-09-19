@@ -131,7 +131,8 @@ function createArchiveShell(playerId, at) {
     lastSeenAt: null,
     auth: null,
     progress: {
-      tier: 'common', peakTier: 'common', tierUpdatedAt: ts, batchesPlayed: 0, batchesPromoted: 0, lastBatchId: null,
+      tier: 'common', peakTier: 'common', tierUpdatedAt: ts, batchesPlayed: 0, batchesPromoted: 0,
+      lastBatchId: null, lastPromotedBatchId: null,
     },
     rating: {
       points: 0, peakPoints: 0, games: 0, wins: 0, losses: 0, draws: 0, lastBattleAt: null, seasonId: 's0',
@@ -385,10 +386,17 @@ function syncActiveSnapshot(archive) {
 
 // ---------- journal 记录 → 档案（幂等；调用方负责 appliedSeq 水位与落盘） ----------
 
+// 战绩环形：**按 seq 升序插入**（不是简单 push）。
+// 理由（P7-6 并发缺陷修复）：并发结算下"补 apply/乱序 apply"可能晚于更高 seq 落地，
+// 若按应用顺序 push，环形会失去"seq 递增"的稳定视图（recent[0] 也不再是窗口下界）。
+// 保持 seq 有序，使 `recent[0].seq` 可作"已应用窗口下界"用于幂等判定（见 isRecordApplied）。
 function pushRecent(archive, entry, limit) {
-  archive.record.recent.push(entry);
-  if (archive.record.recent.length > limit) {
-    archive.record.recent.splice(0, archive.record.recent.length - limit);
+  const recent = archive.record.recent;
+  let at = recent.length;
+  while (at > 0 && recent[at - 1].seq > entry.seq) at -= 1;
+  recent.splice(at, 0, entry);
+  if (recent.length > limit) {
+    recent.splice(0, recent.length - limit);
   }
 }
 
@@ -397,6 +405,63 @@ function bumpStats(archive, bucket, result) {
   if (result === 'win') stats.wins += 1;
   else if (result === 'loss') stats.losses += 1;
   else stats.draws += 1;
+}
+
+// ---------- 幂等判定（P7-6 并发缺陷修复的核心，§6.3） ----------
+// 背景：`appliedSeq` 是**单调水位**，但并发结算下"到达顺序 ≠ seq 顺序"（同一玩家在一条记录里当 p1、
+//   在另一条并发记录里当 p2，两条记录的两侧 apply 交错），仅凭 `record.seq <= appliedSeq` 跳过
+//   会把**从未 apply** 的记录永久丢掉（journal 里有、档案里没有，且水位已超过 → 重放也跳过）。
+// 现在水位降级为**加速/诊断**：命中水位区间时还要用"内容级幂等键"证明该记录确实已应用，证明不了就补 apply。
+// 各类型的幂等键（都是"最后写入者胜"的字段，天然可重放）：
+//   battle.recorded     → recent 内 battleId；若 seq 已滑出环形窗口下界 → 视为早已应用（窗口外无键可查）
+//   account.created/bot → 档案已具备账号 + 配置（或已是检查点重建态）
+//   password / banned / nickname / pool → 目标字段是否已是记录要求的值
+//   player.config.saved → 槽存在且 snapshot.hash/updatedAt 与记录一致（deleted → 槽已不存在）
+//   ranked.batch / ranked.promoted → progress.lastBatchId / lastPromotedBatchId（防止计数器重复 +1）
+//   checkpoint          → 仅对"检查点重建的空壳"生效（已有内容 → 视为已应用）
+//   player.removed      → 适配器按墓碑水位处理（此处不作为判据）
+function isRecordApplied(archive, record) {
+  if (!archive || !record) return false;
+  switch (record.type) {
+    case 'battle.recorded': {
+      const ring = archive.record.recent || [];
+      if (ring.some((e) => e.battleId === record.battleId)) return true;
+      const windowFrom = ring.length > 0 ? ring[0].seq : null;
+      // 环形窗口下界之外（seq 更小）说明该场早已应用并已滑出窗口 → 可安全跳过；
+      // 窗口之内却查不到 battleId，则说明**从未应用** → 必须补 apply（不得因水位跳过）。
+      return windowFrom !== null && record.seq < windowFrom;
+    }
+    case 'account.created':
+    case 'admin.bot.injected':
+      return archive.auth !== null && archive.auth !== undefined
+        && ((archive.configs.slots || []).length > 0 || archive.flags.rebuiltFromCheckpoint === true);
+    case 'account.password.changed':
+      return !!record.auth && !!archive.auth && archive.auth.hash === record.auth.hash;
+    case 'account.banned':
+      return archive.flags.banned === true;
+    case 'account.unbanned':
+      return archive.flags.banned === false;
+    case 'player.nickname.changed':
+      return record.nickname === undefined || archive.nickname === record.nickname;
+    case 'player.pool.changed':
+      return archive.pool.inPool === (record.inPool !== false);
+    case 'player.config.saved': {
+      const slot = findSlot(archive, record.slotId);
+      if (record.deleted === true) return slot === null;
+      if (!slot) return false;
+      if (record.snapshotHash && (!slot.snapshot || slot.snapshot.hash !== record.snapshotHash)) return false;
+      if (Number.isInteger(record.at) && slot.updatedAt !== record.at) return false;
+      return true;
+    }
+    case 'ranked.batch':
+      return record.batchId === undefined || archive.progress.lastBatchId === record.batchId;
+    case 'ranked.promoted':
+      return record.batchId === undefined || archive.progress.lastPromotedBatchId === record.batchId;
+    case 'checkpoint':
+      return archive.record.appliedSeq > 0 || archive.flags.rebuiltFromCheckpoint === true;
+    default:
+      return true; // 未知类型：交给上层统一报错/忽略，不在幂等层做决定
+  }
 }
 
 function slotSnapshotFromRecord(record, at) {
@@ -602,14 +667,15 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
     case 'ranked.batch':
       archive.progress.batchesPlayed += 1;
       archive.progress.lastBatchId = record.batchId === undefined ? null : record.batchId;
-      return { changed: true };
-    case 'ranked.promoted': {
+      return { changed: true };    case 'ranked.promoted': {
       if (!isTier(record.tierAfter)) return { changed: false };
       archive.progress.tier = record.tierAfter;
       archive.progress.peakTier = TIERS.indexOf(record.tierAfter) > TIERS.indexOf(archive.progress.peakTier)
         ? record.tierAfter : archive.progress.peakTier;
       archive.progress.tierUpdatedAt = at;
       archive.progress.batchesPromoted += 1;
+      // 幂等键：同一批次重复 apply 不再累加 batchesPromoted（见 isRecordApplied）
+      if (record.batchId !== undefined) archive.progress.lastPromotedBatchId = record.batchId;
       return { changed: true };
     }
     case 'battle.recorded':
@@ -833,6 +899,7 @@ module.exports = {
   defenseSummaryOf,
   findSlot,
   isTier,
+isRecordApplied,
   isValidNickname,
   isValidUsername,
   markSeen,

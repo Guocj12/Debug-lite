@@ -32,6 +32,7 @@ const { createLogger, parseLevel } = require('../shared/log.js');
 const accountMod = require('./account.js');
 const authMod = require('./auth.js');
 const storeMod = require('./store/index.js');
+const archiveFx = require('./store/archive.js'); // P2-5：注册时显式生成身份（publicId/playerId）供默认配置派生
 const quickmatchMod = require('./quickmatch.js');
 const adminMod = require('./admin.js');
 const rankedMod = require('./ranked.js');
@@ -48,6 +49,7 @@ const DEFAULT_RATE_LIMIT_PER_MINUTE = 600;      // §4.6 全局：600 次/分/to
 const RATE_WINDOW_MS = 60000;
 const DEFAULT_REPLAY_LRU = 64;                  // §11.3/D-135 帧 LRU 上限
 const EVICTED_REMEMBERED = 256;                 // 已淘汰 id 记忆（用于区分 410 与 404）
+const WAREHOUSE_CACHE_MAX = 200;                // 缺陷 B：进程内仓库镜像缓存上限（与 account.js 的 MIRROR_CACHE_MAX 同口径）
 
 /* ---------- 通用工具（P0-8 基线，行为不变） ---------- */
 
@@ -247,6 +249,30 @@ async function createRuntime(logger, options) {
     replayMeta: new Map(),   // 回放 id → { participants, frameId, kind }
     evicted: new Set(),      // 已淘汰 id（区分 410 与 404）
     ownReplays: [],          // 本实例登记的帧 id（LRU 淘汰记账）
+    runBattle: typeof opts.runBattle === 'function' ? opts.runBattle : null, // 测试接缝（P2-1：排位/快速同源）
+  };
+  // 缺陷 B：仓库镜像解析（进程内）。来源 ① account 模块镜像缓存（PUT /me/warehouse）；
+  //   ② 携带 warehouse 的配置保存/注册请求（校验通过后登记，见 rememberWarehouse/路由接线）。
+  //   D-130：仓库由客户端权威持有、服务端**不落盘** → 重启后镜像为空；此时装配引用的对局按
+  //   ranked 的"已校验 → 跳过仓库引用校验（基准面板退化）"口径进行，未校验者仍 409 missing_warehouse。
+  rt.warehouses = new Map();
+  rt.rememberWarehouse = (playerId, warehouse) => {
+    if (typeof playerId !== 'string' || playerId === '' || !warehouse || typeof warehouse !== 'object') return false;
+    rt.warehouses.delete(playerId);
+    rt.warehouses.set(playerId, warehouse);
+    while (rt.warehouses.size > WAREHOUSE_CACHE_MAX) rt.warehouses.delete(rt.warehouses.keys().next().value);
+    return true;
+  };
+  rt.loadWarehouse = async (playerId) => {
+    // 优先级：account 模块镜像（PUT /me/warehouse 的显式提交）→ 配置保存请求登记的镜像
+    if (typeof playerId === 'string' && playerId !== '' && rt.account && typeof rt.account.getWarehouseMirror === 'function') {
+      const r = await rt.account.getWarehouseMirror(playerId);
+      if (r && r.ok === true && r.data && r.data.warehouse) {
+        rt.rememberWarehouse(playerId, r.data.warehouse);
+        return r.data.warehouse;
+      }
+    }
+    return rt.warehouses.get(playerId) || null;
   };
   if (storeWanted(opts, env)) {
     rt.store = await storeMod.openStore({
@@ -260,9 +286,24 @@ async function createRuntime(logger, options) {
       versions: opts.versions || { engine: VERSION },
     });
     rt.account = accountMod.createAccount({ store: rt.store, logger, now: opts.now });
+    // P2-5：默认出战配置按玩家身份派生（`account.js` 的默认构造回调无身份入参，且该文件不在本批所有权内）
+    //   → 在装配层补一层：**仅当调用方未显式提供 loadout** 时，用身份派生的默认配置组装调用。
+    //   身份 = publicId（注册时生成）优先，其次 playerId；两者都缺 → ranked 内部回落 steady/0（确定性）。
+    if (typeof rt.account.createPlayerArchive === 'function') {
+      const createArchiveInner = rt.account.createPlayerArchive;
+      rt.account.createPlayerArchive = (input) => {
+        const o = input || {};
+        if (o.loadout !== undefined && o.loadout !== null) return createArchiveInner(o);
+        return createArchiveInner({
+          ...o,
+          loadout: rankedMod.buildDefaultLoadout({ publicId: o.publicId, playerId: o.playerId }),
+        });
+      };
+    }
     rt.auth = authMod.createAuth({ store: rt.store, logger, now: opts.now, account: rt.account, config: opts.authConfig });
     rt.quick = quickmatchMod.createQuickMatch({
       store: rt.store, logger, now: opts.now, env, config: opts.ratingConfig, runBattle: opts.runBattle,
+      loadWarehouse: (playerId) => rt.loadWarehouse(playerId),
     });
     rt.admin = adminMod.createAdmin({ store: rt.store, logger, now: opts.now, env });
   }
@@ -604,7 +645,9 @@ function createHandler(logger, extraRoutes, runtime) {
     // 元数据表同样有上限：超过 EVICTED_REMEMBERED 条按插入序淘汰最旧（缺失只影响缓存命中，不影响正确性）。
     if (Array.isArray(entry.participants)) {
       rt.replayMeta.set(entry.id, {
-        id: entry.id, frameId: entry.frameId, participants: entry.participants, kind: entry.kind, createdAt: Date.now(),
+        id: entry.id, frameId: entry.frameId, participants: entry.participants, kind: entry.kind,
+        sides: entry.sides === undefined ? null : entry.sides, // P1-1：请求者 side（aiTrace 裁剪用）
+        createdAt: Date.now(),
       });
       while (rt.replayMeta.size > EVICTED_REMEMBERED) {
         const oldest = rt.replayMeta.keys().next().value;
@@ -624,14 +667,64 @@ function createHandler(logger, extraRoutes, runtime) {
     return { ...data, frames: frames.slice(lo - 1, hi) };
   }
 
+  /* ----- 回放 aiTrace 裁剪（P1-1 / §9.4） -----
+   * §9.4：`aiTrace` **默认只返回请求方自己一侧**的（避免把对手 AI 的逐步决策喂给玩家）；
+   *       `?trace=all` 仅管理员令牌通过时放行；未知 trace 值 → 400 bad_request。
+   * 两条归档路径（进程内帧缓存命中 / 按 journal + 快照重算）都必须裁剪；`?trace=self` 是默认值。
+   * 侧别未知的情形（遗留 `r<seq>`：双方 loadout 与 AI 程序都由调用方在 `POST /battle` 自备 → 不存在
+   *       "对手私有信息"）不裁剪，保持旧语义零回归。
+   */
+  function parseTraceMode(query) {
+    const raw = query && query.trace !== undefined && query.trace !== null ? String(query.trace) : 'self';
+    if (raw === 'self' || raw === 'all') return { mode: raw };
+    return { mode: null, error: failStatus(400, 'bad_request', `非法 trace=${raw}（可选: self/all）`) };
+  }
+
+  function traceAllAllowed(ctx) {
+    if (!rt.admin || typeof rt.admin.checkToken !== 'function') {
+      return { ok: false, status: 503, code: 'admin_token_missing', message: '管理端未装配，trace=all 不可用' };
+    }
+    const auth = rt.admin.checkToken(ctx.adminToken);
+    if (auth.ok) return { ok: true };
+    logger.warn('api', 'api.reject', `trace=all 被拒：${auth.code}`, {
+      path: ctx.urlPath, publicId: ctx.player ? ctx.player.publicId : null, code: auth.code,
+    });
+    return auth;
+  }
+
+  // participants = [p1PlayerId, p2PlayerId]（任一可为 undefined/null）→ 请求者的 side
+  function sideOfPlayer(participants, playerId) {
+    if (!Array.isArray(participants) || typeof playerId !== 'string') return null;
+    if (participants[0] === playerId) return 'p1';
+    if (participants[1] === playerId) return 'p2';
+    return null;
+  }
+
+  function applyTrace(data, side, mode) {
+    if (mode === 'all' || side === null) return data;
+    const frames = (Array.isArray(data.frames) ? data.frames : []).map((f) => {
+      const diff = f && f.diff;
+      if (!diff || !Array.isArray(diff.aiTrace)) return f;
+      return { ...f, diff: { ...diff, aiTrace: diff.aiTrace.filter((t) => t && t.owner === side) } };
+    });
+    return { ...data, frames };
+  }
+
   // GET /api/v1/replay/:id（`r<seq>` = 遗留无状态注册表；`b_…` = 归档记录 → 参与者鉴权 + 按需重算）
   async function serveReplay(ctx, id, query) {
     const from = intOf(query.from);
     const to = intOf(query.to);
+    const parsedTrace = parseTraceMode(query);
+    if (parsedTrace.error) return parsedTrace.error;
+    const traceMode = parsedTrace.mode;
+    if (traceMode === 'all') {
+      const gate = traceAllAllowed(ctx);
+      if (!gate.ok) return failStatus(gate.status, gate.code, gate.message);
+    }
     if (/^r\d+$/.test(id)) {
       if (!rt.legacyStateless) return deprecated(`GET /api/v1/replay/${id}`);
       const r = battleApi.getReplay(id, from, to);
-      if (r.status === 200) return { status: 200, payload: okEnvelope(r.data, logger) };
+      if (r.status === 200) return { status: 200, payload: okEnvelope(applyTrace(r.data, null, traceMode), logger) };
       if (rt.evicted.has(id)) {
         logger.warn('store', 'store.snapshot.missing', `回放 ${id} 已从帧缓存淘汰（LRU ${rt.replayLimit}）`, { replayId: id, reason: 'evicted', limit: rt.replayLimit });
         return failStatus(410, 'replay_expired', `回放 ${id} 已过期（帧缓存淘汰，上限 ${rt.replayLimit} 场）`);
@@ -640,22 +733,27 @@ function createHandler(logger, extraRoutes, runtime) {
     }
     // 归档回放：必须登录（§9.4）
     if (!ctx.player) return failStatus(401, 'unauthorized', '回放需要登录（参与者鉴权，D-135）');
+    const playerId = ctx.player.playerId;
     const meta = rt.replayMeta.get(id);
     if (meta && Array.isArray(meta.participants)) {
-      if (!meta.participants.includes(ctx.player.playerId)) {
+      if (!meta.participants.includes(playerId)) {
         logger.warn('api', 'api.reject', 'replay_forbidden: 非参与者请求回放', { path: `/api/v1/replay/${id}`, publicId: ctx.player.publicId, code: 'replay_forbidden' });
         return failStatus(403, 'replay_forbidden', '只能查看自己参与的对局回放');
       }
-      if (meta.frameId) {
+      // 缓存路径同样裁剪 aiTrace（P1-1）；侧别不可知时落到重算路径（那边可从 journal 记录定位 side）
+      const cachedSide = sideOfPlayer(meta.sides && [meta.sides.p1, meta.sides.p2], playerId);
+      if (meta.frameId && (cachedSide !== null || traceMode === 'all')) {
         const cached = battleApi.getReplay(meta.frameId, from, to);
-        if (cached.status === 200) return { status: 200, payload: okEnvelope({ ...cached.data, id }, logger) };
+        if (cached.status === 200) {
+          return { status: 200, payload: okEnvelope(applyTrace({ ...cached.data, id }, cachedSide, traceMode), logger) };
+        }
       }
     }
     if (!rt.store) return failStatus(404, 'unknown_replay', `未知回放 ${id}`);
     const record = await rt.store.findBattleRecord(id);
     if (!record) return failStatus(404, 'unknown_replay', `未知回放 ${id}`);
     const participants = [record.p1 && record.p1.playerId, record.p2 && record.p2.playerId].filter((x) => typeof x === 'string');
-    if (!participants.includes(ctx.player.playerId)) {
+    if (!participants.includes(playerId)) {
       logger.warn('api', 'api.reject', 'replay_forbidden: 非参与者请求归档回放', { path: `/api/v1/replay/${id}`, publicId: ctx.player.publicId, code: 'replay_forbidden' });
       return failStatus(403, 'replay_forbidden', '只能查看自己参与的对局回放');
     }
@@ -677,18 +775,34 @@ function createHandler(logger, extraRoutes, runtime) {
     const tier = (record.p1 && record.p1.tierBefore) || 'common';
     const r = battleApi.runBattle({ p1: snap1.loadout, p2: snap2.loadout, seed: record.seed, tier });
     if (r.status !== 200) return failStatus(410, 'replay_expired', `回放过期：快照无法实例化（${r.code}）`);
-    registerReplay({ id, frameId: r.data.id, participants, kind: 'archive' });
+    registerReplay({
+      id, frameId: r.data.id, participants, kind: 'archive',
+      sides: { p1: record.p1 && record.p1.playerId, p2: record.p2 && record.p2.playerId },
+    });
     logger.debug('store', 'store.read', `回放 ${id} 按需重算（${r.data.frames.length} 帧）`, { replayId: id, frames: r.data.frames.length, kind: 'archive' });
-    return { status: 200, payload: okEnvelope({ ...sliceReplay(r.data, from, to), id }, logger) };
+    const side = record.p1 && record.p1.playerId === playerId ? 'p1' : 'p2';
+    return { status: 200, payload: okEnvelope(applyTrace({ ...sliceReplay(r.data, from, to), id }, side, traceMode), logger) };
   }
 
   /* ----- 排位/快速对战（P7-3 档案驱动 + P5 遗留口径） ----- */
+
+  // P2-1：排位路径必须与 quick/admin 同源注入 `env`（`DL_DEBUG_BOTS` 门控）与 `runBattle` 测试接缝、
+  //   以及 `ratingConfig`（P2-3 晋升阈值单一真源）——旧接线只传 logger → 同一 `DL_DEBUG_BOTS=1` 下
+  //   `quick.match debug=true` 而 `ranked.pool debug=false`（同一开关两种行为）。
+  function rankedDeps() {
+    return {
+      env: rt.env,
+      runBattle: typeof rt.runBattle === 'function' ? rt.runBattle : undefined,
+      ratingConfig: rt.store ? rt.store.ratingConfig : undefined,
+      loadWarehouse: (playerId) => rt.loadWarehouse(playerId), // 缺陷 B
+    };
+  }
 
   async function rankedRunArchive(ctx) {
     const body = bodyOf(ctx);
     if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
     // `pool` 原样透传给业务层 → 400 pool_forbidden（服务端抽池，D-136 不接受客户端自选对手）
-    return respond(await rankedMod.withLogger(logger).runRankedBattle({
+    return respond(await rankedMod.withLogger(logger, rankedDeps()).runRankedBattle({
       store: rt.store, playerId: ctx.player.playerId, seed: body.seed, pool: body.pool,
     }));
   }
@@ -701,7 +815,7 @@ function createHandler(logger, extraRoutes, runtime) {
     if (unlockApi.tierIndex(tier) === null) {
       return failStatus(400, 'bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`);
     }
-    const r = rankedMod.withLogger(logger).runRankedBattle({ loadout: body.loadout, warehouse: body.warehouse, pool: body.pool, seed: body.seed, tier });
+    const r = rankedMod.withLogger(logger, rankedDeps()).runRankedBattle({ loadout: body.loadout, warehouse: body.warehouse, pool: body.pool, seed: body.seed, tier });
     if (r.status !== 200) {
       if (r.code === 'loadout_invalid') return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
       return { status: r.status, payload: errEnvelope(r.code, r.message) };
@@ -720,14 +834,14 @@ function createHandler(logger, extraRoutes, runtime) {
       logger.warn('api', 'api.reject', 'forbidden: tier 与档案不一致', { path: '/api/v1/ranked/promote', publicId: ctx.player.publicId, code: 'forbidden' });
       return failStatus(403, 'forbidden', `段位以档案为准（档案 ${tier}），不接受入参 tier=${body.tier}`);
     }
-    const r = rankedMod.withLogger(logger).promote(tier, body.wins);
+    const r = rankedMod.withLogger(logger, rankedDeps()).promote(tier, body.wins);
     return respond(r);
   }
 
   function rankedPromoteLegacy(ctx) {
     const body = bodyOf(ctx);
     if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-    const r = rankedMod.withLogger(logger).promote(body.tier, body.wins);
+    const r = rankedMod.withLogger(logger, rankedDeps()).promote(body.tier, body.wins);
     if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, r.message) };
     return { status: 200, payload: okEnvelope(r.data, logger) };
   }
@@ -782,10 +896,20 @@ function createHandler(logger, extraRoutes, runtime) {
       handler: async (ctx) => {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-        return respond(await rt.auth.register({
+        // P2-5：注册即生成身份（与 store 内部生成同形），显式下传 → 默认出战配置可按身份派生
+        //   （否则 `auth.register` 把 playerId/publicId 留空、由 store 就地生成，装配层拿不到身份）
+        const playerId = typeof body.playerId === 'string' && archiveFx.PLAYER_ID_RE.test(body.playerId)
+          ? body.playerId : archiveFx.newPlayerId();
+        const publicId = typeof body.publicId === 'string' && archiveFx.PUBLIC_ID_RE.test(body.publicId)
+          ? body.publicId : archiveFx.newPublicId();
+        const r = await rt.auth.register({
           username: body.username, password: body.password, nickname: body.nickname,
           warehouse: body.warehouse, ip: ctx.ip, userAgent: ctx.userAgent,
-        }));
+          playerId, publicId,
+        });
+        // 缺陷 B：注册请求携带的仓库镜像 → 登记（后续对局/回放解析装配引用用；D-130 不落盘）
+        if (r.status === 200 && body.warehouse && r.data && r.data.playerId) rt.rememberWarehouse(r.data.playerId, body.warehouse);
+        return respond(r);
       },
     },
     '/api/v1/auth/login': {
@@ -816,10 +940,12 @@ function createHandler(logger, extraRoutes, runtime) {
       handler: async (ctx) => {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-        return respond(await rt.account.createSlot({
+        const r = await respond(await rt.account.createSlot({
           playerId: ctx.player.playerId, loadout: body.loadout, warehouse: body.warehouse,
           name: body.name, activate: body.activate,
         }));
+        if (r.status === 200 && body.warehouse) rt.rememberWarehouse(ctx.player.playerId, body.warehouse);
+        return r;
       },
     },
     '/api/v1/me/records/seen': {
@@ -1017,10 +1143,13 @@ function createHandler(logger, extraRoutes, runtime) {
           handler: async (c) => {
             const body = bodyOf(c);
             if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-            return respond(await rt.account.saveConfig({
+            const r = await respond(await rt.account.saveConfig({
               playerId: c.player.playerId, slotId, loadout: body.loadout, warehouse: body.warehouse,
               name: body.name, baseUpdatedAt: body.baseUpdatedAt, activate: body.activate,
             }));
+            // 缺陷 B：保存配置请求携带的仓库镜像 → 登记（校验已通过才登记，避免存入未校验镜像）
+            if (r.status === 200 && body.warehouse) rt.rememberWarehouse(c.player.playerId, body.warehouse);
+            return r;
           },
         }, ctx);
       }

@@ -536,6 +536,8 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
       'createAccount', 'setPasswordHash', 'setBanned', 'setNickname', 'setPool', 'touchLastSeen', 'markRecordsSeen',
       'saveConfigSlot', 'createConfigSlot', 'activateConfigSlot', 'deleteConfigSlot', 'freezeSnapshot',
       'append', 'appendMany', 'applyRecord', 'applyRecords', 'settleBattle', 'readRecords', 'findBattleRecord',
+      // P7-6 修复 1/2 追加的结算原语：批量结算 + 参与集合结算锁 + 锁内单场 + 索引立即落盘
+      'settleBatch', 'settleBattleLocked', 'withSettlementLock', 'flushIndex',
       'replayJournal', 'maxSeq', 'compactJournal', 'records', 'defenseSummary', 'getSummary', 'opponentWindow',
       'recover', 'rebuildIndex', 'gc', 'stats']) {
       assert.equal(typeof store[method], 'function', `适配器缺方法 ${method}`);

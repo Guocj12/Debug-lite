@@ -55,6 +55,7 @@ scripts/fe-spec-check.js    前端文档自检器（C1–C9；`npm test` 内断�
 | `npm run demo` | 跑一场并打印逐 tick 摘要（数据表示例模板实例化） | B11 | ✅ 已补齐 `scripts/demo.js` 并实跑 |
 | `npm run demo:log` | 同上，`trace` 级（等价 `DL_LOG_LEVEL=trace`） | B11 | ✅ 同上（`--log-level trace`） |
 | `npm run play` | **离线可玩闭环**（开箱→自动装配→预设 AI→面板→打一场→逐 tick 战报；选项 `--seed/--boxes/--tier/--preset/--quality/--out`） | 2026-09-16（D-151） | ✅ 已实跑（`node scripts/play.js --help` 与默认局均可跑；**离线，不需要 `npm start`**） |
+| `npm run e2e` | **联网全链路端到端**（真实玩家：注册→`GET /me`→开箱→仓库镜像→装配→配置槽/出战→AI validate/compile→对战→回放(403/410)→排位 run/promote→战绩/防守/未读→排行榜→快速对战 Elo；22 个检查点按 P7-7 §B1 顺序逐步打印真实响应；进程内起服务于随机端口，数据根用 `os.tmpdir()`，**不需要 `npm start`**） | 2026-09-16（P7-5） | ✅ 已实跑（`node scripts/e2e.js` = 22/22 检查点、退出码 0；测试版 `tests/integration/e2e-play.test.js` 纳入 `npm test`） |
 | `npm run cli -- ...` | 后端接口客户端（唯一"操作台"） | P0-8 | ⚠ 本轮未实跑（有 `tests/cli` 覆盖） |
 | `node scripts/fe-spec-check.js` | 前端文档自检（C1–C9；`npm test` 已含同一函数） | P6 前端 | ⚠ 本轮未单独实跑（`npm test` 内含） |
 | `node .audit/fe-samples.js` | 重采真实响应样本（`.audit/fe-samples.json`） | P6 前端 | ⚠ 本轮未实跑（**已入库**，见 `git ls-files`；快照字段扩充后**必须重采**，见 `docs/plan-p7-playable.md` §已知风险 4） |

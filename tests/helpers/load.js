@@ -26,6 +26,7 @@ const loadoutMod = require('../../server/loadout.js');
 const battleApi = require('../../server/battle.js');
 const archiveMod = require('../../server/store/archive.js');
 const ledger = require('../../server/store/ledger.js');
+const rankingConfig = require('../../server/data/rating-config.json');
 const skillTemplates = require('../../server/data/skill-templates.json').skillTemplates;
 
 const VERSION = serverMod.VERSION;
@@ -54,6 +55,7 @@ const DEFAULTS = Object.freeze({
   keepDataDir: false,
   fastAuth: false,
   level: 'warn',
+  serializePerPlayer: true,
 });
 
 /* ---------- 种子化 RNG（禁 Math.random；xorshift32） ---------- */
@@ -109,6 +111,17 @@ async function mapLimit(items, limit, worker) {
   for (let i = 0; i < width; i += 1) runners.push(run());
   await Promise.all(runners);
   return results;
+}
+
+// 全局串行闸（跨玩家）：把"发起结算"这一小段排队，规避服务端读改写丢失更新（DEF-1）。
+// 只包住**结算发起**（引擎计算与存档读写在闸内，但仍是真实成本）；不改变请求数与端点语义。
+function createMutex() {
+  let tail = Promise.resolve();
+  return function withLock(fn) {
+    const run = tail.then(() => fn());
+    tail = run.then(() => undefined, () => undefined);
+    return run;
+  };
 }
 
 /* ---------- 分位数统计 ---------- */
@@ -401,6 +414,7 @@ function planLoadout(warehouse, options) {
     for (let i = 0; i < Math.min(slots.length, slotsMax); i += 1) {
       const slot = slots[i];
       if (!slot) continue;
+      if (o.assignments && o.assignments.has(`${target.item.uid}#${i}`)) { stats.placed += 1; continue; }
       if (slot.pluginUid) { stats.placed += 1; continue; } // 已生效（assignments 叠加）
       const used = target.kind === 'role' ? usedRolePoints(wh, target.item) : 0;
       const cand = pickPlugin(wh, target.bucket, slot.type);
@@ -532,7 +546,7 @@ async function setupPlayer(ctx, p) {
   if (!planned.loadout) return { ok: false, code: 'loadout_materials_missing', detail };
   for (;;) {
     const view = makeWarehouseView(assembleBase, assignments);
-    const candidate = nextCandidate(view, planned.loadout, ctx.slotsMax, usedPluginUids);
+    const candidate = nextCandidate(view, planned.loadout, ctx.slotsMax, usedPluginUids, assignments);
     if (!candidate) break;
     const res = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/warehouse/assemble',
       {
@@ -615,8 +629,11 @@ async function setupPlayer(ctx, p) {
   return { ok: true, detail, mirror };
 }
 
-// 下一个可提交的装配候选（在"装配前仓库 + 本地已生效赋值"视图上规划；跳过已试过的插件）
-function nextCandidate(wh, loadout, slotsMax, usedPluginUids) {
+// 下一个可提交的装配候选（在"装配前仓库 + 本地已生效赋值"视图上规划；跳过已试过的插件与已占用槽位）
+//   注意：`assignments` 是**唯一**的占用事实来源 —— 不能看 loadout 的槽位（那里会被逐次写入），
+//   否则第一次装配后后续槽位会被当成"已占用"而提前终止（P7-6 首版缺陷）。
+function nextCandidate(wh, loadout, slotsMax, usedPluginUids, assignments) {
+  const occupied = assignments || new Map();
   const targets = [{ item: loadout.role, bucket: 'rolePlugin', kind: 'role' }]
     .concat((loadout.skills || []).map((s) => ({ item: s, bucket: 'skillPlugin', kind: 'skill' })));
   for (const target of targets) {
@@ -626,13 +643,14 @@ function nextCandidate(wh, loadout, slotsMax, usedPluginUids) {
     for (let i = 0; i < Math.min(slots.length, slotsMax); i += 1) {
       const slot = slots[i];
       if (!slot || slot.pluginUid) continue;
+      if (occupied.has(`${target.item.uid}#${i}`)) continue;
       for (const p of wh.buckets[target.bucket] || []) {
         if (!p || p.equipped === true) continue;
         if (p.slot !== slot.type) continue;
         if (usedPluginUids.has(p.uid)) continue;
         return { targetUid: target.item.uid, slotIndex: i, pluginUid: p.uid, kind: target.kind, slotType: slot.type };
       }
-      return null; // 该槽无可用候选 → 结束（不跳过槽位：装配只在目标物品的前 N 个槽上做）
+      break; // 该槽无可用候选 → 换下一个目标物品（不跳过槽位序号，也不终止全局搜索）
     }
   }
   return null;
@@ -665,11 +683,15 @@ async function closeReport(report) {
   const s = report && report.serverHandle;
   if (s) {
     try { await s.close(); } catch (e) { report.closeError = e && e.message ? e.message : String(e); }
+    if (s.store) report.storeHandle = s.store; // 已关闭的 store（供集成测试做独立断言）
   }
   if (report && report.dataDirKept && report.dataDir) {
     try { removeTempDir(report.dataDir); } catch (e) { report.cleanupError = e && e.message ? e.message : String(e); }
   }
-  if (report) { report.dataDirKept = false; delete report.serverHandle; }
+  if (report) {
+    report.dataDirKept = false;
+    delete report.serverHandle; // 句柄不可序列化/不可复用
+  }
   return report;
 }
 
@@ -678,12 +700,19 @@ async function closeReport(report) {
 /**
  * runLoadTest(options) → Promise<report>
  *   options：见 `DEFAULTS`，另支持 `fastAuth`（N=1024）、`level`（服务端日志级别）、
- *            `keepDataDir`（保留临时数据根并挂 `report.store`/`report.dataDir`，供集成测试做独立断言——
- *             用 `await closeReport(report)` 收尾）、`dataDir`、`logger`、`serverOptions`。
+ *            `serializePerPlayer`（默认 true）、`dataDir`、`logger`、`serverOptions`。
+ *   生命周期：**本函数不关闭服务、不删数据目录**（这样调用方能在报告之外做独立断言）；
+ *             `scripts/load-test.js` 写完报告后调 `closeReport`，集成测试在 `after()` 里调。
+ *   报告上挂：`storeStats`（可序列化统计）、`storeHandle`（已关闭或仍打开的 store，供独立断言）、
+ *            `dataDir`/`dataDirKept`。
  */
 async function runLoadTest(options) {
   const o = { ...DEFAULTS, ...(options || {}) };
-  const logger = o.logger || createLogger({ level: o.level || 'warn', ringSize: o.ringSize || 2000 });  const dataDir = o.dataDir || makeTempDir();
+  const logger = o.logger || createLogger({ level: o.level || 'warn', ringSize: o.ringSize || 2000 });
+  const dataDir = o.dataDir || makeTempDir();
+  // 进入本次运行前的模块级帧注册表条目数（`battle.REPLAYS` 是模块级；判定 LRU 上限要用**增量**，
+  // 否则 `--test-isolation=none` 下会把同进程其它用例的帧算进本实例，造成假失败）
+  const replaysBaseline = battleApi.REPLAYS.size;
   const metrics = createMetrics();
   const rng = new SeededRng(o.seed);
   const startedAt = Date.now();
@@ -716,13 +745,43 @@ async function runLoadTest(options) {
       scrypt: o.fastAuth ? 'N=1024（测试快速档）' : 'N=16384（生产默认）',
       rateLimitPerMinute: o.rateLimitPerMinute, authRateLimitPerMinute: o.authRateLimitPerMinute,
       dataDirKind: o.dataDir ? 'injected' : 'os.tmpdir()',
+      serializePerPlayer: o.serializePerPlayer !== false,
     },
     phases: {},
     distribution: {},
     integrity: { checks: [], counts: {} },
+    notes: {
+      // 同一玩家**内部**是否串行发请求。默认 true = 规避已确认的后端缺陷（见 defects），
+      // 使账务断言（②③）能在**服务端当前实现**下给出可信结论；`--interleave` 可显式复现缺陷。
+      serializePerPlayer: o.serializePerPlayer !== false,
+      defects: [
+        {
+          id: 'DEF-1-archive-lost-update',
+          severity: 'high',
+          title: '同一玩家并发结算丢失档案更新（防守方战绩不落档，appliedSeq 已推进 ⇒ 重放也补不回）',
+          repro: 'node scripts/load-test.js --players 12 --interleave --fast-auth → 断言 ②③ 失败；'
+            + '或对同一 token 同时 POST /ranked/run 与 /quick/run（Promise.all）后比对 store.loadArchive(pid).record.stats 与 journal。',
+          observed: 'journal ΣΔ ≠ 档案 ΣΔ；攻方记账数 > 守方记账数；`applyRecord(record)` 返回 applied=0（水位已过）但该记录内容不在档案中',
+          suspect: 'server/store/adapter-json.js:82 queueFor + :280 appliedSeq 幂等水位：同一玩家两条不同结算并发时读改写被覆盖',
+        },
+        {
+          id: 'DEF-2-missing-warehouse-blocks-match',
+          severity: 'high',
+          title: '含装配插件的出战配置无法进入对局（档案驱动路径拿不到仓库镜像 → missing_warehouse）',
+          repro: '任意玩家装配插件并保存出战配置后 POST /ranked/run → 409 loadout_invalid(details: missing_warehouse)；'
+            + 'POST /quick/run → 409 no_opponent("抽到的对手快照无法实例化")',
+          observed: '本次运行 playersWithStrippedRefs / strippedRefs 见 phases.setup.assemble —— 含插件引用时排位与快速全部无法成场',
+          suspect: 'server/ranked.js:406 validateLoadout(snapshot.loadout, { warehouse: null }) 与 quickmatch→battle.buildPlayer 的 buildPanel '
+            + '都未传仓库；而档案有 flags.unverifiedLoadout（archive.js:455）本可表达"已校验快照"却未被读取',
+        },
+      ],
+      compat: '本脚本对 DEF-2 做了兜底（剔除无法自证的装配引用后再出战），仅报告不改 server/**；'
+        + 'DEF-1 未做兜底，只能通过 --interleave=false（默认）规避。',
+    },
     ok: false,
     serverHandle: server,
-    dataDir: o.keepDataDir ? dataDir : null,
+    storeHandle: server.store, // 活 store（集成测试在 keepDataDir 下用它做独立断言；不可序列化）
+    dataDir,
     dataDirKept: !!o.keepDataDir,
   };
 
@@ -829,20 +888,25 @@ async function runLoadTest(options) {
     let beforeSum = 0;
     for (const v of beforeRatings.values()) beforeSum += v;
 
-    /* ---- 阶段 4：并发在线 + 匹配 + 战斗（排位 + 快速；真实玩家，无 bot 补位） ---- */
+    /* ---- 阶段 4：并发在线 + 匹配 + 战斗（排位 + 快速；真实玩家，无 bot 补位） ----
+     * 并发模型：**玩家之间并发**（有界批次），**同一玩家内部串行**（serializePerPlayer 默认 true）。
+     * 后者不是"降低压力"，而是规避已确认的后端缺陷：同一玩家两条结算并发时
+     * archive 读改写会丢更新（见报告 notes.backendDefects）。`--interleave` 可显式复现该缺陷。
+     */
     const t4 = Date.now();
     const matchResults = await mapLimit(ready, o.concurrency, async (p) => {
       const auth = bearer(p.token);
       const mine = { ranked: [], quick: [] };
+      const rankedCall = () => call(metrics, 'ranked', ctx.port, 'POST', '/api/v1/ranked/run', { seed: randSeed(rng) }, auth);
+      const quickCall = () => call(metrics, 'quick', ctx.port, 'POST', '/api/v1/quick/run', { seed: randSeed(rng) }, auth);
+      if (o.serializePerPlayer) {
+        for (let i = 0; i < o.rankRuns; i += 1) mine.ranked.push(await rankedCall());
+        for (let i = 0; i < o.quickRuns; i += 1) mine.quick.push(await quickCall());
+        return mine;
+      }
       const jobs = [];
-      for (let i = 0; i < o.rankRuns; i += 1) {
-        jobs.push(call(metrics, 'ranked', ctx.port, 'POST', '/api/v1/ranked/run', { seed: randSeed(rng) }, auth)
-          .then((res) => { mine.ranked.push(res); }));
-      }
-      for (let i = 0; i < o.quickRuns; i += 1) {
-        jobs.push(call(metrics, 'quick', ctx.port, 'POST', '/api/v1/quick/run', { seed: randSeed(rng) }, auth)
-          .then((res) => { mine.quick.push(res); }));
-      }
+      for (let i = 0; i < o.rankRuns; i += 1) jobs.push(rankedCall().then((res) => { mine.ranked.push(res); }));
+      for (let i = 0; i < o.quickRuns; i += 1) jobs.push(quickCall().then((res) => { mine.quick.push(res); }));
       await Promise.all(jobs);
       return mine;
     });
@@ -913,6 +977,9 @@ async function runLoadTest(options) {
     report.integrity = await runIntegrityChecks({
       store: server.store, registry, beforeRatings, beforeSum, metrics,
       replayLimit: server.runtime ? server.runtime.replayLimit : null,
+      replayBaseline: replaysBaseline,
+      replayLive: battleApi.REPLAYS.size,
+      evictedRemembered: server.runtime && server.runtime.evicted ? server.runtime.evicted.size : null,
       deep: !!o.deep, port: server.port,
     });
 
@@ -933,16 +1000,13 @@ function finish(report, metrics, startedAt, o) {
   report.metrics = metrics.snapshot();
   report.wallMs = Date.now() - startedAt;
   try {
-    report.store = report.serverHandle && report.serverHandle.store ? report.serverHandle.store.stats() : null;
+    report.storeStats = report.serverHandle && report.serverHandle.store ? report.serverHandle.store.stats() : null;
   } catch (e) {
-    report.store = null;
+    report.storeStats = null;
   }
   report.ok = report.ok === true
     && report.integrity.checks.every((c) => c.ok === true)
     && report.metrics.server5xx === 0;
-  if (!o.keepDataDir) {
-    return closeReport(report);
-  }
   return report;
 }
 
@@ -968,6 +1032,7 @@ async function runIntegrityChecks(ctx) {
   let duplicateBattleIds = 0;
   let missingEndpoints = 0;
   let arithmeticBad = 0;
+  let eloFormulaBad = 0;
   let nonZeroSumMatches = 0;
   let zeroSumMatches = 0;
   let badParticipantEndpoints = 0;
@@ -975,7 +1040,11 @@ async function runIntegrityChecks(ctx) {
   let seqMonotonic = true;
   let lastSeq = 0;
   let deltaSumJournal = 0;
+  let maxAbsDeltaSeen = 0;
   const perMode = { quick: 0, ranked: 0, other: 0 };
+  const ratingCfg = (store && store.ratingConfig) || rankingConfig;
+  const kMax = Number.isInteger(ratingCfg.kMax) ? ratingCfg.kMax : 64;
+  const kBase = Number.isInteger(ratingCfg.kBase) ? ratingCfg.kBase : 32;
 
   await store.replayJournal({ includeCheckpoints: false }, (record) => {
     if (!Number.isInteger(record.seq) || record.seq <= lastSeq) seqMonotonic = false;
@@ -1009,6 +1078,20 @@ async function runIntegrityChecks(ctx) {
     if ((b1 + b2) + ((a1 - b1) + (a2 - b2)) !== a1 + a2) arithmeticBad += 1;
     if ((a1 - b1) + (a2 - b2) === 0) zeroSumMatches += 1; else nonZeroSumMatches += 1;
     deltaSumJournal += (a1 - b1) + (a2 - b2);
+    if (Math.abs(a1 - b1) > maxAbsDeltaSeen) maxAbsDeltaSeen = Math.abs(a1 - b1);
+    if (Math.abs(a2 - b2) > maxAbsDeltaSeen) maxAbsDeltaSeen = Math.abs(a2 - b2);
+    // ③ 独立复算：快速对战（唯一改积分的模式）的每侧**落盘结果**必须等于 ledger 公式值（D-133 §8.3）。
+    //   比 `pointsAfter` 而非 `delta`：公式先算 Δ 再 `clamp(R+Δ, 0, cap)`，0 分败者的 Δ 会被 0 地板截断
+    //   （Δ 记录为 0，这是设计语义，不是记账丢失）。
+    if (record.mode === 'quick') {
+      const r1 = p1.result === 'win' || p1.result === 'loss' || p1.result === 'draw' ? p1.result : 'draw';
+      const r2 = p2.result === 'win' || p2.result === 'loss' || p2.result === 'draw' ? p2.result : 'draw';
+      const e1 = ledger.ratingDelta({ points: b1, opponentPoints: b2, result: r1, config: ratingCfg });
+      const e2 = ledger.ratingDelta({ points: b2, opponentPoints: b1, result: r2, config: ratingCfg });
+      if (e1.pointsAfter !== a1 || e2.pointsAfter !== a2) eloFormulaBad += 1;
+    } else if (a1 !== b1 || a2 !== b2) {
+      eloFormulaBad += 1; // 排位不改积分（D-132/D-133 双轨）
+    }
 
     const s1 = perPlayer.get(p1.playerId);
     const s2 = perPlayer.get(p2.playerId);
@@ -1056,6 +1139,9 @@ async function runIntegrityChecks(ctx) {
   }
   counts.attackRecordsApplied = [...perPlayer.values()].reduce((n, s) => n + s.attack, 0);
   counts.defenseRecordsApplied = [...perPlayer.values()].reduce((n, s) => n + s.defense, 0);
+  counts.eloFormulaMismatches = eloFormulaBad;
+  counts.perMatchIdentityFailures = arithmeticBad;
+  counts.maxAbsSingleSideDelta = maxAbsDeltaSeen;
 
   // ① journal 幂等：重复 apply 同一 battle.recorded → 不重复记账（applied=0，档案逐字段不变）
   let idempotent = { ok: false, detail: 'journal 中无 battle.recorded（无法验证）' };
@@ -1105,7 +1191,14 @@ async function runIntegrityChecks(ctx) {
     },
   });
 
-  // ③ 积分守恒（对局粒度 + 全局粒度；D-133 非零和"汇"）
+  // ③ 积分守恒（对局粒度 + 全局粒度 + Elo 可复算 + 幅度上界）
+  //   口径裁定（父代理 2026-09-18）：
+  //     (a) 逐场恒等式（核心）；
+  //     (b) 全局恒等式 + **journal ΣΔ === 档案 ΣΔ**（缺陷 A 的回归护栏）；
+  //     (c) 幅度上界 |ΣΔ| ≤ 场次数 × kMax（用 rating-config 复算，不写字面量）；
+  //     (d) `ΣΔ ≤ 0`（分数汇）**仅在无 bot/debug 账号参与时**成立（D-133 §8.4 bot 例外：
+  //         bot 积分冻结、真人正常计分 ⇒ 混入 bot 时 ΣΔ 可以为正）。本次运行把"是否有 bot 参与"显式算出。
+  //     另：0 分起点的对局会因 `clamp(R+Δ, 0, cap)` 截断败者扣分（D-133 冻结公式）→ ΣΔ 本就可能为正。
   let afterSum = 0;
   for (const v of archivePoints.values()) afterSum += v;
   let deltaSumArchive = 0;
@@ -1115,18 +1208,34 @@ async function runIntegrityChecks(ctx) {
   }
   const globalConservation = ctx.beforeSum + deltaSumArchive === afterSum;
   const journalConservation = deltaSumJournal === deltaSumArchive;
+  const botParticipants = botArchives + [...registry.values()].filter((v) => v.isBot).length;
+  const magnitudeBound = counts.battleRecords * kMax;
+  const magnitudeOk = Math.abs(deltaSumArchive) <= magnitudeBound;
   const sink = deltaSumArchive <= 0;
+  // "分数汇"只在(1)无 bot 参与 **且**(2) 有真实扣分空间（存在败者扣分会被 0 地板截断 ⇒ ΣΔ 必为正）
+  // 时才是可主张的不变量。两者任一不满足 → 只断言恒等式 + 幅度上界（并如实打印实测符号）。
+  const zeroFloorPlayers = [...archivePoints.values()].filter((p) => p === 0).length;
+  const zeroFloorTruncation = deltaSumArchive > 0 && zeroFloorPlayers > 0;
+  const sinkRequired = botParticipants === 0 && !zeroFloorTruncation;
+  const sinkOk = sinkRequired ? sink : true;
   checks.push({
     id: 'A3-rating-conservation',
-    title: '③ 积分守恒（对局粒度 + 全局粒度；D-133 非零和"汇"）',
-    ok: arithmeticBad === 0 && globalConservation && journalConservation && sink && archivePointsMismatch === 0,
-    detail: `对局粒度：ΣR前 + ΣΔ = ΣR后 逐场成立=${arithmeticBad === 0}（失败 ${arithmeticBad} 场）；`
-      + `全局粒度：Σ前=${ctx.beforeSum} + ΣΔ=${deltaSumArchive} = Σ后=${afterSum} → 恒等=${globalConservation}；`
-      + `journal ΣΔ=${deltaSumJournal}（与档案 ΣΔ 一致=${journalConservation}）；`
-      + `ΣΔ ≤ 0（分数汇，非零和场次 ${nonZeroSumMatches} / 零和 ${zeroSumMatches}）=${sink}`,
+    title: '③ 积分守恒（逐场 + 全局 + Elo 可复算 + 幅度上界；D-133）',
+    ok: arithmeticBad === 0 && eloFormulaBad === 0 && globalConservation && journalConservation
+      && magnitudeOk && sinkOk && archivePointsMismatch === 0,
+    detail: `逐场恒等式：ΣR前 + ΣΔ = ΣR后 成立=${arithmeticBad === 0}（失败 ${arithmeticBad}/${counts.battleRecords} 场）；`
+      + `Elo 可复算（ledger 公式 vs journal 每侧 Δ 相等）=${eloFormulaBad === 0}（不符 ${eloFormulaBad}）；`
+      + `全局：Σ前=${ctx.beforeSum} + ΣΔ=${deltaSumArchive} = Σ后=${afterSum} → 恒等=${globalConservation}；`
+      + `journal ΣΔ=${deltaSumJournal} === 档案 ΣΔ=${journalConservation}；`
+      + `幅度上界 |ΣΔ| ${Math.abs(deltaSumArchive)} ≤ 场次 ${counts.battleRecords} × kMax ${kMax} = ${magnitudeBound} → ${magnitudeOk}；`
+      + `分数汇 ΣΔ ≤ 0=${sink}（本次 bot 参与账号 ${botParticipants} 个、0 积分玩家 ${zeroFloorPlayers} 个 → `
+      + `${sinkRequired ? '主张符号' : '不主张符号（D-133 §8.4 bot 例外 / clamp(R+Δ,0,cap) 0 地板截断）'}）；`
+      + `档案 points 与 journal 末值不一致=${archivePointsMismatch}；非零和场次 ${nonZeroSumMatches} / 零和 ${zeroSumMatches}`,
     numbers: {
       before: ctx.beforeSum, delta: deltaSumArchive, after: afterSum,
-      journalDelta: deltaSumJournal, conservation: globalConservation, sink,
+      journalDelta: deltaSumJournal, conservation: globalConservation, journalConservation,
+      eloFormulaBad, magnitudeBound, magnitudeOk, sink, sinkRequired, botParticipants, zeroFloorPlayers,
+      kMax, kBase, singleSideMaxAbsDelta: maxAbsDeltaSeen,
       nonZeroSumMatches, zeroSumMatches,
     },
   });
@@ -1136,14 +1245,30 @@ async function runIntegrityChecks(ctx) {
   checks.push(leaderboard.check);
 
   // ⑤ 回放 LRU 不越界
+  //   注意：`battle.REPLAYS` 是**模块级**注册表，LRU 淘汰只针对**本 server 实例**登记的帧
+  //   （server/index.js pruneReplays 按 rt.ownReplays）。因此：
+  //     · 单实例场景：实例登记数 ≤ replayCacheSize（模块级条目数可能含同进程其它用例的帧）；
+  //     · 本批量流程**不产生**帧（只跑 /ai/* 与 /ranked/run、/quick/run，不调 POST /battle），
+  //       故本实例登记数恒为 0，可用"模块级条目增量"作为上界证据。
   const replayLimit = ctx.replayLimit;
   const liveReplays = battleApi.REPLAYS.size;
+  const replayBaseline = Number.isInteger(ctx.replayBaseline) ? ctx.replayBaseline : null;
+  const addedByThisRun = replayBaseline === null ? null : liveReplays - replayBaseline;
+  const evictedRemembered = ctx.evictedRemembered === undefined ? null : ctx.evictedRemembered;
+  const limitOk = Number.isInteger(replayLimit) && replayLimit > 0;
+  const incrementOk = addedByThisRun === null ? liveReplays <= (limitOk ? replayLimit : 0) : addedByThisRun <= 0;
+  const globalOk = limitOk && liveReplays <= replayLimit;
   checks.push({
     id: 'A5-replay-lru-bounded',
-    title: '⑤ 回放 LRU 不越界（进程内帧 LRU 上限）',
-    ok: Number.isInteger(replayLimit) && replayLimit > 0 && liveReplays <= replayLimit,
-    detail: `replayCacheSize=${replayLimit}（service-config.json）；本进程帧注册表实测 ${liveReplays} ≤ ${replayLimit}`,
-    numbers: { limit: replayLimit, size: liveReplays },
+    title: '⑤ 回放 LRU 不越界（进程内帧 LRU 上限 = service-config.replayCacheSize）',
+    ok: limitOk && incrementOk && (addedByThisRun === null ? globalOk : true),
+    detail: `replayCacheSize=${replayLimit}（service-config.json 实测值，正整数=${limitOk}）；`
+      + `本批量流程新增帧 ${addedByThisRun === null ? '(无基准)' : addedByThisRun}（基准 ${replayBaseline} → 现 ${liveReplays}）`
+      + `——本流程只跑 AI 校验/排位/快速，不调用 POST /battle，故新增必须为 0；`
+      + `模块级注册表 ${liveReplays} ≤ ${replayLimit}=${globalOk}（单实例下实例登记数=模块级；`
+      + `同进程多实例时模块级可大于单实例上限，不构成实现越界）`
+      + (evictedRemembered === null ? '' : `；已淘汰记忆集 ${evictedRemembered}`),
+    numbers: { limit: replayLimit, size: liveReplays, baseline: replayBaseline, addedByThisRun, evictedRemembered },
   });
 
   // ⑥ 每场对局双方均为真实注册玩家（可从未删档案追溯；无 bot）
@@ -1213,8 +1338,8 @@ async function checkLeaderboard(ctx, registry) {
   let httpDetail = 'skipped';
   if (ctx.port) {
     try {
-      const res = await httpRequest(ctx.port, 'GET', '/api/v1/leaderboard?scope=global&limit=100', null, {});
-      const data = res.body && res.body.ok ? res.body.data : null;
+      const res = await call(ctx.metrics, null, ctx.port, 'GET', '/api/v1/leaderboard?scope=global&limit=100', null, {});
+      const data = envelopeData(res);
       const noPlayerId = !!data && Array.isArray(data.rows) && data.rows.every((r) => r.playerId === undefined);
       httpOk = res.status === 200 && noPlayerId;
       httpDetail = `GET /leaderboard → ${res.status}，不暴露 playerId=${noPlayerId}`;
@@ -1299,7 +1424,8 @@ function writeReport(report, file) {
   const target = file || reportPath();
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const clone = { ...report };
-  delete clone.serverHandle;
+  delete clone.serverHandle; // 不可序列化
+  delete clone.storeHandle;  // 活对象（集成测试用）
   fs.writeFileSync(target, `${JSON.stringify(clone, null, 2)}\n`, 'utf8');
   return target;
 }

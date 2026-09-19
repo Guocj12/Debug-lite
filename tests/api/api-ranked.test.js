@@ -133,3 +133,82 @@ test('B25 POST /ranked/promote：晋升/不晋升/顶段 409/参数 400', async 
     assert.equal(bj.body.error.code, 'bad_json');
   });
 });
+
+/* ---------- P7-3 批次/身份接线（需要已装配 store；用 helpers/http.js 起落盘服务） ---------- */
+
+const h = require('../helpers/http.js');
+
+test('P1-4 排位批次级幂等（HTTP）：同 seed 重发 → 同 batchId、batchesPlayed 仅 +1、journal 零新增', async () => {
+  await h.withServer(null, async (s) => {
+    const me = await h.register(s.port, h.uniqueName('idem'));
+    await h.register(s.port, h.uniqueName('idem2'));
+    await h.register(s.port, h.uniqueName('idem3'));
+    const meId = await h.playerIdByPublicId(s.store, me.publicId);
+    const first = await h.request(s.port, 'POST', '/api/v1/ranked/run', { seed: 777001 }, h.authed(me.token));
+    assert.equal(first.status, 200, first.raw);
+    const d1 = first.body.data;
+    assert.match(d1.batchId, /^bt_[0-9a-f]{16}$/, 'batchId 形状不变');
+    assert.equal(d1.matches, 2, '同段位另 2 名真实玩家 → 2 场');
+    assert.equal((await s.store.loadArchive(meId)).progress.batchesPlayed, 1);
+    const seq1 = s.store.maxSeq();
+    const countBatch = () => {
+      const ids = [];
+      return s.store.replayJournal({ fromSeq: 0 }, (rec) => {
+        if (rec.type === 'battle.recorded' && rec.batchId === d1.batchId) ids.push(rec.battleId);
+      }).then(() => ids);
+    };
+    assert.equal((await countBatch()).length, 2);
+
+    // 同 seed 重发
+    const again = await h.request(s.port, 'POST', '/api/v1/ranked/run', { seed: 777001 }, h.authed(me.token));
+    assert.equal(again.status, 200, again.raw);
+    assert.equal(again.body.data.batchId, d1.batchId, '同 seed → 同 batchId');
+    assert.equal(again.body.data.duplicate, true, '标注为回放');
+    assert.equal(again.body.data.matches, d1.matches);
+    assert.deepEqual(again.body.data.results.map((x) => x.battleId), d1.results.map((x) => x.battleId));
+    assert.equal((await s.store.loadArchive(meId)).progress.batchesPlayed, 1, 'batchesPlayed 仅 +1（修前 1→2）');
+    assert.equal(s.store.maxSeq(), seq1, 'journal 无任何新增（修前会新增 battle.recorded + ranked.batch）');
+    assert.equal((await countBatch()).length, 2, 'battle.recorded 无新增');
+    // 不同 seed → 新批次
+    const other = await h.request(s.port, 'POST', '/api/v1/ranked/run', { seed: 777002 }, h.authed(me.token));
+    assert.equal(other.status, 200, other.raw);
+    assert.notEqual(other.body.data.batchId, d1.batchId);
+    assert.equal((await s.store.loadArchive(meId)).progress.batchesPlayed, 2, '新 seed 才 +1');
+  });
+});
+
+test('P2-5 真实注册玩家的默认出战配置按身份派生（HTTP）：≥2 种 AI 程序且对局能分出胜负', async () => {
+  await h.withServer(null, async (s) => {
+    const players = [];
+    for (let i = 0; i < 6; i++) players.push(await h.register(s.port, h.uniqueName('p25')));
+    const programs = new Set();
+    for (const p of players) {
+      const pid = await h.playerIdByPublicId(s.store, p.publicId);
+      const slot = await h.activeSlotOf(s.store, pid);
+      programs.add(JSON.stringify(slot.loadout.ai));
+    }
+    assert.ok(programs.size >= 2, `6 名真实注册玩家的默认 AI 至少 2 种（实得 ${programs.size}；修前恒为 move_left 一种）`);
+    const outcomes = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await h.request(s.port, 'POST', '/api/v1/quick/run', { seed: 9000 + i }, h.authed(players[i].token));
+      assert.equal(r.status, 200, r.raw);
+      outcomes.push(r.body.data.winner);
+    }
+    assert.ok(outcomes.some((w) => w !== 'draw'), `真实玩家对局应出现非平局（实得 ${JSON.stringify(outcomes)}；修前 move_left 恒平）`);
+  });
+});
+
+test('P2-1 门控同源：DL_DEBUG_BOTS=1 时 quick.match 与 ranked.pool 都标注 debug:true', async () => {
+  await h.withServer(null, async (s) => {
+    const a = await h.register(s.port, h.uniqueName('dbg'));
+    await h.register(s.port, h.uniqueName('dbg2'));
+    const q = await h.request(s.port, 'POST', '/api/v1/quick/run', { seed: 31 }, h.authed(a.token));
+    assert.equal(q.status, 200, q.raw);
+    const r = await h.request(s.port, 'POST', '/api/v1/ranked/run', { seed: 32 }, h.authed(a.token));
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(s.logger.records.some((x) => x.event === 'quick.match' && x.data && x.data.debug === true),
+      'quick 路径读到注入的 env（debug=true）');
+    assert.ok(s.logger.records.some((x) => x.event === 'ranked.pool' && x.data && x.data.debug === true),
+      'ranked 路径同样读到注入的 env（修前 withLogger 未注入 env → debug=false）');
+  }, { server: { env: { ...process.env, DL_DEBUG_BOTS: '1' } } });
+});

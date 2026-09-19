@@ -155,12 +155,26 @@ function createQuickMatch(options) {
   const env = opts.env === undefined ? process.env : opts.env;
   const config = opts.config || store.ratingConfig || {};
   const debugBots = ranked.inspectDebugBots(env);
+  // 缺陷 B：仓库镜像解析缝（缺省 = 无镜像）。装配了插件（槽内 pluginUid）的配置**必须**有仓库正文
+  //   才能实例化；镜像不在本进程内时按 ranked 的已校验口径退化（见 ranked.syntheticVerifiedWarehouse）。
+  const loadWarehouse = typeof opts.loadWarehouse === 'function' ? opts.loadWarehouse : null;
 
-  // 候选池：排行榜索引 + 可用快照 + 未封禁 + 在池内（服务端抽池，不可自选对手 D-136）
+  async function warehouseFor(playerId, archive, active, loadout) {
+    if (!ranked.needsWarehouse(loadout)) return { warehouse: null, degraded: false };
+    const real = loadWarehouse ? await loadWarehouse(playerId) : null;
+    if (real) return { warehouse: real, degraded: false };
+    if (ranked.isWarehouseVerified(archive, active)) {
+      const synthetic = ranked.syntheticVerifiedWarehouse(loadout);
+      if (synthetic) return { warehouse: synthetic, degraded: true };
+    }
+    return { warehouse: null, degraded: false };
+  }
+
+  // 候选池：排行榜索引 + 可用快照 + 未封禁 + 在池内 + 可实例化（含插件引用者需仓库镜像；服务端抽池，不可自选对手 D-136）
   async function candidatePool(selfId) {
     const ids = store.index.playerIds();
     const pool = [];
-    const skipped = { unusable: 0, banned: 0, outOfPool: 0 };
+    const skipped = { unusable: 0, banned: 0, outOfPool: 0, noWarehouse: 0, degraded: 0 };
     for (const playerId of ids) {
       if (playerId === selfId) continue;
       const entry = store.index.get(playerId);
@@ -169,9 +183,18 @@ function createQuickMatch(options) {
       if (!entry.inPool) { skipped.outOfPool += 1; continue; }
       const snapshot = await ranked.loadSnapshotOf(store, entry.activeSnapshotHash);
       if (!ranked.isUsableSnapshot(snapshot)) { skipped.unusable += 1; continue; }
+      let warehouse = null;
+      if (ranked.needsWarehouse(snapshot[ranked.RAW_SNAPSHOT_FIELD])) {
+        const foeArchive = await store.loadArchive(playerId);
+        const active = foeArchive ? archiveMod.activeSlot(foeArchive) : null;
+        const w = await warehouseFor(playerId, foeArchive, active, snapshot[ranked.RAW_SNAPSHOT_FIELD]);
+        if (!w.warehouse) { skipped.noWarehouse += 1; continue; }
+        warehouse = w.warehouse;
+        if (w.degraded) skipped.degraded += 1;
+      }
       pool.push({
         playerId, publicId: entry.publicId, nickname: entry.nickname, tier: entry.tier,
-        points: entry.points, snapshotHash: entry.activeSnapshotHash, isBot: !!entry.isBot,
+        points: entry.points, snapshotHash: entry.activeSnapshotHash, isBot: !!entry.isBot, warehouse,
       });
     }
     return { pool, skipped, poolSize: ids.length };
@@ -190,7 +213,29 @@ function createQuickMatch(options) {
     if (!ranked.isUsableSnapshot(snapshot)) {
       return { error: { status: 409, code: 'no_active_config', message: `出战快照正文缺失/不一致 ${active.snapshot.hash}（不变量破损）` } };
     }
-    return { archive, active, snapshot };
+    // 缺陷 B：装配引用 + 无仓库正文（且未校验过）→ 如实 409 loadout_invalid（details 含 missing_warehouse），
+    //   而不是拖到 buildPlayer 后变成含混的 409 no_opponent。已校验者走退化路径仍可对局。
+    const w = await warehouseFor(playerId, archive, active, snapshot[ranked.RAW_SNAPSHOT_FIELD]);
+    if (!w.warehouse && ranked.needsWarehouse(snapshot[ranked.RAW_SNAPSHOT_FIELD])) {
+      return {
+        error: {
+          status: 409,
+          code: 'loadout_invalid',
+          message: '出战快照不合法（装配引用需要仓库镜像）',
+          details: [{
+            where: 'warehouse', code: 'missing_warehouse',
+            message: '出战配置含装配引用，需要 warehouse 校验引用完整性（T-PB-9）',
+          }],
+        },
+      };
+    }
+    if (w.degraded) {
+      log.warn('store', 'store.snapshot.missing',
+        '出战配置含装配引用但仓库镜像不在本进程内（已校验过 → 基准面板退化对局，插件词条不生效）', {
+          playerId, reason: 'warehouse_mirror_degraded', snapshotHash: active.snapshot.hash,
+        });
+    }
+    return { archive, active, snapshot, warehouse: w.warehouse, warehouseDegraded: w.degraded };
   }
 
   async function findOpponent(input) {
@@ -234,8 +279,17 @@ function createQuickMatch(options) {
       ? createRng(seed).deriveStream(0, 'quick').int(1, 0x7fffffff)
       : o.battleSeed;
     const r = typeof opts.runBattle === 'function'
-      ? opts.runBattle({ p1: mine.snapshot.loadout, p2: foeSnapshot.loadout, tier: mine.archive.progress.tier, seed: matchSeed })
-      : ranked.battleOne(mine.snapshot.loadout, foeSnapshot.loadout, null, mine.archive.progress.tier, matchSeed);
+      ? opts.runBattle({
+        p1: mine.snapshot.loadout, p2: foeSnapshot.loadout, tier: mine.archive.progress.tier, seed: matchSeed,
+        warehouse: mine.warehouse === undefined ? null : mine.warehouse,
+        p1Warehouse: mine.warehouse === undefined ? null : mine.warehouse,
+        p2Warehouse: found.opponent.warehouse === undefined ? null : found.opponent.warehouse,
+      })
+      : ranked.battleOne(
+        mine.snapshot.loadout, foeSnapshot.loadout,
+        { p1: mine.warehouse, p2: found.opponent.warehouse },
+        mine.archive.progress.tier, matchSeed,
+      );
     if (r.invalid) {
       log.warn('store', 'store.snapshot.missing', '对手/我方快照无法实例化 → 本场 invalid（不记账）', {
         playerId: o.playerId, opponentPlayerId: found.opponent.playerId, code: 'snapshot_invalid',

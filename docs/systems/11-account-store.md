@@ -258,7 +258,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | `runtime/sessions.json` | 临时状态 | ✅（重建=全员登出） | 会话表 |
 | `runtime/lock` | 运行时 | ✅ | 单进程锁 |
 
-`<shard>` = `playerId` 的前 2 个 hex 字符（避免单目录上万文件；Windows/NTFS 与 ext4 均友好）。
+`<shard>` = **`playerId` 去掉 `pl_` 前缀后的前 2 个 hex 字符**（`server/store/archive.js:53-59` 的 `shardOf` 落实口径；设计与实现均已注记：直接取 `playerId` 前 2 字符会得到 `'pl'` 使全部玩家同分片，故取 `pl_` 之后的前 2 hex）。理由：避免单目录上万文件；Windows/NTFS 与 ext4 均友好。
 
 ### 5.2 玩家档案结构（`archiveVersion: 1`）
 
@@ -271,13 +271,15 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
   "createdAt": 1790000000000,
   "lastLoginAt": 1790003600000,
   "lastSeenAt": 1790003600000,
-  "auth": { "algo": "scrypt", "N": 16384, "r": 8, "p": 1, "salt": "…", "hash": "…" },
+  "auth": { "algo": "scrypt", "N": 16384, "r": 8, "p": 1, "salt": "…", "hash": "…",
+            "username": "dev", "usernameLower": "dev" },   // 原大小写 + 索引键 lowercase（§5.2 字段要点①）
   "progress": {
     "tier": "rare",            // common|rare|epic|legendary|mythic（服务端权威）
     "peakTier": "rare",
     "tierUpdatedAt": 1790000000000,
     "batchesPlayed": 4,        // 排位批次数
-    "batchesPromoted": 1
+    "batchesPromoted": 1,
+    "lastBatchId": "pl_9f3ab21c77de4410|11"             // §5.2 字段要点②
   },
   "rating": {
     "points": 137,             // 积分（非对称 Elo，§8.3）
@@ -301,7 +303,8 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
     "activeSlotId": "slot1",
     "activeSnapshotHash": "sha256:…"
   },
-  "pool": { "inPool": true, "enteredAt": ..., "lastDrawnAt": ..., "drawnCount": 7 },
+  "pool": { "inPool": true, "enteredAt": ..., "lastDrawnAt": ..., "drawnCount": 7,
+            "lastOpponentAt": 1790003400000 },          // §5.2 字段要点⑤（去重窗口基准）
   "record": {
     "appliedSeq": 41207,                       // 已应用的 journal 水位（幂等依据）
     "recent": [                                // 环形，容量 = serviceConfig.record.recentLimit（默认 100）
@@ -316,7 +319,8 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
     },
     "unread": { "attack": 3, "defense": 4, "fromSeq": 41200 }
   },
-  "flags": { "banned": false, "isBot": false, "cheatSuspect": false, "unverifiedLoadout": true },
+  "flags": { "banned": false, "banReason": null, "isBot": false, "cheatSuspect": false,
+             "unverifiedLoadout": true, "rebuiltFromCheckpoint": false },   // ③④
   "updatedAt": 1790003600000
 }
 ```
@@ -328,6 +332,12 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 - `flags.isBot`：bot 账号标记，入池正常被抽，但**自身 rating/tier 不因结算变化**（§7.6）。
 - `flags.unverifiedLoadout`：最近一次保存配置时**未提供仓库镜像**，引用完整性未经服务端校验（§15.1 作弊面登记）。
 - `record.recent` 环形上限默认 100（`service-config.record.recentLimit`），超出丢弃最旧；**完整历史在 journal**（§9）。
+- **文档外补录字段（2026-09-19 实测档案结构，共 5 个；本表此前未登记）**：
+  1. `auth.username`（用户输入的原大小写）/ `auth.usernameLower`（唯一索引键，**大小写不敏感**）——因 §5.2 档案顶层无 `username` 字段，登录凭据随 `auth` 落档（`server/auth.js`）。
+  2. `progress.lastBatchId`——最近一次排位批次标识，用于"同批次重发幂等"与展示（`(playerId,seed)` 确定性派生）。
+  3. `flags.banReason`——封禁原因（`admin.ban` 写入；解封时清空），供 `GET /me` 展示与审计。
+  4. `flags.rebuiltFromCheckpoint`——该档案是否由 journal 月度检查点（§6.7）重建而来（精度降级标记：逐场战绩/回放引用可能缺失）。
+  5. `pool.lastOpponentAt`——最近一次"作为对手被抽取"的时间，去重窗口（§7.2）与 `drawnCount` 的配套字段。
 
 ### 5.3 配置槽规则（用户确认口径）
 
@@ -416,6 +426,8 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 
 **为什么 B 类不能只靠原子写**：一次排位批次 = 发起者 + 10 个对手 = **11 个档案**。若逐个写文件，进程崩在中途就会出现"我赢了 7 场，但对手只记了 3 场"的不一致，且无真相可依。因此把 journal 作为真源。
 
+> **水位口径（2026-09-19 实现注记，必读）**：**只有走 journal 的写（B 类）**会推进**该档案**的 `record.appliedSeq`（apply 时提升到 `record.seq`）；**纯 A 类写**（`touchLastSeen`、未读游标 `markRecordsSeen`、昵称/配置槽/密码/登出等）**不动水位**——它们不产生 journal 记录，因此不影响幂等判据。**每档案 `appliedSeq` ≠ 全局 `index.seq`**：前者 = 该档案已 apply 到的最大 journal seq，后者 = journal 全局水位；二者只在"该档案已被全量重放到最新"时才相等，**不得互相替代**（用全局水位判幂等会跳过其他玩家的记录）。
+
 ### 6.2 journal 记录格式（每行一个 JSON）
 
 ```jsonc
@@ -450,6 +462,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | `ranked.batch` | 一批排位开始 | `batchId, playerId, tier, seed, opponentCount` |
 | `ranked.promoted` | 晋升 | `batchId, playerId, tierBefore, tierAfter` |
 | `admin.bot.injected` | 注入 bot | `playerId, tier, points` |
+| `player.removed` | **管理端墓碑删除**（P7-3 追加，2026-09-19） | `playerId, reason?`。**journal 是唯一真源**，故删除不能只删档案文件：apply 时删档案 + 摘索引 + 记墓碑水位（`removedAt`），**全量重放不复活已删玩家**；墓碑 seq 之后同名玩家再次注册 → 解禁（`adapter-json.js:245-297`、`ledger.js:232-236`）。日志事件 `store.player.removed`(info) |
 
 > **配置正文（loadout/AI AST）不写 journal**，只写 `snapshotHash` 引用 —— 保证 journal 体积小（~0.5 KB/场）且不重复存储大对象。
 
@@ -505,7 +518,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | 快照库 | `snapshot.retentionDays`（默认 90）+ **引用计数** | 无 journal 引用且超期 → 删除；被引用（近 90 天内的对局）→ 保留 |
 | `record.recent` | 环形 100 条 | 溢出丢弃最旧（历史仍在 journal/检查点） |
 | 回放帧 | **不持久化** | 按需重算；进程内 LRU 上限 `replayCacheSize`（默认 64 场） |
-| 会话 | TTL + 最多 5/人 | 过期清理（启动 + 每 10 分钟一次懒清理） |
+| 会话 | TTL + 最多 5/人（`session.maxPerPlayer`） | **启动一次 prune + 读时懒清理/GC 时顺带清理**（**无定时器**，与 §3.4 一致）；`sessions.json` 丢失 = 全员登出 |
 
 **聚合检查点**是"能删 journal 段"的前提：检查点必须包含该段内**每个玩家的** `wins/losses/draws/points/peak/games` 增量合计，删除段后档案仍可重建到"检查点精度"（但**逐场战绩与回放引用会丢失**——若要保留逐场历史，则不许删段，见 §15.5 Q3）。
 
@@ -536,10 +549,10 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | 池定义 | **所有玩家（含 bot）的出战快照**（用户确认："池内为所有玩家的出战配置"） |
 | 同段位 | 只从 `progress.tier == 发起者 tier` 取（沿用 D-122/RK 语义） |
 | 排除自己 | 按 `playerId` 排除（比现实现的 JSON 深等更严格且更快） |
-| 池有效期 | `pool.ttlDays`（默认 **0 = 不过期**，符合用户口径）；置为 >0 时，`lastSeenAt` 超期的玩家退出抽取但不退池 |
-| 跨批去重 | `pool.opponentCooldownHours`（默认 **24**，用户选择"仅对手去重"）：同一对手 24h 内不重复；候选不足 → 放宽到 72h → 仍不足 → 允许重复（记 `ranked.match` 的 `relaxed:true`） |
-| 抽样 | 批次内不重复（`splice` 语义，与现实现一致）；用种子派生 RNG，可复现 |
-| 数量不足 | 候选 < 10 → **本轮不注入 bot**（用户口径："暂不考虑，开发完成后我会自行注入 bot 用户"）；剩余场次记为 `no_opponent` 并在响应 `matches < 10` 中显式告知，**不伪造对局**（§7.7） |
+| 池有效期 | `pool.ttlDays`（默认 **0 = 不过期**，符合用户口径）；置为 >0 时，`lastSeenAt` 超期的玩家退出抽取但不退池。**现状：参数已留、未启用**（代码不消费该值，退出抽取的分支不可达） |
+| 跨批去重（**用户 2026-09-16 裁定**） | `pool.opponentCooldownHours`（默认 **24**，"仅对手去重"）：`strict` = 同一对手**间隔 ≥ 72h**（优先）；`relaxed` = **24h ≤ 间隔 < 72h**（仅当 strict 候选凑不满本轮所需场次时启用，响应记 `relaxed:true`）；**间隔 < 24h 两池皆拒 —— 24h 是硬底线，永不"允许重复"**；仍不足 → `shortfall`。`relaxed` **不落 journal**（抽取窗口细节不可复原） |
+| 抽样 | 批次内不重复（`splice` 语义）；用种子派生 RNG，可复现 |
+| 数量不足 | 候选 < 10 → **本轮不注入 bot**（用户口径："暂不考虑，开发完成后我会自行注入 bot 用户"）；只打实际可用场次，响应 `matches` 与 **`shortfall`**（**字段名就是 `shortfall`，不是 `no_opponent`**）如实告知，**不伪造对局**（§7.7）；`shortfall > 0` 的批次**不判晋升** |
 | 并发安全 | 抽池只读索引快照；对手档案在结算时才落盘 |
 
 ### 7.3 发起者与防守方的差异（用户确认：D-132）
@@ -564,8 +577,8 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 
 - 档案里维护 `record.unread.{attack,defense}` 与 `record.unread.fromSeq`（上次标记已读时的 journal seq）。
 - `GET /api/v1/me` 返回 `unread` 计数 → 前端显示红点。
-- `GET /api/v1/me/records?since=<seq>&limit=20` 返回增量战绩（`since` 缺省 = 档案里的 `unread.fromSeq`）。
-- `POST /api/v1/me/records/seen { uptoSeq }` 推进游标（清红点）。
+- `GET /api/v1/me/records?since=<seq>&limit=20&role=attacker|defender` 返回增量战绩（`since` 缺省 = 档案里的 `unread.fromSeq`）；响应字段 `{records, since, latestSeq, limit, role, unread, maxSeq}`。
+- **游标口径（2026-09-19 实现注记，重要）**：`latestSeq` = **本次返回里最大的 seq**（展示/去重用途），**原名 `nextSince` 已弃用**；**不可把它当 `since` 直接回传**——`limit` 截断时那样会**跳过更早的未读战绩**。**游标推进只由 `POST /me/records/seen { uptoSeq }` 负责**（纯 A 类写，不动 `appliedSeq` 水位）；`maxSeq` 是全局 journal 水位（`store.maxSeq()`），不是游标。
 - **不做推送/邮件**（非目标）；离线玩家上线即见，是唯一交付方式。
 
 ### 7.6 bot 账号（管理员注入，用户口径）
@@ -642,11 +655,15 @@ K_loss(R) = clamp(kBase * (1 + R / cap), kBase, kMax)       # 扣分系数：随
 
 **性质（必须写进测试）**
 
-1. **有界**：`Δ` 恒 ≤ `kBase/2 = 16`（加分），扣分上限 `kMax/2 = 32`；积分恒在 `[0, cap]`。
-2. **收敛性（可解析）**：对同分对手（`E = 0.5`）且长期胜率 `p` 的玩家，均衡点满足
+1. **有界（2026-09-19 更正，旧口径"Δ ≤ kBase/2 = 16"是错的）**：
+   - **加分**：`Δ_win = K_gain(R_self) × (1 − E_self) ≤ K_gain ≤ kBase = 32`（`E → 0`，即对手远强于自己时**可达** `kBase`）；**同分对手**（`E = 0.5`）才 ≤ `kBase/2 = 16`。
+   - **扣分**：`Δ_loss = K_loss(R_self) × E_self ≤ K_loss ≤ kMax = 64`（`E → 1` 时可达 `kMax`）。
+   - 积分恒在 `[0, cap]`。
+   - ⚠️ **告警阈值口径**：`store.abuse.suspect` 一类的"分数突变"阈值**必须**按 `kMax`（而非 `kBase/2`）设——代码曾按错误的 `kBase/2` 设阈值，导致**合法败局被误报为异常**（已修）。
+2. **收敛性（可解析；**仅在未触发 `kMin/kMax` 裁剪时精确**）**：对同分对手（`E = 0.5`）且长期胜率 `p` 的玩家，均衡点满足
    `p * K_gain(R) = (1 - p) * K_loss(R)` → 代入 `r = R/cap` 得 **`r = 2p - 1`**，即
    **积分 ≈ cap × (2 × 胜率 − 1)**：胜率 60% → 600 分；70% → 1200；80% → 1800；90% → 2400。
-   这就是"积分几乎固定在某个范围内"的数学依据。
+   这就是"积分几乎固定在某个范围内"的数学依据。**注意**：该解析式假设 `K_gain`/`K_loss` 未被裁剪；在 `cap = 3000` 下 **`p = 0.9`（R ≈ 2400）已触发 `kMin` 裁剪**（`K_gain = clamp(6.4, 8, 32) = 8`），实际均衡点低于解析值——测试断言必须区分"未裁剪区间"与"裁剪区间"，不得把解析式当全域恒等式。
 3. **非零和（有意为之）**：`Δ_self + Δ_opp ≠ 0`（高分玩家扣得比对手加得多），系统存在**分数汇**，抑制通胀。文档与测试必须显式承认这一点（否则会被当成 bug）。
 4. **下限保护**：`clamp(...,0,...)`；0 分玩家输球不再扣分（防止负分）。
 5. **平局**：向期望值靠拢（强者平局扣分、弱者平局加分）。
@@ -686,7 +703,7 @@ K_loss(R) = clamp(kBase * (1 + R / cap), kBase, kMax)       # 扣分系数：随
 
 ### 9.2 快照库与 GC（回放可重算的前提）
 
-- 冻结时把快照正文写入 `runtime/snapshots/<hash[0:2]>/<hash>.json`（内容寻址，同 hash 只存一份）。
+- 冻结时把快照正文写入 `runtime/snapshots/<hash[0:2]>/<hash>.json`（内容寻址，同 hash 只存一份）。**磁盘文件名口径（实现注记）**：hash 字符串形如 `sha256:<64hex>`，而 **Windows 文件名不允许 `:`**，故落盘时去掉 `sha256:` 前缀、只留纯 hex，分片目录 = 纯 hex 的前 2 字符（`server/store/canonical.js:46-48` 的 `digestOf` + `server/store/snapshot-store.js:32-39` 的 `snapshotPath`）；档案里保存的引用仍是带前缀的 `sha256:<hex>`。
 - **引用计数**：应用 journal 记录时对 `snapshotHash` 计数（内存计数 + 启动时扫描 journal 重建）。
 - GC：`retentionDays`（默认 90）外且引用计数为 0 → 删除。被引用但超期的**不删**（否则近期的回放会失效）。
 - 若某快照因人为删除/数据升级不可用 → 对应回放返回 `410 replay_expired`（§9.3）。
@@ -716,7 +733,7 @@ GET /api/v1/replay/:battleId
 | 参与者可见 | 该场双方均可取帧（进攻方与防守方，含离线方上线后取回放） |
 | 非参与者 | `403 replay_forbidden` |
 | 返回内容 | 帧内 `players/bullets/bases/events` 为**双方完整信息**（引擎语义决定，无法隐藏） |
-| `aiTrace` | **默认只返回请求方自己的**（`?trace=self`，默认值），避免把对手 AI 的逐步决策喂给玩家；`?trace=all` 仅管理员可用 |
+| `aiTrace` | **按 side 过滤（P1-1 修复后，已实现）**：`?trace=self`（默认）时**逐帧保留 `diff.aiTrace` 中 `owner === 请求者 side` 的条目**（`p1`/`p2` 由 `participants` 推出），避免把对手 AI 的逐步决策喂给玩家；`?trace=all` 需**管理员令牌**通过（否则 403/503）；未知 `trace` 值 → 400 `bad_request`。**两条归档路径（帧缓存命中 / 按 journal+快照重算）都裁剪**；遗留 `r<seq>` 回放**不裁剪**（双方 loadout 与 AI 均由调用方自备，侧别未知 → 保持旧语义零回归） |
 | `programHash` | 只返回自己的 |
 | 对手 `loadout` | **永不返回**（无论何种角色）；只给 `opponent.publicId/nickname/tier/points` |
 | 进程内 `REPLAYS` | **替换**为有上限 LRU（默认 64 场）+ 持久化引用；修掉现状 `battle.js:18` 无上限增长 |
@@ -746,7 +763,7 @@ GET /api/v1/replay/:battleId
 | GET | `/api/v1/me/records` | ✅ | 战绩（`?since=&limit=&role=`） | 401 |
 | POST | `/api/v1/me/records/seen` | ✅ | 推进未读游标 | 400 |
 | GET | `/api/v1/me/defense` | ✅ | 防守战绩汇总（被抽场次/胜负/最近列表） | 401 |
-| POST | `/api/v1/ranked/run` | ✅ | **改造**：服务端抽池 + 双向记账 | 409 `no_opponent` / `no_active_config` |
+| POST | `/api/v1/ranked/run` | ✅ | **改造（已实现）**：服务端抽池 + 双向记账；无 token 时按 `DL_LEGACY_STATELESS` 走遗留口径（=0 → 401） | 400 `pool_forbidden`（传入 `pool`）/`bad_seed`/`bad_tier`；409 `no_active_config`/`store_not_found`/`loadout_invalid`/`no_loadout` |
 | POST | `/api/v1/ranked/promote` | ✅ | **保留**（兼容），改为读档案而非入参 | 409 `already_max` |
 | POST | `/api/v1/quick/run` | ✅ | 快速对战（积分相近 + 双向 Elo） | 409 `no_opponent` |
 | GET | `/api/v1/leaderboard` | — | 排行榜（`?scope=&limit=`） | 400 `bad_scope` |
@@ -797,6 +814,17 @@ GET /api/v1/replay/:battleId
     "drawnCount": 7, "stats": { "wins":2, "losses":4, "draws":1 },
     "recent": [ { "battleId":"b_…", "opponentPublicId":"u_…", "result":"loss",
                   "ticks":41, "at":…, "seen":false } ] }, "log": {…} }
+
+// GET /api/v1/me/records?since=&limit=20&role=defender      （2026-09-19 实现口径）
+{ "ok": true, "data": {
+    "records": [ { "seq":41205, "battleId":"b_…", "role":"defender", "result":"loss", … } ],
+    "since": 41200,          // 本次起点（缺省 = 档案未读游标 unread.fromSeq）
+    "latestSeq": 41207,      // 本次返回里最大的 seq（原名 nextSince，已弃用；**不可当 since 回传**）
+    "limit": 20, "role": "defender",
+    "unread": { "attack":0, "defense":3, "fromSeq":41200 },
+    "maxSeq": 41207 },        // 全局 journal 水位（≠ 每档案 appliedSeq）
+  "log": {…} }
+// POST /api/v1/me/records/seen { "uptoSeq": 41207 }  → 游标推进的**唯一**入口（纯 A 类写，不动 appliedSeq）
 ```
 
 ### 10.3 新增错误码
@@ -817,28 +845,40 @@ GET /api/v1/replay/:battleId
 | `slot_not_found` | 404 | `slotId` 不存在 |
 | `no_active_config` | 409 | 出战配置缺失/快照缺失（不应发生，属不变量破损） |
 | `config_conflict` | 409 | 乐观锁冲突（`baseUpdatedAt` 不匹配） |
-| `no_opponent` | 409 | 匹配不到对手（候选不足/窗口用尽） |
+| `no_opponent` | 409 | **快速对战**匹配不到对手（候选不足/窗口用尽） |
+| `pool_forbidden` | 400 | 排位请求传入 `pool`（服务端抽池，D-136；**排位池不足用 `shortfall` 字段，不是 `no_opponent`**） |
 | `replay_forbidden` | 403 | 非该场参与者 |
-| `replay_expired` | 410 | 引擎/数据版本不匹配或快照已 GC |
+| `replay_expired` | 410 | 引擎/数据版本不匹配、快照已 GC 或帧缓存 LRU 淘汰 |
+| `payload_too_large` | 413 | 请求体超 1MB（**原为 500 `internal_error`**，P7-4 修正） |
+| `deprecated` | 410 | 遗留无状态端点被 `DL_LEGACY_STATELESS=0` 关闭 |
+| `store_unavailable` | 503 | 未装配档案存储（`DL_DATA_DIR` 未启用） |
+| `admin_token_missing` | 503 | `DL_ADMIN_TOKEN` 未配置（管理端整体不可用） |
+| `debug_bots_disabled` | 403 | 未设 `DL_DEBUG_BOTS=1`（调试注入默认关闭） |
 | `store_write_failed` | 500 | journal/档案写失败（磁盘满等） |
 | `bad_scope` | 400 | 排行榜 scope 非法 |
 
-> HTTP 状态语义在本轮**扩展**为：`400 参数 / 401 未鉴权 / 403 越权 / 404 不存在 / 409 业务拒绝 / 410 已失效 / 429 限速 / 500 内部`。需同步 `docs/server.md` §4。
+> HTTP 状态语义**已扩展并实测**为：`400 参数 / 401 未鉴权 / 403 越权 / 404 不存在 / 409 业务拒绝 / 410 已失效 / 413 体过大 / 429 限速 / 500 内部 / 503 存储未装配`（`docs/server.md` §4 已同步）。
 
 ### 10.4 CLI 扩展（`cli/index.js`，仍只走 HTTP）
 
 ```
-register --user dev --pass *** [--nick 调试员]
-login --user dev --pass *** [--save-token .token]
-me [--token …] | configs list|save|activate|rm … | records [--since N] | defense
-ranked run [--seed 11] | quick run [--seed 7] | leaderboard [--limit 50]
-replay --battle b_… [--tick N]
-admin bot --count 10 --tier rare --points 200 --admin-token …   # 运维
-admin rebuild-index
+# ✅ 已实现（P7-4，2026-09-19 实测）
+auth register --user dev --pass *** [--nick 调试员] [--save-token <file>]
+auth login    --user dev --pass *** [--save-token <file>]
+auth logout   [--token …]
+auth change-password --old *** --new *** [--token …]
+me [--token …] | quick run [--seed 7] | leaderboard [--limit 50] [--scope global|tier:<t>]
+ranked run [--seed 11] [--tier <t>] [--loadout <file>] [--pool <file>]      # 有 token → 档案驱动
+ranked promote [--wins N] [--tier <t>] [--token …]                          # 登录时读档案
+
+# ⏳ 未实现 / 后续批次（当前会以退出码 2 失败）
+configs list|save|activate|rm … | records [--since N] | defense
+replay --battle b_… [--tick N]        # 现仅支持 replay --file <replay.json>
+admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 ```
 
-- token 通过 `--token` 或环境变量 `DL_TOKEN` 传入（CLI 不落盘明文，`--save-token` 写文件时权限 0600）。
-- 退出码沿用 `0 成功 / 1 业务拒绝 / 2 参数错误`；新增 `3 未鉴权`（便于脚本区分）。
+- token 通过 `--token` 或环境变量 `DL_TOKEN` 传入（CLI 不落盘明文，`--save-token` 写文件时权限 0600）；**优先级 `--token` > `options.token` > `DL_TOKEN`**。
+- 退出码沿用 `0 成功 / 1 业务拒绝 / 2 参数错误`；新增 **`3` = 未鉴权**（401 → 3，便于脚本区分）。
 
 ---
 
@@ -896,7 +936,7 @@ admin rebuild-index
 
 1. 新增 `server/store/adapter-sqlite.js`，基于 **Node 24 内置 `node:sqlite`**（实验性 API，落地前需在门禁环境验证可用性与告警级别）。
 2. 表结构：`players(player_id PK, public_id, nickname, tier, points, in_pool, is_bot, archive_json, applied_seq, updated_at)`、`journal(seq PK, type, battle_id, payload_json, at)`、`snapshots(hash PK, body_json, ref_count, created_at)`、`sessions(token_hash PK, player_id, expires_at)`。
-3. `store/index.js` 按 `DL_STORE`（默认 `json`）选择适配器；**业务代码零改动**。
+3. `store/index.js` 按 `DL_STORE`（默认 `json`）选择适配器；**业务代码零改动**。**现状（2026-09-19）**：`server/store/adapter-sqlite.js` 只是**契约骨架占位**——`open()` / `close()` 与全部方法**抛** `store_adapter_unavailable`（**有意不静默退回 json**，避免"以为在用 SQLite"），迁移尚未启动；上述四条触发判据（>5 万玩家 / 写 QPS>500 / 多进程 / 复杂查询）当前均**未命中**。
 4. 迁移脚本 `npm run cli -- admin migrate-store --to sqlite`：逐个档案 upsert + journal 全量导入 + 快照导入；迁移期间服务停机（单进程）。
 5. 适配器契约测试（`tests/contract/store-contract.test.js`）对 json/sqlite 跑**同一套断言**，保证可替换性。
 
@@ -919,11 +959,11 @@ admin rebuild-index
 | `store` | `store.recover`(info) / `store.index.rebuild`(info) / `store.migrate`(info) | 启动恢复与迁移 |
 | `store` | `store.snapshot.write`(debug) / `store.snapshot.gc`(info) / `store.snapshot.missing`(warn) | 快照库 |
 | `store` | `store.auth.register`(info) / `store.auth.login`(info) / `store.auth.reject`(warn) / `store.auth.lock`(warn) | 账号（首段 `store`，**不新增通道**） |
-| `store` | `store.abuse.suspect`(warn) / `store.error`(error) | 异常与审计 |
+| `store` | `store.abuse.suspect`(warn) / `store.player.removed`(info，墓碑删除，2026-09-19) / `store.error`(error) | 异常与审计 |
 | `ranked` | `ranked.snapshot`(debug) / `ranked.match`(info) / `ranked.promote`(info) / `ranked.pool`(debug) | 沿用 + 新增 `ranked.pool` |
 | `ranked` | `quick.match`(info) / `quick.settle`(info) | 快速对战（仍在 `ranked` 通道，首段 `quick` 需加入 `PREFIX_MAP.ranked`） |
 
-> **门禁注意**：`scripts/gate.js` 的 `PREFIX_MAP.ranked` 当前为 `['ranked']`，新增 `quick.*` 事件必须把 `'quick'` 加入该数组；否则门禁项 6 失败。
+> **门禁注意（已落实）**：`scripts/gate.js` 的 `PREFIX_MAP.ranked` 原先为 `['ranked']`，新增 `quick.*` 事件时已把 `'quick'` 加入该数组；否则门禁项 6 失败。**现状：`quick.match`/`quick.settle` 已实际产生并通过门禁项 6。**
 
 ### 12.2 审计日志
 

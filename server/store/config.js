@@ -35,6 +35,8 @@ const DEFAULT_SERVICE_CONFIG = Object.freeze({
   journal: { fsyncMode: 'batch', compactAfterDays: 30, bufferBytes: 1048576 },
   snapshot: { retentionDays: 90 },
   replayCacheSize: 64,
+  // P2-8：`pool.ttlDays` 当前**零消费方**（对局/抽池路径均不读它）——按 §7.2 的"参数已留、未启用"口径登记，
+  //   与 `rating.dailyBattleLimit` 的标注方式一致；文档 `11-account-store.md §7.2` 的表需同步为"⏸ 未启用"。
   pool: { ttlDays: 0, opponentCooldownHours: 24 },
 });
 

@@ -57,7 +57,11 @@ function createJsonAdapter(options) {
   const archiveCache = new Map(); // playerId → archive（LRU：Map 插入序）
   const queues = new Map();       // playerId → Promise（每玩家写队列，§6.5）
   const removedAt = new Map();    // playerId → 墓碑 seq（journal 派生的删除水位，D-134）
-  const stats = { reads: 0, writes: 0, applies: 0, skipped: 0, cacheHits: 0, cacheMisses: 0, evictions: 0, quarantined: 0 };
+  const stats = {
+    reads: 0, writes: 0, applies: 0, skipped: 0, reapplied: 0, reconciled: 0,
+    cacheHits: 0, cacheMisses: 0, evictions: 0, quarantined: 0,
+  };
+  const pendingArchiveWrites = new Map(); // playerId → archive（批次内延迟落盘，见 applyForPlayer）
   let lock = null;
   let opened = false;
 
@@ -114,6 +118,101 @@ function createJsonAdapter(options) {
 
   function cacheDelete(playerId) {
     archiveCache.delete(playerId);
+  }
+
+  // ---------- 参与集合锁（P7-6 修复 2：串行粒度 全局 → 参与玩家集合） ----------
+  // 背景（P7-6 问题 2）：上一版把"append + 双方 apply"整体挂进**一条全局结算链**，排位一轮 10 场要在
+  //   锁内做 10 次结算 × 双方 apply，concurrency=24 时 POST /ranked/run P50≈11s（吞吐 21 场/秒），
+  //   瓶颈从"引擎 0.3ms/场"变成这把全局锁。
+  // 现在：**同一玩家串行、不同玩家并行** —— 一条结算只锁它的参与玩家，按 playerId 排序后固定顺序
+  //   逐个入队（经典有序加锁 → 无死锁）。
+  // 为什么 seq 必须在锁内分配：`journal.append` 在调用时**同步**分配 seq。若 seq 在锁外分配，同一玩家
+  //   的两条记录就会"seq 小的后 apply" ⇒ 档案 rating.points ≠ journal 末值（P7-6 问题 1 的第二个症状）。
+  //   因此所有结算路径都是「先取齐参与玩家的锁 → append（拿 seq）→ apply → 释放」。
+  function participantIdsOf(record) {
+    const involved = archiveMod.playersOfRecord(record);
+    if (involved.length > 0) return involved;
+    // 尚未构造的 battle 入参（无 type 字段）：playersOfRecord 认不出，直接取双方 playerId
+    const out = [];
+    for (const side of ['p1', 'p2']) {
+      const part = record && record[side];
+      if (part && typeof part.playerId === 'string' && part.playerId !== '' && !out.includes(part.playerId)) {
+        out.push(part.playerId);
+      }
+    }
+    return out;
+  }
+
+  function participantsOf(records) {
+    const set = new Set();
+    for (const record of records || []) for (const id of participantIdsOf(record)) set.add(id);
+    return [...set];
+  }
+
+  // 全局模式（legacy：调用方未声明参与者）：等价于"索引内全部玩家一起加锁"。
+  // 仅 `withSettlementLock(fn)` 的旧签名使用；生产路径（settleBattle/settleBatch/applyRecords）都声明参与者。
+  function globalKeys() {
+    return index.playerIds();
+  }
+
+  function withPlayerLocks(playerIds, fn) {
+    const keys = [...new Set((playerIds || []).filter((id) => typeof id === 'string' && id !== ''))].sort();
+    const run = (i) => (i >= keys.length ? Promise.resolve().then(fn) : queueFor(keys[i], () => run(i + 1)));
+    return Promise.resolve().then(() => run(0));
+  }
+
+  // 公开形态（P7-6 修复 1 的推荐用法）：把"读档案 → 算 δ → append → 双方 apply"整条链放进参与集合锁。
+  //   withSettlementLock([p1Id, p2Id], fn)   显式参与玩家（最精确）
+  //   withSettlementLock(record, fn)         从记录/入参推导参与玩家（battle → p1/p2；其余 → playerId）
+  //   withSettlementLock(fn)                 legacy：未声明参与者 → 退化为全局模式（索引内全部玩家）
+  function withSettlementLock(playerIdsOrRecordOrFn, maybeFn) {
+    if (typeof playerIdsOrRecordOrFn === 'function') {
+      return withPlayerLocks(globalKeys(), playerIdsOrRecordOrFn);
+    }
+    const fn = maybeFn;
+    if (typeof fn !== 'function') {
+      throw new StoreError('bad_request', 'withSettlementLock 需要回调 fn（可选第一参数 = 参与玩家/记录）');
+    }
+    let ids;
+    if (Array.isArray(playerIdsOrRecordOrFn)) ids = playerIdsOrRecordOrFn;
+    else if (typeof playerIdsOrRecordOrFn === 'string') ids = [playerIdsOrRecordOrFn];
+    else if (playerIdsOrRecordOrFn && typeof playerIdsOrRecordOrFn === 'object') ids = participantIdsOf(playerIdsOrRecordOrFn);
+    else ids = [];
+    return withPlayerLocks(ids.length > 0 ? ids : globalKeys(), fn);
+  }
+
+  // ---------- 派生索引合并写（P7-6 修复 2 的配套） ----------
+  // index.json 是**派生**数据（可重建，§5.6/§6.4 步骤 2），且只在 open() 时从磁盘读取。
+  //   实测单次原子写 ≈7ms（50 玩家、深拷贝 + pretty 序列化 + fsync），占单场结算成本的一半以上。
+  //   运行期改为"标脏 + 微任务合并落盘"；open()/close()/index.save()/rebuildIndex()/recover() 一律
+  //   **立即**落盘 —— 对外可观察语义（"操作返回后索引文件已是最新"）只在维护/生命周期接口上被依赖。
+  let indexDirty = false;
+  let indexFlushScheduled = false;
+
+  function flushIndexNow() {
+    indexDirty = false;
+    fsatomic.writeJsonAtomicSync(indexPath, index.toJSON(), { logger: log, pretty: true });
+    return indexPath;
+  }
+
+  function saveIndex() {
+    indexDirty = true;
+    if (!indexFlushScheduled) {
+      indexFlushScheduled = true;
+      setImmediate(() => {
+        indexFlushScheduled = false;
+        if (!indexDirty) return;
+        try {
+          flushIndexNow();
+        } catch (err) {
+          // 派生索引写失败不得让进程崩：journal + 档案仍是真源，重启时按 §6.4 步骤 2 重建
+          log.error('store', 'store.error', `派生索引合并落盘失败（可重建，不阻断）：${err && err.message}`, {
+            file: indexPath, code: err && err.code ? err.code : null,
+          });
+        }
+      });
+    }
+    return indexPath;
   }
 
   // ---------- 档案读写（§6.6 原子写；§5.7 迁移） ----------
@@ -215,7 +314,7 @@ function createJsonAdapter(options) {
       }
     }
     index.rebuild(archives, nowFn());
-    saveIndex();
+    flushIndexNow(); // 修复类操作：索引立即落盘（重建结果必须可被磁盘观察）
     return index.stats();
   }
 
@@ -240,7 +339,11 @@ function createJsonAdapter(options) {
   }
 
   // 在给定玩家的写队列内应用一条记录（调用方负责队列；返回 applied|skipped|missing）
-  async function applyForPlayer(record, playerId) {
+  //   opts.deferWrite（P7-6 修复 2）：批次内只更新内存态（cache 拥有该对象），批次结束由
+  //   flushPendingArchiveWrites() 每玩家**只落盘一次**（排位一轮 10 场 = 攻方档案 10 次写 → 1 次写）。
+  //   安全性：批次持有该玩家全部参与锁，期间没有其他写者；崩溃时 journal 仍是真源（§6.4）。
+  async function applyForPlayer(record, playerId, opts) {
+    const deferWrite = !!(opts && opts.deferWrite === true);
     // 墓碑（player.removed）：删档案文件 + 失效缓存 + 摘索引 + 记墓碑水位（可重放、幂等）
     if (record.type === 'player.removed') {
       const prev = removedAt.get(playerId);
@@ -277,15 +380,30 @@ function createJsonAdapter(options) {
       }
       if (tomb !== undefined && record.seq > tomb) removedAt.delete(playerId); // 墓碑之后重新注册 → 解禁
     }
+    // 幂等快路径（§6.3）：水位只做加速 —— 命中水位区间时必须再有**内容级幂等键**证明已应用；
+    //   证明不了（例如并发交错导致水位被更高 seq 推前，而本记录从未 apply）→ **补 apply**，绝不丢弃。
     if (archive.record.appliedSeq >= record.seq) {
-      stats.skipped += 1;
-      return 'skipped';
+      if (archiveMod.isRecordApplied(archive, record)) {
+        stats.skipped += 1;
+        return 'skipped';
+      }
+      stats.reapplied += 1;
+      log.info('store', 'store.recover',
+        `水位缺口补 apply：${record.type}#${record.seq}（档案水位 ${archive.record.appliedSeq}）`,
+        { playerId, seq: record.seq, appliedSeq: archive.record.appliedSeq, type: record.type, reason: 'watermark_gap' });
     }
     const res = await archiveMod.applyRecordToArchive(archive, record, playerId, ctx());
-    archive.record.appliedSeq = record.seq;
+    // 水位：只允许前进（补 apply 不回退水位）；同一玩家两条并发记录交错时可能留下"水位 > 某些已应用 seq"
+    //   的形态，这是允许的 —— 幂等由 isRecordApplied 的内容键保证（P7-6 修复）。
+    if (record.seq > archive.record.appliedSeq) archive.record.appliedSeq = record.seq;
     if (res.changed) archive.updatedAt = Number.isInteger(record.at) ? record.at : nowFn();
     archiveMod.assertArchiveInvariants(archive, { config: serviceConfig });
-    writeArchiveRaw(archive, { touch: false });
+    if (deferWrite) {
+      pendingArchiveWrites.set(playerId, archive);
+      cacheSet(playerId, archive);
+    } else {
+      writeArchiveRaw(archive, { touch: false });
+    }
     stats.applies += 1;
     if (record.type === 'battle.recorded') {
       const part = record.p1 && record.p1.playerId === playerId ? record.p1 : record.p2;
@@ -294,31 +412,56 @@ function createJsonAdapter(options) {
     return 'applied';
   }
 
-  async function applyRecords(records) {
+  // 批次内延迟落盘的玩家档案：每玩家只写一次（调用方持有其参与锁）
+  function flushPendingArchiveWrites() {
+    if (pendingArchiveWrites.size === 0) return 0;
+    const entries = [...pendingArchiveWrites.entries()];
+    pendingArchiveWrites.clear();
+    for (const [, archive] of entries) writeArchiveRaw(archive, { touch: false });
+    return entries.length;
+  }
+
+  // 批量 apply 的**内部实现**（调用方必须已持有全部参与玩家的锁；不得在此再加锁，避免自锁）
+  async function applyRecordsLocked(records, opts) {
+    const o = opts || {};
     const list = records || [];
     let applied = 0;
     let recordsApplied = 0;
-    for (const record of list) {
-      archiveMod.validateRecord(record);
-      const involved = archiveMod.playersOfRecord(record);
-      let allKnown = involved.length > 0;
-      let touched = 0;
-      for (const playerId of involved) {
-        const status = await queueFor(playerId, () => applyForPlayer(record, playerId));
-        if (status === 'applied') { applied += 1; touched += 1; }
-        if (status === 'missing') allKnown = false;
+    try {
+      for (const record of list) {
+        archiveMod.validateRecord(record);
+        const involved = archiveMod.playersOfRecord(record);
+        let allKnown = involved.length > 0;
+        let touched = 0;
+        for (const playerId of involved) {
+          const status = await applyForPlayer(record, playerId, o);
+          if (status === 'applied') { applied += 1; touched += 1; }
+          if (status === 'missing') allKnown = false;
+        }
+        if (touched > 0) recordsApplied += 1;
+        if (allKnown) index.setSeq(record.seq); // 全局水位：所有参与方都已在/超过该 seq
       }
-      if (touched > 0) recordsApplied += 1;
-      if (allKnown) index.setSeq(record.seq); // 全局水位：所有参与方都已在/超过该 seq
+    } finally {
+      // 即使中途抛错也要把内存里已完成的变更落盘（journal 已 append，绝不能"只改了内存"）
+      if (o.deferWrite === true) flushPendingArchiveWrites();
     }
     if (list.length > 0) saveIndex();
     return { applied, count: list.length, recordsApplied };
   }
 
+  // 公开入口：按**参与玩家集合**加锁（同一玩家串行、不同玩家并行）
+  async function applyRecords(records) {
+    const players = participantsOf(records);
+    return withPlayerLocks(players.length > 0 ? players : globalKeys(), () => applyRecordsLocked(records));
+  }
+
   async function appendAndApply(records) {
-    const appended = await journal.appendMany(records);
-    const res = await applyRecords(appended);
-    return { records: appended, applied: res.applied };
+    const players = participantsOf(records);
+    return withPlayerLocks(players.length > 0 ? players : globalKeys(), async () => {
+      const appended = await journal.appendMany(records);
+      const res = await applyRecordsLocked(appended, { deferWrite: true });
+      return { records: appended, applied: res.applied };
+    });
   }
 
   // ---------- 高层事务方法（后续 auth/account/quickmatch/ranked 直接调用） ----------
@@ -502,27 +645,163 @@ function createJsonAdapter(options) {
     });
   }
 
-  // B 类事务：先 append journal（一次落盘即成立）→ 再 apply 双方档案（§6.1/D-134）
-  //   重复 battleId（同 batchId/seed/双方快照）→ 不重复写 journal，返回已有记录（内容寻址幂等，§9.1）
-  async function settleBattle(input) {
-    const prepared = input && input.type === 'battle.recorded' ? { ...input } : ledger.buildBattleRecord(input || {});
-    if (prepared.mode === 'ranked') {
-      // D-132/D-133 硬约束：排位既不改积分也不改段位——段位变化只由 ranked.promoted 记录驱动（§7.1 步骤 6），
-      // 防守方恒不掉段。战斗记录只落战绩（stats/recent/未读/被抽计数）。
-      for (const side of ['p1', 'p2']) {
-        const part = prepared[side];
-        if (!part) continue;
-        part.pointsAfter = part.pointsBefore;
-        part.tierAfter = part.tierBefore;
+  // ranked：双轨（D-132/D-133）——段位变化只由 ranked.promoted 记录驱动，战斗记录只落战绩。
+  function normalizeRankedSides(record) {
+    if (record.mode !== 'ranked') return record;
+    for (const side of ['p1', 'p2']) {
+      const part = record[side];
+      if (!part) continue;
+      part.pointsAfter = part.pointsBefore;
+      part.tierAfter = part.tierBefore;
+    }
+    return record;
+  }
+
+  // 结算入参规范化：深拷贝（不原地改写调用方对象）+ 排位双轨规整
+  function prepareBattleInput(input) {
+    const prepared = input && input.type === 'battle.recorded'
+      ? deepClone(input)
+      : ledger.buildBattleRecord(input || {});
+    return normalizeRankedSides(prepared);
+  }
+
+  // ---------- P7-6 修复 1 的兜底：把"锁外读到的旧档案"换成锁内当前值重算 ----------
+  // 缺陷（可复现）：调用方（quickmatch/ranked）在**锁外**读档案算 pointsBefore/pointsAfter。同一玩家
+  //   在两个并发请求里被结算时（自己发起快速对战 + 自己被别人抽为防守方；或排位一轮进行中积分被并发改写），
+  //   两条记录会基于同一个旧 pointsBefore 各算一份 δ，后 apply 的覆盖先 apply 的 ⇒
+  //     · journal ΣΔ(664) > 档案 ΣΔ(536)（P7-6 50 人实测；12 人小规模掩盖）
+  //     · 档案 rating.points ≠ journal 末值（ranked 记录仍写旧 pointsAfter）
+  // 本层修法：持有参与集合锁后**重取双方档案**；只要某个非 bot 参与方的当前积分 ≠ 记录声明的
+  //   pointsBefore（能证明"这条记录基于旧档案"），就在锁内用当前档案值重算整场结算，再 append。
+  // 只在"能证明陈旧"时重算 ⇒ 顺序路径与既有单测/契约用例的手工数值**逐字节不变**。
+  // 再加一道闸（P7-4 ME-4 回归）：仅当记录声明的 pointsBefore/pointsAfter **本身符合该模式的标准
+  //   结算口径**（quick → ledger 公式逐侧相符；ranked → 双轨 Δ=0）才补正。手工写入的非公式值
+  //   （管理端/测试夹具）一律视为权威值原样落账 —— 避免把"业务上刻意的数值"当成陈旧读改写。
+  // 调用方契约（更强、推荐）：把"读档案 → 算 δ → settle"整体放进
+  //   `store.withSettlementLock([p1, p2], fn)` + 锁内 `store.settleBattleLocked(...)`，
+  //   或直接用 `store.settleBatch(records)`；此时本兜底永不触发（stats().reconciled === 0）。
+  function reconcileStaleSettlement(record) {
+    if (!record || record.type !== 'battle.recorded') return false;
+    const mode = record.mode === 'ranked' ? 'ranked' : 'quick';
+    const sides = [];
+    for (const side of ['p1', 'p2']) {
+      const part = record[side];
+      if (!part || typeof part.playerId !== 'string' || part.playerId === '') return false;
+      if (sides.some((s) => s.part.playerId === part.playerId)) return false; // 自战（异常数据）→ 不重算
+      const archive = readArchiveForUpdate(part.playerId);
+      if (!archive) return false; // 档案缺失：交给既有的 missing 路径
+      sides.push({ side, part, archive });
+    }
+    const declared = (part) => (Number.isInteger(part.pointsBefore) ? part.pointsBefore : 0);
+    const declaredAfter = (part) => (Number.isInteger(part.pointsAfter) ? part.pointsAfter : declared(part));
+    const fresh = (s) => (s.archive.flags.isBot === true ? declared(s.part) : s.archive.rating.points);
+    const stale = sides.some((s) => fresh(s) !== declared(s.part));
+    if (!stale) return false;
+    if (mode === 'quick') {
+      const b1 = declared(sides[0].part);
+      const b2 = declared(sides[1].part);
+      const e1 = ledger.ratingDelta({ points: b1, opponentPoints: b2, result: sides[0].part.result, config: ratingConfig });
+      const e2 = ledger.ratingDelta({ points: b2, opponentPoints: b1, result: sides[1].part.result, config: ratingConfig });
+      const formulaConsistent = e1.pointsAfter === declaredAfter(sides[0].part)
+        && e2.pointsAfter === declaredAfter(sides[1].part);
+      if (!formulaConsistent) return false; // 非公式值（手工/管理端/夹具）→ 原样落账，不补正
+    }
+    if (mode === 'quick') {
+      const winner = record.verdict && (record.verdict.winner === 'p1' || record.verdict.winner === 'p2')
+        ? record.verdict.winner : 'draw';
+      const settled = ledger.settleRating({
+        p1Points: sides[0].archive.rating.points,
+        p2Points: sides[1].archive.rating.points,
+        winner, config: ratingConfig,
+      });
+      for (let i = 0; i < sides.length; i += 1) {
+        const s = sides[i];
+        if (s.archive.flags.isBot === true) continue; // bot 积分/段位冻结（§7.6）：保留调用方原值
+        const next = i === 0 ? settled.p1 : settled.p2;
+        s.part.pointsBefore = s.archive.rating.points;
+        s.part.pointsAfter = next.pointsAfter;
+        s.part.tierBefore = s.archive.progress.tier;
+        s.part.tierAfter = s.archive.progress.tier;
+      }
+    } else {
+      for (const s of sides) {
+        if (s.archive.flags.isBot === true) continue;
+        s.part.pointsBefore = s.archive.rating.points;
+        s.part.pointsAfter = s.archive.rating.points; // 排位不改积分（D-132/D-133）
+        s.part.tierBefore = s.archive.progress.tier;
+        s.part.tierAfter = s.archive.progress.tier;
       }
     }
-    const existing = prepared.battleId ? journal.findBattle(prepared.battleId) : null;
-    if (existing) {
-      return { record: existing, applied: 0, duplicate: true };
+    stats.reconciled += 1;
+    log.info('store', 'store.recover',
+      `结算陈旧读补正：${record.battleId || '(no id)'} 的 pointsBefore 已被并发结算推进，锁内以当前档案值重算`,
+      {
+        battleId: record.battleId || null, mode, type: record.type, reason: 'stale_settlement_reconciled',
+        p1: { playerId: sides[0].part.playerId, pointsBefore: sides[0].part.pointsBefore, pointsAfter: sides[0].part.pointsAfter },
+        p2: { playerId: sides[1].part.playerId, pointsBefore: sides[1].part.pointsBefore, pointsAfter: sides[1].part.pointsAfter },
+      });
+    return true;
+  }
+
+  // 锁内批量结算（调用方已持有全部参与玩家的锁）：
+  //   battleId 去重 → appendMany（**一次**落盘/group commit）→ applyRecordsLocked（每玩家档案**一次**落盘）
+  //   幂等：已在 journal 的 battleId 直接回放既有记录，不重复写、不重复记账（§9.1）
+  async function settleBatchLocked(inputs) {
+    const list = inputs || [];
+    const entries = new Array(list.length);
+    const pending = [];
+    let duplicates = 0;
+    for (let i = 0; i < list.length; i += 1) {
+      const prepared = prepareBattleInput(list[i]);
+      const existing = prepared.battleId ? journal.findBattle(prepared.battleId) : null;
+      if (existing) {
+        duplicates += 1;
+        entries[i] = { record: existing, duplicate: true };
+        continue;
+      }
+      reconcileStaleSettlement(prepared);
+      pending.push({ index: i, record: prepared });
+      entries[i] = { record: prepared, duplicate: false, pending: true };
     }
-    const appended = await journal.append(prepared);
-    const res = await applyRecords([appended]);
-    return { record: appended, applied: res.applied, duplicate: false };
+    let applied = 0;
+    if (pending.length > 0) {
+      const appended = await journal.appendMany(pending.map((p) => p.record));
+      // applyRecordsLocked 内部已 saveIndex()（合并写）
+      const res = await applyRecordsLocked(appended, { deferWrite: true });
+      applied = res.applied;
+      for (let k = 0; k < appended.length; k += 1) entries[pending[k].index].record = appended[k];
+    } else {
+      saveIndex(); // 纯重复：不写 journal，但索引回写仍幂等
+    }
+    return {
+      records: entries.map((e) => e.record),
+      duplicateFlags: entries.map((e) => e.duplicate === true),
+      applied, count: list.length, duplicates,
+    };
+  }
+
+  // B 类事务：先 append journal（一次落盘即成立）→ 再 apply 双方档案（§6.1/D-134）
+  // 调用方契约：`pointsBefore/pointsAfter` 由调用方计算；若希望"同一玩家的多次并发结算"积分守恒
+  //   （ΣΔ(journal) === ΣΔ(档案)）且档案末值与 journal 末值一致，请：
+  //     ① 用 `store.settleBatch(records)`（一轮多场；一次 appendMany + 一次 apply，锁只获取一次），或
+  //     ② 把"读档案 → 算 δ → settle"整体放进 `store.withSettlementLock([p1, p2], fn)`，
+  //        锁内用 `store.settleBattleLocked(record)`（避免自锁）。
+  //   只调 settleBattle 也能保证**每场双方记账一份不少**（本层保证），并在检测到"调用方读到旧档案"时
+  //   于锁内重算补正（reconcileStaleSettlement）；但调用方拿到的 Elo 明细会是重算后的值。
+  async function settleBattleLocked(input) {
+    const res = await settleBatchLocked([input]);
+    return { record: res.records[0], applied: res.applied, duplicate: res.duplicates === 1 };
+  }
+
+  async function settleBattle(input) {
+    const players = participantIdsOf(input && input.type === 'battle.recorded' ? input : (input || {}));
+    return withPlayerLocks(players.length > 0 ? players : globalKeys(), () => settleBattleLocked(input));
+  }
+
+  // 批量结算原语（P7-6 修复 2）：一轮 N 场 = 1 次加锁 + 1 次 appendMany + 1 次 apply（每玩家档案 1 次落盘）
+  async function settleBatch(records) {
+    const players = participantsOf(records);
+    return withPlayerLocks(players.length > 0 ? players : globalKeys(), () => settleBatchLocked(records));
   }
 
   async function touchLastSeen(playerId, at) {
@@ -678,7 +957,7 @@ function createJsonAdapter(options) {
         rebuildIndexFromArchives,
         rebuildDerivedState,
       });
-      saveIndex();
+      flushIndexNow(); // 生命周期边界：索引必须立即落盘（契约：open() 返回后 index.json 已存在）
       opened = true;
       log.info('store', 'store.open',
         `存储层已打开（adapter=${ADAPTER_NAME}，玩家 ${index.size()}，journal seq=${journal.maxSeq()}）`, {
@@ -699,7 +978,7 @@ function createJsonAdapter(options) {
   async function close() {
     if (!opened) return false;
     await journal.close();
-    saveIndex();
+    flushIndexNow(); // 生命周期边界：合并写必须在关闭前刷干净（重开/崩溃恢复都依赖它）
     sessions.save();
     if (lock) {
       lock.release();
@@ -726,6 +1005,11 @@ function createJsonAdapter(options) {
       writes: stats.writes,
       applies: stats.applies,
       skipped: stats.skipped,
+      reapplied: stats.reapplied, // 水位缺口补 apply 次数（P7-6 修复；正常并发下应为 0）
+      // 锁内"陈旧读补正"次数（P7-6 修复 1）：调用方在锁外读到旧档案时本层重算整场结算；
+      //   用 settleBatch / withSettlementLock 的调用方应恒为 0
+      reconciled: stats.reconciled,
+      pendingArchives: pendingArchiveWrites.size, // 批次内延迟落盘的档案数（批次结束即为 0）
       quarantined: stats.quarantined,
       journal: journal.stats(),
       snapshots: snapshots.stats(),
@@ -758,12 +1042,15 @@ function createJsonAdapter(options) {
         throw new StoreError('bad_request', 'removeArchive 需要 playerId');
       }
       const o = removeOpts || {};
-      const known = fsatomic.pathExists(playerArchivePath(playerId)) || index.has(playerId);
-      if (!known) return false; // 幂等：不存在 → 不产生墓碑（避免无意义 journal 记录）
-      const record = ledger.buildRemovedRecord({ playerId, reason: o.reason, at: nowFn() });
-      const appended = await journal.append(record);
-      await applyRecords([appended]);
-      return true;
+      // 墓碑的 append 也必须在**该玩家的锁内**（seq 顺序 = 应用顺序，见 withPlayerLocks 注释）
+      return withPlayerLocks([playerId], async () => {
+        const known = fsatomic.pathExists(playerArchivePath(playerId)) || index.has(playerId);
+        if (!known) return false; // 幂等：不存在 → 不产生墓碑（避免无意义 journal 记录）
+        const record = ledger.buildRemovedRecord({ playerId, reason: o.reason, at: nowFn() });
+        const appended = await journal.append(record);
+        await applyRecordsLocked([appended]);
+        return true;
+      });
     },
     rebuildArchive: async (playerId) => {
       cacheDelete(playerId);
@@ -778,6 +1065,7 @@ function createJsonAdapter(options) {
         rebuildIndexFromArchives,
         rebuildDerivedState,
       });
+      flushIndexNow();
       return loadArchive(playerId);
     },
     getSummary,
@@ -800,7 +1088,11 @@ function createJsonAdapter(options) {
     appendMany: (records) => journal.appendMany(records),
     applyRecord: async (record) => applyRecords([record]),
     applyRecords,
-    settleBattle,
+    settleBattle,             // 单场（按参战双方加锁；自动补正陈旧读，见 reconcileStaleSettlement）
+    settleBatch,              // 批量结算原语：一轮 N 场 = 1 次加锁 + 1 次 appendMany + 1 次 apply
+    settleBattleLocked,       // 锁内版本（须在 withSettlementLock([...]) 内调用；见 settleBattle 注释的调用方契约）
+    withSettlementLock,       // (playerIds|record|fn, fn) → 读档案→算 δ→append→apply 全链在参与集合锁内
+    flushIndex: () => flushIndexNow(), // 维护接口：立即把派生索引落盘（运行期默认合并写）
     readRecords: (readOpts) => journal.readAll(readOpts),
     findBattleRecord: async (battleId) => journal.findBattle(battleId),
     replayJournal: (replayOpts, fn) => journal.replay(replayOpts, fn),
@@ -829,7 +1121,7 @@ function createJsonAdapter(options) {
       leaderboard: (query) => index.leaderboard(query),
       rank: (playerId) => index.rank(playerId),
       rebuild: async () => rebuildIndex(),
-      save: async () => saveIndex(),
+      save: async () => flushIndexNow(),
       stats: () => index.stats(),
     },
     // 快照
@@ -877,7 +1169,7 @@ function createJsonAdapter(options) {
         rebuildIndexFromArchives,
         rebuildDerivedState,
       });
-      saveIndex();
+      flushIndexNow();
       return report;
     },
     rebuildIndex: async () => rebuildIndex(),

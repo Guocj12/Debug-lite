@@ -267,6 +267,164 @@ test('T-QM-L1 排行榜读取接口：scope=global / tier:<t> / 非法 scope →
   assert.equal(badLimit.code, 'bad_request');
 });
 
+/* ---------- P1-3 突变告警：合法败局不再误报；篡改 Δ 仍报 ---------- */
+
+// 用真实档案构造"指定积分 + 指定强度"的玩家（loadout 由调用方给定，避免全同默认配置导致恒平）
+async function seedPlayer(fx, playerId, points, loadout) {
+  const res = await fx.account.createPlayerArchive({
+    playerId, nickname: playerId, loadout, tier: 'common', points, at: fx.clock(),
+  });
+  assert.equal(res.ok, true, `建档失败：${JSON.stringify(res).slice(0, 200)}`);
+  return res.data.archive;
+}
+
+test('P1-3 合法对局不再触发 store.abuse.suspect：R=2900 败局（-31）与 R=0 胜 R=3000（+32）', async (t) => {
+  const fx = await h.openFixture({ logger: h.makeLogger() });
+  t.after(() => fx.cleanup());
+  const R = fx.RATING;
+  const rankedMod = require('../../server/ranked.js');
+  // 案例①：我 = 2900 分 + 脆弱配置（必败）vs 同分正常对手；Δ = -round(K_loss(2900) × E(0.5)) = -31
+  await seedPlayer(fx, h.makePlayerId(1), 2900, h.fragile(rankedMod.buildDefaultLoadout('probe-fragile'), 'f1'));
+  await seedPlayer(fx, h.makePlayerId(2), 2900, rankedMod.buildDefaultLoadout('probe-strong'));
+  const quick1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, config: R });
+  const r1 = await quick1.run({ playerId: h.makePlayerId(1), seed: 31337 });
+  assert.equal(r1.status, 200, JSON.stringify(r1));
+  assert.equal(r1.data.winner, 'loss', '脆弱配置且对手会交战 → 必败');
+  assert.equal(r1.data.self.delta, -31, 'R=2900 败局 Δ=-31（公式值）');
+  assert.ok(Math.abs(r1.data.self.delta) > R.kBase / 2, '该 Δ 已超旧阈值 kBase/2=16（修前必然误报）');
+  assert.ok(!fx.events().includes('store.abuse.suspect'), '合法败局**不得**产生 store.abuse.suspect');
+
+  // 案例②：我 = 0 分 vs 3000 分脆弱对手（必败于我方）→ Δ = +round(K_gain(0) × (1-E)) = +32
+  const cfgWide = { ...R, matchWindowMax: 3000 }; // 3000 分差需放宽匹配窗口（正常配置下窗口上限 600）
+  await seedPlayer(fx, h.makePlayerId(11), 0, rankedMod.buildDefaultLoadout('probe-strong2'));
+  await seedPlayer(fx, h.makePlayerId(12), R.cap, h.fragile(rankedMod.buildDefaultLoadout('probe-fragile2'), 'f2'));
+  const quick2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, config: cfgWide });
+  const r2 = await quick2.run({ playerId: h.makePlayerId(11), seed: 4242 });
+  assert.equal(r2.status, 200, JSON.stringify(r2));
+  assert.equal(r2.data.winner, 'win', '对满积分脆弱对手 → 我方胜');
+  assert.equal(r2.data.self.delta, R.kBase, 'R=0 胜满积分对手 Δ=+32=kBase（对满分对手上限）');
+  assert.ok(r2.data.self.delta > R.kBase / 2, '该 Δ 已超旧阈值 16（修前必然误报）');
+  assert.ok(!fx.events().includes('store.abuse.suspect'), '合法胜局**不得**产生 store.abuse.suspect');
+
+  // 案例③（真异常仍抓得住）：人为篡改落盘积分 —— **首次读（结算前取值）保持真值，其后每次读 +500**
+  //   → 结算后回读的 Δ ≈ 500 + 公式值，远超真实上界 → 必须报（不依赖适配器内部读次数与 clamp）
+  const realLoad = fx.store.loadArchive.bind(fx.store);
+  let reads = 0;
+  fx.store.loadArchive = async (pid) => {
+    const a = await realLoad(pid);
+    if (pid === h.makePlayerId(1)) {
+      reads += 1;
+      if (reads > 1) a.rating.points += 500;
+    }
+    return a;
+  };
+  fx.clock.advance(73 * 3600 * 1000);
+  const r3 = await quick1.run({ playerId: h.makePlayerId(1), seed: 31338 });
+  assert.equal(r3.status, 200, JSON.stringify(r3));
+  assert.ok(Math.abs(r3.data.self.delta) > qm.maxSingleMatchDelta(R), `篡改 Δ=${r3.data.self.delta} 超真实上界`);
+  assert.ok(fx.logger.records.some((x) => x.event === 'store.abuse.suspect' && Math.abs(x.data.deltaP1) > qm.maxSingleMatchDelta(R)),
+    '人为篡改 Δ 超真实上界 → store.abuse.suspect(warn) 仍然触发（告警未被削弱）');
+});
+
+/* ---------- 缺陷 B：装配引用（pluginUid）与仓库镜像 ---------- */
+
+// 造一份"真实物品 + 真实装配"的仓库与出战配置（零 HTTP：box 开箱 → core/items 装配）
+function pluginWarehouseFixture() {
+  const itemsApi = require('../../server/core/items.js');
+  const boxApi = require('../../server/box.js');
+  const rankedMod = require('../../server/ranked.js');
+  let wh = itemsApi.emptyWarehouse();
+  const boxed = boxApi.openBoxes({ seed: 20260919, tier: 'common', times: 24 });
+  const boxedItems = boxed && boxed.data && Array.isArray(boxed.data.items) ? boxed.data.items : (boxed.items || []);
+  const find = (uid) => {
+    for (const list of Object.values(wh.buckets)) {
+      if (!Array.isArray(list)) continue;
+      const hit = list.find((x) => x && x.uid === uid);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  for (const it of boxedItems) {
+    if (!Array.isArray(wh.buckets[it.kind])) wh.buckets[it.kind] = [];
+    wh.buckets[it.kind].push(it);
+  }
+  const targets = wh.buckets.role.slice(0, 1).concat(wh.buckets.skill.slice(0, 3));
+  for (const t0 of targets) {
+    for (let i = 0; i < (t0.slots || []).length; i++) {
+      const target = find(t0.uid);
+      if (!target || !target.slots[i] || target.slots[i].pluginUid) continue;
+      const kind = target.kind === 'role' ? 'rolePlugin' : 'skillPlugin';
+      const cand = (wh.buckets[kind] || []).find((p) => p.slot === target.slots[i].type && p.equipped !== true);
+      if (!cand) continue;
+      const r = itemsApi.assemble(wh, { targetUid: target.uid, slotIndex: i, pluginUid: cand.uid, tier: 'common' });
+      if (r && r.warehouse) wh = r.warehouse;
+    }
+  }
+  const role = find(targets[0].uid);
+  const skills = targets.slice(1).map((t) => find(t.uid));
+  const refs = (role.slots || []).filter((s) => s.pluginUid).length
+    + skills.reduce((n, sk) => n + (sk.slots || []).filter((s) => s.pluginUid).length, 0);
+  return { warehouse: wh, loadout: { role, skills, ai: rankedMod.buildDefaultLoadout().ai }, refs };
+}
+
+test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无镜像退化可打 / 未校验如实 missing_warehouse', async (t) => {
+  const fx = await h.openFixture({ logger: h.makeLogger() });
+  t.after(() => fx.cleanup());
+  const { warehouse, loadout, refs } = pluginWarehouseFixture();
+  assert.ok(refs > 0, `夹具必须带装配引用（实得 ${refs}）`);
+  const me = h.makePlayerId(101);
+  const created = await fx.account.createPlayerArchive({
+    playerId: me, nickname: '装配玩家', loadout, warehouse, tier: 'common', at: fx.clock(),
+  });
+  assert.equal(created.ok, true, `装配配置应能建档（带 warehouse 校验）：${JSON.stringify(created).slice(0, 200)}`);
+  await fx.registerPlayer({ playerId: h.makePlayerId(500) }); // 对手（默认配置，无引用；避开夹具自增 seq）
+  assert.equal((await fx.store.loadArchive(me)).flags.unverifiedLoadout, false, '带 warehouse 建档 → 已校验');
+
+  // ① 镜像可用 → 正常对局（插件词条生效）
+  const q1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => warehouse });
+  const r1 = await q1.run({ playerId: me, seed: 11 });
+  assert.equal(r1.status, 200, `有镜像必须能打：${JSON.stringify(r1).slice(0, 220)}`);
+  assert.equal(r1.data.duplicate, false);
+  // ①b 排位同样能打（缺陷 B 报告的另一半：修前 409 loadout_invalid / missing_warehouse）
+  const rankedMod = require('../../server/ranked.js');
+  fx.clock.advance(73 * 3600 * 1000);
+  const ranked1 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => warehouse })
+    .runRankedBattle({ store: fx.store, playerId: me, seed: 21 });
+  assert.equal(ranked1.status, 200, `排位有镜像必须能打：${JSON.stringify(ranked1).slice(0, 220)}`);
+  assert.ok(ranked1.data.matches >= 1, `排位至少 1 场：${JSON.stringify(ranked1.data).slice(0, 160)}`);
+  assert.equal(ranked1.data.invalids, 0, '不得出现"抽中却实例化失败"的 invalid 场');
+
+  // ② 已校验但镜像不在本进程（D-130 不落盘/重启后）→ 基准面板退化对局（不再 409），并记 warn
+  const q2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => null });
+  fx.clock.advance(73 * 3600 * 1000);
+  const r2 = await q2.run({ playerId: me, seed: 12 });
+  assert.equal(r2.status, 200, `已校验 + 无镜像应退化可打（修前 409 no_opponent）：${JSON.stringify(r2).slice(0, 220)}`);
+  assert.ok(fx.logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.reason === 'warehouse_mirror_degraded'),
+    '退化对局必须留下可观测 warn（store.snapshot.missing / warehouse_mirror_degraded）');
+  fx.clock.advance(73 * 3600 * 1000);
+  const ranked2 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => null })
+    .runRankedBattle({ store: fx.store, playerId: me, seed: 22 });
+  assert.equal(ranked2.status, 200, `排位退化路径同样可打：${JSON.stringify(ranked2).slice(0, 220)}`);
+  assert.equal(ranked2.data.invalids, 0);
+
+  // ③ 未校验 + 无镜像 → 如实 409 loadout_invalid + missing_warehouse（不得放宽成"永远放行"）
+  await fx.store.updateArchive(me, (ar) => {
+    ar.flags.unverifiedLoadout = true;
+    for (const slot of ar.configs.slots) if (slot.snapshot) slot.snapshot.verifiedAgainstWarehouse = false;
+    return null;
+  });
+  fx.clock.advance(73 * 3600 * 1000);
+  const r3 = await q2.run({ playerId: me, seed: 13 });
+  assert.equal(r3.status, 409, JSON.stringify(r3).slice(0, 220));
+  assert.equal(r3.code, 'loadout_invalid');
+  assert.ok((r3.details || []).some((d) => d.code === 'missing_warehouse'), '未校验 → 如实 missing_warehouse');
+  const ranked3 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => null })
+    .runRankedBattle({ store: fx.store, playerId: me, seed: 23 });
+  assert.equal(ranked3.status, 409, JSON.stringify(ranked3).slice(0, 220));
+  assert.equal(ranked3.code, 'loadout_invalid');
+  assert.ok((ranked3.details || []).some((d) => d.code === 'missing_warehouse'), '排位同样如实报（不放宽）');
+});
+
 test('T-QM-F1 工厂与入口：缺少已装配 store → TypeError；runQuickMatch 便捷入口等价', async (t) => {
   assert.throws(() => qm.createQuickMatch({}), TypeError);
   const fx = await h.openFixture();
