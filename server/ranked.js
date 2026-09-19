@@ -304,13 +304,13 @@ function batchSizeOf(ratingConfig) {
     ? cfg.batchSize : DEFAULT_BATCH_SIZE;
 }
 
-// D-136 去重窗口小时数：权威在 `rating-config.json`（§8.3）；service-config.pool 为配套默认值的兜底
+// D-136 去重窗口小时数：**单一来源 = `rating-config.json`**（§8.3）。
+//   P2-5（2026-09-19）：删除 `service-config.pool.opponentCooldownHours` 兜底分支——它是双源（同名两义），
+//   且永远不可达（rating-config 的冻结默认恒带该键）；表内 `pool.opponentCooldownHours` 仅为兼容
+//   `server/data/schema.js` 的冻结键集而保留（键集/段校验不在本批所有权内，见交付报告）。
 function cooldownHoursOf(config, ratingConfig) {
   const rating = ratingConfig || {};
-  const pool = (config && config.pool) || {};
-  if (Number.isInteger(rating.opponentCooldownHours)) return rating.opponentCooldownHours;
-  if (Number.isInteger(pool.opponentCooldownHours)) return pool.opponentCooldownHours;
-  return 0;
+  return Number.isInteger(rating.opponentCooldownHours) ? rating.opponentCooldownHours : 0;
 }
 
 // §5.4：只有带**正文**（含 loadout）的快照才能实例化对手（configHash 仅存在于正文里）

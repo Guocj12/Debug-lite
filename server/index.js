@@ -46,6 +46,8 @@ const BODY_LIMIT_BYTES = 1000000;               // §4.6 请求体上限 1MB（�
 const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 600;      // §4.6 全局：600 次/分/token（未登录按 IP）
+                                                //   分层命名（P2-4）：表内键为 `global.rateLimitPerMinute`，
+                                                //   与 `auth.rateLimitPerMinute`（登录/注册失败限速，10/分/IP）**同名两义**，禁止混用
 const RATE_WINDOW_MS = 60000;
 const DEFAULT_REPLAY_LRU = 64;                  // §11.3/D-135 帧 LRU 上限
 const EVICTED_REMEMBERED = 256;                 // 已淘汰 id 记忆（用于区分 410 与 404）
@@ -196,6 +198,31 @@ function createRateLimiter(options) {
   };
 }
 
+// P2-4：全局限速取值（分层命名 `global.rateLimitPerMinute`）。
+//   优先级：测试接缝 `opts.rateLimitPerMinute` → `opts.config.global.rateLimitPerMinute`
+//   → 存储装配后的 `store.config.global.rateLimitPerMinute` → 默认 600。
+//   ⚠️ 把该键写进 `server/data/service-config.json` 需同步 `server/data/schema.js` 的
+//      `SERVICE_CONFIG_FROZEN` 键集与段校验（不在本批所有权内，见交付报告）。
+function globalRateLimitOf(opts, storeConfig) {
+  const o = opts || {};
+  if (Number.isInteger(o.rateLimitPerMinute) && o.rateLimitPerMinute > 0) return o.rateLimitPerMinute;
+  const fromOpts = o.config && o.config.global ? o.config.global.rateLimitPerMinute : undefined;
+  if (Number.isInteger(fromOpts) && fromOpts > 0) return fromOpts;
+  const fromStore = storeConfig && storeConfig.global ? storeConfig.global.rateLimitPerMinute : undefined;
+  if (Number.isInteger(fromStore) && fromStore > 0) return fromStore;
+  return DEFAULT_RATE_LIMIT_PER_MINUTE;
+}
+
+// P2-1：`DL_PORT` 显式解析——**`0` = 临时端口**（与 docs/server.md §2 一致），
+//   修前 `Number(env) || DEFAULT_PORT` 会把 0 吞成 3000；非法值返回 null（调用方拒绝启动）。
+function resolvePort(env) {
+  const raw = (env || process.env).DL_PORT;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_PORT;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 65535) return null;
+  return n;
+}
+
 // 遗留无状态端点（DL_LEGACY_STATELESS=0 → 410 deprecated）
 function isLegacyPath(urlPath) {
   if (urlPath === '/api/v1/box' || urlPath === '/api/v1/loadout' || urlPath === '/api/v1/panel' || urlPath === '/api/v1/battle') return true;
@@ -248,7 +275,7 @@ async function createRuntime(logger, options) {
     account: null,
     quick: null,
     admin: null,
-    rateLimiter: createRateLimiter({ limit: opts.rateLimitPerMinute, windowMs: opts.rateWindowMs }),
+    rateLimiter: createRateLimiter({ limit: globalRateLimitOf(opts, null), windowMs: opts.rateWindowMs }),
     replayLimit: Number.isInteger(opts.replayLimit) && opts.replayLimit > 0 ? opts.replayLimit : null,
     replayMeta: new Map(),   // 回放 id → { participants, frameId, kind }
     evicted: new Set(),      // 已淘汰 id（区分 410 与 404）
@@ -367,6 +394,13 @@ async function createRuntime(logger, options) {
     const configured = rt.store && rt.store.config && Number.isInteger(rt.store.config.replayCacheSize)
       ? rt.store.config.replayCacheSize : 0;
     rt.replayLimit = configured > 0 ? configured : DEFAULT_REPLAY_LRU;
+  }
+  // P2-4：存储装配后若表/覆盖提供了全局限速值，则按同一取值函数重建限速器（测试接缝仍最高优先）
+  if (rt.store) {
+    const limit = globalRateLimitOf(opts, rt.store.config);
+    if (limit !== rt.rateLimiter.limit) {
+      rt.rateLimiter = createRateLimiter({ limit, windowMs: opts.rateWindowMs });
+    }
   }
   return rt;
 }
@@ -1399,7 +1433,12 @@ async function main() {
       if (r.levelValue >= 3) console.log(`[${r.level}] ${r.channel} ${r.event} ${r.msg}${Object.keys(r.data).length ? ' ' + JSON.stringify(r.data) : ''}`);
     },
   });
-  const port = Number(process.env.DL_PORT) || DEFAULT_PORT;
+  const port = resolvePort(process.env);
+  if (port === null) {
+    console.error(`[server] DL_PORT=${process.env.DL_PORT} 非法（应为 0..65535 的整数；0 = 临时端口）`);
+    process.exitCode = 1;
+    return;
+  }
   // 生产入口：显式装配档案存储（DL_DATA_DIR 或默认 <repo>/runtime），失败则拒绝启动（§3.4，退出码 1）
   const s = await start({
     logger,
@@ -1426,6 +1465,8 @@ module.exports = {
   isLegacyPath,
   stripPlayerId,
   bearerOf,
+  globalRateLimitOf,
+  resolvePort,
   VERSION,
 };
 

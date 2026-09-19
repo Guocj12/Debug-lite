@@ -61,7 +61,8 @@
 - **风险**：单进程 HTTP 服务被少量请求即可打到 CPU 饱和（同步战斗 + 同步开箱 + 同步排位批次的叠加），表现为**服务不可用**（其他玩家请求排队）；配合 SEC-03 还会转为内存耗尽。这是一条**完整可用的 DoS 路径**，且不需要任何鉴权。
 - **建议处置方向**：按主体（token/IP）令牌桶或滑窗限流（复用 `11-account-store.md` §4.6 的阈值口径）；对**昂贵端点**（`/battle`、`/ranked/run`、`/ai/battle`、`/box`）加**并发闸门**（同时最多 N 个在算，超出 → 429/排队）与**批次预算**；把 CPU 密集结算移出 HTTP 事件循环的临界区（或至少分片让出）；`dailyBattleLimit`（`11-account-store.md:638`，当前 `0 = 不限制`）在排行榜对外可见前至少设一个非零默认。
 - **优先级**：**高**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7-4）**——① **全局限速已落地**：`server/index.js` 的 `createRateLimiter`（进程内滑动窗口，默认 `600 次/分/principal`；键 = `playerId`，未登录按 `ip:<addr>`），命中 → `429 rate_limited` + `api.reject`(warn)；另有登录失败锁定（`auth.maxFailures=5`/`lockMinutes=5`）。
+  **残余（仍未处置）**：② **昂贵端点仍无并发闸门/批次预算**（`/battle`、`/ranked/run`、`/ai/battle`、`/box` 同步 CPU 计算照旧串行占用事件循环）；③ `dailyBattleLimit` 仍是"参数已留、**无消费方**"（默认 0）；④ 未做"CPU 密集结算移出临界区"。
 
 ### SEC-03 回放注册表 `REPLAYS` 无上限，持续请求可耗尽内存
 
@@ -106,7 +107,7 @@
 - **风险**：同源部署下无害；一旦前后端分离或服务被放到非预期 Origin 后面，行为**不可预测且不可配置**（浏览器直接拦截预检，前端表现为"接口挂了"）；同时服务端对"谁来调"没有任何声明，安全边界全凭部署巧合。
 - **建议处置方向**：实现 `DL_CORS_ORIGIN` 白名单（`docs/server.md:33` / `11-account-store.md:241`），显式处理 `OPTIONS` 并返回 204 + 精确头；不配置时**明确不发 CORS 头**（同源口径，已有设计依据）。
 - **优先级**：**中**
-- **状态**：待处理
+- **状态**：**已处置（2026-09-19，P7-4）**——处置证据：`server/index.js` 的 `applyCors()`（`access-control-allow-origin`（回显命中的 Origin）/`vary: origin`/`allow-headers: authorization, content-type, x-admin-token`/`allow-methods: GET, POST, PUT, DELETE, OPTIONS`/`max-age: 600`，白名单来自 `DL_CORS_ORIGIN`，支持 `*` 与逗号分隔）；`OPTIONS` 预检在 `hasCors` 时返回 **204** 并记 `api.req`(preflight)/`api.res`。**未配置 `DL_CORS_ORIGIN` 时仍不发 CORS 头且 `OPTIONS` → 404**——这是**有意的同源口径**（已写进 `docs/server.md` §2），不再是"未实现的副作用"。
 
 ---
 
@@ -167,7 +168,8 @@
 - **风险**：① 错误语义错误：客户端收到 `500 internal_error` 会当作服务端故障并**重试**，形成放大回路；② 未 drain 表示连接在 `keep-alive` 下继续接收/保留数据，是资源浪费与慢速攻击的温床（配合 SEC-05）；③ `e.message` 直接进响应（见 SEC-21）。
 - **建议处置方向**：定义 `413 payload_too_large`（先补 `docs/interfaces.md` §2 与 `docs/server.md` §4），在 `readBody` 内以**带 `statusCode` 的错误**拒绝，并 `req.destroy()`（或 `req.resume()` 后按 413 收尾）；同时预检 `Content-Length`，超限时**在读之前**就拒绝。
 - **优先级**：**高**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7-7/P7-4）**——① **语义已修**：`server/index.js` 的 `BodyTooLargeError`（`code:'payload_too_large'`、`status:413`）在 `readBody` 超限时抛出，外层映射为 **413 `payload_too_large`**（响应体不再含内部错误文案）；契约已进 `docs/interfaces.md` §2.1 与 `docs/server.md` §4。
+  **残余（仍未处置）**：② `readBody` 置 `tooBig` 后**不 `req.destroy()`/`resume()`、不 drain**；③ **未预检 `Content-Length`**（仍在读满 1 MB 后才拒）；④ 无空闲读超时（见 SEC-05）。
 
 ### SEC-12 无 `Content-Type` / `Accept` 校验，无 `415` / `406`
 
@@ -186,7 +188,8 @@
 - **风险**：当前恰好是"反向安全的默认"（不发 CORS 头 = 浏览器端不可用），但这是**未实现的副作用**而非策略：一旦有人为了联调随手加 `*`，就没有任何机制阻止；缺 `nosniff`/`no-store` 让响应在代理/浏览器缓存与 MIME 嗅探上存在被误用空间。
 - **建议处置方向**：明确 CORS 策略（白名单，默认不发头）；统一加安全头（至少 `X-Content-Type-Options: nosniff`、`Cache-Control: no-store`）；把这些写进 `docs/server.md` §4。
 - **优先级**：**中**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7-4）**——① **CORS 策略已落地**：`DL_CORS_ORIGIN` 白名单 + `OPTIONS` 预检 204 + 精确头（见 SEC-06），默认不配置即不发 CORS 头（同源口径，已写进 `docs/server.md` §2）。
+  **残余（仍未处置）**：② **安全响应头仍缺失**——`send()` 只写 `content-type`，无 `X-Content-Type-Options: nosniff`、无 `Cache-Control: no-store`、无 CSP/`X-Frame-Options`/`Referrer-Policy`；③ 无 `content-length`（仍 chunked，见 SEC-16）。
 
 ### SEC-14 日志可被用作放大/污染面（每请求两条 info 全量落盘，无采样、无来源限流）
 
@@ -315,7 +318,10 @@
 - **风险**：① 崩溃窗口内"一方记了账"（若 fsync/group commit 实现偏离设计）；② 并发写导致的丢失更新（若某处绕开每玩家队列）；③ **seq 复用 → 静默丢账/账目错乱**（最危险，因为不报错）；④ Windows 上目录 fsync 无效，rename 原子性依赖 NTFS 语义，设计未给出 Windows 专用验证；⑤ 分段压缩删除旧 journal 后，重建能力下降。
 - **建议处置方向**：实现前先补齐三处规格：**(a) `seq` 分配器**（明确"持久化的 `nextSeq` 记在 index 或 checkpoint 中，且分段删除时必须保留最大值；或改用 `node:sqlite` 自增主键"）；**(b) 崩溃点矩阵测试**（T-ST-3 `:951` 已有设想，需扩到"journal 分段删除后重启""index+journal 双损"）；**(c) Windows 下的原子写与 fsync 实测**（`fsatomic.js` 的 tmp→fsync→rename→目录 fsync 在 Windows 上的语义）。**强烈建议评估直接用 `node:sqlite`**（`docs/server.md:30` 已预留 `DL_STORE=sqlite`，`:898` 已给出表结构 `players/journal/snapshots/sessions`）：单文件、事务、`WAL` 直接把"崩溃一致性 + seq 单调 + 并发写"交给数据库，可消掉本条目大部分风险，且 **Node 24 内置、仍是零依赖**（`package.json` `engines.node >= 24.18.0`）。
 - **优先级**：**中**（当前 0 行代码；若直接按原设计实现而不加规格 → 升为**高**）
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7/B27）**——① **`seq` 分配来源已明确并实现**：`server/store/journal.js` 启动加载时扫**全部分段 + 全部检查点**计算 `maxSeq`（注释即写明"seq 的**唯一权威来源**"，`:123`），检查点记录自带 `seq: seg.maxSeq`（`:375`）并计入 `maxSeq` → **压缩删段后不会复用旧 seq**；写入侧为**全局单写者 append**（`journal.append()` 内部串行 + group commit）。
+  ② **崩溃一致性已按设计实现并有测试**：先 append journal 再 `applyRecord`，`appliedSeq` 单调、`battleId` 幂等去重、`server/store/recovery.js` 五步恢复（index 缺失/损坏 → 由 `players/*` 重建 → 否则全量重放；`appliedSeq` 超前 journal → fatal 拒绝启动；结束 `index.setSeq(journalSeq)`）；用例 `tests/integration/store-recovery.test.js`、`tests/unit/store-*.test.js`。
+  ③ **并发写**：每玩家写队列 + 单进程锁 `runtime/lock`。
+  **残余（仍未处置）**：④ Windows 上**目录 fsync 无效**（`fsatomic.js` 只记 debug），rename 原子性依赖 NTFS 语义；⑤ 崩溃点矩阵未覆盖"分段删除后重启""index+journal 双损"的全部组合（双损仍只有"拒绝启动并从备份恢复"兜底）；⑥ 未加"持久化 nextSeq 计数器"（现以"重启扫 segments∪checkpoints 取 max"实现同效语义）。
 
 ### SEC-26 管理员端点未实现，`DL_ADMIN_TOKEN` 未被读取（设计中的注入/重建入口同时缺位）
 
@@ -323,7 +329,7 @@
 - **风险**：① 现在无风险（端点不存在），但**将来实现时**若沿用当前 handler 风格（无鉴权中间件，SEC-01），`/api/v1/admin/*` 会以"路径不存在"的假象被误以为安全，一旦注册进 `routes` 就**立即裸奔**（bot 注入 = 直接改写竞技生态；`rebuild-index` = 数据面破坏）；② token 比较若实现为 `====` 明文比较，还存在时序侧信道。
 - **建议处置方向**：实现时**先**接鉴权中间件（SEC-01），admin 路由只在其后注册；`DL_ADMIN_TOKEN` 为空 → **整体禁用**（返回 404/403，`docs/server.md:31` 已是此口径）；token 比较用 `crypto.timingSafeEqual`；所有 admin 操作写审计事件（`:452` 已设计 `admin.bot.injected` 进 journal）。
 - **优先级**：**中**
-- **状态**：待处理
+- **状态**：**已处置（2026-09-19，P7/B33）**——处置证据：`server/index.js` 注册 `POST /api/v1/admin/:op`（`bots`/`rebuild-index`/`stats`/`clear-bots`/`ban`/`unban`，未知 op → 404）；`server/admin.js` 读取 `DL_ADMIN_TOKEN`，**为空 → 整体禁用**（`503 admin_token_missing`），令牌比较用 `crypto.timingSafeEqual`（`tokenEquals`）；bot 注入另有第二道门控 `DL_DEBUG_BOTS=1`（未设 → `403 debug_bots_disabled`）；注入写 journal `admin.bot.injected`、封禁/解封写 `account.banned`/`account.unbanned`（可重放审计）；接口契约见 `docs/interfaces.md` §2 与 `docs/server.md` §3.2。
 
 ---
 
@@ -339,7 +345,8 @@
 - **风险**：**信息泄漏**。攻击者枚举 `r1…rN` 即可批量抓取所有回放的帧与 AI 轨迹：① 逆向对手 AI 策略（本游戏的核心竞技资产就是 AI 程序）；② 结合 `seed`（帧/响应里回带，`battle.js:96`）可**离线复现**任意一场并做针对性优化；③ 回放含双方 loadout 状态 → 变相获得对手配置；④ 与 SEC-03 叠加：枚举本身还会产生大量请求（放大 DoS）。
 - **建议处置方向**：按 D-135 落地——**参与者鉴权**（仅对局双方可读 → 403 `replay_forbidden`）；id 改为**不可枚举**（随机 `battleId`，如 `b_` + 128-bit hex，`11-account-store.md:423` 已是此形态）；按最小暴露裁剪帧内容（是否需要给对手完整 `aiTrace`，`§15.5 Q5` 留了开放问题）；帧不落盘 + 版本不匹配 → `410 replay_expired`。
 - **优先级**：**高**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7/B31+B33）**——① **归档回放（`b_` 型）已处置**：`GET /api/v1/replay/:id` 对归档回放校验**参与者关系**（非参与者 → `403 replay_forbidden`），`battleId` 为内容寻址的 `b_` + sha256 前 16 hex（**不可枚举**），帧不落盘（按 journal + 双方快照按需重算），版本/快照不匹配 → `410 replay_expired`；`aiTrace` 默认按请求者 side 裁剪（`?trace=self`；`?trace=all` 需管理员令牌）。
+  **残余（仍未处置）**：② **遗留 `r<seq>` 回放**（`POST /battle` 直出的帧）在 `DL_LEGACY_STATELESS=1`（**默认**）下仍是"持有 id 即可读"、id 仍是进程内自增 `r1…rN` **可枚举**（`server/battle.js`）；生产置 `DL_LEGACY_STATELESS=0` 可关闭该路径（→ `410 deprecated`）。③ 帧内对手 `aiTrace` 仅按 side 裁剪，未做"是否给对手完整轨迹"的策略级最小化（§15.5 Q5 仍开放）。
 
 ### SEC-28 跨源简单请求 + 无 CSRF 判断依据落地（与 SEC-01/SEC-12/SEC-13 的组合面）
 
@@ -363,7 +370,8 @@
 - **风险**：① 玩家在战斗后被引导去 `GET /replay/:id`，若期间发生部署/重启 → **404 `unknown_replay`**（`battle.js:104`），体验上等同"回放丢了"；② 多实例部署下回放**不可达**（单进程是当前唯一支持形态，`11-account-store.md:64`）；③ 与 SEC-03 结合：攻击者可用内存压力**主动制造重启**，从而批量销毁他人的回放。
 - **建议处置方向**：D-135 的"journal 只存引用 + 按需重算"正是为此设计（回放不因重启消失），实现时一并解决；在此之前，前端应把"回放可能失效"作为正常分支而非异常（`404 unknown_replay` 的文案与重试策略）。**登记在此仅为提醒：处置 SEC-03 时不要退化成"落盘存帧"**（会与 D-135 冲突且放大磁盘面）。
 - **优先级**：**低**
-- **状态**：待处理
+- **状态**：**已部分处置（2026-09-19，P7/B33，按 D-135 落地）**——① **归档回放（`b_` 型）不再随重启丢失**：journal 只存引用（`battleId/seed/双方 snapshotHash/版本戳`），取帧时按需重算（**未落盘存帧**，符合本条"不要退化成落盘"的提醒），故重启/换进程后仍可取，且**多实例下也能重算**（只要共享同一 `DL_DATA_DIR`）。
+  **残余**：② 遗留 `r<seq>` 帧（`POST /battle` 直出、`DL_LEGACY_STATELESS=1` 默认）仍是进程内 `Map`，**重启即 404 `unknown_replay`**（与 SEC-27 同一残余面）；③ 单进程仍是唯一支持形态（多进程写同一 `runtime/` 由 `lock` 拒绝）。
 
 ---
 
@@ -372,18 +380,18 @@
 | 编号 | 标题 | 分节 | 优先级 | 状态 |
 |---|---|---|---|---|
 | SEC-01 | 所有 `/api/v1/*` 端点无鉴权，无会话概念 | A | 高 | **已部分处置（2026-09-19）**（残余：`/log-level` 无鉴权；遗留端点默认开放） |
-| SEC-02 | 无限流、无并发闸门，唯一"防护"是单端点参数上限 | A | 高 | 待处理 |
+| SEC-02 | 无限流、无并发闸门，唯一"防护"是单端点参数上限 | A | 高 | **已部分处置（2026-09-19）**（全局限速 600/分/principal 已落地；**仍缺昂贵端点并发闸门**、`dailyBattleLimit` 无消费方） |
 | SEC-03 | 回放注册表 `REPLAYS` 无上限，持续请求可耗尽内存 | A | 高 | **已处置（2026-09-19）**（HTTP 层 LRU 64 + 淘汰 → 410 `replay_expired`） |
 | SEC-04 | AI 提交无信誉约束、无按账号配额（CPU 消耗攻击面） | A | 中 | 待处理 |
 | SEC-05 | 无请求/连接超时，慢速请求可长期占用 socket | A | 中 | 待处理 |
-| SEC-06 | `OPTIONS` / 预检完全未处理，跨源调用行为取决于浏览器 | A | 中 | 待处理 |
+| SEC-06 | `OPTIONS` / 预检完全未处理，跨源调用行为取决于浏览器 | A | 中 | **已处置（2026-09-19）**（`DL_CORS_ORIGIN` 白名单 + `OPTIONS` 204 + 精确头；未配置时不发头=同源口径） |
 | SEC-07 | 客户端权威的经济系统可被伪造（品质上限取请求体、仓库/出战整包提交） | B | 高 | 待处理 |
 | SEC-08 | `tier` 缺省值与校验口径在端点间不一致 | B | 中 | 待处理 |
 | SEC-09 | 排位对手池由客户端提供，可自选/自造对手 | B | 高 | 待处理 |
 | SEC-10 | 幂等/重放面：seed 可自选，结算可择优 | B | 中 | 待处理 |
-| SEC-11 | 请求体超限返回 500 而非 413，且未 drain/destroy | C | 高 | 待处理 |
+| SEC-11 | 请求体超限返回 500 而非 413，且未 drain/destroy | C | 高 | **已部分处置（2026-09-19）**（413 `payload_too_large` 已修；**仍未 drain/destroy、未预检 Content-Length**） |
 | SEC-12 | 无 `Content-Type`/`Accept` 校验，无 415/406 | C | 中 | 待处理 |
-| SEC-13 | 无 CORS 策略、无安全响应头 | C | 中 | 待处理 |
+| SEC-13 | 无 CORS 策略、无安全响应头 | C | 中 | **已部分处置（2026-09-19）**（CORS 白名单已落地；**安全响应头仍缺**） |
 | SEC-14 | 日志可被用作放大/污染面（每请求两条 info，无采样/限流） | C | 中 | 待处理 |
 | SEC-15 | 未知路径/方法语义不严（统一 404，无 405） | C | 低 | 待处理 |
 | SEC-16 | 响应无大小/压缩策略，大响应直接 chunked 抛出 | C | 低 | 待处理 |
@@ -395,16 +403,16 @@
 | SEC-22 | 文档冻结的多个环境变量在代码中不存在（配置面与实现面脱节） | D | 低 | **已处置（2026-09-19）**（五个 `DL_*` 已接线；残余 `DL_LOG_CHANNELS`） |
 | SEC-23 | 查询串解析静默吞错/畸形即 500 | D | 低 | 待处理 |
 | SEC-24 | 未知路径请求仍无条件落 `api.req` 日志 | D | 低 | 待处理 |
-| SEC-25 | P7 存储设计：崩溃一致性、并发写、journal `seq` 重启来源未定义 | E | 中（若照原设计直接实现 → 高） | 待处理 |
-| SEC-26 | 管理员端点未实现，`DL_ADMIN_TOKEN` 未被读取 | E | 中 | 待处理 |
-| SEC-27 | 回放可被任意读取且 id 可枚举（无参与者鉴权） | F | 高 | 待处理 |
+| SEC-25 | P7 存储设计：崩溃一致性、并发写、journal `seq` 重启来源未定义 | E | 中（若照原设计直接实现 → 高） | **已部分处置（2026-09-19）**（seq 来源=segments∪checkpoints 的 maxSeq、单写者、每玩家队列、五步恢复 + 测试；残余 Windows 目录 fsync/崩溃矩阵） |
+| SEC-26 | 管理员端点未实现，`DL_ADMIN_TOKEN` 未被读取 | E | 中 | **已处置（2026-09-19）**（`/admin/:op` + token（`timingSafeEqual`）+ `DL_DEBUG_BOTS` 双门控 + journal 审计） |
+| SEC-27 | 回放可被任意读取且 id 可枚举（无参与者鉴权） | F | 高 | **已部分处置（2026-09-19）**（归档 `b_` 已参与者鉴权 + 不可枚举；**遗留 `r<seq>` 默认仍可读/可枚举**） |
 | SEC-28 | 跨源简单请求 + 无 CSRF 判断依据落地（组合面） | F | 中 | 待处理 |
 | SEC-29 | 日志含原始 `req.url`/`query`，日志注入与取证污染 | F | 低 | 待处理 |
-| SEC-30 | 回放注册表进程内状态，随重启丢失（设计取舍，非缺陷） | F | 低 | 待处理 |
-| | **合计** | | **高 7 / 中 16 / 低 7 = 30**（2026-09-16 复核更正：原写 6/16/8 与正文及分节统计不符） | **已处置 3（SEC-03 / SEC-17 / SEC-22）/ 已部分处置 2（SEC-01 / SEC-19）/ 待处理 25**（2026-09-19 更新） |
+| SEC-30 | 回放注册表进程内状态，随重启丢失（设计取舍，非缺陷） | F | 低 | **已部分处置（2026-09-19）**（归档 `b_` 回放不落帧、按需重算 → 不随重启丢失；遗留 `r<seq>` 仍进程内） |
+| | **合计** | | **高 7 / 中 16 / 低 7 = 30**（2026-09-16 复核更正：原写 6/16/8 与正文及分节统计不符） | **已处置 5（SEC-03 / SEC-06 / SEC-17 / SEC-22 / SEC-26）/ 已部分处置 8（SEC-01 / SEC-02 / SEC-11 / SEC-13 / SEC-19 / SEC-25 / SEC-27 / SEC-30）/ 待处理 17**（2026-09-19 更新） |
 
 > **状态口径（**D-153**）**：本册**只登记不修复**——不派发任务、不改门禁；但**被顺手修掉的条目必须回填"现状证据 + 状态"**（标为**已处置**/**已部分处置**，附日期与 `文件:行`/测试证据）。
-> 截至 2026-09-19：**SEC-03 已处置**（HTTP 层 LRU 64 + 淘汰 → `410 replay_expired`；证据见该条）、**SEC-22 已处置**（五个 `DL_*` 变量均已在 `server/index.js`/`server/store/index.js`/`server/admin.js` 有读取点；残余 `DL_LOG_CHANNELS`）、**SEC-01 已部分处置**（鉴权中间件 + `DL_LEGACY_STATELESS=0` 开关已实现；残余 `/log-level` 无鉴权与遗留端点默认开放）、**SEC-17 已处置**（运行时 + 校验期双白名单）、**SEC-19 已部分处置**（CI + git 钩子 + `demo.js` 补齐；残余"门禁自身可被改写/无 CODEOWNERS"未处置）。
+> 截至 2026-09-19：**已处置 5 条**——SEC-03（HTTP 层 LRU 64 + 淘汰 → `410 replay_expired`）、SEC-06（`DL_CORS_ORIGIN` 白名单 + `OPTIONS` 204）、SEC-17（运行时 + 校验期双白名单）、SEC-22（五个 `DL_*` 已接线，残余 `DL_LOG_CHANNELS`）、SEC-26（`/admin/:op` + token 双门控 + 审计）；**已部分处置 8 条**——SEC-01（鉴权中间件 + `DL_LEGACY_STATELESS`；残余 `/log-level` 与遗留端点）、SEC-02（全局限速；仍缺昂贵端点并发闸门）、SEC-11（413 已修；未 drain/预检）、SEC-13（CORS；安全头仍缺）、SEC-19（CI + 钩子；门禁自身可改写）、SEC-25（seq 来源/恢复/并发已实现；Windows 目录 fsync 与崩溃矩阵）、SEC-27 与 SEC-30（归档 `b_` 已鉴权且不随重启丢失；遗留 `r<seq>` 仍可枚举/进程内）。**其余 17 条仍为待处理。**
 
 **按分节统计**：A 网络与可用性 6 条（高 3 / 中 3 / 低 0）；B 经济与防作弊 4 条（高 2 / 中 2 / 低 0）；C 传输与配置 6 条（高 1 / 中 3 / 低 2）；D 运行时与代码面 8 条（高 0 / 中 5 / 低 3）；E 持久化与账号 2 条（高 0 / 中 2 / 低 0）；F 其他 4 条（高 1 / 中 1 / 低 2）。
 
