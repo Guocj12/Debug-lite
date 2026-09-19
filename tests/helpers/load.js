@@ -414,22 +414,40 @@ function planLoadout(warehouse, options) {
   return { loadout: { role, skills, ai: null }, plan, skipped, stats };
 }
 
-// 仅保留被 loadout 引用的物品（不含无关开箱产物）→ 提交为仓库镜像（D-130 非权威，只做引用校验）
+// 仅保留被 loadout 引用的物品（与其装配引用）→ 提交为仓库镜像（D-130 非权威，只做引用完整性校验）。
+// 关键：镜像里的被引用插件必须显式 `equipped: true`（loadout 校验的第二道引用检查），
+// 且被引用的槽位保留 `pluginUid`（本函数用 loadout 的槽位作为模板，天然一致）。
 function mirrorOfLoadout(loadout, warehouse, bucketMax) {
-  const keep = new Set();
-  const add = (item) => {
-    if (!item || typeof item.uid !== 'string') return;
-    keep.add(item.uid);
-    for (const s of item.slots || []) if (s && s.pluginUid) keep.add(s.pluginUid);
-  };
+  const items = [];
+  const add = (item) => { if (item && typeof item.uid === 'string') items.push(item); };
   add(loadout.role);
   for (const s of loadout.skills || []) add(s);
-  const out = itemsApi.emptyWarehouse();
-  const cap = Number.isInteger(bucketMax) && bucketMax > 0 ? bucketMax : DEFAULTS.warehouseBucketMax;
+  const byUid = new Map();
   for (const [bucket, list] of Object.entries((warehouse && warehouse.buckets) || {})) {
     if (!Array.isArray(list)) continue;
-    out.buckets[bucket] = list.filter((x) => x && keep.has(x.uid)).slice(0, cap);
+    for (const it of list) if (it && typeof it.uid === 'string') byUid.set(it.uid, { bucket, item: it });
   }
+  const plugins = new Map(); // pluginUid → bucket
+  for (const item of items) {
+    for (const s of item.slots || []) {
+      if (!s || !s.pluginUid) continue;
+      const found = byUid.get(s.pluginUid);
+      if (found) plugins.set(s.pluginUid, found);
+    }
+  }
+  const out = itemsApi.emptyWarehouse();
+  const cap = Number.isInteger(bucketMax) && bucketMax > 0 ? bucketMax : DEFAULTS.warehouseBucketMax;
+  for (const item of items) {
+    const found = byUid.get(item.uid);
+    const bucket = found ? found.bucket : item.kind;
+    if (!Array.isArray(out.buckets[bucket])) out.buckets[bucket] = [];
+    out.buckets[bucket].push(JSON.parse(JSON.stringify(item)));
+  }
+  for (const [uid, found] of plugins) {
+    if (!Array.isArray(out.buckets[found.bucket])) out.buckets[found.bucket] = [];
+    out.buckets[found.bucket].push({ ...JSON.parse(JSON.stringify(found.item)), equipped: true });
+  }
+  for (const bucket of Object.keys(out.buckets)) out.buckets[bucket] = out.buckets[bucket].slice(0, cap);
   return out;
 }
 
@@ -761,7 +779,7 @@ async function runLoadTest(options) {
     }
     report.phases.pool = {
       archives: pool.size(),
-      registeredPlayers: registry.size(),
+      registeredPlayers: registry.size,
       distinctSnapshots: snapshotHashes.size,
       usableSnapshots: snapshotUsable,
       byTier: countBy(registry.values(), (v) => v.tier),
@@ -1238,13 +1256,14 @@ function reportPath(root) {
   return path.join(root || path.join(__dirname, '..', '..'), 'runtime', 'load-report.json');
 }
 
-function writeReport(report, root) {
-  const file = reportPath(root);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+// 报告落盘（runtime/ 已 gitignore；绝不写仓库根或 docs）。`report` 的 `serverHandle` 不可序列化，剔除。
+function writeReport(report, file) {
+  const target = file || reportPath();
+  fs.mkdirSync(path.dirname(target), { recursive: true });
   const clone = { ...report };
-  delete clone.serverHandle; // 句柄不可序列化
-  fs.writeFileSync(file, `${JSON.stringify(clone, null, 2)}\n`, 'utf8');
-  return file;
+  delete clone.serverHandle;
+  fs.writeFileSync(target, `${JSON.stringify(clone, null, 2)}\n`, 'utf8');
+  return target;
 }
 
 module.exports = {

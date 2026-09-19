@@ -164,6 +164,17 @@ function request(port, method, urlPath, body, headers) {
   });
 }
 
+// 该玩家是否参与过任何已结算对局（扫 journal；用于挑选确定性的"非参与者"）
+async function battleParticipants(store) {
+  const set = new Set();
+  await store.replayJournal({ fromSeq: 0, includeCheckpoints: false }, (r) => {
+    if (!r || r.type !== 'battle.recorded') return;
+    if (r.p1 && typeof r.p1.playerId === 'string') set.add(r.p1.playerId);
+    if (r.p2 && typeof r.p2.playerId === 'string') set.add(r.p2.playerId);
+  });
+  return set;
+}
+
 const authed = (token) => ({ authorization: `Bearer ${token}` });
 
 // 清空某玩家档案里的对手冷却记录（等价"24h 已过"；仅用于让 CLI 快速对战这条独立检查点可复现）
@@ -761,19 +772,26 @@ async function main() {
       expect(mine.body.data.frames.length === d.ticks, `重算帧数应等于 ticks（${d.ticks}），实得 ${mine.body.data.frames.length}`, mine.raw);
       const anon = await request(port, 'GET', `/api/v1/replay/${d.battleId}`);
       expect(anon.status === 401, `未鉴权取归档回放应 401，实得 ${anon.status}`, anon.raw);
-      // "非参与者"主体：第 2 步注册、从未参与过任何对局的真实玩家（先机器核对 0 条战绩）
-      const victimRec = await request(port, 'GET', '/api/v1/me/records?limit=100', undefined, authed(state.facts.victim.token));
-      expect(victimRec.status === 200 && victimRec.body.data.records.length === 0,
-        `"非参与者"用例主体必须 0 条战绩（实得 ${victimRec.body.data && victimRec.body.data.records.length} 条）`, victimRec.raw);
-      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(state.facts.victim.token));
-      expect(outsider.status === 403, `非参与者应 403（主体 ${state.facts.victim.publicId}，0 条战绩），实得 ${outsider.status}`, outsider.raw);
+      // "非参与者"主体：注册 2 名全新玩家并**机器核对**其从未出现在任何 battle.recorded 记录里
+      const fresh = [];
+      for (let i = 0; i < 2; i++) {
+        const p = await request(port, 'POST', '/api/v1/auth/register', { username: `e2e_fresh_${7 + i}`, password: PASSWORD, nickname: `旁观${i}` });
+        expect(p.status === 200 || p.status === 201, `旁观玩家注册失败 ${p.status}`, p.raw);
+        fresh.push({ token: p.body.data.token, publicId: p.body.data.publicId, playerId: await playerIdByPublicId(s.store, p.body.data.publicId) });
+      }
+      state.facts.fresh = fresh;
+      const participants = await battleParticipants(s.store);
+      const outsiderPlayer = fresh.find((x) => !participants.has(x.playerId));
+      expect(outsiderPlayer !== undefined, `应存在从未参与对局的真实玩家（参与过对局者 ${participants.size} 人；本轮新注册 ${fresh.map((x) => x.playerId).join(',')}）`);
+      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(outsiderPlayer.token));
+      expect(outsider.status === 403, `非参与者应 403（主体 ${outsiderPlayer.publicId}，journal 里无任何对局记录），实得 ${outsider.status}`, outsider.raw);
       expect(outsider.body.error.code === 'replay_forbidden', `非参与者错误码应为 replay_forbidden，实得 ${j(outsider.body.error)}`, outsider.raw);
 
       const foeId = await playerIdByPublicId(s.store, d.opponent.publicId);
       const mineArch = await s.store.loadArchive(state.facts.B.playerId);
       const mineSlot = mineArch.configs.slots.find((x) => x.slotId === mineArch.configs.activeSlotId);
-      const appended = await s.store.settleBattle({
-        mode: 'quick', seed: 987654, at: Date.now(),
+      const defeatedB = await s.store.settleBattle({
+        mode: 'quick', seed: 987655, at: Date.now(),
         p1: {
           playerId: state.facts.B.playerId, publicId: state.facts.B.publicId, role: 'attacker',
           snapshotHash: mineSlot.snapshot.hash, configHash: mineSlot.snapshot.configHash,
@@ -853,16 +871,20 @@ async function main() {
 
     /* ---- [22/22] 真实玩家快速对战 + CLI 闭环 ---- */
     await step(22, 'POST /quick/run（真实玩家对手）Elo 可复算；CLI auth/me/quick/leaderboard + 退出码 3 = 未鉴权', async () => {
-      // 先注册一名"从未交手"的真实玩家作为本步发起者（保证 Elo 双向场景确定性成立）
+      // 本步发起者 = 第 11 步已压到 1hp 的脆皮 A（确定性必败 → 双向 Δ 均非零）；
+      // 注册一名全新真实玩家并清掉 A 的对手冷却，保证池内确有可用候选（等价 24h 已过）
       const init = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_elo_6', password: PASSWORD, nickname: '埃洛' });
       expect(init.status === 200 || init.status === 201, `Elo 用例注册失败 ${init.status}`, init.raw);
       const initPlayer = { token: init.body.data.token, publicId: init.body.data.publicId, playerId: await playerIdByPublicId(s.store, init.body.data.publicId) };
       expect(typeof initPlayer.playerId === 'string', '新玩家档案应可回查', init.raw);
       state.facts.eloPlayer = initPlayer;
-      const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(initPlayer.token));
-      expect(r.status === 200, `${initPlayer.publicId} 的快速对战应 200（池中有真实对手），实得 ${r.status}`, r.raw);
+      await clearOpponentHistory(s.store, state.facts.A.playerId);
+      // 每一步的真实对局使用**互不相同**的 seed：quick 的 battleId 由 seed + 双方快照内容寻址（§9.1），
+      // 跨步骤复用同 seed 会命中同一 battleId（幂等去重），使 Δ 落盘值与本次 winner 不一致（缺陷 D2）。
+      const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(state.facts.A.token));
+      expect(r.status === 200, `A 的快速对战应 200（已清冷却，池中有真实候选），实得 ${r.status}`, r.raw);
       const d = r.body.data;
-      await assertReal(s.store, [initPlayer.publicId, d.opponent.publicId], 'quick/run#2');
+      await assertReal(s.store, [state.facts.A.publicId, d.opponent.publicId], 'quick/run#2');
       const selfCalc = quickmatch.ratingDelta({
         points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore,
         result: d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw', config: RATING,
@@ -875,6 +897,9 @@ async function main() {
       expect(d.opponent.pointsAfter === foeCalc.pointsAfter, `对手积分可复算：${d.opponent.pointsAfter} ≠ ${foeCalc.pointsAfter}`, j(d.opponent));
       expect(d.self.pointsAfter >= 0 && d.self.pointsAfter <= RATING.cap, `A 积分越界 ${d.self.pointsAfter}`, j(d.self));
       expect(d.opponent.pointsAfter >= 0 && d.opponent.pointsAfter <= RATING.cap, `对手积分越界 ${d.opponent.pointsAfter}`, j(d.opponent));
+      // 双向非零（脆皮一方必败）：输家 Δ<0、赢家 Δ>0，且差额可复算
+      expect(d.self.delta < 0 && d.opponent.delta > 0,
+        `脆皮发起者必败 → 双向 Δ 应一负一正，实得 self=${d.self.delta} opponent=${d.opponent.delta}（winner=${d.winner}）`, j(d));
       const foeToken = d.opponent.publicId === state.facts.B.publicId ? state.facts.B.token
         : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token
           : d.opponent.publicId === state.facts.victim.publicId ? state.facts.victim.token
@@ -910,7 +935,7 @@ async function main() {
       const me = await runCli(['me', '--token', state.facts.cliPlayer.token]);
       expect(me.code === 0, `cli me 应退出码 0，实得 ${me.code}`, `${me.text}\n${me.err}`);
       expect(me.text.includes(state.facts.cliPlayer.publicId), 'cli me 输出应含自己的 publicId', me.text);
-      const lb = await runCli(['leaderboard', '--limit', '5']);
+      const lb = await runCli(['leaderboard', '--limit', '100']);
       expect(lb.code === 0, `cli leaderboard 应退出码 0，实得 ${lb.code}`, `${lb.text}\n${lb.err}`);
       expect(lb.text.includes(state.facts.cliPlayer.publicId), 'cli leaderboard 输出应含榜单行', lb.text);
       const quick = await runCli(['quick', 'run', '--token', state.facts.cliPlayer.token, '--seed', '31415']);
@@ -926,7 +951,11 @@ async function main() {
         cliQuickNote = `quick run→1（${short(quick.err, 80)}：池内真实候选已被 24h 去重清空，未注入 bot）`;
       }
       const cliDataForNote = quick.code === 0 ? JSON.parse(quick.text) : null;
-      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${initPlayer.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
+      const sumBefore = d.self.pointsBefore + d.opponent.pointsBefore;
+      const sumAfter = d.self.pointsAfter + d.opponent.pointsAfter;
+      expect(sumBefore + d.self.delta + d.opponent.delta === sumAfter,
+        `本场守恒式不成立：${sumBefore} + ${d.self.delta} + ${d.opponent.delta} ≠ ${sumAfter}`, j(d));
+      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${state.facts.A.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、双向非零、守恒式 ${sumBefore}+(${d.self.delta}${d.opponent.delta >= 0 ? '+' : ''}${d.opponent.delta})=${sumAfter} ✔、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
       return `Δ ${d.self.delta}/${d.opponent.delta}；CLI 0/3`;
     });
 

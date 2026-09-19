@@ -160,9 +160,9 @@ async function main() {
     level: args.quiet ? 'error' : 'warn',
   });
 
-  const outFile = args.out || load.reportPath();
+  const outFile = args.out ? path.resolve(args.out) : load.reportPath();
   try {
-    load.writeReport(report, path.dirname(path.dirname(outFile)));
+    load.writeReport(report, outFile);
   } catch (e) {
     process.stderr.write(`报告写入失败：${e && e.message}\n`);
   }
