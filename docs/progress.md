@@ -144,6 +144,7 @@ docs/progress.md       本文件
 - [x] **P7-0 关闭段位门控（D-137，2026-09-16 已落地）**：`unlock.json` 新增 `gating.enabled=false` 总开关；`core/unlock.js`（`availableNodes`/`isUnlocked`/`filterByTier`/`validateLoadout`）、`core/items.js`（`validateUnlock`/`rollQuality` 品质截断）、`server/box.js`、`server/loadout.js`、`ai/ast.js`（`node_locked`）读开关；**门控逻辑与数据字段保留**（`unlockTier`/段位树作元数据），`withGating(true|false)` 使**开/关两模式都有测试**；排位晋升与段位奖励不受开关影响（属进度，不属门控）。**现状（2026-09-16 复测）**：门控相关用例全绿（D-137 的开关语义由 `withGating(true)`/`withGating(false)` 两套用例钉死）。
 - [x] **P7-1 存储层（B27，2026-09-16 已落地）**：`server/store/*`（适配器契约 + JSON 适配器原子写、append-only journal + 幂等 apply、物化档案、内容寻址快照库、索引、单进程锁、崩溃恢复）；`scripts/check-arch.js` 已登记新层；`tests/unit/store-*.test.js` + `tests/property/items-invariants.test.js`。**现状（2026-09-16 复测）**：`GX-8 check-arch` 已转绿，存储层用例全绿（其中 `AD-1`/`AD-6` 曾在途中红，已由并行改动修绿，见 §3.4 说明）。
 - [x] **P7-2/P7-3/P7-4/P7-5/P7-6/P7-7（2026-09-19 全部交付）**：身份与会话（`auth.js`：并发注册闭合 / `session_expired` / 启动 prune + 读时懒清理）、排位与快速对战（**去占位 bot + `shortfall`**、D-136 去重窗口裁定、双向记账、Elo 可复算与积分守恒）、HTTP·CLI 接线（Bearer/401/403/409/410/429、`DL_*` 五个变量、回放 LRU 64 + 410、CLI 退出码 3、`readBody` → 413）、P7-5 全链路 e2e（`npm run e2e` 22/22）、P7-6 批量测试（`npm run load-test`，真实玩家 + 7 条完整性断言）、P7-7 测试体系冗余与缺口审查（`docs/reviews/P7-7-test-audit.md`、`docs/reviews/P7-7-wave2-code-review-residual.md`）。**实测**：`npm test` = 903 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`check-docs` PASS、`fe-spec-check` 9 PASS。
+- [ ] **待办（P7-5 线报告的残余缺陷，已派修、修好后回填）**：`POST /quick/run` 在"发起者带装配引用 + 抽到默认配置对手 + 进程内仓库镜像缓存缺失"下返回 `409 no_opponent`——**匹配池筛选与最终实例化对"可用性"的判定口径不一致**（`server/quickmatch.js` 的 `candidatePool` vs `run` 的实例化路径）。修复方向：两处共用同一可用性判定，失败时给**可解释**的错误码（仍**不得**注入 bot，D-152）；匹配池章节的硬性要求见 `docs/systems/10-ranked.md` §4.3 注记。
 
 ---
 
@@ -239,3 +240,5 @@ docs/progress.md       本文件
 - 终局收口（2026-09-19T06:29:36.757Z）。
 
 - 终局收口（2026-09-19T06:32:18.387Z）。
+
+- 终局收口（2026-09-19T06:36:06.918Z）。

@@ -213,7 +213,9 @@ function legacyStatelessOf(opts, env) {
 
 // 是否装配档案存储（D-129）：显式 dataDir/store/enableStore，或 DL_DATA_DIR 已设置。
 // 说明：`start()` 缺省不落盘（沿用无状态基线，旧测试/冒烟零副作用）；`npm start` 走 main() 显式 enableStore。
+//   `enableStore: false` = **显式否决**（即使 env 里有 DL_DATA_DIR 也不装配）——测试用"确定不落盘"的口径。
 function storeWanted(opts, env) {
+  if (opts.enableStore === false) return false;
   if (opts.store) return true;
   if (typeof opts.dataDir === 'string' && opts.dataDir !== '') return true;
   if (opts.enableStore === true) return true;
@@ -222,9 +224,11 @@ function storeWanted(opts, env) {
 }
 
 // 环境变量读取（§2/§7）：DL_DATA_DIR / DL_STORE / DL_ADMIN_TOKEN / DL_LEGACY_STATELESS / DL_CORS_ORIGIN
+// C5 修复（2026-09-19）：显式注入是**覆盖层**——未提供的键回退真实 `process.env`（空对象不再整体屏蔽，
+//   否则 `start({env:{}})` 会把 store/legacyStateless/CORS 全部重置为相反值）。
 function envOf(options) {
   const opts = options || {};
-  const env = { ...(opts.env || process.env) };
+  const env = { ...(process.env || {}), ...(opts.env || {}) };
   if (opts.adminToken !== undefined) env.DL_ADMIN_TOKEN = opts.adminToken;
   if (opts.corsOrigin !== undefined) env.DL_CORS_ORIGIN = opts.corsOrigin;
   if (opts.legacyStateless !== undefined) env.DL_LEGACY_STATELESS = opts.legacyStateless === false ? '0' : String(opts.legacyStateless);
@@ -309,6 +313,7 @@ async function createRuntime(logger, options) {
       dataDir: opts.dataDir,
       adapter: opts.adapter,
       configDir: opts.configDir,
+      env, // C5：把已解析的 env 透传给存储层（否则 store 只读真实 process.env，注入缝失效）
       logger,
       now: opts.now,
       config: opts.config,

@@ -785,6 +785,8 @@ GET /api/v1/replay/:battleId
 
 **兼容策略（重要）**：既有**无状态**端点 `POST /box`、`/warehouse*`、`/loadout`、`/panel`、`/ai/*`、`/battle` **全部保留不动**（门禁项 9 接口冒烟与 `tests/api/*`、CLI 依赖它们）。新旧并存，由环境变量 `DL_LEGACY_STATELESS`（默认 `1`）控制；置 `0` 时旧端点返回 `410 deprecated`（生产可关，开发/CLI/测试保持开启）。
 
+> **参数覆盖缝（契约注记，2026-09-19）**：运行时参数表是**数值单一来源**，代码内置默认值仅兜底；`server/store/config.js` 的合并顺序为 **`opts` > 文件 > 内置**，故实例级 `opts` 是最终覆盖层。帧 LRU 上限因而可实例级覆盖：`start({ config: { replayCacheSize: N } })`（经 store config）或 `start({ replayLimit: N })`（最高优先）。契约同 `docs/interfaces.md` §7。
+
 ### 10.2 关键端点示例
 
 ```jsonc

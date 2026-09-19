@@ -174,9 +174,10 @@
 
 1. 释放时（引擎步骤 6）把 `skill.castEffects` 每条 `addEffect` 入效果队列，`addedTick = 当前 tick`。
 2. 效果系统的"新效果下一 tick 起效"规则（D-70）→ **释放当 tick 的持续结算（步骤 2）已经过去**，所以 **下一 tick 才起效**。
-3. 持续 `params.duration` tick（缺省取注册表 `fallbackDuration = 2`）；形态为 `continuous / stat=atk / delta=v`，逐 tick 结算并递减，归零移除。
-4. 该效果与命中无关——**没打中也会生效**（"释放"即触发）。
-5. ✅ **API 链路已接线**（2026-09-16 复核）：`loadout.buildPanel` 的技能投影白名单含 `castEffects`，故经 `/api/v1/battle` 时 `cast_buff` 正常入队（见 §4.5 注）。
+3. 持续 `params.duration` tick（缺省取注册表 `fallbackDuration = 2`）；形态为 `continuous / stat=atk / delta=v`，逐 tick 结算并递减，归零移除。**`v` 是"每 tick"的增量**（`duration=2` → 共结算 2 次，生效窗口 t+1/t+2），**不是一次性总量**。
+4. **面板类到期回滚（2026-09-19）**：`atk`/`def` 属**面板修饰**，逐 tick 累加**实际生效**增量（含钳制修正），到期**回滚累计增量 → 整段生效期净 0**（不再永久增益）；`hp`/`mp`/`sp` 类为**资源池流量**，结算即生效、**到期不回滚**。参见 `systems/05-effects.md` §4.3。
+5. 该效果与命中无关——**没打中也会生效**（"释放"即触发）。
+6. ✅ **API 链路已接线**（2026-09-16 复核）：`loadout.buildPanel` 的技能投影白名单含 `castEffects`，故经 `/api/v1/battle` 时 `cast_buff` 正常入队（见 §4.5 注）。
 
 ## 5. 边界与异常
 
