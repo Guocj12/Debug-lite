@@ -747,6 +747,7 @@ GET /api/v1/replay/:battleId
 | 返回内容 | 帧内 `players/bullets/bases/events` 为**双方完整信息**（引擎语义决定，无法隐藏） |
 | `aiTrace` | **按 side 过滤（P1-1 修复后，已实现）**：`?trace=self`（默认）时**逐帧保留 `diff.aiTrace` 中 `owner === 请求者 side` 的条目**（`p1`/`p2` 由 `participants` 推出），避免把对手 AI 的逐步决策喂给玩家；`?trace=all` 需**管理员令牌**通过（否则 403/503）；未知 `trace` 值 → 400 `bad_request`。**两条归档路径（帧缓存命中 / 按 journal+快照重算）都裁剪**；遗留 `r<seq>` 回放**不裁剪**（双方 loadout 与 AI 均由调用方自备，侧别未知 → 保持旧语义零回归） |
 | `programHash` | **回放响应内不含 `programHash`**（回放数据 = `id/seed/tier/winner/phase/ticks` + `frames`），因此不存在"按侧过滤"的实现点——**旧文"只返回自己的"没有对应代码，已按实测更正**（2026-09-19）。仅 `/ai/compile`、`/ai/battle` 回带 `programHash`，那是**调用方自己提交的程序** |
+| **仍缺项（待办，2026-09-19 登记）** | **`programHash` 未进入回放响应/帧**：归档回放（`b_` 型）与遗留 `r<seq>` 回放都不带 `programHash`，调用方无法据回放数据核验"该场用的是哪个 AI 程序"。当前以 `snapshotHash`/`configHash` 三元组间接保证可复现性；若要按侧暴露 `programHash`，需先定"是否随帧返回 + 按 side 过滤"的契约（用户裁定后另开批次） |
 | 对手 `loadout` | **永不返回**（无论何种角色）；只给 `opponent.publicId/nickname/tier/points` |
 | 进程内 `REPLAYS` | **有上限 LRU（默认 64 场，`service-config.replayCacheSize`）**：帧仍登记在模块级 `battle.REPLAYS`，但由 HTTP 层 `pruneReplays()` 按 LRU 淘汰并 `REPLAYS.delete(id)`，淘汰 → `410 replay_expired`；归档回放另有"只存引用 + 按需重算"路径（不占帧缓存额度）。直接调用 `battle.runBattle`（不经 HTTP，如部分单测）不受该上限约束 |
 

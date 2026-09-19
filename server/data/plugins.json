@@ -117,8 +117,8 @@
       "affixes": [{ "id": "lifesteal", "desc": "命中吸 hp 20%", "params": { "v": 0.20 } }],
       "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
     { "id": "sp_buff", "kind": "skillPlugin", "slot": "special", "category": "释放增益",
-      "name": "释放增益", "desc": "释放后 atk +2 持续 2 tick",
-      "affixes": [{ "id": "cast_buff", "desc": "释放后 atk +2 持续 2 tick", "params": { "v": 2, "duration": 2 } }],
+      "name": "释放增益", "desc": "释放后 atk 每 tick +2，duration=2（生效窗口 t+1/t+2），到期回滚累计增量、净 0（D-154）",
+      "affixes": [{ "id": "cast_buff", "desc": "释放后 atk 每 tick +2（duration=2），到期回滚、净 0（D-154）", "params": { "v": 2, "duration": 2 } }],
       "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 }
   ]
 }

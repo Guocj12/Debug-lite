@@ -269,29 +269,8 @@ async function createRuntime(logger, options) {
     while (rt.warehouses.size > WAREHOUSE_CACHE_MAX) rt.warehouses.delete(rt.warehouses.keys().next().value);
     return true;
   };
-  rt.loadWarehouse = async (playerId) => {
-    // 优先级：account 模块镜像（PUT /me/warehouse 的显式提交）→ 配置保存请求登记的镜像 → 快照自带镜像
-    if (typeof playerId === 'string' && playerId !== '' && rt.account && typeof rt.account.getWarehouseMirror === 'function') {
-      const r = await rt.account.getWarehouseMirror(playerId);
-      if (r && r.ok === true && r.data && r.data.warehouse) {
-        rt.rememberWarehouse(playerId, r.data.warehouse);
-        return r.data.warehouse;
-      }
-    }
-    const cached = rt.warehouses.get(playerId);
-    if (cached) return cached;
-    const durable = await rt.snapshotWarehouseOf(playerId);
-    if (durable) {
-      rt.rememberWarehouse(playerId, durable);
-      logger.trace('store', 'store.read', '装配引用子集取自快照（不依赖进程内镜像缓存）', {
-        op: 'loadWarehouse', playerId, source: 'snapshot',
-      });
-      return durable;
-    }
-    return null;
-  };
-  // 出战快照自带的装配引用子集（缺口 1 的落盘载体；旧快照无该字段 → null，走既有退化路径）
-  rt.snapshotWarehouseOf = async (playerId) => {
+  // 出战快照（正文）——loadWarehouse 的覆盖判定与第 ③ 级来源共用一次读取（默认槽）
+  rt.activeSnapshotOf = async (playerId) => {
     if (!rt.store || typeof playerId !== 'string' || playerId === '') return null;
     try {
       const archive = await rt.store.loadArchive(playerId);
@@ -300,13 +279,55 @@ async function createRuntime(logger, options) {
       if (!hash) return null;
       const snap = await rt.store.snapshot.get(hash);
       if (!snap || snap.hash !== hash) return null;
-      return snap.warehouse && typeof snap.warehouse === 'object' ? snap.warehouse : null;
+      return snap;
     } catch (err) {
-      logger.warn('store', 'store.snapshot.missing', `读取快照自带镜像失败：${err && err.message ? err.message : err}`, {
-        playerId, reason: 'snapshot_warehouse_read_failed',
+      logger.warn('store', 'store.snapshot.missing', `读取出战快照失败：${err && err.message ? err.message : err}`, {
+        playerId, reason: 'active_snapshot_read_failed',
       });
       return null;
     }
+  };
+  // D1-residual：镜像来源必须**覆盖**当前出战配置的引用，否则跳过该来源并落到下一级
+  //   （修前：账号级陈旧子集镜像会遮蔽快照自带镜像 → 抽池"可用"而实例化"悬挂引用"→ 409 no_opponent）。
+  rt.loadWarehouse = async (playerId) => {
+    if (typeof playerId !== 'string' || playerId === '') return null;
+    const snap = await rt.activeSnapshotOf(playerId);
+    const loadoutOfPlayer = snap && snap.loadout ? snap.loadout : null;
+    const needs = loadoutOfPlayer ? rankedMod.needsWarehouse(loadoutOfPlayer) : false;
+    const covers = (wh) => !needs || rankedMod.warehouseCovers(loadoutOfPlayer, wh);
+    const sources = [];
+    // ① account 模块镜像（PUT /me/warehouse 的显式提交）
+    if (rt.account && typeof rt.account.getWarehouseMirror === 'function') {
+      const r = await rt.account.getWarehouseMirror(playerId);
+      if (r && r.ok === true && r.data && r.data.warehouse) sources.push({ name: 'account', warehouse: r.data.warehouse });
+    }
+    // ② 配置保存请求登记的进程内镜像
+    const cached = rt.warehouses.get(playerId);
+    if (cached) sources.push({ name: 'cache', warehouse: cached });
+    // ③ 快照自带镜像（缺口 1 落盘载体）
+    if (snap && snap.warehouse && typeof snap.warehouse === 'object') sources.push({ name: 'snapshot', warehouse: snap.warehouse });
+    for (const s of sources) {
+      if (covers(s.warehouse)) {
+        rt.rememberWarehouse(playerId, s.warehouse);
+        if (s.name === 'snapshot') {
+          logger.trace('store', 'store.read', '装配引用子集取自快照（不依赖进程内镜像缓存）', {
+            op: 'loadWarehouse', playerId, source: 'snapshot',
+          });
+        }
+        return s.warehouse;
+      }
+      logger.warn('store', 'store.snapshot.missing', `仓库镜像不覆盖出战配置引用 → 跳过该来源（${s.name}）`, {
+        playerId, reason: 'warehouse_mirror_incomplete', source: s.name,
+        missing: rankedMod.warehouseMissingRefs(loadoutOfPlayer, s.warehouse).slice(0, 5),
+      });
+    }
+    // 无覆盖来源 → null（上层按既有口径退化：已校验 → 基准面板退化；未校验 → 如实 409）
+    return null;
+  };
+  // 出战快照自带的装配引用子集（缺口 1 的落盘载体；旧快照无该字段 → null，走既有退化路径）
+  rt.snapshotWarehouseOf = async (playerId) => {
+    const snap = await rt.activeSnapshotOf(playerId);
+    return snap && snap.warehouse && typeof snap.warehouse === 'object' ? snap.warehouse : null;
   };
   if (storeWanted(opts, env)) {
     rt.store = await storeMod.openStore({

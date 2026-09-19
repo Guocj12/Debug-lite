@@ -170,11 +170,17 @@ function createQuickMatch(options) {
     return { warehouse: null, degraded: false };
   }
 
-  // 候选池：排行榜索引 + 可用快照 + 未封禁 + 在池内 + 可实例化（含插件引用者需仓库镜像；服务端抽池，不可自选对手 D-136）
+  // 候选池：排行榜索引 + 可用快照 + 未封禁 + 在池内 + **可实例化**（D1-residual：判定与实例化同源）
+  //   D1-residual（2026-09-19 修复）：抽池曾经只判"仓库镜像是否**非空**"，而实例化（`battle.buildPlayer`）
+  //   还会因**镜像不覆盖引用**（陈旧子集账号镜像遮蔽快照自带镜像）而失败 → "抽得到但打不了"，
+  //   表现为 `409 no_opponent("抽到的对手快照无法实例化")` 且根因埋在 warn 里。
+  //   修法：对**带装配引用**的候选（唯一有风险的一类）用 `ranked.sideInstantiable` 证明"真的能实例化"
+  //   —— 与 `ranked.battleOne` 同一实现（`battle.buildPlayer`），失败者直接不入池（`skipped.notInstantiable`）。
+  //   成本：仅为带引用的候选付一次 buildPlayer（无引用者不受影响）。
   async function candidatePool(selfId) {
     const ids = store.index.playerIds();
     const pool = [];
-    const skipped = { unusable: 0, banned: 0, outOfPool: 0, noWarehouse: 0, degraded: 0 };
+    const skipped = { unusable: 0, banned: 0, outOfPool: 0, noWarehouse: 0, degraded: 0, notInstantiable: 0 };
     for (const playerId of ids) {
       if (playerId === selfId) continue;
       const entry = store.index.get(playerId);
@@ -191,6 +197,16 @@ function createQuickMatch(options) {
         if (!w.warehouse) { skipped.noWarehouse += 1; continue; }
         warehouse = w.warehouse;
         if (w.degraded) skipped.degraded += 1;
+        // 与实例化同源的可用性证明（含"镜像存在但不覆盖引用"的残余态）
+        const usable = ranked.sideInstantiable(snapshot[ranked.RAW_SNAPSHOT_FIELD], warehouse, entry.tier);
+        if (!usable.ok) {
+          skipped.notInstantiable += 1;
+          log.warn('store', 'store.snapshot.missing', '候选对手快照无法实例化（抽池阶段已排除，不再拖到对局时 409）', {
+            playerId: selfId, opponentPlayerId: playerId, code: 'not_instantiable', reason: 'pool_availability',
+            errors: usable.errors.slice(0, 3),
+          });
+          continue;
+        }
       }
       pool.push({
         playerId, publicId: entry.publicId, nickname: entry.nickname, tier: entry.tier,
@@ -223,11 +239,26 @@ function createQuickMatch(options) {
           code: 'loadout_invalid',
           message: '出战快照不合法（装配引用需要仓库镜像）',
           details: [{
-            where: 'warehouse', code: 'missing_warehouse',
+            where: 'warehouse', path: 'warehouse', code: 'missing_warehouse',
             message: '出战配置含装配引用，需要 warehouse 校验引用完整性（T-PB-9）',
           }],
         },
       };
+    }
+    // D1-residual：自身侧也要**证明可实例化**（与实例化同源）——镜像存在但不覆盖引用时，
+    //   早失败（可解释的 409 loadout_invalid + 逐条明细），而不是匹配成功后才 409 no_opponent。
+    if (ranked.needsWarehouse(snapshot[ranked.RAW_SNAPSHOT_FIELD])) {
+      const usable = ranked.sideInstantiable(snapshot[ranked.RAW_SNAPSHOT_FIELD], w.warehouse, archive.progress.tier);
+      if (!usable.ok) {
+        return {
+          error: {
+            status: 409,
+            code: 'loadout_invalid',
+            message: '出战快照不合法（引用无法解析：仓库镜像不可用/不完整）',
+            details: usable.errors,
+          },
+        };
+      }
     }
     if (w.degraded) {
       log.warn('store', 'store.snapshot.missing',
@@ -291,11 +322,23 @@ function createQuickMatch(options) {
         mine.archive.progress.tier, matchSeed,
       );
     if (r.invalid) {
+      // D1-residual：抽池已用 `ranked.sideInstantiable` 排除不可实例化候选 → 此处**不应**再发生；
+      //   真发生即口径再次漂移：保持对外错误码 `no_opponent`（契约兼容，interfaces §2/e2e 依赖）但
+      //   回带 `details`（逐条 buildPanel 原因）+ 记 warn，使失败可解释、不再"含混"。
       log.warn('store', 'store.snapshot.missing', '对手/我方快照无法实例化 → 本场 invalid（不记账）', {
         playerId: o.playerId, opponentPlayerId: found.opponent.playerId, code: 'snapshot_invalid',
+        reason: 'instantiation_diverged',
         errors: r.errors === undefined ? null : r.errors.slice(0, 3),
       });
-      return { status: 409, code: 'no_opponent', message: '抽到的对手快照无法实例化（本场不成立）' };
+      return {
+        status: 409,
+        code: 'no_opponent',
+        message: '抽到的对手快照无法实例化（本场不成立）',
+        details: (r.errors || []).slice(0, 5).map((e) => ({
+          path: e.path === undefined ? e.where : e.path, where: e.where === undefined ? e.path : e.where,
+          code: e.code, message: e.message, side: 'p1',
+        })),
+      };
     }
     const winner = r.winner === 'p1' ? 'p1' : r.winner === 'p2' ? 'p2' : 'draw';
     // 结算前取值：settleBattle 会按模式规整 pointsAfter/tierAfter，故先取一份供记录构造及公式复算使用
