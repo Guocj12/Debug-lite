@@ -1,0 +1,26 @@
+{
+  "_sample": false,
+  "_note": "服务端全局参数表（D-129 §11.3 / interfaces §4.12）：槽位上限、会话 TTL 与设备数、战绩环形容量、缓存与 journal/snapshot 保留策略、匹配去重窗口。数值单一来源=本表；代码侧同值默认值见 server/store/config.js（DEFAULT_SERVICE_CONFIG），门禁项 4 会逐值冻结比对防双源漂移（server/data/schema.js 的 SERVICE_CONFIG_FROZEN）。",
+  "auth": {
+    "scrypt": { "N": 16384, "r": 8, "p": 1 },
+    "saltBytes": 16,
+    "hashBytes": 64,
+    "usernameMin": 3,
+    "usernameMax": 24,
+    "nicknameMax": 16,
+    "passwordMin": 8,
+    "passwordMax": 72,
+    "passwordMaxBytes": 256,
+    "maxFailures": 5,
+    "lockMinutes": 5,
+    "rateLimitPerMinute": 10
+  },
+  "session": { "ttlDays": 7, "maxPerPlayer": 5, "maxTotalDays": 30 },
+  "config": { "maxSlots": 3, "slotIdPrefix": "slot" },
+  "record": { "recentLimit": 100 },
+  "store": { "archiveCacheSize": 200, "snapshotCacheSize": 500 },
+  "journal": { "fsyncMode": "batch", "compactAfterDays": 30, "bufferBytes": 1048576 },
+  "snapshot": { "retentionDays": 90 },
+  "replayCacheSize": 64,
+  "pool": { "ttlDays": 0, "opponentCooldownHours": 24 }
+}

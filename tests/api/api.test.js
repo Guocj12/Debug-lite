@@ -7,6 +7,7 @@ const http = require('node:http');
 const path = require('node:path');
 const { createLogger } = require('../../shared/log.js');
 const serverMod = require('../../server/index.js');
+const { requestChunks } = require('../helpers/http.js');
 
 const REPO_DATA = path.join(__dirname, '..', '..', 'server', 'data');
 const REPO_ASSETS = path.join(__dirname, '..', '..', 'assets');
@@ -167,15 +168,24 @@ test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14
   });
 });
 
-test('AP-8 请求体超限（>1MB）→ 500 internal_error + api.err', async () => {
+test('AP-8 请求体超限（>1MB）→ 413 payload_too_large（P7-7 §⑩ P0：不再是 500 internal_error）', async () => {
   const logger = createLogger({ level: 'debug', ringSize: 500 });
   const s = await serverMod.start({ logger });
   try {
     const big = 'x'.repeat(1500000);
     const r = await request(s.port, 'POST', '/api/v1/log-level', JSON.stringify({ level: 'trace', pad: big }));
-    assert.equal(r.status, 500);
-    assert.equal(r.body.error.code, 'internal_error');
-    assert.ok(logger.records.some((x) => x.event === 'api.err' && x.data.message.includes('1MB')), 'api.err 应记录超限');
+    assert.equal(r.status, 413);
+    assert.equal(r.body.ok, false);
+    assert.equal(r.body.error.code, 'payload_too_large');
+    assert.match(r.body.error.message, /1MB/);
+    assert.ok(logger.records.some((x) => x.event === 'api.reject' && x.data.code === 'payload_too_large'), '超限记 api.reject(warn)');
+    // 分块写入（Transfer-Encoding: chunked）同样必须 413
+    const chunked = await requestChunks(s.port, '/api/v1/log-level', [JSON.stringify({ level: 'trace', pad: big })]);
+    assert.equal(chunked.status, 413);
+    assert.equal(chunked.body.error.code, 'payload_too_large');
+    // 超限请求不得改变服务端状态
+    const g = await request(s.port, 'GET', '/api/v1/log-level');
+    assert.equal(g.body.data.level, 'debug');
   } finally {
     await s.close();
   }
@@ -206,4 +216,62 @@ test('AP-10 channels 非法形状 / 畸形 URI → 400（审查 P2-b）', async 
     assert.equal(badUri.status, 400);
     assert.equal(badUri.body.error.code, 'bad_table');
   });
+});
+
+test('AP-12 CORS（DL_CORS_ORIGIN，P7-4）：默认不发送头；白名单命中发送 + OPTIONS 预检 204', async () => {
+  // 默认（未配置 DL_CORS_ORIGIN）：任何响应都不带 CORS 头
+  await withServer(null, async ({ port }) => {
+    const r = await request(port, 'GET', '/api/v1/health');
+    assert.equal(r.status, 200);
+    const noCors = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/api/v1/health', headers: { origin: 'https://a.example' } }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.headers));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(noCors['access-control-allow-origin'], undefined, '空 = 不发送 CORS 头（同源部署）');
+  });
+  // 白名单命中（注入 corsOrigin，等价 DL_CORS_ORIGIN=https://a.example）
+  const logger = createLogger({ level: 'debug', ringSize: 500 });
+  const s = await serverMod.start({ logger, corsOrigin: 'https://a.example,https://b.example' });
+  try {
+    const hit = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: s.port, method: 'GET', path: '/api/v1/health', headers: { origin: 'https://a.example' } }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(hit.status, 200);
+    assert.equal(hit.headers['access-control-allow-origin'], 'https://a.example');
+    assert.match(hit.headers['access-control-allow-headers'], /authorization/i);
+    const miss = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: s.port, method: 'GET', path: '/api/v1/health', headers: { origin: 'https://evil.example' } }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(miss.headers['access-control-allow-origin'], undefined, '白名单外不发送');
+    // 预检
+    const preflight = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port: s.port, method: 'OPTIONS', path: '/api/v1/me',
+        headers: { origin: 'https://b.example', 'access-control-request-method': 'GET' },
+      }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers['access-control-allow-origin'], 'https://b.example');
+  } finally {
+    await s.close();
+  }
 });

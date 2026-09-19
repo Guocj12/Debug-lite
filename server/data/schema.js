@@ -59,6 +59,72 @@ const BATTLE_CONFIG_FROZEN = {
 
 const QUALITY_PLUGIN_POINTS = { common: 3, rare: 4, epic: 5, legendary: 6, mythic: 7 }; // D-116 / items-data §2
 
+// ---------- P7 服务参数与积分配置的冻结数值（D-129 §11.3 / D-133 §8.3） ----------
+// 原则"机制在代码、数值在表"：两张表的**数值单一来源是 JSON**，代码侧 server/store/config.js 只保留
+// 同值默认值（表缺失时的兜底）。此处逐值冻结比对，防止"改了表没改默认值 / 改了默认值没改表"的双源漂移
+// （与 battle-config 的 BATTLE_CONFIG_FROZEN 同一手法）。键集也校验：表内出现未登记键即报错。
+const SERVICE_CONFIG_FROZEN = Object.freeze({
+  auth: {
+    scrypt: { N: 16384, r: 8, p: 1 },
+    saltBytes: 16,
+    hashBytes: 64,
+    usernameMin: 3,
+    usernameMax: 24,
+    nicknameMax: 16,
+    passwordMin: 8,
+    passwordMax: 72,
+    passwordMaxBytes: 256,
+    maxFailures: 5,
+    lockMinutes: 5,
+    rateLimitPerMinute: 10,
+  },
+  session: { ttlDays: 7, maxPerPlayer: 5, maxTotalDays: 30 },
+  config: { maxSlots: 3, slotIdPrefix: 'slot' },
+  record: { recentLimit: 100 },
+  store: { archiveCacheSize: 200, snapshotCacheSize: 500 },
+  journal: { fsyncMode: 'batch', compactAfterDays: 30, bufferBytes: 1048576 },
+  snapshot: { retentionDays: 90 },
+  replayCacheSize: 64,
+  pool: { ttlDays: 0, opponentCooldownHours: 24 },
+});
+
+const RATING_CONFIG_FROZEN = Object.freeze({
+  base: 0,
+  cap: 3000,
+  scale: 400,
+  kBase: 32,
+  kMin: 8,
+  kMax: 64,
+  drawFactor: 0.5,
+  matchWindowStart: 100,
+  matchWindowStep: 100,
+  matchWindowMax: 600,
+  opponentCooldownHours: 24,
+  dailyBattleLimit: 0,
+  rounding: 'half_up',
+  promoteWins: 6,
+  batchSize: 10,
+});
+
+// 元数据键统一以 `_` 开头（_note/_sample/...），不参与值比对与键集校验（与内容层惯例一致）
+function metaKeysOf(obj) {
+  return Object.keys(obj).filter((k) => k.startsWith('_'));
+}
+
+// 深比较：返回首个差异的路径描述（无差异 → null）
+function firstDiff(actual, expected, prefix) {
+  const path0 = prefix || '';
+  if (expected !== null && typeof expected === 'object') {
+    if (actual === null || typeof actual !== 'object') return `${path0 || '<root>'} 应为对象`;
+    for (const key of Object.keys(expected)) {
+      const sub = firstDiff(actual[key], expected[key], path0 === '' ? key : `${path0}.${key}`);
+      if (sub) return sub;
+    }
+    return null;
+  }
+  return actual === expected ? null : `${path0 || '<root>'} = ${JSON.stringify(actual)}，应为 ${JSON.stringify(expected)}`;
+}
+
 // ---------- T-DC-2 items-data 期望表（出处：items-data.md §3/§4/§2/§5/§6） ----------
 // 语义（2026-09-16 补完）：这些**示例期望**仅在对应内容表带 `_sample: true` 时逐值比对；
 //   用户正式设计内容后去掉标记 → 该表只走 T-DC-1 的结构与机制校验。
@@ -177,6 +243,13 @@ function validateStructure(dataDir, assetsDir) {
       aiNodes: loadJSON(dataDir, 'ai-nodes.json').data,
     };
   } catch (e) { problems.push(`机制表（affix-registry/skill-mechanics/ai-nodes）加载失败: ${e.message}`); }
+  // P7 服务参数/积分配置（D-129 §11.3 / D-133 §8.3）：存储层与匹配层运行期读取的数值表
+  try {
+    tables.serviceConfig = loadJSON(dataDir, 'service-config.json').data;
+  } catch (e) { problems.push(`service-config.json 缺失或解析失败: ${e.message}`); }
+  try {
+    tables.ratingConfig = loadJSON(dataDir, 'rating-config.json').data;
+  } catch (e) { problems.push(`rating-config.json 缺失或解析失败: ${e.message}`); }
   if (problems.length > 0) return problemsOf(problems);
   const MECH_TYPES = (mechTables && mechTables.mechanics && mechTables.mechanics.types) || {};
 
@@ -438,6 +511,75 @@ function validateStructure(dataDir, assetsDir) {
     for (const [perm, decl] of Object.entries(perms)) {
       for (const g of decl.grants || []) if (!nodeSet.has(g)) problems.push(`unlock.nodePermissions.${perm}: 授予了不存在的节点 ${g}`);
       if (decl.implemented === false && Array.isArray(decl.grants) && decl.grants.length > 0) problems.push(`unlock.nodePermissions.${perm}: implemented=false 不得授予节点`);
+    }
+  }
+
+  // ---------- P7 服务参数表：键集 + 类型/范围 + 冻结数值（D-129 §11.3；interfaces §4.12） ----------
+  {
+    const sc = tables.serviceConfig;
+    const unknownKeys = Object.keys(sc).filter((k) => !k.startsWith('_') && !(k in SERVICE_CONFIG_FROZEN));
+    for (const k of unknownKeys) problems.push(`service-config 未登记键 ${k}（键集以 SERVICE_CONFIG_FROZEN 为准）`);
+    const diff = firstDiff(sc, SERVICE_CONFIG_FROZEN);
+    if (diff) problems.push(`service-config 冻结数值不符：${diff}（D-129 §11.3）`);
+    const a = sc.auth || {};
+    const scr = a.scrypt || {};
+    if (!isInt(scr.N) || scr.N < 1024) problems.push('service-config.auth.scrypt.N 应为 ≥1024 的整数（算力下限；默认 16384）');
+    if (!isInt(scr.r) || scr.r < 1) problems.push('service-config.auth.scrypt.r 应为 ≥1 的整数');
+    if (!isInt(scr.p) || scr.p < 1) problems.push('service-config.auth.scrypt.p 应为 ≥1 的整数');
+    if (!isInt(a.usernameMin) || !isInt(a.usernameMax) || a.usernameMin < 1 || a.usernameMax < a.usernameMin) problems.push('service-config.auth.usernameMin/Max 非法（1 ≤ min ≤ max）');
+    if (!isInt(a.passwordMin) || !isInt(a.passwordMax) || a.passwordMin < 1 || a.passwordMax < a.passwordMin) problems.push('service-config.auth.passwordMin/Max 非法（1 ≤ min ≤ max）');
+    if (!isInt(a.nicknameMax) || a.nicknameMax < 1) problems.push('service-config.auth.nicknameMax 应为正整数');
+    if (!isInt(a.maxFailures) || a.maxFailures < 1) problems.push('service-config.auth.maxFailures 应为正整数');
+    if (!isNum(a.lockMinutes) || a.lockMinutes <= 0) problems.push('service-config.auth.lockMinutes 应为正数');
+    if (!isNum(a.rateLimitPerMinute) || a.rateLimitPerMinute <= 0) problems.push('service-config.auth.rateLimitPerMinute 应为正数');
+    const se = sc.session || {};
+    if (!isNum(se.ttlDays) || se.ttlDays <= 0) problems.push('service-config.session.ttlDays 应为正数（会话 TTL）');
+    if (!isInt(se.maxPerPlayer) || se.maxPerPlayer < 1) problems.push('service-config.session.maxPerPlayer 应为正整数（每人最多活跃会话数）');
+    if (!isNum(se.maxTotalDays) || se.maxTotalDays < se.ttlDays) problems.push('service-config.session.maxTotalDays 应 ≥ ttlDays（滑动续期上限）');
+    const conf = sc.config || {};
+    if (!isInt(conf.maxSlots) || conf.maxSlots < 1 || conf.maxSlots > 3) problems.push('service-config.config.maxSlots 应为 1..3（D-131：最多 3 套配置槽）');
+    if (typeof conf.slotIdPrefix !== 'string' || conf.slotIdPrefix === '') problems.push('service-config.config.slotIdPrefix 应为非空字符串');
+    if (!isInt(sc.record && sc.record.recentLimit) || sc.record.recentLimit < 1) problems.push('service-config.record.recentLimit 应为正整数（战绩环形容量）');
+    if (!isInt(sc.store && sc.store.archiveCacheSize) || sc.store.archiveCacheSize < 1) problems.push('service-config.store.archiveCacheSize 应为正整数');
+    if (!isInt(sc.store && sc.store.snapshotCacheSize) || sc.store.snapshotCacheSize < 1) problems.push('service-config.store.snapshotCacheSize 应为正整数');
+    const jr = sc.journal || {};
+    if (!['batch', 'sync'].includes(jr.fsyncMode)) problems.push(`service-config.journal.fsyncMode 应为 batch|sync（实际 ${jr.fsyncMode}）`);
+    if (!isNum(jr.compactAfterDays) || jr.compactAfterDays < 0) problems.push('service-config.journal.compactAfterDays 应为 ≥0 的数');
+    if (!isInt(jr.bufferBytes) || jr.bufferBytes < 1024) problems.push('service-config.journal.bufferBytes 应为 ≥1024 的整数（group commit 阈值）');
+    if (!isNum(sc.snapshot && sc.snapshot.retentionDays) || sc.snapshot.retentionDays < 0) problems.push('service-config.snapshot.retentionDays 应为 ≥0 的数');
+    if (!isInt(sc.replayCacheSize) || sc.replayCacheSize < 1) problems.push('service-config.replayCacheSize 应为正整数（帧 LRU 上限）');
+    const pl = sc.pool || {};
+    if (!isNum(pl.ttlDays) || pl.ttlDays < 0) problems.push('service-config.pool.ttlDays 应为 ≥0 的数（0 = 池不过期）');
+    if (!isNum(pl.opponentCooldownHours) || pl.opponentCooldownHours < 0) problems.push('service-config.pool.opponentCooldownHours 应为 ≥0 的数');
+  }
+
+  // ---------- P7 积分配置表：键集 + 类型/范围 + 冻结数值（D-133 §8.3；D-122/D-136） ----------
+  {
+    const rc = tables.ratingConfig;
+    const unknownKeys = Object.keys(rc).filter((k) => !k.startsWith('_') && !(k in RATING_CONFIG_FROZEN));
+    for (const k of unknownKeys) problems.push(`rating-config 未登记键 ${k}（键集以 RATING_CONFIG_FROZEN 为准）`);
+    const diff = firstDiff(rc, RATING_CONFIG_FROZEN);
+    if (diff) problems.push(`rating-config 冻结数值不符：${diff}（D-133 §8.3）`);
+    if (!isNum(rc.base) || rc.base < 0) problems.push('rating-config.base 应为 ≥0 的数（积分起点 D-133）');
+    if (!isNum(rc.cap) || rc.cap <= 0) problems.push('rating-config.cap 应为正数（积分上限 D-133）');
+    if (!isNum(rc.scale) || rc.scale <= 0) problems.push('rating-config.scale 应为正数（Elo 尺度）');
+    if (!isNum(rc.kBase) || rc.kBase <= 0) problems.push('rating-config.kBase 应为正数');
+    if (!isNum(rc.kMin) || rc.kMin <= 0) problems.push('rating-config.kMin 应为正数');
+    if (!isNum(rc.kMax) || rc.kMax <= 0) problems.push('rating-config.kMax 应为正数');
+    if (isNum(rc.kMin) && isNum(rc.kBase) && isNum(rc.kMax) && !(rc.kMin <= rc.kBase && rc.kBase <= rc.kMax)) {
+      problems.push('rating-config 应满足 kMin ≤ kBase ≤ kMax（非对称 Elo 的加分/扣分系数上下界）');
+    }
+    if (!isNum(rc.drawFactor) || rc.drawFactor < 0 || rc.drawFactor > 1) problems.push('rating-config.drawFactor 应在 [0,1]');
+    if (!isNum(rc.matchWindowStart) || rc.matchWindowStart <= 0) problems.push('rating-config.matchWindowStart 应为正数');
+    if (!isNum(rc.matchWindowStep) || rc.matchWindowStep <= 0) problems.push('rating-config.matchWindowStep 应为正数');
+    if (!isNum(rc.matchWindowMax) || rc.matchWindowMax < rc.matchWindowStart) problems.push('rating-config.matchWindowMax 应 ≥ matchWindowStart（窗口递进上界）');
+    if (!isNum(rc.opponentCooldownHours) || rc.opponentCooldownHours < 0) problems.push('rating-config.opponentCooldownHours 应为 ≥0 的数（D-136 去重窗口）');
+    if (!isInt(rc.dailyBattleLimit) || rc.dailyBattleLimit < 0) problems.push('rating-config.dailyBattleLimit 应为 ≥0 的整数（0 = 不限制）');
+    if (!['half_up', 'round'].includes(rc.rounding)) problems.push(`rating-config.rounding 应为 half_up|round（实际 ${rc.rounding}）`);
+    if (!isInt(rc.promoteWins) || rc.promoteWins < 0) problems.push('rating-config.promoteWins 应为 ≥0 的整数（D-122：胜 > 6 晋升）');
+    if (!isInt(rc.batchSize) || rc.batchSize < 1) problems.push('rating-config.batchSize 应为正整数（排位批次场次）');
+    if (isInt(rc.promoteWins) && isInt(rc.batchSize) && rc.promoteWins >= rc.batchSize) {
+      problems.push('rating-config 应满足 promoteWins < batchSize（否则批次必晋级）');
     }
   }
 

@@ -33,19 +33,18 @@ const DEFENSE_LIMIT_MAX = 100;
 /* ---------- 结果信封（§10.3 错误码 → HTTP 状态） ---------- */
 
 // 本层（auth/account）新增码；其余回退 store/errors.js 的 STATUS_BY_CODE
+// 说明：§10.3 的 `rate_limited`（全局限速 600 次/分/token）与 `forbidden` 的中间件判定属 P7-4（HTTP 层），
+// 本层只保留自己会返回的码（避免"登记了却从不产生"的死码）。
 const EXTRA_STATUS = Object.freeze({
   unauthorized: 401,
   session_expired: 401,
   invalid_credentials: 401,
   too_many_attempts: 429,
-  rate_limited: 429,
   weak_password: 400,
   username_taken: 409,
   forbidden: 403,
   banned: 403,
-  warehouse_invalid: 400,
   warehouse_missing: 404,
-  default_loadout_invalid: 500,
 });
 
 function statusOf(code) {
@@ -90,9 +89,11 @@ function toFailure(err, log, op) {
 
 // 默认出战配置 = `ranked.buildBotLoadout()` 的构造（§5.3：role_bal + 3 个 common 技能 + 兜底 AI）
 // 惰性 require：避免 server/account.js 在被 require 时即拉起引擎（P7-4 可先装配 store 再触发）
+// B31（P7-3）把该构造改名 `buildDefaultLoadout` 并保留 `buildBotLoadout` 别名——两者取其一，保持兼容
 function defaultLoadout() {
   const ranked = require('./ranked.js');
-  return deepClone(ranked.buildBotLoadout());
+  const build = typeof ranked.buildDefaultLoadout === 'function' ? ranked.buildDefaultLoadout : ranked.buildBotLoadout;
+  return deepClone(build());
 }
 
 // 校验 loadout（I-12 全案 + 引用完整性 + 门控）：统一把 loadout.js 的 {where,code,message} 映射成 details
@@ -177,6 +178,14 @@ function maxSlotsOf(store) {
   return archiveMod.maxSlotsOf(store.config || {});
 }
 
+// 昵称上界：config.auth.nicknameMax，但档案层不变量恒为 ≤16（archive.isValidNickname，§4.2/§5.2）
+const ARCHIVE_NICKNAME_MAX = 16;
+
+function nicknameMaxOf(store) {
+  const raw = store && store.config && store.config.auth ? store.config.auth.nicknameMax : undefined;
+  return Math.min(Number.isInteger(raw) && raw > 0 ? raw : ARCHIVE_NICKNAME_MAX, ARCHIVE_NICKNAME_MAX);
+}
+
 /* ---------- 门面工厂 ---------- */
 
 /**
@@ -231,7 +240,7 @@ function createAccount(options) {
       const v = validateLoadoutOf(loadout, { warehouse: o.warehouse, tier: o.tier });
       if (!v.ok) return fail('loadout_invalid', '默认出战配置不合法（服务端构造异常）', v.errors);
       const snapshot = store.freezeSnapshot(loadout, versions);
-      if (!snapshot || !snapshot.hash) return fail('default_loadout_invalid', '默认出战配置冻结失败');
+      if (!snapshot || !snapshot.hash) return fail('store_internal', '默认出战配置冻结失败（快照库不可用）');
       const slotId = archiveMod.slotIdOf(store.config || {}, 1);
       const archive = await store.createAccount({
         playerId: o.playerId,
@@ -407,7 +416,8 @@ function createAccount(options) {
   async function deleteSlot(input) {
     const o = input || {};
     try {
-      const archive = await requireArchive(o.playerId);
+      // 先校验 playerId 与档案存在；默认槽/出战槽/不存在由 store 的写队列内判定
+      await requireArchive(o.playerId);
       const res = await store.deleteConfigSlot({ playerId: o.playerId, slotId: o.slotId });
       logWrite('deleteSlot', { playerId: o.playerId, slotId: o.slotId });
       return ok({
@@ -510,7 +520,9 @@ function createAccount(options) {
     return { ok: true, query: out };
   }
 
-  // GET /me/records?since=&limit=&role=：seq 增量游标（since 缺省 = 档案未读游标）
+  // GET /me/records?since=&limit=&role=：seq 增量读取（since 缺省 = 档案未读游标）
+  // 游标推进**只由** POST /me/records/seen 负责；latestSeq 是"本次返回里最大的 seq"（展示/去重用途），
+  // **不可当作 since 直接回传**——limit 截断时那样会跳过更早的未读战绩。
   async function records(input) {
     const o = input || {};
     try {
@@ -520,15 +532,15 @@ function createAccount(options) {
       const list = await store.records(o.playerId, norm.query);
       const unread = archiveMod.unreadOf(archive);
       const base = norm.query.since === undefined ? unread.fromSeq : norm.query.since;
-      let nextSince = base;
+      let latestSeq = base;
       for (const entry of list) {
-        if (Number.isInteger(entry.seq) && entry.seq > nextSince) nextSince = entry.seq;
+        if (Number.isInteger(entry.seq) && entry.seq > latestSeq) latestSeq = entry.seq;
       }
       log.trace('store', 'store.read', 'account.records', { playerId: o.playerId, count: list.length });
       return ok({
         records: list,
         since: base,
-        nextSince,
+        latestSeq,
         limit: norm.query.limit,
         role: norm.query.role,
         unread,
@@ -546,7 +558,8 @@ function createAccount(options) {
       if (!Number.isInteger(o.uptoSeq) || o.uptoSeq < 0) {
         return fail('bad_request', 'uptoSeq 必须是非负整数（journal seq）', [detailOf('bad_request', '非法 uptoSeq', 'uptoSeq')]);
       }
-      const archive = await requireArchive(o.playerId);
+      // 先校验 playerId 与档案存在（缺失 → 400/404，早于 store 的队列路径）
+      await requireArchive(o.playerId);
       const updated = await store.markRecordsSeen({ playerId: o.playerId, uptoSeq: o.uptoSeq });
       logWrite('markSeen', { playerId: o.playerId, uptoSeq: o.uptoSeq });
       return ok({ uptoSeq: o.uptoSeq, unread: archiveMod.unreadOf(updated), maxSeq: store.maxSeq() });
@@ -563,7 +576,8 @@ function createAccount(options) {
       if (!Number.isInteger(limit) || limit < 1 || limit > DEFENSE_LIMIT_MAX) {
         return fail('bad_request', `limit 必须是 1..${DEFENSE_LIMIT_MAX} 的整数`, [detailOf('bad_request', '非法 limit', 'limit')]);
       }
-      const archive = await requireArchive(o.playerId);
+      // 先校验 playerId 与档案存在（缺失 → 400/404，早于 store 的读路径）
+      await requireArchive(o.playerId);
       const data = await store.defenseSummary(o.playerId, { limit });
       log.trace('store', 'store.read', 'account.defenseSummary', { playerId: o.playerId });
       return ok(data);
@@ -577,10 +591,12 @@ function createAccount(options) {
   async function setNickname(input) {
     const o = input || {};
     try {
-      if (!archiveMod.isValidNickname(o.nickname)) {
-        return fail('bad_request', '昵称需 1~16 字符', [detailOf('bad_request', '非法昵称', 'nickname')]);
+      const maxNick = nicknameMaxOf(store);
+      if (!archiveMod.isValidNickname(o.nickname) || o.nickname.length > maxNick) {
+        return fail('bad_request', `昵称需 1~${maxNick} 字符`, [detailOf('bad_request', '非法昵称', 'nickname')]);
       }
-      const archive = await requireArchive(o.playerId);
+      // 先校验 playerId 与档案存在（缺失 → 400/404，早于 store 的写队列）
+      await requireArchive(o.playerId);
       const updated = await store.setNickname({ playerId: o.playerId, nickname: o.nickname });
       logWrite('setNickname', { playerId: o.playerId });
       return ok({ nickname: updated.nickname, publicId: updated.publicId });
@@ -619,20 +635,14 @@ function createAccount(options) {
 
 module.exports = {
   createAccount,
+  // 纯领域工具（P7-4 预校验 / 注册事务 / 文档核对；每个导出都有仓库内消费点或被测试直接覆盖）
   defaultLoadout,
   validateLoadoutOf,
   validateWarehouseMirror,
-  // 信封工具（auth.js 复用；P7-4 也可用来统一错误响应）
+  // 结果信封（auth.js 复用；P7-4 用它统一错误响应）
   ok,
   fail,
   statusOf,
   detailOf,
   toFailure,
-  // 常量（P7-4/测试可读）
-  DEFAULT_SLOT_NAME,
-  RECORDS_LIMIT_DEFAULT,
-  RECORDS_LIMIT_MAX,
-  DEFENSE_LIMIT_DEFAULT,
-  DEFENSE_LIMIT_MAX,
-  MIRROR_CACHE_MAX,
 };

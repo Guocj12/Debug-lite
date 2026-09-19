@@ -328,3 +328,42 @@ test('RCV-11 T-ST-1 等价：反复原子写后档案永远是完整 JSON；崩�
     rmTmp(dir);
   }
 });
+
+test('RCV-12 墓碑 player.removed：删除 → journal 全量重放 → 不复活（幂等）；其他玩家照常重建', async () => {
+  const dir = mkTmp();
+  try {
+    const store = await open(dir);
+    const snap = store.freezeSnapshot(loadout('tomb'));
+    const slot = { slotId: 'slot1', snapshotHash: snap.hash, configHash: snap.configHash, versions: VERSIONS };
+    const a = await store.createAccount({ username: 'tomb_a', nickname: 'a', auth: { hash: 'a' }, slot });
+    const b = await store.createAccount({ username: 'tomb_b', nickname: 'b', auth: { hash: 'b' }, slot });
+    await store.settleBattle({
+      mode: 'quick', seed: 71,
+      p1: { playerId: a.playerId, publicId: a.publicId, role: 'attacker', snapshotHash: snap.hash, configHash: snap.configHash, pointsBefore: 0, pointsAfter: 10, result: 'win' },
+      p2: { playerId: b.playerId, publicId: b.publicId, role: 'defender', snapshotHash: snap.hash, configHash: snap.configHash, pointsBefore: 0, pointsAfter: 0, result: 'loss' },
+      verdict: { winner: 'p1', ticks: 20 }, versions: VERSIONS,
+    });
+    const tombSeq = (await store.readRecords({})).length;
+    assert.equal(await store.removeArchive(b.playerId), true);
+    assert.equal(await store.loadArchive(b.playerId), null);
+    await store.close();
+
+    // 极端恢复：删索引 + 清空 players/（"只信 journal"的全量重放）
+    fs.rmSync(path.join(dir, 'index.json'));
+    fs.rmSync(path.join(dir, 'players'), { recursive: true, force: true });
+    const store2 = await open(dir);
+    assert.equal(await store2.loadArchive(b.playerId), null,
+      '重放历史 account.created/battle 之后仍被墓碑删除 → 已删玩家不得复活（D-134）');
+    assert.equal(store2.index.has(b.playerId), false);
+    const a2 = await store2.loadArchive(a.playerId);
+    assert.ok(a2, '其他玩家正常重建');
+    assert.equal(a2.record.stats.attack.wins, 1, '对局历史保留');
+    assert.ok((await store2.readRecords({})).some((r) => r.type === 'player.removed' && r.playerId === b.playerId));
+    // 显式 rebuildArchive 也尊重墓碑（同样是全量重放语义）
+    assert.equal(await store2.rebuildArchive(b.playerId), null);
+    await store2.close();
+    void tombSeq;
+  } finally {
+    rmTmp(dir);
+  }
+});

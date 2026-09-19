@@ -26,7 +26,10 @@
  *   0 = 无差异 或 仅"已修复"    1 = 出现**新增失败**（回归）    2 = 基线文件缺失/不可用    3 = 用法或内部错误
  *
  * 约束：零依赖（只用 node 内置 fs/path/crypto）、CommonJS、禁 `Math.random`、禁 `child_process`。
- * 产物只写 `runtime/test-baseline.json`（`runtime/` 已 gitignore），不写仓库根、不写 docs。
+ * 产物只写 `.audit/test-baseline.json`（**受版本控制**；2026-09-19 从 `runtime/` 迁出），不写仓库根、不写 docs。
+ *   ↳ 迁出原因（P7-2 审查 P2）：`runtime/` 在 `.gitignore:6` 被忽略 → 锚点永不入库，新克隆 / CI 上
+ *     `--compare` 必然 `exit 2`（无基线可比），护栏只在"已经 --write 过的本地机器"上有效 —— 等于没有护栏。
+ *     `.audit/` 与既有审查快照（`fe-samples.json` / `golden-battle.json` / `walkthrough.json`）同处且已入库。
  */
 
 const fs = require('node:fs');
@@ -34,8 +37,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const REPO = path.join(__dirname, '..');
-// 基线文件落点：runtime/ 已 gitignore（不入库、不污染 git status）
-const BASELINE_PATH = path.join(REPO, 'runtime', 'test-baseline.json');
+// 基线文件落点：`.audit/` 受版本控制（见文件头"迁出原因"）；runtime/ 已 gitignore，锚点放那里＝不入库
+const BASELINE_PATH = path.join(REPO, '.audit', 'test-baseline.json');
 // gate 项 7 明细里逐个打印的失败用例名上限（超出打印"剩余计数"）
 const NAME_LIMIT = 10;
 // digest 长度（sha256 十六进制前缀）——够短可读、够长防撞
@@ -237,6 +240,26 @@ function writeBaseline(fp, filePath) {
   return p;
 }
 
+// `--write` 护栏（**纯函数**，可单测；CLI 与测试共用同一判定）：
+//   基线只能锚定在**绿色**状态。此前有并行任务在"红"的状态下跑了 --write，把绿锚点（643/0）覆写成
+//   红快照（665/5），使 --compare 永远报"已修复"，护栏形同虚设。现在：有失败就拒绝覆写，除非显式
+//   --force（仅用于"确认当前红是已知基线"的场景）。返回 {ok, code, failed, forced, message}。
+function writeGuard(fp, opts) {
+  const o = opts || {};
+  const failed = toInt(fp && fp.failed, 0);
+  if (failed > 0 && o.force !== true) {
+    return {
+      ok: false,
+      code: EXIT.USAGE,
+      failed,
+      forced: false,
+      message: `[FAIL] 拒绝写入基线：当前有 ${failed} 个失败用例（基线只能锚定绿色状态）。\n`
+        + '        若确认这是"已知红"，请显式使用 --force；否则先修好失败再 --write。',
+    };
+  }
+  return { ok: true, code: EXIT.OK, failed, forced: failed > 0 };
+}
+
 // ---------- 展示 ----------
 
 // gate 项 7 明细用：总用例数 / 失败数 / 失败用例名（截断 10 + 剩余计数）/ digest
@@ -284,13 +307,14 @@ function formatComparison(cmp, basePath) {
 
 function usage() {
   return [
-    '用法：node scripts/baseline.js [--write] [--compare] [--help]',
+    '用法：node scripts/baseline.js [--write [--force]] [--compare] [--help]',
     '',
     '  （默认）    采集全量测试 → 打印指纹 JSON + 人类可读摘要',
-    '  --write     采集并把指纹写入 runtime/test-baseline.json（runtime/ 已 gitignore）',
-    '  --compare   与 runtime/test-baseline.json 对比：新增失败 / 已修复 / 总数变化',
+    '  --write     采集并把指纹写入 .audit/test-baseline.json（受版本控制；目录不存在自动创建）',
+    '  --force     仅与 --write 同用：当前有失败时也强制锚定（确认"已知红"时才用）',
+    '  --compare   与 .audit/test-baseline.json 对比：新增失败 / 已修复 / 总数变化',
     '',
-    '退出码：0 = 无差异或仅"已修复"；1 = 出现新增失败（回归）；2 = 基线文件缺失/不可用；3 = 用法或内部错误',
+    '退出码：0 = 无差异或仅"已修复"；1 = 出现新增失败（回归）；2 = 基线文件缺失/不可用；3 = 用法或内部错误（含 --write 被护栏拒绝）',
   ].join('\n');
 }
 
@@ -329,16 +353,13 @@ async function main(argv) {
   process.stdout.write(`${JSON.stringify(fp, null, 2)}\n`);
   process.stdout.write(`${formatSummary(fp)}\n`);
   if (wantWrite) {
-    // 护栏（2026-09-16 实测事故）：基线只能锚定在**绿色**状态。此前有并行任务在"红"的状态下
-    //   跑了 --write，把绿锚点（643/0）覆写成红快照（665/5），使 --compare 永远报"已修复"，
-    //   护栏形同虚设。现在：有失败就拒绝覆写，除非显式 --force（仅用于"确认当前红是已知基线"的场景）。
-    if (fp.failed > 0 && !args.includes('--force')) {
-      process.stdout.write(`[FAIL] 拒绝写入基线：当前有 ${fp.failed} 个失败用例（基线只能锚定绿色状态）。\n`);
-      process.stdout.write(`        若确认这是"已知红"，请显式使用 --force；否则先修好失败再 --write。\n`);
-      return EXIT.USAGE; // 3
+    const guard = writeGuard(fp, { force: args.includes('--force') });
+    if (!guard.ok) {
+      process.stdout.write(`${guard.message}\n`);
+      return guard.code; // 3
     }
     const p = writeBaseline(fp);
-    process.stdout.write(`已写入基线：${toPosix(path.relative(REPO, p))}${fp.failed > 0 ? '（--force：已锚定含失败的基线）' : ''}\n`);
+    process.stdout.write(`已写入基线：${toPosix(path.relative(REPO, p))}${guard.forced ? '（--force：已锚定含失败的基线）' : ''}\n`);
   }
   return EXIT.OK;
 }
@@ -347,7 +368,7 @@ module.exports = {
   REPO, BASELINE_PATH, EXIT, NAME_LIMIT, DIGEST_LEN,
   toPosix, listTestFiles, digestOf, buildFingerprint, qualifiedName,
   createEventAccumulator, fingerprintFromEvents, collectEventsInProcess, collectBaseline,
-  normalizeFingerprint, compareBaseline, readBaseline, writeBaseline,
+  normalizeFingerprint, compareBaseline, readBaseline, writeBaseline, writeGuard,
   formatDetail, formatSummary, formatComparison, usage, main,
 };
 

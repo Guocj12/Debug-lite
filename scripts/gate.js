@@ -25,7 +25,7 @@ const PREFIX_MAP = {
   roles: ['role'], skills: ['skill'], bullets: ['bullet'],
   engine: ['tick', 'battle', 'move', 'collision', 'resource', 'action'],
   damage: ['damage'], 'ai.ast': ['ai'], 'ai.runtime': ['ai', 'trace'], unlock: ['unlock'],
-  api: ['api'], cli: ['cli'], ranked: ['ranked'], log: ['log'],
+  api: ['api'], cli: ['cli'], ranked: ['ranked', 'quick'], log: ['log'],
   store: ['store'], view: ['view'], render: ['render'], editor: ['editor'], perf: ['perf'],
 };
 // 通道注册表延迟加载：门禁进程不得在项 7 覆盖率会话开始前 require shared/log.js

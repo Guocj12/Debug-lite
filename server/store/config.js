@@ -8,7 +8,7 @@
  */
 const path = require('node:path');
 const fsatomic = require('./fsatomic.js');
-const { sha256Hex } = require('./canonical.js');
+const { sha256Hex, deepClone } = require('./canonical.js');
 
 const SERVICE_CONFIG_FILE = 'service-config.json';
 const RATING_CONFIG_FILE = 'rating-config.json';
@@ -79,7 +79,21 @@ function defaultConfigDir(repoRoot) {
   return path.join(repoRoot || path.join(__dirname, '..', '..'), 'server', 'data');
 }
 
-// 读取可选数据表并深合并到内置默认值；返回 {service, rating, sources}
+// 元数据键（`_note`/`_sample`/…）不进入运行期配置：数据表与内容层同惯例，元数据与载荷同层存放
+function stripMeta(obj) {
+  const out = {};
+  for (const key of Object.keys(obj || {})) {
+    if (!key.startsWith('_')) out[key] = obj[key];
+  }
+  return out;
+}
+
+// 读取数据表并深合并到内置默认值；合并顺序 **文件 > 内置 > opts**（opts 为代码侧最终覆盖）
+//   —— 表存在时以表为数值单一来源（"数值在表"），内置默认值仅在表缺失时兜底。
+// 合并出口**深拷贝**（P7-2 审查 P2）：`mergeDeep` 只做浅展开（`{...base}`），文件/opts 未覆盖的嵌套键
+//   会与模块级 `DEFAULT_*_CONFIG` **共享引用** —— 调用方就地写 `store.config.auth.X` 会污染默认值并跨实例
+//   泄漏（第二个 store 也读到被改的值）。这里在出口用 canonical.js 的 `deepClone`（structuredClone 封装，
+//   零新依赖）切断共享。**刻意不引入深冻结**：那会把将来"合法覆盖默认值"的代码变成硬报错。
 function loadConfigs(options) {
   const opts = options || {};
   const configDir = opts.configDir || defaultConfigDir();
@@ -87,8 +101,8 @@ function loadConfigs(options) {
   const ratingFile = path.join(configDir, RATING_CONFIG_FILE);
   const serviceFromFile = fsatomic.readJsonSync(serviceFile, null);
   const ratingFromFile = fsatomic.readJsonSync(ratingFile, null);
-  const service = mergeDeep(DEFAULT_SERVICE_CONFIG, mergeDeep(serviceFromFile || {}, opts.service || {}));
-  const rating = mergeDeep(DEFAULT_RATING_CONFIG, mergeDeep(ratingFromFile || {}, opts.rating || {}));
+  const service = deepClone(mergeDeep(DEFAULT_SERVICE_CONFIG, mergeDeep(stripMeta(serviceFromFile), opts.service || {})));
+  const rating = deepClone(mergeDeep(DEFAULT_RATING_CONFIG, mergeDeep(stripMeta(ratingFromFile), opts.rating || {})));
   const sources = [];
   if (serviceFromFile) sources.push(SERVICE_CONFIG_FILE);
   if (ratingFromFile) sources.push(RATING_CONFIG_FILE);
@@ -114,6 +128,7 @@ module.exports = {
   DEFAULT_RATING_CONFIG,
   DATA_VERSION_TABLES,
   mergeDeep,
+  stripMeta,
   defaultConfigDir,
   loadConfigs,
   computeDataVersion,

@@ -34,18 +34,53 @@ async function withServer(t, fn) {
   }
 }
 
-test('T-AP-1 POST /ranked/run：10 场统计 + seed 回带 + 平局不计胜', async () => {
+test('T-AP-1a POST /ranked/run：真实池 10 场全平（requested=10/matches=10/shortfall=0）+ seed 回带', async () => {
+  await withServer(null, async ({ port }) => {
+    const h = require('../helpers/ranked.js');
+    // 10 个**真实构造**的对手档案快照（wait-only → 全平局），每个都带 playerId 溯源
+    const pool = Array.from({ length: 10 }, (_, i) => {
+      const x = h.waitOnly(LD.loadout, `w${i}`);
+      x.playerId = h.makePlayerId(i + 1);
+      return x;
+    });
+    const r = await request(port, 'POST', '/api/v1/ranked/run', {
+      loadout: LD.loadout, warehouse: LD.warehouse, pool, seed: 20260913, tier: 'mythic',
+    });
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.data.requested, 10);
+    assert.equal(r.body.data.matches, 10, '池里 10 个真实对手 → 打满 10 场');
+    assert.equal(r.body.data.shortfall, 0);
+    assert.equal(r.body.data.results.length, 10);
+    assert.equal(r.body.data.seed, 20260913, 'seed 回带');
+    assert.equal(r.body.data.wins + r.body.data.draws + r.body.data.losses + r.body.data.invalids, 10);
+    assert.equal(r.body.data.wins, 0, '双方 wait-only → 全平局（平局不计胜）');
+    assert.equal(typeof r.body.data.promoted, 'boolean');
+    // HTTP 层当前只回带场次与胜负（不回带对手标识，见 QU-3 的"不暴露 playerId"口径）→
+    // 这一段让位于 HTTP 契约：真实玩家可追溯性在模块层用同一份池逐场断言（见下）
+    assert.equal(r.body.data.matches + r.body.data.shortfall, r.body.data.requested);
+    // 模块层（同一份真实池）：每场对手都能追溯到真实 playerId
+    const ranked = require('../../server/ranked.js');
+    const direct = ranked.runRankedBattle({ loadout: LD.loadout, warehouse: LD.warehouse, pool, seed: 20260913, tier: 'mythic' });
+    const poolIds = new Set(pool.map((x) => x.playerId));
+    assert.ok(direct.data.results.every((m) => poolIds.has(m.opponentPlayerId)), '每场对手都是池中的真实 playerId');
+    assert.equal(new Set(direct.data.results.map((m) => m.opponentPlayerId)).size, 10, '批次内 10 个互不相同的真实对手');
+  });
+});
+
+test('T-AP-1b POST /ranked/run：无池 → 少打并如实回报 shortfall（禁止 bot 凑 10 场）', async () => {
   await withServer(null, async ({ port }) => {
     const r = await request(port, 'POST', '/api/v1/ranked/run', {
       loadout: LD.loadout, warehouse: LD.warehouse, seed: 20260913, tier: 'mythic',
     });
     assert.equal(r.status, 200, r.raw);
     assert.equal(r.body.ok, true);
-    assert.equal(r.body.data.matches, 10);
-    assert.equal(r.body.data.results.length, 10);
-    assert.equal(r.body.data.seed, 20260913);
-    assert.equal(r.body.data.wins + r.body.data.draws + r.body.data.losses + r.body.data.invalids, 10);
-    assert.equal(typeof r.body.data.promoted, 'boolean');
+    assert.equal(r.body.data.requested, 10);
+    assert.equal(r.body.data.matches, 0, '无真实对手 → 一场都不打（不注入占位 bot）');
+    assert.equal(r.body.data.shortfall, 10);
+    assert.equal(r.body.data.results.length, 0);
+    assert.equal(r.body.data.matches + r.body.data.shortfall, r.body.data.requested, 'matches + shortfall === requested');
+    assert.equal(r.body.data.wins + r.body.data.draws + r.body.data.losses + r.body.data.invalids, r.body.data.matches);
   });
 });
 

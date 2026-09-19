@@ -1,7 +1,10 @@
 'use strict';
 /* cli/index.js —— 命令行"操作台"（P0-8，契约 docs/interfaces.md §3）
- * 只走 HTTP（不 require server/core，L14）；退出码 0 成功 / 1 业务拒绝 / 2 参数错误（T-CLI-2）。
+ * 只走 HTTP（不 require server/core，L14）；退出码 0 成功 / 1 业务拒绝 / 2 参数错误（T-CLI-2）
+ *   **P7-4 新增 3 = 未鉴权**（缺 token / 服务端 401，§10.4）。
  * P0-8 子命令：health / data / log；B16：ai validate|compile|battle；B17：box；B18：wh list|assemble|disassemble。
+ * P7-4 子命令：auth register|login|logout|change-password；me；quick run；leaderboard；ranked promote。
+ * token 来源（§10.4）：`--token <t>` > `options.token`（进程内调用）> 环境变量 `DL_TOKEN`。
  */
 const http = require('node:http');
 const fs = require('node:fs');
@@ -24,15 +27,29 @@ commands:
   replay --file replay.json [--tick N]         # 文本回放（px 位置/碰撞/伤害值+暴击/背击标注；B23，本地文件）
   ranked run --seed <n> [--tier <t>] [--loadout <file>] [--pool <file>]
                                                # 排位 10 场离线结算（B24，经 HTTP；D-123 不持久化）
-exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
+  auth <register|login|logout|change-password>  # 账号（P7-4，经 HTTP）
+       auth register --user <u> --pass <p> [--nick <n>] [--save-token <file>]
+       auth login    --user <u> --pass <p> [--save-token <file>]
+       auth logout   [--token <t>]
+       auth change-password --old <p> --new <p> [--token <t>]
+  me [--token <t>]                             # 档案摘要（段位/积分/未读/槽位；P7-4）
+  quick run [--seed <n>] [--token <t>]         # 快速对战（积分相近 + 非对称 Elo；P7-4）
+  leaderboard [--limit <n>] [--scope <global|tier:<t>>]   # 排行榜（P7-4）
+  ranked promote [--wins <n>] [--tier <t>] [--token <t>]
+                                               # 晋升判定（登录时读档案；未登录为遗留口径需 --tier）
+  token: --token <t> 或环境变量 DL_TOKEN（CLI 不落盘明文，--save-token 写文件时权限 0600）
+exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误 / 3 未鉴权`;
 
-function httpJson(baseUrl, method, urlPath, body) {
+function httpJson(baseUrl, method, urlPath, body, token) {
   return new Promise((resolve, reject) => {
     const u = new URL(baseUrl + urlPath);
+    const headers = {};
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    if (typeof token === 'string' && token !== '') headers.authorization = `Bearer ${token}`;
     const req = http.request({
       hostname: u.hostname, port: u.port, method,
       path: u.pathname + u.search,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      headers,
     }, (res) => {
       let d = '';
       res.on('data', (c) => { d += c; });
@@ -47,6 +64,154 @@ function httpJson(baseUrl, method, urlPath, body) {
     req.end();
   });
 }
+
+/* ---------- P7-4：退出码、旗标与 token（§10.4） ---------- */
+
+const EXIT_UNAUTHORIZED = 3;
+
+// 结果 → stdout/stderr + 退出码：200 → 0；401（未鉴权）→ 3；其余非 200 → 1
+function finish(r) {
+  if (r.status === 200) {
+    console.log(JSON.stringify(r.body ? r.body.data : null, null, 2));
+    return 0;
+  }
+  console.error(JSON.stringify((r.body && r.body.error) || { code: 'unknown', message: r.raw }));
+  return r.status === 401 ? EXIT_UNAUTHORIZED : 1;
+}
+
+function usageError(message) {
+  console.error(`${message}\n${USAGE}`);
+  return 2;
+}
+
+// 解析 `--key value` 序列；未登记旗标或缺少取值 → { valid:false }
+function parseFlags(args, spec) {
+  const flags = {};
+  let valid = true;
+  for (let i = 0; i < (args || []).length; i++) {
+    const a = args[i];
+    const name = typeof a === 'string' && a.startsWith('--') ? a.slice(2) : null;
+    if (name === null || !spec.includes(name)) { valid = false; break; }
+    const value = args[++i];
+    if (value === undefined) { valid = false; break; }
+    flags[name] = value;
+  }
+  return { valid, flags };
+}
+
+function tokenOf(flags, opts) {
+  if (flags && flags.token) return flags.token;
+  if (opts && opts.token) return opts.token;
+  return process.env.DL_TOKEN || null;
+}
+
+function unauthorized() {
+  console.error('未鉴权：缺少会话 token（--token <t> 或环境变量 DL_TOKEN）');
+  return EXIT_UNAUTHORIZED;
+}
+
+// seed 形参 → 正整数（非法值原样透传 → 服务端 400 bad_seed）
+function toSeed(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 ? n : value;
+}
+
+const AUTH_PATHS = Object.freeze({
+  register: '/api/v1/auth/register',
+  login: '/api/v1/auth/login',
+  logout: '/api/v1/auth/logout',
+  'change-password': '/api/v1/auth/change-password',
+});
+
+function authBodyOf(sub, flags) {
+  if (sub === 'register') return { username: flags.user, password: flags.pass, nickname: flags.nick };
+  if (sub === 'login') return { username: flags.user, password: flags.pass };
+  if (sub === 'change-password') return { oldPassword: flags.old, newPassword: flags.new };
+  return {};
+}
+
+// auth register|login|logout|change-password（P7-4）
+async function cmdAuth(baseUrl, args, opts) {
+  const sub = args[1];
+  if (!Object.prototype.hasOwnProperty.call(AUTH_PATHS, sub)) {
+    return usageError('auth 需要一个子命令（register/login/logout/change-password）');
+  }
+  const spec = sub === 'register' ? ['user', 'pass', 'nick', 'save-token']
+    : sub === 'login' ? ['user', 'pass', 'save-token']
+      : sub === 'change-password' ? ['old', 'new', 'token'] : ['token'];
+  const parsed = parseFlags(args.slice(2), spec);
+  if (!parsed.valid) return usageError(`auth ${sub} 参数非法`);
+  const flags = parsed.flags;
+  if ((sub === 'register' || sub === 'login') && (!flags.user || !flags.pass)) {
+    return usageError(`auth ${sub} 需要 --user 与 --pass`);
+  }
+  if (sub === 'change-password' && (!flags.old || !flags.new)) {
+    return usageError('auth change-password 需要 --old 与 --new');
+  }
+  const token = tokenOf(flags, opts);
+  if ((sub === 'logout' || sub === 'change-password') && !token) return unauthorized();
+  const r = await httpJson(baseUrl, 'POST', AUTH_PATHS[sub], authBodyOf(sub, flags), token);
+  if (r.status === 200 && flags['save-token']) {
+    try {
+      fs.writeFileSync(flags['save-token'], r.body.data.token, { mode: 0o600 });
+    } catch (e) {
+      console.error(`写入 ${flags['save-token']} 失败: ${e.message}`);
+      return 1;
+    }
+    console.log(JSON.stringify({ savedToken: flags['save-token'], publicId: r.body.data.publicId, nickname: r.body.data.nickname }, null, 2));
+    return 0;
+  }
+  return finish(r);
+}
+
+// me（P7-4）
+async function cmdMe(baseUrl, args, opts) {
+  const parsed = parseFlags(args.slice(1), ['token']);
+  if (!parsed.valid) return usageError('me 参数非法');
+  const token = tokenOf(parsed.flags, opts);
+  if (!token) return unauthorized();
+  return finish(await httpJson(baseUrl, 'GET', '/api/v1/me', undefined, token));
+}
+
+// quick run（P7-4）
+async function cmdQuickRun(baseUrl, args, opts) {
+  if (args[1] !== 'run') return usageError('quick 需要一个子命令（run）');
+  const parsed = parseFlags(args.slice(2), ['token', 'seed']);
+  if (!parsed.valid) return usageError('quick run 参数非法');
+  const token = tokenOf(parsed.flags, opts);
+  if (!token) return unauthorized();
+  const body = {};
+  if (parsed.flags.seed !== undefined) body.seed = toSeed(parsed.flags.seed);
+  return finish(await httpJson(baseUrl, 'POST', '/api/v1/quick/run', body, token));
+}
+
+// leaderboard（P7-4；无需鉴权）
+async function cmdLeaderboard(baseUrl, args, opts) {
+  const parsed = parseFlags(args.slice(1), ['limit', 'scope', 'token']);
+  if (!parsed.valid) return usageError('leaderboard 参数非法');
+  const q = [];
+  if (parsed.flags.limit !== undefined) q.push(`limit=${encodeURIComponent(parsed.flags.limit)}`);
+  if (parsed.flags.scope !== undefined) q.push(`scope=${encodeURIComponent(parsed.flags.scope)}`);
+  const path = `/api/v1/leaderboard${q.length > 0 ? `?${q.join('&')}` : ''}`;
+  return finish(await httpJson(baseUrl, 'GET', path, undefined, tokenOf(parsed.flags, opts)));
+}
+
+// ranked promote（P7-4：已登录 → 段位读档案；未登录 → 遗留 --tier 口径）
+async function cmdRankedPromote(baseUrl, args, opts) {
+  const parsed = parseFlags(args.slice(2), ['token', 'tier', 'wins']);
+  if (!parsed.valid) return usageError('ranked promote 参数非法');
+  const body = {};
+  if (parsed.flags.tier !== undefined) body.tier = parsed.flags.tier;
+  if (parsed.flags.wins !== undefined) {
+    const n = Number(parsed.flags.wins);
+    body.wins = Number.isInteger(n) && n >= 0 ? n : parsed.flags.wins; // 非法 → 服务端 400 bad_wins
+  }
+  const token = tokenOf(parsed.flags, opts);
+  if (token) return finish(await httpJson(baseUrl, 'POST', '/api/v1/ranked/promote', body, token));
+  if (body.tier === undefined) return usageError('ranked promote 未登录时需要 --tier（遗留无状态口径）');
+  return finish(await httpJson(baseUrl, 'POST', '/api/v1/ranked/promote', body));
+}
+
 
 /* ---- replay 伤害标注（B23 可读性增强；用户 2026-09-19 勾选项 2）----
  * 素材来源：帧 events[] 里 damage.calc 的 data（attacker/target/dmg/crit/critM/backstab/backM/hitUid）。
@@ -486,11 +651,22 @@ async function main(argv, options) {
           }
         }
       }
+    } else if (cmd === 'auth') {
+      code = await cmdAuth(baseUrl, args, opts);
+    } else if (cmd === 'me') {
+      code = await cmdMe(baseUrl, args, opts);
+    } else if (cmd === 'quick') {
+      code = await cmdQuickRun(baseUrl, args, opts);
+    } else if (cmd === 'leaderboard') {
+      code = await cmdLeaderboard(baseUrl, args, opts);
     } else if (cmd === 'ranked') {
       // ranked run --seed <n> [--tier <t>] [--loadout <file>] [--pool <file>]（B24）
+      // ranked promote [--wins n] [--tier t] [--token t]（P7-4）
       const sub = args[1];
-      if (sub !== 'run') {
-        console.error(`ranked 需要一个子命令（run）\n${USAGE}`);
+      if (sub === 'promote') {
+        code = await cmdRankedPromote(baseUrl, args, opts);
+      } else if (sub !== 'run') {
+        console.error(`ranked 需要一个子命令（run/promote）\n${USAGE}`);
         code = 2;
       } else {
         let seed = null;

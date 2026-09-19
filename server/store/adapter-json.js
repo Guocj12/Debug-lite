@@ -56,6 +56,7 @@ function createJsonAdapter(options) {
 
   const archiveCache = new Map(); // playerId → archive（LRU：Map 插入序）
   const queues = new Map();       // playerId → Promise（每玩家写队列，§6.5）
+  const removedAt = new Map();    // playerId → 墓碑 seq（journal 派生的删除水位，D-134）
   const stats = { reads: 0, writes: 0, applies: 0, skipped: 0, cacheHits: 0, cacheMisses: 0, evictions: 0, quarantined: 0 };
   let lock = null;
   let opened = false;
@@ -218,9 +219,16 @@ function createJsonAdapter(options) {
     return index.stats();
   }
 
-  function rebuildSnapshotRefs() {
+  // 重建"派生内存状态"：快照引用计数 + 墓碑水位（都只依赖 journal，§9.2/D-134）
+  function rebuildDerivedState() {
     const records = journal.readAll({ includeCheckpoints: false });
-    return snapshots.rebuildRefs(records);
+    for (const record of records) {
+      if (record.type === 'player.removed' && typeof record.playerId === 'string' && Number.isInteger(record.seq)) {
+        const prev = removedAt.get(record.playerId);
+        if (prev === undefined || record.seq > prev) removedAt.set(record.playerId, record.seq);
+      }
+    }
+    return { ...snapshots.rebuildRefs(records), removed: removedAt.size };
   }
 
   // ---------- journal apply（§6.3 幂等） ----------
@@ -233,8 +241,33 @@ function createJsonAdapter(options) {
 
   // 在给定玩家的写队列内应用一条记录（调用方负责队列；返回 applied|skipped|missing）
   async function applyForPlayer(record, playerId) {
+    // 墓碑（player.removed）：删档案文件 + 失效缓存 + 摘索引 + 记墓碑水位（可重放、幂等）
+    if (record.type === 'player.removed') {
+      const prev = removedAt.get(playerId);
+      if (prev !== undefined && prev >= record.seq) {
+        stats.skipped += 1;
+        return 'skipped';
+      }
+      const file = playerArchivePath(playerId);
+      const removed = fsatomic.removeFileSafe(file);
+      cacheDelete(playerId);
+      const inIndex = index.remove(playerId);
+      removedAt.set(playerId, record.seq);
+      index.setSeq(record.seq);
+      stats.applies += 1;
+      log.info('store', 'store.player.removed',
+        `档案已删除（墓碑 seq=${record.seq}${record.reason ? `，原因 ${record.reason}` : ''}）`,
+        { playerId, seq: record.seq, reason: record.reason || null, fileRemoved: removed, indexRemoved: inIndex });
+      return 'applied';
+    }
     let archive = readArchiveForUpdate(playerId); // 深拷贝：不变量校验失败时不污染缓存
     if (!archive) {
+      // 墓碑守卫：seq 小于墓碑的历史记录不得重建档案（journal 全量重放不复活，D-134）
+      const tomb = removedAt.get(playerId);
+      if (tomb !== undefined && tomb > record.seq) {
+        stats.skipped += 1;
+        return 'skipped';
+      }
       archive = archiveFromRecord(record, playerId);
       if (!archive) {
         log.error('store', 'store.error',
@@ -242,6 +275,7 @@ function createJsonAdapter(options) {
           { playerId, seq: record.seq, type: record.type });
         return 'missing';
       }
+      if (tomb !== undefined && record.seq > tomb) removedAt.delete(playerId); // 墓碑之后重新注册 → 解禁
     }
     if (archive.record.appliedSeq >= record.seq) {
       stats.skipped += 1;
@@ -263,19 +297,22 @@ function createJsonAdapter(options) {
   async function applyRecords(records) {
     const list = records || [];
     let applied = 0;
+    let recordsApplied = 0;
     for (const record of list) {
       archiveMod.validateRecord(record);
       const involved = archiveMod.playersOfRecord(record);
       let allKnown = involved.length > 0;
+      let touched = 0;
       for (const playerId of involved) {
         const status = await queueFor(playerId, () => applyForPlayer(record, playerId));
-        if (status === 'applied') applied += 1;
+        if (status === 'applied') { applied += 1; touched += 1; }
         if (status === 'missing') allKnown = false;
       }
+      if (touched > 0) recordsApplied += 1;
       if (allKnown) index.setSeq(record.seq); // 全局水位：所有参与方都已在/超过该 seq
     }
     if (list.length > 0) saveIndex();
-    return { applied, count: list.length };
+    return { applied, count: list.length, recordsApplied };
   }
 
   async function appendAndApply(records) {
@@ -385,13 +422,15 @@ function createJsonAdapter(options) {
     });
   }
 
+  // 下一个空闲槽 id：checkSlotLimit 已保证 slots.length < maxSlots，故 1..maxSlots 内必有空位
   function nextSlotId(archive) {
     const prefix = (serviceConfig.config && serviceConfig.config.slotIdPrefix) || 'slot';
-    for (let i = 1; i <= archiveMod.maxSlotsOf(serviceConfig) + 1; i += 1) {
+    const maxSlots = archiveMod.maxSlotsOf(serviceConfig);
+    for (let i = 1; i <= maxSlots; i += 1) {
       const candidate = `${prefix}${i}`;
       if (!archiveMod.findSlot(archive, candidate)) return candidate;
     }
-    return `${prefix}${archive.configs.slots.length + 1}`;
+    throw new StoreError('slot_limit', `配置槽已满（${maxSlots}）`);
   }
 
   // 新建槽（POST /me/configs）：默认复制出战配置；注册后的默认槽由 createAccount 提供
@@ -624,6 +663,8 @@ function createJsonAdapter(options) {
         log.error('store', 'store.error', '索引损坏（index.json 不可解析或结构非法）→ 进入重建分支', { file: indexPath });
       }
       sessions.load();
+      // 启动清理（P7-2 最小加法，§6.7：会话 TTL 过期清理 = 启动一次 + 读时懒清理；§3.4 无定时器）
+      sessions.prune(nowFn());
       const report = await recoveryMod.recoverStore({
         journal,
         index,
@@ -635,7 +676,7 @@ function createJsonAdapter(options) {
         applyRecords,
         saveIndex,
         rebuildIndexFromArchives,
-        rebuildSnapshotRefs,
+        rebuildDerivedState,
       });
       saveIndex();
       opened = true;
@@ -699,6 +740,9 @@ function createJsonAdapter(options) {
     config: serviceConfig,
     ratingConfig,
     versions,
+    logger: log, // P7-3 最小加法：L6 业务层（ranked/quickmatch）默认复用适配器的 logger（不新增语义）
+    now: nowFn,  // P7-3 最小加法：同上，业务层默认复用适配器的时钟（测试可注入确定性时钟）
+    peekNow: () => nowFn(), // P7-3 最小加法：**只读**取当前时间（不推进注入时钟）
     open,
     close,
     isOpen: () => opened,
@@ -707,8 +751,23 @@ function createJsonAdapter(options) {
     saveArchive,
     updateArchive,
     listPlayerIds,
+    // 删除档案（管理端）：**走 journal 墓碑**（`player.removed`），保证 journal 全量重放不复活已删玩家（D-134）
+    //   返回 true = 本次确实删除了（首次删除）；false = 档案本就不存在且无索引条目（幂等，不写墓碑）
+    removeArchive: async (playerId, removeOpts) => {
+      if (typeof playerId !== 'string' || playerId === '') {
+        throw new StoreError('bad_request', 'removeArchive 需要 playerId');
+      }
+      const o = removeOpts || {};
+      const known = fsatomic.pathExists(playerArchivePath(playerId)) || index.has(playerId);
+      if (!known) return false; // 幂等：不存在 → 不产生墓碑（避免无意义 journal 记录）
+      const record = ledger.buildRemovedRecord({ playerId, reason: o.reason, at: nowFn() });
+      const appended = await journal.append(record);
+      await applyRecords([appended]);
+      return true;
+    },
     rebuildArchive: async (playerId) => {
       cacheDelete(playerId);
+      removedAt.delete(playerId); // 显式重建：清掉本进程内的墓碑水位（journal 墓碑仍在，重启后仍受其约束）
       await recoveryMod.recoverStore({
         journal, index, logger: log, indexLoaded: false,
         listPlayerIds: async () => [playerId],
@@ -717,7 +776,7 @@ function createJsonAdapter(options) {
         applyRecords,
         saveIndex,
         rebuildIndexFromArchives,
-        rebuildSnapshotRefs,
+        rebuildDerivedState,
       });
       return loadArchive(playerId);
     },
@@ -796,6 +855,7 @@ function createJsonAdapter(options) {
       save: () => sessions.save(),
       put: (record) => sessions.put(record),
       get: (tokenHash) => sessions.get(tokenHash),
+      peek: (tokenHash) => sessions.peek(tokenHash),
       touch: (tokenHash, patch) => sessions.touch(tokenHash, patch),
       revoke: (tokenHash) => sessions.revoke(tokenHash),
       revokePlayer: (playerId, sessionOpts) => sessions.revokePlayer(playerId, sessionOpts),
@@ -815,12 +875,12 @@ function createJsonAdapter(options) {
         applyRecords,
         saveIndex,
         rebuildIndexFromArchives,
-        rebuildSnapshotRefs,
+        rebuildDerivedState,
       });
       saveIndex();
       return report;
     },
-    rebuildIndex,
+    rebuildIndex: async () => rebuildIndex(),
     gc: async () => {
       const snap = snapshots.gc({ retentionDays: serviceConfig.snapshot.retentionDays, at: nowFn() });
       const sess = sessions.prune(nowFn());

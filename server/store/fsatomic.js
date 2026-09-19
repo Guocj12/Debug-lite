@@ -176,6 +176,18 @@ async function writeJsonAtomic(target, value, options) {
   return writeJsonAtomicSync(target, value, options);
 }
 
+// 尽力删除（P7-3 管理端清理调试档案的最小加法）：不存在 → false；其余 IO 错误照旧抛出。
+// 语义：**删除成功即视为已清理**；不写任何临时文件、不做原子替换（删除不可"半写"）。
+function removeFileSafe(target) {
+  try {
+    fs.unlinkSync(target);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 // 读取 JSON：失败时返回 fallback（未提供 fallback → 抛 store_corrupt）
 function readJsonSync(target, fallback) {
   let text;
@@ -221,6 +233,7 @@ module.exports = {
   readText,
   readJsonSync,
   removeFile,
+  removeFileSafe,
   renameSafe,
   renameWithRetrySync,
   listDirFiles,

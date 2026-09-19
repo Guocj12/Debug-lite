@@ -1,17 +1,55 @@
 'use strict';
-/* server/index.js —— /api/v1 HTTP 层（P0-8，契约 docs/interfaces.md §2）
- * 实现取向：零依赖 node:http（白名单 express 允许但未引入：与门禁/测试零依赖哲学一致，
- * 且当时网络不稳定；后续如需路由中间件可换 express，接口不变）。
- * IO（stdout/文件）只在本层：≥info 经 onRecord sink 输出；api.* 事件见 §6 日志矩阵。
+/* server/index.js —— /api/v1 HTTP 层（P0-8 基线 + P7-4 账号 / 档案 / 快速对战接线）
+ *
+ * 契约（唯一权威）：
+ *   · docs/interfaces.md §2（端点表）/§6（日志事件矩阵）/§7（环境与门禁契约）
+ *   · docs/systems/11-account-store.md §4.4（鉴权中间件）/§4.6（安全清单）/§9.3-§9.4（回放重算与可见性）
+ *     /§10（端点总表与错误码）/§11.3（帧 LRU 上限）
+ *   · docs/server.md §2（环境变量）/§3（端点速查）/§4（状态语义）；decisions.md D-129…D-136
+ *
+ * 中间件与状态语义（P7-4）：
+ *   401 unauthorized / session_expired（缺 token / token 失效 / 会话过期）
+ *   403 forbidden / banned / replay_forbidden（越权 / 封禁 / 非回放参与者）
+ *   404 unknown_endpoint / unknown_replay / slot_not_found
+ *   409 业务拒绝（slot_limit/config_conflict/no_opponent/…）
+ *   410 deprecated（DL_LEGACY_STATELESS=0）/ replay_expired（D-135：版本不匹配、快照缺失、LRU 淘汰）
+ *   413 payload_too_large（>1MB 请求体）；429 rate_limited / too_many_attempts
+ *   503 store_unavailable（未装配档案存储）/ admin_token_missing（DL_ADMIN_TOKEN 未配置）
+ *
+ * 遗留无状态端点（`/box`、`/warehouse*`、`/loadout`、`/panel`、`/ai/*`、`/battle`、`r` 型回放 id）默认保留：
+ *   `DL_LEGACY_STATELESS`（默认 `1`）置 `0` → `410 deprecated`。`b_` 型归档回放不受该开关影响（按需重算，§9.3）。
+ *
+ * 回放注册表：进程内 LRU（默认 `store.config.replayCacheSize` = 64，D-135），淘汰 → `410 replay_expired`；
+ *   归档回放（`b_…`）在帧被淘汰/从未缓存时按 journal 记录 + 快照库**按需重算**。
+ *
+ * 日志脱敏（§4.6/§12.2）：`api.req` / `api.res` 只记 method/path/query/publicId；绝不记 token/密码/载荷全文。
+ * IO（stdout/文件）只在本层与 server/store/*：≥info 经 onRecord sink 输出。
  */
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createLogger } = require('../shared/log.js');
+const { createLogger, parseLevel } = require('../shared/log.js');
+const accountMod = require('./account.js');
+const authMod = require('./auth.js');
+const storeMod = require('./store/index.js');
+const quickmatchMod = require('./quickmatch.js');
+const adminMod = require('./admin.js');
+const rankedMod = require('./ranked.js');
+const battleApi = require('./battle.js');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const ASSETS_DIR = path.join(__dirname, '..', 'assets'); // P0-9：占位美术表作为数据表经 API 提供
 const VERSION = '3.0.0';
+
+const BODY_LIMIT_BYTES = 1000000;               // §4.6 请求体上限 1MB（超限 → 413）
+const DEFAULT_PORT = 3000;
+const DEFAULT_HOST = '127.0.0.1';
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 600;      // §4.6 全局：600 次/分/token（未登录按 IP）
+const RATE_WINDOW_MS = 60000;
+const DEFAULT_REPLAY_LRU = 64;                  // §11.3/D-135 帧 LRU 上限
+const EVICTED_REMEMBERED = 256;                 // 已淘汰 id 记忆（用于区分 410 与 404）
+
+/* ---------- 通用工具（P0-8 基线，行为不变） ---------- */
 
 function tableNames() {
   const data = fs.readdirSync(DATA_DIR)
@@ -61,6 +99,17 @@ function send(res, status, payload) {
   return Buffer.byteLength(body);
 }
 
+// 请求体超限（P7-7 §⑩ P0：500 internal_error → 413 payload_too_large）
+class BodyTooLargeError extends Error {
+  constructor(limit) {
+    super(`请求体超过 1MB 上限（${limit} 字节）`);
+    this.name = 'BodyTooLargeError';
+    this.code = 'payload_too_large';
+    this.status = 413;
+    this.limit = limit;
+  }
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -68,9 +117,9 @@ function readBody(req) {
     req.on('data', (c) => {
       if (tooBig) return;
       data += c;
-      if (data.length > 1e6) {
+      if (data.length > BODY_LIMIT_BYTES) {
         tooBig = true;
-        reject(new Error('请求体超过 1MB 上限'));
+        reject(new BodyTooLargeError(BODY_LIMIT_BYTES));
       }
     });
     req.on('end', () => { if (!tooBig) resolve(data); });
@@ -88,9 +137,150 @@ function jsonBody(ctx) {
   }
 }
 
+/* ---------- P7-4 中间件辅助 ---------- */
+
+// `Authorization: Bearer <token>` → token（其它形状 → null）
+function bearerOf(headerValue) {
+  if (typeof headerValue !== 'string') return null;
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(headerValue.trim());
+  return m ? m[1] : null;
+}
+
+// §4.5：playerId 只作服务端内部标识，**不返回给任何客户端**（含自己）
+//   除精确键 `playerId` 外，还剔除 ranked 响应里的 `opponentPlayerId` / `opponentsDrawn`（同样是内部 id）
+const REDACT_KEYS = new Set(['playerid', 'opponentplayerid', 'opponentsdrawn', 'playerids']);
+
+function stripPlayerId(value) {
+  if (Array.isArray(value)) return value.map((v) => stripPlayerId(v));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (REDACT_KEYS.has(String(k).toLowerCase())) continue;
+      out[k] = stripPlayerId(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+// query 值 → 整数（非法值原样透传，由业务层回 400）
+function intOf(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : value;
+}
+
+// 全局滑动窗口限速（§4.6：600 次/分/token；未登录按 IP）
+function createRateLimiter(options) {
+  const o = options || {};
+  const limit = Number.isInteger(o.limit) && o.limit > 0 ? o.limit : DEFAULT_RATE_LIMIT_PER_MINUTE;
+  const windowMs = Number.isInteger(o.windowMs) && o.windowMs > 0 ? o.windowMs : RATE_WINDOW_MS;
+  const buckets = new Map();
+  return {
+    limit,
+    windowMs,
+    check(key, at) {
+      const now = Number.isInteger(at) ? at : Date.now();
+      const hits = (buckets.get(key) || []).filter((t) => now - t < windowMs);
+      if (hits.length >= limit) {
+        buckets.set(key, hits);
+        return { ok: false, retryAfterMs: Math.max(0, windowMs - (now - hits[0])) };
+      }
+      hits.push(now);
+      buckets.set(key, hits);
+      return { ok: true, remaining: limit - hits.length };
+    },
+    size: () => buckets.size,
+  };
+}
+
+// 遗留无状态端点（DL_LEGACY_STATELESS=0 → 410 deprecated）
+function isLegacyPath(urlPath) {
+  if (urlPath === '/api/v1/box' || urlPath === '/api/v1/loadout' || urlPath === '/api/v1/panel' || urlPath === '/api/v1/battle') return true;
+  if (urlPath.startsWith('/api/v1/warehouse')) return true;
+  if (urlPath.startsWith('/api/v1/ai/')) return true;
+  return false;
+}
+
+function legacyStatelessOf(opts, env) {
+  const raw = opts.legacyStateless !== undefined ? opts.legacyStateless : env.DL_LEGACY_STATELESS;
+  if (raw === undefined || raw === null || raw === '') return true; // §2/§7：默认 1
+  if (raw === false || raw === 0 || raw === '0' || raw === 'false') return false;
+  return true;
+}
+
+// 是否装配档案存储（D-129）：显式 dataDir/store/enableStore，或 DL_DATA_DIR 已设置。
+// 说明：`start()` 缺省不落盘（沿用无状态基线，旧测试/冒烟零副作用）；`npm start` 走 main() 显式 enableStore。
+function storeWanted(opts, env) {
+  if (opts.store) return true;
+  if (typeof opts.dataDir === 'string' && opts.dataDir !== '') return true;
+  if (opts.enableStore === true) return true;
+  if (typeof env.DL_DATA_DIR === 'string' && env.DL_DATA_DIR !== '') return true;
+  return false;
+}
+
+// 环境变量读取（§2/§7）：DL_DATA_DIR / DL_STORE / DL_ADMIN_TOKEN / DL_LEGACY_STATELESS / DL_CORS_ORIGIN
+function envOf(options) {
+  const opts = options || {};
+  const env = { ...(opts.env || process.env) };
+  if (opts.adminToken !== undefined) env.DL_ADMIN_TOKEN = opts.adminToken;
+  if (opts.corsOrigin !== undefined) env.DL_CORS_ORIGIN = opts.corsOrigin;
+  if (opts.legacyStateless !== undefined) env.DL_LEGACY_STATELESS = opts.legacyStateless === false ? '0' : String(opts.legacyStateless);
+  return env;
+}
+
+async function createRuntime(logger, options) {
+  const opts = options || {};
+  const env = envOf(opts);
+  const rt = {
+    logger,
+    env,
+    legacyStateless: legacyStatelessOf(opts, env),
+    corsOrigin: typeof env.DL_CORS_ORIGIN === 'string' ? env.DL_CORS_ORIGIN : '',
+    store: null,
+    auth: null,
+    account: null,
+    quick: null,
+    admin: null,
+    rateLimiter: createRateLimiter({ limit: opts.rateLimitPerMinute, windowMs: opts.rateWindowMs }),
+    replayLimit: Number.isInteger(opts.replayLimit) && opts.replayLimit > 0 ? opts.replayLimit : null,
+    replayMeta: new Map(),   // 回放 id → { participants, frameId, kind }
+    evicted: new Set(),      // 已淘汰 id（区分 410 与 404）
+    ownReplays: [],          // 本实例登记的帧 id（LRU 淘汰记账）
+  };
+  if (storeWanted(opts, env)) {
+    rt.store = await storeMod.openStore({
+      dataDir: opts.dataDir,
+      adapter: opts.adapter,
+      configDir: opts.configDir,
+      logger,
+      now: opts.now,
+      config: opts.config,
+      ratingConfig: opts.ratingConfig,
+      versions: opts.versions || { engine: VERSION },
+    });
+    rt.account = accountMod.createAccount({ store: rt.store, logger, now: opts.now });
+    rt.auth = authMod.createAuth({ store: rt.store, logger, now: opts.now, account: rt.account, config: opts.authConfig });
+    rt.quick = quickmatchMod.createQuickMatch({
+      store: rt.store, logger, now: opts.now, env, config: opts.ratingConfig, runBattle: opts.runBattle,
+    });
+    rt.admin = adminMod.createAdmin({ store: rt.store, logger, now: opts.now, env });
+  }
+  if (rt.replayLimit === null) {
+    const configured = rt.store && rt.store.config && Number.isInteger(rt.store.config.replayCacheSize)
+      ? rt.store.config.replayCacheSize : 0;
+    rt.replayLimit = configured > 0 ? configured : DEFAULT_REPLAY_LRU;
+  }
+  return rt;
+}
+
+/* ---------- 路由表（P0-8 基线；P7-4 新增端点见 p74Routes） ---------- */
+
 // 路由表：GET/POST → path → handler(ctx) → {status, payload}
 // handler 抛异常 → api.err + 500 internal_error（AP-6）
-function createHandler(logger, extraRoutes) {
+// P7-4 形状扩展：`{ auth: true, handler }` = 需 Bearer 鉴权；`{ admin: true }` = 需 DL_ADMIN_TOKEN。
+function createHandler(logger, extraRoutes, runtime) {
+  const rt = runtime;
   const routes = {
     GET: {
       '/api/v1/health': () => ({ status: 200, payload: okEnvelope({ status: 'ok', version: VERSION }, logger) }),
@@ -298,7 +488,6 @@ function createHandler(logger, extraRoutes) {
       },
       '/api/v1/battle': async (ctx) => {
         // B22：双方 loadout + AI + seed → 完整回放帧（服务端重执行；回放注册表进程内，D-123 不落盘）
-        const battleApi = require('./battle.js');
         const body = jsonBody(ctx);
         if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
         const tier = body.tier === undefined ? 'mythic' : String(body.tier);
@@ -313,35 +502,33 @@ function createHandler(logger, extraRoutes) {
           }
           return { status: r.status, payload: errEnvelope(r.code, r.message) };
         }
+        // P7-4：登记进有上限 LRU（无参与者 → 与旧无状态语义一致，任何持有 id 者可见）
+        registerReplay({ id: r.data.id, frameId: r.data.id, participants: null, kind: 'legacy' });
         return { status: 200, payload: okEnvelope(r.data, logger) };
       },
-      '/api/v1/ranked/run': async (ctx) => {
-        // B24：排位——抽 10 场离线结算（段位由请求传入/回带，D-123 不持久化；平局不计胜）
-        const rankedApi = require('./ranked.js').withLogger(logger);
-        const body = jsonBody(ctx);
-        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
-        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
-        const unlockApi = require('./core/unlock.js');
-        if (unlockApi.tierIndex(tier) === null) {
-          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
-        }
-        const r = rankedApi.runRankedBattle({ loadout: body.loadout, warehouse: body.warehouse, pool: body.pool, seed: body.seed, tier });
-        if (r.status !== 200) {
-          if (r.code === 'loadout_invalid') return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
-          return { status: r.status, payload: errEnvelope(r.code, r.message) };
-        }
-        return { status: 200, payload: okEnvelope(r.data, logger) };
+      // 双轨端点（P7-4）：有 Bearer token → 档案驱动；无 token → 遗留无状态口径（DL_LEGACY_STATELESS=1）
+      // `store:false`：无档案存储时仍必须可走遗留路径（既有 tests/api/api-ranked.test.js 依赖）
+      '/api/v1/ranked/run': {
+        store: false,
+        redact: true,
+        handler: async (ctx) => {
+          if (ctx.player) return rankedRunArchive(ctx);
+          if (!rt.legacyStateless) return failStatus(401, 'unauthorized', '缺少会话 token（DL_LEGACY_STATELESS=0 时排位为鉴权端点）');
+          return rankedRunLegacy(ctx);
+        },
       },
-    '/api/v1/ranked/promote': async (ctx) => {
-        // B25：晋升判定（x=6，D-122）+ 段位→奖励品质（D-123 不持久化，段位由请求传入/回带）
-        const rankedApi = require('./ranked.js').withLogger(logger);
-        const body = jsonBody(ctx);
-        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
-        const r = rankedApi.promote(body.tier, body.wins);
-        if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, r.message) };
-        return { status: 200, payload: okEnvelope(r.data, logger) };
+      '/api/v1/ranked/promote': {
+        store: false,
+        redact: true,
+        handler: async (ctx) => {
+          if (ctx.player) return rankedPromoteArchive(ctx);
+          if (!rt.legacyStateless) return failStatus(401, 'unauthorized', '缺少会话 token（DL_LEGACY_STATELESS=0 时晋升为鉴权端点）');
+          return rankedPromoteLegacy(ctx);
+        },
       },
     },
+    PUT: {},
+    DELETE: {},
   };
   if (extraRoutes) {
     for (const method of Object.keys(extraRoutes)) {
@@ -349,107 +536,571 @@ function createHandler(logger, extraRoutes) {
     }
   }
 
-  // 动态路由：/api/v1/data/:table（P0-8）+ /api/v1/replay/:id（B22）
-function parsePathArg(urlPath, prefix) {
-  if (!urlPath.startsWith(prefix)) return null;
-  let arg = null;
-  let badUri = false;
-  try {
-    arg = decodeURIComponent(urlPath.slice(prefix.length));
-  } catch (e) {
-    badUri = true;
-  }
-  return { arg, badUri };
-}
+  /* ---------- P7-4 新端点（§10.1） ---------- */
 
-return async (req, res) => {
-    const started = Date.now();
-    const urlPath = (req.url || '/').split('?')[0];
-    logger.info('api', 'api.req', `${req.method} ${req.url}`, { method: req.method, path: urlPath, query: req.url.includes('?') ? req.url.split('?')[1] : null });
-    let status = 404;
-    let payload = errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`);
-    try {
-      // 动态表端点：GET /api/v1/data/:table
-      if (req.method === 'GET' && urlPath.startsWith('/api/v1/data/')) {
-        let table = null;
-        let badUri = false;
-        try {
-          table = decodeURIComponent(urlPath.slice('/api/v1/data/'.length));
-        } catch (e) {
-          badUri = true; // 畸形 URI 编码（如 %zz）→ 400 bad_table
-        }
-        if (badUri) {
-          status = 400;
-          payload = errEnvelope('bad_table', '表名含非法 URI 编码');
-        } else if (table.includes('/') || table.includes('..')) {
-          status = 400;
-          payload = errEnvelope('bad_table', `非法表名 ${table}`);
+  // 模块结果信封 → HTTP（auth/account 用 {ok,status,code,data}；quickmatch/ranked/admin 用 {status,data|code}）
+  function respond(res) {
+    if (res && (res.ok === true || (res.ok === undefined && res.status === 200))) {
+      return { status: 200, payload: okEnvelope(res.data === undefined ? null : res.data, logger) };
+    }
+    const code = (res && res.code) || 'internal_error';
+    const status = Number.isInteger(res && res.status) ? res.status : accountMod.statusOf(code);
+    return { status, payload: errEnvelope(code, (res && res.message) || code, (res && res.details) || []) };
+  }
+
+  function failStatus(status, code, message) {
+    return { status, payload: errEnvelope(code, message) };
+  }
+
+  function deprecated(what) {
+    return failStatus(410, 'deprecated', `${what} 为遗留无状态端点，已由 DL_LEGACY_STATELESS=0 关闭`);
+  }
+
+  // 请求体（空体 → {}；坏 JSON → null，由调用方回 400 bad_json）
+  function bodyOf(ctx) {
+    return jsonBody(ctx);
+  }
+
+  /* ----- 认证（§4.4） ----- */
+
+  async function authenticate(token) {
+    if (!rt.store || !rt.auth) return { ok: false, status: 503, code: 'store_unavailable', message: '服务未装配档案存储' };
+    const tokenHash = authMod.tokenHashOf(token);
+    const peek = rt.store.sessions.peek(tokenHash); // 只读探针：区分"不存在"与"刚过期"
+    if (peek && Number.isInteger(peek.expiresAt) && peek.expiresAt <= Date.now()) {
+      logger.warn('store', 'store.auth.reject', '会话已过期', { op: 'authenticate', reason: 'session_expired' });
+      return { ok: false, status: 401, code: 'session_expired', message: '会话已过期，请重新登录' };
+    }
+    const res = await rt.auth.authenticate(token);
+    if (!res.ok) {
+      return { ok: false, status: Number.isInteger(res.status) ? res.status : accountMod.statusOf(res.code), code: res.code, message: res.message };
+    }
+    return { ok: true, player: res.data.player, data: res.data };
+  }
+
+  /* ----- 回放（§9.3/§9.4/D-135） ----- */
+
+  function rememberEvicted(id) {
+    rt.evicted.add(id);
+    while (rt.evicted.size > EVICTED_REMEMBERED) {
+      const first = rt.evicted.values().next().value;
+      rt.evicted.delete(first);
+    }
+  }
+
+  // 本实例登记的帧按 LRU 上限淘汰（battle.REPLAYS 是模块级注册表：淘汰只针对本实例创建的帧，
+  // 生产为单实例 → 等价于全局上限 64；测试同进程多实例时互不干扰）
+  function pruneReplays() {
+    while (rt.ownReplays.length > rt.replayLimit) {
+      const id = rt.ownReplays.shift();
+      battleApi.REPLAYS.delete(id);
+      rememberEvicted(id);
+      for (const meta of rt.replayMeta.values()) if (meta.frameId === id) meta.frameId = null;
+    }
+  }
+
+  function registerReplay(entry) {
+    // 遗留 `r<seq>` 回放不需要元数据（参与者恒为"无"）；归档回放只缓存 frameId（未命中则按需重算）。
+    // 元数据表同样有上限：超过 EVICTED_REMEMBERED 条按插入序淘汰最旧（缺失只影响缓存命中，不影响正确性）。
+    if (Array.isArray(entry.participants)) {
+      rt.replayMeta.set(entry.id, {
+        id: entry.id, frameId: entry.frameId, participants: entry.participants, kind: entry.kind, createdAt: Date.now(),
+      });
+      while (rt.replayMeta.size > EVICTED_REMEMBERED) {
+        const oldest = rt.replayMeta.keys().next().value;
+        rt.replayMeta.delete(oldest);
+      }
+    }
+    if (entry.frameId) {
+      rt.ownReplays.push(entry.frameId);
+      pruneReplays();
+    }
+  }
+
+  function sliceReplay(data, from, to) {
+    const frames = Array.isArray(data.frames) ? data.frames : [];
+    const lo = Number.isInteger(from) && from >= 1 ? from : 1;
+    const hi = Number.isInteger(to) && to >= lo ? Math.min(to, frames.length) : frames.length;
+    return { ...data, frames: frames.slice(lo - 1, hi) };
+  }
+
+  // GET /api/v1/replay/:id（`r<seq>` = 遗留无状态注册表；`b_…` = 归档记录 → 参与者鉴权 + 按需重算）
+  async function serveReplay(ctx, id, query) {
+    const from = intOf(query.from);
+    const to = intOf(query.to);
+    if (/^r\d+$/.test(id)) {
+      if (!rt.legacyStateless) return deprecated(`GET /api/v1/replay/${id}`);
+      const r = battleApi.getReplay(id, from, to);
+      if (r.status === 200) return { status: 200, payload: okEnvelope(r.data, logger) };
+      if (rt.evicted.has(id)) {
+        logger.warn('store', 'store.snapshot.missing', `回放 ${id} 已从帧缓存淘汰（LRU ${rt.replayLimit}）`, { replayId: id, reason: 'evicted', limit: rt.replayLimit });
+        return failStatus(410, 'replay_expired', `回放 ${id} 已过期（帧缓存淘汰，上限 ${rt.replayLimit} 场）`);
+      }
+      return { status: r.status, payload: errEnvelope(r.code, r.message) };
+    }
+    // 归档回放：必须登录（§9.4）
+    if (!ctx.player) return failStatus(401, 'unauthorized', '回放需要登录（参与者鉴权，D-135）');
+    const meta = rt.replayMeta.get(id);
+    if (meta && Array.isArray(meta.participants)) {
+      if (!meta.participants.includes(ctx.player.playerId)) {
+        logger.warn('api', 'api.reject', 'replay_forbidden: 非参与者请求回放', { path: `/api/v1/replay/${id}`, publicId: ctx.player.publicId, code: 'replay_forbidden' });
+        return failStatus(403, 'replay_forbidden', '只能查看自己参与的对局回放');
+      }
+      if (meta.frameId) {
+        const cached = battleApi.getReplay(meta.frameId, from, to);
+        if (cached.status === 200) return { status: 200, payload: okEnvelope({ ...cached.data, id }, logger) };
+      }
+    }
+    if (!rt.store) return failStatus(404, 'unknown_replay', `未知回放 ${id}`);
+    const record = await rt.store.findBattleRecord(id);
+    if (!record) return failStatus(404, 'unknown_replay', `未知回放 ${id}`);
+    const participants = [record.p1 && record.p1.playerId, record.p2 && record.p2.playerId].filter((x) => typeof x === 'string');
+    if (!participants.includes(ctx.player.playerId)) {
+      logger.warn('api', 'api.reject', 'replay_forbidden: 非参与者请求归档回放', { path: `/api/v1/replay/${id}`, publicId: ctx.player.publicId, code: 'replay_forbidden' });
+      return failStatus(403, 'replay_forbidden', '只能查看自己参与的对局回放');
+    }
+    // 版本门槛（§9.3：宁可 replay_expired，也不返回"看起来对但实际不同"的帧）
+    const versions = record.versions || {};
+    if (versions.engine !== rt.store.versions.engine) {
+      return failStatus(410, 'replay_expired', `回放过期：引擎版本 ${versions.engine} ≠ ${rt.store.versions.engine}（engine_mismatch）`);
+    }
+    if (versions.data !== rt.store.versions.data) {
+      return failStatus(410, 'replay_expired', `回放过期：数据版本 ${versions.data} ≠ ${rt.store.versions.data}（data_mismatch）`);
+    }
+    const snap1 = record.p1 && record.p1.snapshotHash ? await rt.store.snapshot.get(record.p1.snapshotHash) : null;
+    const snap2 = record.p2 && record.p2.snapshotHash ? await rt.store.snapshot.get(record.p2.snapshotHash) : null;
+    if (!snap1 || !snap2) {
+      logger.warn('store', 'store.snapshot.missing', `回放 ${id} 依赖的快照缺失（GC/人为删除）`, { replayId: id, reason: 'snapshot_gc' });
+      return failStatus(410, 'replay_expired', `回放过期：快照已不可用（snapshot_gc）`);
+    }
+    const tier = (record.p1 && record.p1.tierBefore) || 'common';
+    const r = battleApi.runBattle({ p1: snap1.loadout, p2: snap2.loadout, seed: record.seed, tier });
+    if (r.status !== 200) return failStatus(410, 'replay_expired', `回放过期：快照无法实例化（${r.code}）`);
+    registerReplay({ id, frameId: r.data.id, participants, kind: 'archive' });
+    logger.debug('store', 'store.read', `回放 ${id} 按需重算（${r.data.frames.length} 帧）`, { replayId: id, frames: r.data.frames.length, kind: 'archive' });
+    return { status: 200, payload: okEnvelope({ ...sliceReplay(r.data, from, to), id }, logger) };
+  }
+
+  /* ----- 排位/快速对战（P7-3 档案驱动 + P5 遗留口径） ----- */
+
+  async function rankedRunArchive(ctx) {
+    const body = bodyOf(ctx);
+    if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+    // `pool` 原样透传给业务层 → 400 pool_forbidden（服务端抽池，D-136 不接受客户端自选对手）
+    return respond(await rankedMod.withLogger(logger).runRankedBattle({
+      store: rt.store, playerId: ctx.player.playerId, seed: body.seed, pool: body.pool,
+    }));
+  }
+
+  function rankedRunLegacy(ctx) {
+    const body = bodyOf(ctx);
+    if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+    const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+    const unlockApi = require('./core/unlock.js');
+    if (unlockApi.tierIndex(tier) === null) {
+      return failStatus(400, 'bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`);
+    }
+    const r = rankedMod.withLogger(logger).runRankedBattle({ loadout: body.loadout, warehouse: body.warehouse, pool: body.pool, seed: body.seed, tier });
+    if (r.status !== 200) {
+      if (r.code === 'loadout_invalid') return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
+      return { status: r.status, payload: errEnvelope(r.code, r.message) };
+    }
+    return { status: 200, payload: okEnvelope(r.data, logger) };
+  }
+
+  // 有 token：段位以**档案**为准（§10.1）；不一致 → 403（越权/伪造段位）
+  async function rankedPromoteArchive(ctx) {
+    const body = bodyOf(ctx);
+    if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+    const archive = await rt.store.loadArchive(ctx.player.playerId);
+    if (!archive) return failStatus(404, 'store_not_found', '档案不存在');
+    const tier = archive.progress.tier;
+    if (body.tier !== undefined && body.tier !== tier) {
+      logger.warn('api', 'api.reject', 'forbidden: tier 与档案不一致', { path: '/api/v1/ranked/promote', publicId: ctx.player.publicId, code: 'forbidden' });
+      return failStatus(403, 'forbidden', `段位以档案为准（档案 ${tier}），不接受入参 tier=${body.tier}`);
+    }
+    const r = rankedMod.withLogger(logger).promote(tier, body.wins);
+    return respond(r);
+  }
+
+  function rankedPromoteLegacy(ctx) {
+    const body = bodyOf(ctx);
+    if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+    const r = rankedMod.withLogger(logger).promote(body.tier, body.wins);
+    if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, r.message) };
+    return { status: 200, payload: okEnvelope(r.data, logger) };
+  }
+
+  /* ----- 管理端（DL_ADMIN_TOKEN；admin.js 内部二次校验） ----- */
+
+  async function adminOp(ctx, op) {
+    if (!rt.admin) return failStatus(503, 'store_unavailable', '服务未装配档案存储（管理端不可用）');
+    const body = bodyOf(ctx);
+    if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+    const adminToken = ctx.adminToken || body.adminToken;
+    const input = { ...body, adminToken };
+    if (op === 'bots') return respond(await rt.admin.injectDebugBots(input));
+    if (op === 'rebuild-index') return respond(await rt.admin.rebuildIndex(input));
+    if (op === 'stats') return respond(await rt.admin.stats(input));
+    if (op === 'clear-bots') return respond(await rt.admin.clearDebugBots(input));
+    if (op === 'ban') return respond(await rt.admin.ban({ ...input, banned: body.banned !== false }));
+    if (op === 'unban') return respond(await rt.admin.ban({ ...input, banned: false }));
+    return failStatus(404, 'unknown_endpoint', `未知管理端点 POST /api/v1/admin/${op}`);
+  }
+
+  /* ----- 路由分派 ----- */
+
+  const P74_GET = {
+    '/api/v1/me': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getSummary(ctx.player.playerId)) },
+    '/api/v1/me/configs': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.listConfigs(ctx.player.playerId)) },
+    '/api/v1/me/warehouse': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getWarehouseMirror(ctx.player.playerId)) },
+    '/api/v1/me/records': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => respond(await rt.account.records({
+        playerId: ctx.player.playerId,
+        since: intOf(ctx.query.since),
+        limit: intOf(ctx.query.limit),
+        role: ctx.query.role,
+      })),
+    },
+    '/api/v1/me/defense': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => respond(await rt.account.defenseSummary({ playerId: ctx.player.playerId, limit: intOf(ctx.query.limit) })),
+    },
+    '/api/v1/leaderboard': {
+      redact: true,
+      handler: async (ctx) => respond(await rt.quick.loadLeaderboard({ scope: ctx.query.scope, limit: intOf(ctx.query.limit) })),
+    },
+  };
+
+  const P74_POST = {
+    '/api/v1/auth/register': {
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.auth.register({
+          username: body.username, password: body.password, nickname: body.nickname,
+          warehouse: body.warehouse, ip: ctx.ip, userAgent: ctx.userAgent,
+        }));
+      },
+    },
+    '/api/v1/auth/login': {
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.auth.login({ username: body.username, password: body.password, ip: ctx.ip, userAgent: ctx.userAgent }));
+      },
+    },
+    '/api/v1/auth/logout': { auth: true, redact: true, handler: async (ctx) => respond(await rt.auth.logout({ token: ctx.token })) },
+    '/api/v1/auth/password': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.auth.changePassword({
+          token: ctx.token, playerId: ctx.player.playerId,
+          oldPassword: body.oldPassword === undefined ? body.old_password : body.oldPassword,
+          newPassword: body.newPassword === undefined ? body.new_password : body.newPassword,
+        }));
+      },
+    },
+    '/api/v1/me/configs': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.createSlot({
+          playerId: ctx.player.playerId, loadout: body.loadout, warehouse: body.warehouse,
+          name: body.name, activate: body.activate,
+        }));
+      },
+    },
+    '/api/v1/me/records/seen': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        const uptoSeq = body.uptoSeq === undefined ? intOf(ctx.query.uptoSeq) : body.uptoSeq;
+        return respond(await rt.account.markSeen({ playerId: ctx.player.playerId, uptoSeq }));
+      },
+    },
+    '/api/v1/quick/run': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.quick.run({ playerId: ctx.player.playerId, seed: body.seed }));
+      },
+    },
+  };
+
+  const P74_PUT = {
+    '/api/v1/me/nickname': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.setNickname({ playerId: ctx.player.playerId, nickname: body.nickname }));
+      },
+    },
+    '/api/v1/me/warehouse': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.saveWarehouseMirror({ playerId: ctx.player.playerId, warehouse: body.warehouse }));
+      },
+    },
+  };
+
+  // 端点别名（任务口径与设计口径并存；两条路径等价，见 P7-4 报告）
+  P74_POST['/api/v1/auth/change-password'] = P74_POST['/api/v1/auth/password'];
+  P74_POST['/api/v1/me/seen'] = P74_POST['/api/v1/me/records/seen'];
+
+  /* ----- 请求管线 ----- */
+
+  function applyCors(req, res) {
+    const whitelist = rt.corsOrigin;
+    if (typeof whitelist !== 'string' || whitelist === '') return false;
+    const origin = req.headers.origin;
+    const allowed = whitelist.split(',').map((s) => s.trim()).filter((s) => s !== '');
+    const match = typeof origin === 'string' && origin !== '' && (allowed.includes('*') || allowed.includes(origin));
+    if (match) {
+      res.setHeader('access-control-allow-origin', origin);
+      res.setHeader('vary', 'origin');
+      res.setHeader('access-control-allow-headers', 'authorization, content-type, x-admin-token');
+      res.setHeader('access-control-allow-methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('access-control-max-age', '600');
+    }
+    return true; // 已配置 CORS → 处理 OPTIONS 预检
+  }
+
+  // 端点元数据 → 管线（鉴权 → 限速 → 取体 → 越权 → 业务）
+  async function runEntry(entry, ctx) {
+    const isLegacy = typeof entry === 'function';
+    const meta = isLegacy ? { legacy: true } : entry;
+    const handler = isLegacy ? entry : entry.handler;
+    if (meta.legacy !== true && meta.store !== false && !rt.store) {
+      return failStatus(503, 'store_unavailable', '服务未装配档案存储（DL_DATA_DIR 未启用）：/auth、/me、/quick、/leaderboard、归档回放不可用');
+    }
+    if (meta.legacy !== true && meta.admin !== true) {
+      const token = bearerOf(ctx.headers.authorization);
+      if (token) {
+        const a = await authenticate(token);
+        if (!a.ok) {
+          // tolerant：遗留 `r<seq>` 回放等端点忽略无效 token（旧语义未读 Authorization），仅按匿名处理
+          if (meta.tolerant !== true) {
+            logger.warn('api', 'api.reject', `${a.code}: ${a.message}`, { path: ctx.urlPath, code: a.code });
+            return failStatus(a.status, a.code, a.message);
+          }
+          logger.debug('api', 'api.req', `忽略无效 token（tolerant 端点）：${a.code}`, { path: ctx.urlPath, code: a.code });
         } else {
-          const data = loadTable(table);
-          if (data === null) {
-            status = 404;
-            payload = errEnvelope('unknown_table', `未知数据表 ${table}`, [`可用表: ${tableNames().join(', ')}`]);
-          } else {
-            status = 200;
-            payload = okEnvelope(data, logger);
-          }
-        }
-      } else if (req.method === 'GET' && urlPath.startsWith('/api/v1/replay/')) {
-        // B22 动态路由：GET /api/v1/replay/:id（?from=&to= 1-based 含端切分；未知 id → 404）
-        const q = parseQuery(req.url);
-        const pt = parsePathArg(urlPath, '/api/v1/replay/');
-        if (pt.badUri || pt.arg === null || pt.arg === '' || pt.arg.includes('/') || pt.arg.includes('..')) {
-          status = 400;
-          payload = errEnvelope('bad_replay', `非法回放 id ${pt.arg || ''}`);
-        } else {
-          const battleApi = require('./battle.js');
-          const r = battleApi.getReplay(pt.arg, Number(q.from), Number(q.to));
-          if (r.status !== 200) {
-            status = r.status;
-            payload = errEnvelope(r.code, r.message);
-          } else {
-            status = 200;
-            payload = okEnvelope(r.data, logger);
-          }
-        }
-      } else {
-        const handler = (routes[req.method] || {})[urlPath];
-        if (handler) {
-          let rawBody = '';
-          if (req.method === 'POST') {
-            rawBody = await readBody(req);
-            if (!rawBody) rawBody = '{}';
-          }
-          const ctx = { rawBody, logger, query: parseQuery(req.url) };
-          const r = await handler(ctx);
-          status = r.status;
-          payload = r.payload;
+          ctx.player = a.player;
+          ctx.token = token;
         }
       }
-    } catch (e) {
-      status = 500;
-      payload = errEnvelope('internal_error', e.message || '服务端内部错误');
-      logger.error('api', 'api.err', `处理 ${urlPath} 异常`, { message: e.message, stack: e.stack });
+      if (meta.auth === true && !ctx.player) {
+        logger.warn('api', 'api.reject', 'unauthorized: 缺少会话 token', { path: ctx.urlPath, code: 'unauthorized' });
+        return failStatus(401, 'unauthorized', '缺少会话 token（Authorization: Bearer <token>）');
+      }
     }
+    // 全局限速（§4.6：600 次/分/token；未登录按 IP）
+    const key = ctx.player ? ctx.player.playerId : `ip:${ctx.ip}`;
+    const gate = rt.rateLimiter.check(key);
+    if (!gate.ok) {
+      logger.warn('api', 'api.reject', 'rate_limited: 全局限速命中', { path: ctx.urlPath, code: 'rate_limited', retryAfterMs: gate.retryAfterMs });
+      return failStatus(429, 'rate_limited', `请求过于频繁（上限 ${rt.rateLimiter.limit} 次/分钟），请稍后重试`);
+    }
+    if (ctx.method !== 'GET') {
+      const raw = await readBody(ctx.req); // 超限 → BodyTooLargeError → 413（外层捕获）
+      ctx.rawBody = raw || '{}';
+    }
+    // 越权防护（§4.4 步骤 5）：请求体不得指定他人 playerId
+    if (ctx.player) {
+      const body = jsonBody(ctx);
+      if (body && body.playerId !== undefined && body.playerId !== null && body.playerId !== ctx.player.playerId) {
+        logger.warn('api', 'api.reject', 'forbidden: 请求体 playerId 与令牌不一致', { path: ctx.urlPath, publicId: ctx.player.publicId, code: 'forbidden' });
+        return failStatus(403, 'forbidden', '不能访问其他玩家的资源（playerId 与令牌不一致）');
+      }
+    }
+    const result = await handler(ctx);
+    // §4.5：玩家侧响应一律剔除 playerId（admin 运维通道除外）
+    const payload = meta.redact === true && result.payload && result.payload.ok === true
+      ? { ...result.payload, data: stripPlayerId(result.payload.data) }
+      : result.payload;
+    return {
+      status: result.status,
+      payload,
+      publicId: ctx.player && ctx.player.publicId ? ctx.player.publicId : null,
+    };
+  }
+
+  async function dispatch(req) {
+    const urlPath = (req.url || '/').split('?')[0];
+    const query = parseQuery(req.url);
+    const ctx = {
+      method: req.method, urlPath, query, headers: req.headers, req,
+      rawBody: '', logger,
+      ip: req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null,
+      userAgent: req.headers['user-agent'] === undefined ? null : req.headers['user-agent'],
+      player: null, token: null,
+      adminToken: typeof req.headers['x-admin-token'] === 'string' && req.headers['x-admin-token'] !== ''
+        ? req.headers['x-admin-token'] : bearerOf(req.headers.authorization),
+    };
+    // 遗留无状态端点开关（DL_LEGACY_STATELESS=0 → 410 deprecated）
+    if (!rt.legacyStateless && isLegacyPath(urlPath)) return deprecated(`${req.method} ${urlPath}`);
+
+    // 动态表端点：GET /api/v1/data/:table
+    if (req.method === 'GET' && urlPath.startsWith('/api/v1/data/')) {
+      let table = null;
+      let badUri = false;
+      try {
+        table = decodeURIComponent(urlPath.slice('/api/v1/data/'.length));
+      } catch (e) {
+        badUri = true; // 畸形 URI 编码（如 %zz）→ 400 bad_table
+      }
+      if (badUri) return failStatus(400, 'bad_table', '表名含非法 URI 编码');
+      if (table.includes('/') || table.includes('..')) return failStatus(400, 'bad_table', `非法表名 ${table}`);
+      const data = loadTable(table);
+      if (data === null) return { status: 404, payload: errEnvelope('unknown_table', `未知数据表 ${table}`, [`可用表: ${tableNames().join(', ')}`]) };
+      return { status: 200, payload: okEnvelope(data, logger) };
+    }
+
+    // 动态回放端点：GET /api/v1/replay/:id
+    if (req.method === 'GET' && urlPath.startsWith('/api/v1/replay/')) {
+      let id = null;
+      let badUri = false;
+      try {
+        id = decodeURIComponent(urlPath.slice('/api/v1/replay/'.length));
+      } catch (e) {
+        badUri = true;
+      }
+      if (badUri || id === null || id === '' || id.includes('/') || id.includes('..')) {
+        return failStatus(400, 'bad_replay', `非法回放 id ${id || ''}`);
+      }
+      return runEntry({ auth: false, store: false, tolerant: true, handler: async (c) => serveReplay(c, id, query) }, ctx);
+    }
+
+    // 管理端：POST /api/v1/admin/:op（DL_ADMIN_TOKEN）
+    if (req.method === 'POST' && urlPath.startsWith('/api/v1/admin/')) {
+      const op = urlPath.slice('/api/v1/admin/'.length);
+      return runEntry({ admin: true, store: false, handler: async (c) => adminOp(c, op) }, ctx);
+    }
+
+    // 配置槽动态路由：PUT|DELETE /me/configs/:slotId、POST /me/configs/:slotId/activate
+    const cfgPrefix = '/api/v1/me/configs/';
+    if (urlPath.startsWith(cfgPrefix)) {
+      const rest = urlPath.slice(cfgPrefix.length);
+      const parts = rest.split('/');
+      let slotId = null;
+      let badUri = false;
+      try {
+        slotId = decodeURIComponent(parts[0]);
+      } catch (e) {
+        badUri = true;
+      }
+      if (badUri) return failStatus(400, 'bad_request', `非法槽位 id ${parts[0]}`);
+      if (parts.length === 1 && req.method === 'PUT') {
+        return runEntry({
+          auth: true,
+          handler: async (c) => {
+            const body = bodyOf(c);
+            if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+            return respond(await rt.account.saveConfig({
+              playerId: c.player.playerId, slotId, loadout: body.loadout, warehouse: body.warehouse,
+              name: body.name, baseUpdatedAt: body.baseUpdatedAt, activate: body.activate,
+            }));
+          },
+        }, ctx);
+      }
+      if (parts.length === 1 && req.method === 'DELETE') {
+        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.deleteSlot({ playerId: c.player.playerId, slotId })) }, ctx);
+      }
+      if (parts.length === 2 && parts[1] === 'activate' && req.method === 'POST') {
+        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.activateConfig({ playerId: c.player.playerId, slotId })) }, ctx);
+      }
+    }
+
+    // 静态路由（P7-4 优先于遗留：同名端点以 P7-4 语义为准）
+    const p74 = { GET: P74_GET, POST: P74_POST, PUT: P74_PUT, DELETE: {} }[req.method];
+    const entry = (p74 && p74[urlPath]) || (routes[req.method] || {})[urlPath];
+    if (!entry) return { status: 404, payload: errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`) };
+    return runEntry(entry, ctx);
+  }
+
+  return async (req, res) => {
+    const started = Date.now();
+    const urlPath = (req.url || '/').split('?')[0];
+    const hasCors = applyCors(req, res);
+    if (req.method === 'OPTIONS' && hasCors) {
+      res.writeHead(204);
+      res.end();
+      logger.info('api', 'api.req', `OPTIONS ${req.url}`, { method: 'OPTIONS', path: urlPath, preflight: true });
+      logger.info('api', 'api.res', `OPTIONS ${urlPath} -> 204`, { method: 'OPTIONS', path: urlPath, status: 204, durationMs: Date.now() - started, bytes: 0 });
+      return;
+    }
+    let status = 404;
+    let payload = errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`);
+    let publicId = null;
+    try {
+      const r = await dispatch(req);
+      status = r.status;
+      payload = r.payload;
+      publicId = r.publicId === undefined ? null : r.publicId;
+    } catch (e) {
+      if (e && e.code === 'payload_too_large') {
+        // P7-7 §⑩：请求体超限 → 413 payload_too_large（不再是 500 internal_error）
+        status = 413;
+        payload = errEnvelope('payload_too_large', e.message);
+        logger.warn('api', 'api.reject', `payload_too_large: ${urlPath}`, { path: urlPath, code: 'payload_too_large', limit: e.limit });
+      } else {
+        status = 500;
+        payload = errEnvelope('internal_error', e.message || '服务端内部错误');
+        logger.error('api', 'api.err', `处理 ${urlPath} 异常`, { message: e.message, stack: e.stack });
+      }
+    }
+    // §4.6 日志脱敏：只记路径与玩家 publicId（不记 token/密码/载荷全文）
+    logger.info('api', 'api.req', `${req.method} ${req.url}`, {
+      method: req.method, path: urlPath, query: req.url.includes('?') ? req.url.split('?')[1] : null, publicId,
+    });
     const bytes = send(res, status, payload);
-    logger.info('api', 'api.res', `${req.method} ${urlPath} -> ${status}`, { method: req.method, path: urlPath, status, durationMs: Date.now() - started, bytes });
+    logger.info('api', 'api.res', `${req.method} ${urlPath} -> ${status}`, { method: req.method, path: urlPath, status, durationMs: Date.now() - started, bytes, publicId });
   };
 }
 
-// start(port) → Promise<{server, port, close}>；端口 0 = 临时端口（测试/冒烟用）
+/* ---------- 启动 ---------- */
+
+// start(options) → Promise<{server, port, close, store, runtime}>；端口 0 = 临时端口（测试/冒烟用）
+// 缺省不装配档案存储（沿用无状态基线）；传 dataDir/store/enableStore 或设 DL_DATA_DIR 才落盘（D-129）。
 async function start(options) {
   const opts = options || {};
   const logger = opts.logger || createLogger();
-  const server = http.createServer(createHandler(logger, opts.routes));
+  const runtime = await createRuntime(logger, opts); // 失败（锁占用/版本拒绝）原样冒泡 → 调用方 exit 1
+  const server = http.createServer(createHandler(logger, opts.routes, runtime));
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(opts.port || 0, opts.host || '127.0.0.1', resolve);
+    server.listen(opts.port || 0, opts.host || DEFAULT_HOST, resolve);
   });
   const port = server.address().port;
   return {
     server,
     port,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    store: runtime.store,
+    runtime,
+    close: async () => {
+      await new Promise((resolve) => server.close(() => resolve()));
+      if (runtime.store) await runtime.store.close();
+    },
   };
 }
 
@@ -459,13 +1110,35 @@ async function main() {
       if (r.levelValue >= 3) console.log(`[${r.level}] ${r.channel} ${r.event} ${r.msg}${Object.keys(r.data).length ? ' ' + JSON.stringify(r.data) : ''}`);
     },
   });
-  const port = Number(process.env.DL_PORT) || 3000;
-  const s = await start({ logger, port, host: process.env.DL_HOST || '127.0.0.1' });
+  const port = Number(process.env.DL_PORT) || DEFAULT_PORT;
+  // 生产入口：显式装配档案存储（DL_DATA_DIR 或默认 <repo>/runtime），失败则拒绝启动（§3.4，退出码 1）
+  const s = await start({
+    logger,
+    port,
+    host: process.env.DL_HOST || DEFAULT_HOST,
+    enableStore: true,
+    versions: { engine: VERSION },
+  });
   // 启动信息用普通 stdout（不属于日志矩阵事件，P0-8 审查 P3：避免占用 battle.create/api.req 语义）
   console.log(`[server] Debug-Lite v${VERSION} listening http://${s.server.address().address}:${port}`);
+  if (s.store) {
+    console.log(`[store] archive=${s.store.index.size()} seq=${s.store.maxSeq()} dataDir=${s.store.dataDir}`);
+  }
 }
 
-module.exports = { createHandler, start, loadTable, tableNames, okEnvelope, errEnvelope, VERSION };
+module.exports = {
+  createHandler,
+  createRuntime,
+  start,
+  loadTable,
+  tableNames,
+  okEnvelope,
+  errEnvelope,
+  isLegacyPath,
+  stripPlayerId,
+  bearerOf,
+  VERSION,
+};
 
 if (require.main === module) {
   main().catch((e) => { console.error(e); process.exitCode = 1; });

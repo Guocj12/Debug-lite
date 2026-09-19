@@ -261,6 +261,7 @@ test('AD-8 日志矩阵：存储层只发 store 通道、事件名均为 store.*
     await store.setNickname({ playerId: acc.playerId, nickname: 'x' });
     await store.snapshot.gc({ retentionDays: 0, at: Date.now() + 86400000 });
     await store.rebuildIndex();
+    await store.removeArchive(acc.playerId, { reason: 'log-matrix' }); // 墓碑事件（store.player.removed）
     await store.close();
     const records = logger.records.filter((r) => r.channel !== 'log');
     assert.ok(records.length > 5, '应有可观测事件');
@@ -269,6 +270,7 @@ test('AD-8 日志矩阵：存储层只发 store 通道、事件名均为 store.*
       'store.journal.truncate', 'store.journal.compact', 'store.recover', 'store.index.rebuild', 'store.migrate',
       'store.snapshot.write', 'store.snapshot.gc', 'store.snapshot.missing', 'store.auth.register', 'store.auth.login',
       'store.auth.reject', 'store.auth.lock', 'store.abuse.suspect', 'store.error',
+      'store.player.removed', // P7-3 追加：墓碑删除（通道 store、首段 store → 无需新增通道/前缀映射）
     ]);
     for (const rec of records) {
       assert.equal(rec.channel, 'store', `非 store 通道: ${rec.channel}`);
@@ -279,6 +281,7 @@ test('AD-8 日志矩阵：存储层只发 store 通道、事件名均为 store.*
     assert.ok(records.some((r) => r.event === 'store.close'));
     assert.ok(records.some((r) => r.event === 'store.journal.append'));
     assert.ok(records.some((r) => r.event === 'store.snapshot.write'));
+    assert.ok(records.some((r) => r.event === 'store.player.removed'), '墓碑删除必须可观测');
   } finally {
     if (store.isOpen()) await store.close();
     rmTmp(dir);

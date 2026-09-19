@@ -248,6 +248,11 @@ test('ARC-5 applyRecordToArchive：账号/密码/封禁/昵称/池/批次/晋升
   shell.record.appliedSeq = 0;
   const unk = await arch.applyRecordToArchive(shell, { seq: 13, type: 'account.created', at: 13, playerId: PID1, bogus: true }, PID1, c2);
   assert.equal(typeof unk.changed, 'boolean');
+  // 墓碑（P7-3）：纯函数只报告 removed=true（删文件/摘索引由适配器负责，不渗进档案模型）
+  const tomb = await arch.applyRecordToArchive(shell, { seq: 14, type: 'player.removed', at: 14, playerId: PID1, reason: 'x' }, PID1, c2);
+  assert.deepEqual(tomb, { changed: true, removed: true });
+  assert.ok(arch.RECORD_TYPES.includes('player.removed'));
+  assert.deepEqual(arch.playersOfRecord({ type: 'player.removed', playerId: PID1 }), [PID1]);
 });
 
 test('ARC-6 配置记录：create/update/delete/激活/乐观字段/缺槽保护', async () => {
@@ -389,6 +394,10 @@ test('ARC-8 aggregateRecords + checkpoint 应用（检查点精度重建）', as
   const per = arch.aggregateRecords(records);
   assert.equal(per[PID1].quickGames, 1);
   assert.equal(per[PID1].quickWins, 1);
+  // 墓碑把该玩家的历史从聚合里抹掉（检查点精度下删除同样生效，D-134）
+  const perWithTomb = arch.aggregateRecords([...records, { seq: 6, type: 'player.removed', at: 6, playerId: PID1, reason: 'x' }]);
+  assert.equal(perWithTomb[PID1], undefined, '墓碑后该玩家不再出现在检查点聚合中');
+  assert.ok(perWithTomb[PID2], '其他玩家不受影响');
   assert.equal(per[PID1].points, 20);
   assert.equal(per[PID1].tier, 'rare');
   assert.equal(per[PID1].nickname, 'n1');

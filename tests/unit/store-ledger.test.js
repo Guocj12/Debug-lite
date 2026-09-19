@@ -204,6 +204,13 @@ test('LED-10 单玩家记录构造器：账号/密码/封禁/昵称/池/配置/�
   assert.equal(ledger.buildNicknameRecord({ playerId: 'pl_1', nickname: 'x', at: 1 }).nickname, 'x');
   assert.equal(ledger.buildPoolRecord({ playerId: 'pl_1', at: 1 }).inPool, true);
   assert.equal(ledger.buildPoolRecord({ playerId: 'pl_1', inPool: false, at: 1 }).inPool, false);
+  // 墓碑（P7-3，D-134）：player.removed 是 journal 记录类型，可重放
+  const tomb = ledger.buildRemovedRecord({ playerId: 'pl_1', reason: 'debug', at: 1 });
+  assert.equal(tomb.type, 'player.removed');
+  assert.equal(tomb.playerId, 'pl_1');
+  assert.equal(tomb.reason, 'debug');
+  assert.equal(tomb.v, 1);
+  assert.equal(ledger.buildRemovedRecord({ playerId: 'pl_1', at: 1 }).reason, null);
   const cfg = ledger.buildConfigRecord({ playerId: 'pl_1', slotId: 'slot2', snapshotHash: 'sha256:s', configHash: 'sha256:c', create: true, activate: true, at: 1 });
   assert.equal(cfg.type, 'player.config.saved');
   assert.equal(cfg.create, true);

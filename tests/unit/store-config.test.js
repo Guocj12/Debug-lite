@@ -153,3 +153,126 @@ test('CFG-7 openStore：一步装配 + 打开 + 关闭（临时目录）', async
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   }
 });
+
+test('CFG-8 配置合并出口深拷贝（P7-2 审查 P2）：就地改配置不污染默认值、不跨实例泄漏', () => {
+  const dir = mkTmp();
+  try {
+    // ① loadConfigs 出口不得与模块级默认值共享引用（含嵌套层）
+    const a = configMod.loadConfigs({ configDir: dir });
+    assert.notEqual(a.service, configMod.DEFAULT_SERVICE_CONFIG, 'service 根对象不共享');
+    assert.notEqual(a.service.auth, configMod.DEFAULT_SERVICE_CONFIG.auth, 'auth 段不得 === DEFAULT_SERVICE_CONFIG.auth');
+    assert.notEqual(a.service.auth.scrypt, configMod.DEFAULT_SERVICE_CONFIG.auth.scrypt, '嵌套 scrypt 也不共享');
+    assert.notEqual(a.service.session, configMod.DEFAULT_SERVICE_CONFIG.session, 'session 段不共享');
+    assert.notEqual(a.rating, configMod.DEFAULT_RATING_CONFIG, 'rating 根对象不共享');
+    // ② 就地改一个实例 → 新建实例读到默认值，模块级默认值纹丝不动
+    a.service.auth.maxFailures = 999;
+    a.service.auth.scrypt.N = 2;
+    a.service.session.ttlDays = 1;
+    a.rating.cap = 1;
+    const b = configMod.loadConfigs({ configDir: dir });
+    assert.equal(b.service.auth.maxFailures, 5, '新实例必须读到默认 maxFailures');
+    assert.equal(b.service.auth.scrypt.N, 16384, '新实例必须读到默认 scrypt.N');
+    assert.equal(b.service.session.ttlDays, 7);
+    assert.equal(b.rating.cap, 3000);
+    assert.equal(configMod.DEFAULT_SERVICE_CONFIG.auth.maxFailures, 5, 'DEFAULT_SERVICE_CONFIG.auth 未被就地改动');
+    assert.equal(configMod.DEFAULT_SERVICE_CONFIG.auth.scrypt.N, 16384);
+    assert.equal(configMod.DEFAULT_SERVICE_CONFIG.session.ttlDays, 7);
+    assert.equal(configMod.DEFAULT_RATING_CONFIG.cap, 3000);
+    // ③ 真实 store 实例：改 store1.config → store2 读到默认（审查报告的最小复现路径）
+    const store1 = entry.createStore({ dataDir: dir, versions: { engine: 't', data: 't' } });
+    assert.notEqual(store1.config.auth, configMod.DEFAULT_SERVICE_CONFIG.auth, 'store.config.auth 不得 === DEFAULT_SERVICE_CONFIG.auth');
+    store1.config.auth.maxFailures = 999;
+    const store2 = entry.createStore({ dataDir: dir, versions: { engine: 't', data: 't' } });
+    assert.equal(store2.config.auth.maxFailures, 5, 'store2 不得读到 store1 的改动（跨实例泄漏）');
+    assert.equal(configMod.DEFAULT_SERVICE_CONFIG.auth.maxFailures, 5);
+    // ④ 调用方传入的 opts 对象也不得被反向共享
+    const injected = { auth: { maxFailures: 7 } };
+    const c = configMod.loadConfigs({ configDir: dir, service: injected });
+    c.service.auth.maxFailures = 8;
+    assert.equal(injected.auth.maxFailures, 7, 'opts 入参对象不被反向污染');
+    // ⑤ 语义保持：仍是**浅冻结**默认值（本次只切断共享引用，刻意不引入深冻结）
+    assert.equal(Object.isFrozen(configMod.DEFAULT_SERVICE_CONFIG), true);
+    assert.equal(Object.isFrozen(configMod.DEFAULT_SERVICE_CONFIG.auth), false, '不引入深冻结（避免合法覆盖变硬报错）');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  }
+});
+
+test('CFG-9 数据表 = 代码默认值 = schema 冻结值（三源一致，防双源漂移）；元数据键不进入运行期配置', () => {
+  const dataDir = configMod.defaultConfigDir();
+  const serviceFile = JSON.parse(fs.readFileSync(path.join(dataDir, configMod.SERVICE_CONFIG_FILE), 'utf8'));
+  const ratingFile = JSON.parse(fs.readFileSync(path.join(dataDir, configMod.RATING_CONFIG_FILE), 'utf8'));
+  // ① 表载荷 = 代码默认值（config.js）
+  assert.deepEqual(configMod.stripMeta(serviceFile), configMod.DEFAULT_SERVICE_CONFIG,
+    'service-config.json 载荷必须与 DEFAULT_SERVICE_CONFIG 逐值一致（改一处必须改两处）');
+  assert.deepEqual(configMod.stripMeta(ratingFile), configMod.DEFAULT_RATING_CONFIG,
+    'rating-config.json 载荷必须与 DEFAULT_RATING_CONFIG 逐值一致');
+  // ② 元数据键（_note/_sample）存在且不进入运行期配置
+  for (const [name, body] of [['service-config', serviceFile], ['rating-config', ratingFile]]) {
+    assert.equal(body._sample, false, `${name} 应显式标注 _sample=false（非示例内容）`);
+    assert.ok(typeof body._note === 'string' && body._note.length > 20, `${name} 应有 _note 说明数值出处`);
+    assert.ok(body._note.includes('D-'), `${name}._note 应引用决策编号（可追溯）`);
+  }
+  const loaded = configMod.loadConfigs({});
+  assert.deepEqual(loaded.sources.slice().sort(), [configMod.RATING_CONFIG_FILE, configMod.SERVICE_CONFIG_FILE].sort(),
+    '真实仓库：两张表都存在 → 都是来源');
+  for (const cfg of [loaded.service, loaded.rating]) {
+    for (const key of Object.keys(cfg)) assert.equal(key.startsWith('_'), false, `元数据键 ${key} 泄漏进运行期配置`);
+  }
+  // ③ 表 = schema.js 冻结值（门禁项 4 的同一判据，这里在存储层侧再断言一次）
+  const schema = require('../../server/data/schema.js');
+  const res = schema.validateStructure(dataDir);
+  assert.equal(res.ok, true, `真实数据表结构/冻结值必须通过：${res.detail}`);
+  // ④ 表是数值来源：覆盖仍由文件 > 内置 > opts 解析（显式 opts 最终胜出）
+  const overridden = configMod.loadConfigs({ service: { config: { maxSlots: 2 } }, rating: { cap: 2500 } });
+  assert.equal(overridden.service.config.maxSlots, 2);
+  assert.equal(overridden.rating.cap, 2500);
+  assert.equal(overridden.service.record.recentLimit, serviceFile.record.recentLimit, '未覆盖键来自表');
+});
+
+test('CFG-10 数据表校验能抓漂移（负例：篡改数值 / 未登记键 / 缺表）', () => {
+  const root = mkTmp();
+  const assetsDir = path.join(__dirname, '..', '..', 'assets');
+  const dataDir = configMod.defaultConfigDir();
+  try {
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.endsWith('.json')) fs.copyFileSync(path.join(dataDir, f), path.join(root, f));
+    }
+    const schema = require('../../server/data/schema.js');
+    assert.equal(schema.validateStructure(root, assetsDir).ok, true, '复制后应通过');
+    const read = (f) => JSON.parse(fs.readFileSync(path.join(root, f), 'utf8'));
+    const write = (f, o) => fs.writeFileSync(path.join(root, f), JSON.stringify(o, null, 2), 'utf8');
+    // ① 篡改积分数值（与 schema 冻结值不符）
+    const rc = read(configMod.RATING_CONFIG_FILE);
+    rc.cap = 9999;
+    write(configMod.RATING_CONFIG_FILE, rc);
+    let res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false, '篡改 cap 必须被抓住');
+    assert.ok(res.detail.includes('cap'), res.detail);
+    // ② 未登记键
+    const rc2 = read(configMod.RATING_CONFIG_FILE);
+    rc2.cap = 3000;
+    rc2.newKnob = 1;
+    write(configMod.RATING_CONFIG_FILE, rc2);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('未登记键'), res.detail);
+    // ③ 服务参数越界（maxSlots > 3 违反 D-131）
+    const sc = read(configMod.SERVICE_CONFIG_FILE);
+    sc.config.maxSlots = 5;
+    write(configMod.SERVICE_CONFIG_FILE, sc);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('maxSlots'), res.detail);
+    // ④ 缺表：service-config 缺失 → 必填（表是数值来源，不得静默回落）
+    const sc2 = read(configMod.SERVICE_CONFIG_FILE);
+    sc2.config.maxSlots = 3;
+    write(configMod.SERVICE_CONFIG_FILE, sc2);
+    fs.rmSync(path.join(root, configMod.SERVICE_CONFIG_FILE));
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('service-config.json 缺失'), res.detail);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  }
+});

@@ -8,6 +8,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const accountMod = require('../../server/account.js');
+const { StoreError } = require('../../server/store/errors.js');
 const { openFixture, registerPlayer, sampleLoadout, quickRecord } = require('../helpers/account.js');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -260,6 +262,7 @@ test('ACC-7 仓库镜像：形状校验 400；与出战配置一致才 verified�
     assert.deepEqual(back.data.warehouse, wh, 'PUT/GET 往返一致');
     assert.equal(back.data.warehouseHash, good.data.warehouseHash);
     assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, false);
+    assert.equal(fx.account.mirrorCacheSize(), 1, '镜像缓存按玩家计条目');
     // 未提交过镜像的玩家 → warehouse_missing
     const other = await registerPlayer(fx.auth, { username: 'Wh_2' });
     assert.equal((await fx.account.getWarehouseMirror(other.playerId)).code, 'warehouse_missing');
@@ -288,7 +291,7 @@ test('ACC-8 战绩 since 增量游标 + 未读游标 + markSeen（T-AU 覆盖点
     assert.deepEqual(all.data.records.map((e) => e.result), ['win', 'loss']);
     assert.equal(all.data.unread.attack, 2);
     assert.equal(all.data.unread.defense, 0);
-    assert.equal(all.data.nextSince, seq2);
+    assert.equal(all.data.latestSeq, seq2, 'latestSeq = 本次返回里最大的 seq');
     assert.equal(all.data.maxSeq >= seq2, true);
     assert.equal(all.data.records[0].opponentPublicId, b.publicId);
     assert.equal(all.data.records[0].seed, 11);
@@ -297,13 +300,18 @@ test('ACC-8 战绩 since 增量游标 + 未读游标 + markSeen（T-AU 覆盖点
     const inc = await fx.account.records({ playerId: a.playerId, since: seq1 });
     assert.equal(inc.data.records.length, 1);
     assert.equal(inc.data.records[0].seq, seq2);
-    assert.equal(inc.data.nextSince, seq2);
+    assert.equal(inc.data.latestSeq, seq2);
     const none = await fx.account.records({ playerId: a.playerId, since: seq2 });
     assert.equal(none.data.records.length, 0);
-    assert.equal(none.data.nextSince, seq2);
+    assert.equal(none.data.latestSeq, seq2);
     // role 过滤
     assert.equal((await fx.account.records({ playerId: a.playerId, role: 'defense' })).data.records.length, 0);
-    assert.equal((await fx.account.records({ playerId: a.playerId, limit: 1 })).data.records.length, 1);
+    // latestSeq 不是游标：limit 截断时它指向最新一条，而 unread 仍为 2（游标推进只能由 records/seen 负责）
+    const truncated = await fx.account.records({ playerId: a.playerId, limit: 1 });
+    assert.equal(truncated.data.records.length, 1);
+    assert.equal(truncated.data.records[0].seq, seq2, '返回的是最新 1 条');
+    assert.equal(truncated.data.latestSeq, seq2);
+    assert.equal(truncated.data.unread.attack, 2, '未读未被读取清空');
     // 防守方（离线也产生，§7.3）
     const def = await fx.account.records({ playerId: b.playerId, role: 'defense' });
     assert.equal(def.data.records.length, 2);
@@ -386,4 +394,43 @@ test('ACC-11 文件所有权：auth.js/account.js 不直接 IO / 不 spawn / 不
   assert.ok(/require\(\s*['"]node:crypto['"]\s*\)/.test(authSrc), 'auth.js 的随机/哈希经 node:crypto');
   assert.ok(/crypto\.randomBytes\(/.test(authSrc), 'token/盐使用 crypto.randomBytes');
   assert.ok(/scryptSync/.test(authSrc), '密码使用 scryptSync 加盐哈希');
+});
+
+test('ACC-12 模块级纯工具与信封：defaultLoadout/校验器/错误码→HTTP 映射（P7-4 直接复用）', () => {
+  // 默认配置构造（§5.3：role_bal + 3 技能 + 兜底 AI），两次调用相互独立
+  const ld = accountMod.defaultLoadout();
+  const ld2 = accountMod.defaultLoadout();
+  assert.deepEqual(ld, ld2);
+  assert.equal(ld.skills.length, 3);
+  assert.notEqual(ld, ld2, '每次返回新对象（不受调用方修改影响）');
+  ld.skills[0].params.cooldown = 999;
+  assert.deepEqual(accountMod.defaultLoadout(), ld2);
+  assert.equal(accountMod.validateLoadoutOf(ld2, {}).ok, true);
+  assert.equal(accountMod.validateLoadoutOf(ld2, {}).warehouseVerified, false);
+  // 校验器把 loadout.js 的 {where,code,message} 映射为 details 的 {path,code,message}
+  const bad = accountMod.validateLoadoutOf({ role: null, skills: [], ai: null }, {});
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.length > 0);
+  for (const e of bad.errors) assert.deepEqual(Object.keys(e).sort(), ['code', 'message', 'path']);
+  assert.equal(accountMod.validateWarehouseMirror({ buckets: { role: [] } }).ok, true);
+  assert.equal(accountMod.validateWarehouseMirror({ buckets: { role: {} } }).ok, false);
+  assert.equal(accountMod.validateWarehouseMirror(null).details[0].path, 'warehouse');
+  // 信封 + 错误码 → HTTP（§10.3）
+  assert.deepEqual(accountMod.ok({ a: 1 }), { ok: true, status: 200, code: null, message: null, data: { a: 1 }, details: [] });
+  const f = accountMod.fail('slot_limit', '满了');
+  assert.equal(f.status, 409);
+  assert.equal(f.details.length, 0);
+  for (const [code, status] of [['slot_locked', 409], ['slot_not_found', 404], ['loadout_invalid', 409], ['config_conflict', 409],
+    ['unauthorized', 401], ['session_expired', 401], ['invalid_credentials', 401], ['too_many_attempts', 429], ['weak_password', 400],
+    ['username_taken', 409], ['banned', 403], ['forbidden', 403], ['store_not_found', 404], ['bad_request', 400],
+    ['warehouse_missing', 404]]) {
+    assert.equal(accountMod.statusOf(code), status, code);
+  }
+  assert.equal(accountMod.statusOf('no_such_code'), 500, '未登记错误码 → 500');
+  assert.deepEqual(accountMod.detailOf('bad_request', 'x', 'field'), { path: 'field', code: 'bad_request', message: 'x' });
+  const mapped = accountMod.toFailure(new StoreError('slot_locked', '默认槽不可删', [{ path: 'slot1', code: 'slot_locked', message: 'x' }]), null, 'unit');
+  assert.equal(mapped.code, 'slot_locked');
+  assert.equal(mapped.status, 409);
+  assert.equal(mapped.details.length, 1);
+  assert.equal(accountMod.toFailure(new TypeError('boom'), null, 'unit').code, 'store_internal');
 });

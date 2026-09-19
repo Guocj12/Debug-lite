@@ -193,3 +193,48 @@ test('BASE-5 基线缺失/损坏 → 语义码 2（提示先 --write）；用法
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// ---------- BASE-6：锚点必须落在**受版本控制**的路径（runtime/ 被 .gitignore 忽略 → 锚点永不入库） ----------
+
+test('BASE-6 默认锚点路径入库：.audit/test-baseline.json（不在 runtime/ 下）且文件真实存在可用', () => {
+  const rel = baseline.toPosix(path.relative(baseline.REPO, baseline.BASELINE_PATH));
+  assert.equal(rel, '.audit/test-baseline.json', `默认锚点应是 .audit/test-baseline.json，实得 ${rel}`);
+  assert.equal(/^runtime\//.test(rel), false, '锚点不得落在 runtime/（.gitignore 忽略 → 新克隆/CI 上 --compare 恒 exit 2）');
+  assert.ok(rel.startsWith('.audit/'), '锚点应与既有审查快照同处 .audit/（已入库）');
+  // 入库的锚点必须真的可读（否则 --compare 对新克隆仍退化为 exit 2）
+  const rd = baseline.readBaseline(baseline.BASELINE_PATH);
+  assert.equal(rd.ok, true, `仓库内锚点应可读：${rd.message || ''}`);
+  assert.equal(rd.code, 0);
+  assert.match(rd.baseline.digest, /^[0-9a-f]{12}$/);
+  assert.ok(Array.isArray(rd.baseline.failedNames));
+  // 默认 --help 文案也应指向新路径（防止文档/提示回退到 runtime/）
+  const helpText = baseline.usage();
+  assert.ok(helpText.includes('.audit/test-baseline.json'), `用法文本应指向新锚点：${helpText}`);
+  assert.equal(helpText.includes('runtime/test-baseline.json'), false, '用法文本不得再提 runtime/ 锚点');
+});
+
+// ---------- BASE-7：--write 护栏（投毒：红状态必须拒绝覆写绿锚点） ----------
+
+test('BASE-7 投毒：--write 护栏——有失败 → 拒绝（exit 3）；--force 才放行；绿状态放行', () => {
+  const green = baseline.buildFingerprint({ total: 679, passed: 679, failed: 0, failedNames: [] });
+  const red = baseline.buildFingerprint({
+    total: 683, passed: 680, failed: 3, failedNames: ['tests/unit/ranked.test.js :: T-RK-1d'],
+  });
+  const greenOk = baseline.writeGuard(green, {});
+  assert.equal(greenOk.ok, true);
+  assert.equal(greenOk.code, 0);
+  assert.equal(greenOk.forced, false);
+  // 红状态：拒绝，且必须是"用法/内部错误"语义码 3（不是 0/1）
+  const refused = baseline.writeGuard(red, {});
+  assert.equal(refused.ok, false, '红状态必须拒绝 --write');
+  assert.equal(refused.code, 3);
+  assert.equal(refused.failed, 3);
+  assert.ok(refused.message.includes('拒绝写入基线'), `拒绝文案应点明拒绝：${refused.message}`);
+  assert.ok(refused.message.includes('--force'), `拒绝文案应提示 --force：${refused.message}`);
+  // 显式 --force：放行但标记 forced（供 CLI 打印"已锚定含失败的基线"）
+  const forced = baseline.writeGuard(red, { force: true });
+  assert.equal(forced.ok, true);
+  assert.equal(forced.forced, true);
+  // 护栏是"有失败"而非"总数"：failed 缺失时按 0 处理（不误拒）
+  assert.equal(baseline.writeGuard({ total: 5, passed: 5, failedNames: [] }, {}).ok, true);
+});

@@ -228,6 +228,16 @@ function buildPoolRecord(input) {
   return { type: 'player.pool.changed', v: RECORD_VERSION, at: o.at, playerId: o.playerId, inPool: o.inPool !== false };
 }
 
+// 墓碑记录（P7-3 追加，D-134 一致）：删除档案必须可重放 —— 只删文件会在"journal 全量重放"时复活账号，
+//   故删除走 journal：append(player.removed) → apply（删档案文件 + 摘索引）；重放遇到墓碑不再重建。
+function buildRemovedRecord(input) {
+  const o = input || {};
+  return {
+    type: 'player.removed', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    reason: o.reason === undefined ? null : o.reason,
+  };
+}
+
 function buildConfigRecord(input) {
   const o = input || {};
   return {
@@ -278,6 +288,7 @@ module.exports = {
   buildBanRecord,
   buildNicknameRecord,
   buildPoolRecord,
+  buildRemovedRecord,
   buildConfigRecord,
   buildBatchRecord,
   buildPromoteRecord,

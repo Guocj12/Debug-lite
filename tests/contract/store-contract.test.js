@@ -9,7 +9,7 @@
  *   CN-3 配置槽规则（≤3/必有出战/默认不可删/乐观锁）  CN-4 journal 幂等（appliedSeq + battleId）
  *   CN-5 结算事务（双向记账 / 排位双轨 / 防守方不掉段 / 重复 no-op）  CN-6 索引与排行榜
  *   CN-7 战绩视图与未读游标      CN-8 快照库（内容寻址/引用计数/GC）  CN-9 会话表
- *   CN-10 适配器选择             CN-11 sqlite 占位契约
+ *   CN-10 适配器选择             CN-11 sqlite 占位契约      CN-13 墓碑（player.removed）
  * 临时目录：全部在 os.tmpdir() 下（DL_DATA_DIR 语义），绝不污染仓库 runtime/。
  */
 const { test } = require('node:test');
@@ -459,9 +459,37 @@ const CASES = [
     store.sessions.put({ tokenHash: 'keep', playerId: pid, createdAt: now, expiresAt: now + DAY });
     store.sessions.save();
     assert.equal(fs.existsSync(path.join(dir, 'sessions.json')), true);
+    // peek：只读探针（不做过期清理、不落盘）——区分"会话不存在"与"刚过期"
+    assert.equal(store.sessions.peek('keep').tokenHash, 'keep');
+    assert.equal(store.sessions.peek('nope'), null);
     const raw = JSON.parse(fs.readFileSync(path.join(dir, 'sessions.json'), 'utf8'));
     assert.ok(raw.sessions.some((s) => s.tokenHash === 'keep'));
     assert.throws(() => store.sessions.put({ playerId: pid }), (e) => e.code === 'bad_request');
+  }],
+
+  ['CN-13 墓碑记录 player.removed：删除走 journal、可重放、幂等', async ({ store }) => {
+    const a = await account(store, 'rm');
+    const pid = a.archive.playerId;
+    assert.equal(await store.removeArchive(pid, { reason: 'debug-cleanup' }), true);
+    assert.equal(await store.loadArchive(pid), null, '档案文件已删');
+    assert.equal(store.index.has(pid), false, '索引条目已摘除');
+    const tomb = (await store.readRecords({})).find((r) => r.type === 'player.removed');
+    assert.ok(tomb, '删除必须落 journal（D-134：journal 是唯一真源）');
+    assert.equal(tomb.playerId, pid);
+    assert.equal(tomb.reason, 'debug-cleanup');
+    assert.ok(Number.isInteger(tomb.seq));
+    // 幂等：再删 → false 且不产生第二条墓碑
+    assert.equal(await store.removeArchive(pid), false);
+    assert.equal((await store.readRecords({})).filter((r) => r.type === 'player.removed').length, 1);
+    // 重复 apply 同一条墓碑 → 不报错、不再变更（幂等）
+    const again = await store.applyRecord(tomb);
+    assert.equal(again.applied, 0);
+    assert.equal(await store.loadArchive(pid), null);
+    // reason 可缺省
+    const b = await account(store, 'rm2');
+    await store.removeArchive(b.archive.playerId);
+    assert.equal((await store.readRecords({})).find((r) => r.type === 'player.removed' && r.playerId === b.archive.playerId).reason, null);
+    await assert.rejects(() => store.removeArchive(''), (e) => e.code === 'bad_request');
   }],
 
   ['CN-10 适配器选择：DL_STORE=json|sqlite|非法', async ({ store, dir }) => {
@@ -521,7 +549,7 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
     for (const m of ['freeze', 'put', 'get', 'has', 'list', 'ref', 'refCount', 'gc', 'stats']) {
       assert.equal(typeof store.snapshot[m], 'function', `store.snapshot 缺方法 ${m}`);
     }
-    for (const m of ['put', 'get', 'touch', 'revoke', 'revokePlayer', 'list', 'prune', 'size']) {
+    for (const m of ['put', 'get', 'peek', 'touch', 'revoke', 'revokePlayer', 'list', 'prune', 'size']) {
       assert.equal(typeof store.sessions[m], 'function', `store.sessions 缺方法 ${m}`);
     }
     assert.equal(resolveDataDir(dir), path.resolve(dir));

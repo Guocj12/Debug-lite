@@ -28,7 +28,7 @@ function isFatalArchiveError(err) {
 //   applyRecords(records)               —— 幂等批量 apply（内部维护索引与水位）
 //   saveIndex()                         —— 原子落盘索引
 //   rebuildIndexFromArchives(archives)  —— 用档案集合重建索引
-//   rebuildSnapshotRefs()               —— 按 journal 重建快照引用计数
+//   rebuildDerivedState()               —— 按 journal 重建派生内存状态（快照引用计数 + 墓碑水位）
 async function recoverStore(host) {
   const { journal, index, logger } = host;
   const report = {
@@ -41,6 +41,7 @@ async function recoverStore(host) {
     truncatedSegments: 0,
   };
   report.journalSeq = journal.maxSeq();
+  report.replayed = 0;
 
   // ---- 步骤 2/5：索引基线 ----
   let baseSeq = 0;
@@ -110,8 +111,9 @@ async function recoverStore(host) {
     let chunk = [];
     const flushChunk = async () => {
       if (chunk.length === 0) return;
-      await host.applyRecords(chunk);
-      report.replayed += chunk.length;
+      const res = await host.applyRecords(chunk);
+      // replayed = **实际产生变更**的记录数（幂等跳过不计），干净重启即为 0（§6.4 步骤 4）
+      report.replayed += res && Number.isInteger(res.recordsApplied) ? res.recordsApplied : chunk.length;
       chunk = [];
     };
     await journal.replay({ fromSeq: startSeq }, async (record) => {
@@ -121,10 +123,10 @@ async function recoverStore(host) {
     await flushChunk();
   }
 
-  // ---- 步骤 5：水位收敛 + 快照引用计数 ----
+  // ---- 步骤 5：水位收敛 + 派生内存状态（快照引用计数 / 墓碑水位） ----
   index.setSeq(report.journalSeq);
   await host.saveIndex();
-  host.rebuildSnapshotRefs();
+  host.rebuildDerivedState();
   logger.info('store', 'store.recover',
     `恢复完成：journal seq=${report.journalSeq}，重放 ${report.replayed} 条，起点 seq=${startSeq}`
     + (report.quarantined.length > 0 ? `，隔离损坏档案 ${report.quarantined.length} 个` : ''),

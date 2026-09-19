@@ -133,9 +133,29 @@ function validatePassword(password, cfg) {
   return { ok: true, code: null, message: null };
 }
 
-function validateUsername(username) {
-  if (archiveMod.isValidUsername(username)) return { ok: true, code: null, message: null };
-  return { ok: false, code: 'bad_request', message: '用户名需 3~24 字符，且只含 [A-Za-z0-9_-]' };
+// 用户名规则（§4.2：3~24 字符，只含 [A-Za-z0-9_-]）；长度上下界取自 config.auth（usernameMin/usernameMax）
+const USERNAME_CHARS_RE = /^[A-Za-z0-9_-]+$/;
+
+function usernameBoundsOf(cfg) {
+  const c = cfg || {};
+  return { min: posInt(c.usernameMin, 3) || 3, max: posInt(c.usernameMax, 24) || 24 };
+}
+
+function validateUsername(username, cfg) {
+  const b = usernameBoundsOf(cfg);
+  if (typeof username === 'string' && username.length >= b.min && username.length <= b.max && USERNAME_CHARS_RE.test(username)) {
+    return { ok: true, code: null, message: null };
+  }
+  return { ok: false, code: 'bad_request', message: `用户名需 ${b.min}~${b.max} 字符，且只含 [A-Za-z0-9_-]` };
+}
+
+// 昵称上界：config.auth.nicknameMax，但档案层不变量恒为 ≤16（§4.2/§5.2 的 isValidNickname）
+function nicknameMaxOf(cfg) {
+  return Math.min(posInt((cfg || {}).nicknameMax, 16) || 16, 16);
+}
+
+function isValidNicknameWithCfg(nickname, cfg) {
+  return archiveMod.isValidNickname(nickname) && nickname.length <= nicknameMaxOf(cfg);
 }
 
 // 反用户名枚举的时间对齐：账号不存在时也做一次等价 scrypt（§4.6 统一错误码的补充）
@@ -324,6 +344,14 @@ function createAuth(options) {
   const limiter = createFailureLimiter({ config: authCfg, now: nowFn });
   const usernameIndex = new Map(); // lowercase → playerId
   let usernameIndexBuilt = false;
+  let registerChain = Promise.resolve(); // 注册临界区（§6.5：用户名唯一性 + 建档案原子）
+
+  // 串行化注册：同一进程内并发注册同名账号时，只有第一个成功，其余 409 username_taken
+  function withRegisterLock(fn) {
+    const run = registerChain.then(fn, fn);
+    registerChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
   function logReject(op, data) {
     log.warn('store', 'store.auth.reject', `鉴权拒绝（${op}）`, Object.assign({ op }, data || {}));
@@ -366,6 +394,22 @@ function createAuth(options) {
     return { token, tokenHash, createdAt, expiresAt };
   }
 
+  // 会话解析（§4.4 步骤 2）：必须先 peek 再 get —— get 会清理过期行，
+  // 若只调 get，过期会话与伪造 token 无法区分，`session_expired`（§10.3）将永远不可达。
+  function resolveSession(tokenHash) {
+    const peeked = typeof store.sessions.peek === 'function' ? store.sessions.peek(tokenHash) : null;
+    const expired = !!peeked && Number.isInteger(peeked.expiresAt) && peeked.expiresAt <= Date.now();
+    const rec = store.sessions.get(tokenHash);
+    if (!rec) {
+      if (expired) {
+        store.sessions.revoke(tokenHash); // 顺手清理并发窗口内的残留
+        return { ok: false, expired: true, failure: fail('session_expired', '会话已过期，请重新登录') };
+      }
+      return { ok: false, expired: false, failure: fail('unauthorized', '会话不存在或已失效') };
+    }
+    return { ok: true, expired: false, rec };
+  }
+
   // 滑动续期（§4.3：最多延长到 createdAt + maxTotalDays；写盘节流 60s）
   function renewPatch(rec) {
     const now = nowFn();
@@ -391,7 +435,7 @@ function createAuth(options) {
     const o = input || {};
     try {
       const username = o.username;
-      const usernameCheck = validateUsername(username);
+      const usernameCheck = validateUsername(username, authCfg); // 上下界取 config.auth.usernameMin/usernameMax
       const pwCheck = validatePassword(o.password, authCfg);
       const nickname = o.nickname === undefined || o.nickname === null ? username : o.nickname;
       const lower = typeof username === 'string' ? username.toLowerCase() : null;
@@ -403,8 +447,8 @@ function createAuth(options) {
       if (!usernameCheck.ok) {
         return fail('bad_request', usernameCheck.message, [detailOf('bad_request', usernameCheck.message, 'username')]);
       }
-      if (!archiveMod.isValidNickname(nickname)) {
-        return fail('bad_request', '昵称需 1~16 字符', [detailOf('bad_request', '非法昵称', 'nickname')]);
+      if (!isValidNicknameWithCfg(nickname, authCfg)) {
+        return fail('bad_request', `昵称需 1~${nicknameMaxOf(authCfg)} 字符`, [detailOf('bad_request', '非法昵称', 'nickname')]);
       }
       if (!pwCheck.ok) {
         return fail('weak_password', pwCheck.message, [detailOf('weak_password', pwCheck.message, 'password')]);
@@ -415,18 +459,28 @@ function createAuth(options) {
         return fail('username_taken', '用户名已被占用（大小写不敏感）', [detailOf('username_taken', '用户名已存在', 'username')]);
       }
       const auth = Object.assign(hashPassword(o.password, authCfg), { username, usernameLower: lower });
-      const created = await account.createPlayerArchive({
-        playerId: o.playerId,
-        publicId: o.publicId,
-        nickname,
-        auth,
-        warehouse: o.warehouse,
-        tier: o.tier,
-        at: nowFn(),
+      // 注册临界区（§6.5）：唯一性检查 + 建档案必须原子；scrypt 摘要留在锁外算（慢操作不占锁）
+      const outcome = await withRegisterLock(async () => {
+        await ensureUsernameIndex();
+        if (usernameIndex.has(lower)) return { taken: true };
+        const res = await account.createPlayerArchive({
+          playerId: o.playerId,
+          publicId: o.publicId,
+          nickname,
+          auth,
+          warehouse: o.warehouse,
+          tier: o.tier,
+          at: nowFn(),
+        });
+        if (res.ok) usernameIndex.set(lower, res.data.archive.playerId);
+        return { res };
       });
-      if (!created.ok) return created;
-      const archive = created.data.archive;
-      usernameIndex.set(lower, archive.playerId);
+      if (outcome.taken) {
+        logReject('register', { reason: 'username_taken' });
+        return fail('username_taken', '用户名已被占用（大小写不敏感）', [detailOf('username_taken', '用户名已存在', 'username')]);
+      }
+      if (!outcome.res.ok) return outcome.res;
+      const archive = outcome.res.data.archive;
       const token = issueToken({ playerId: archive.playerId, ip: o.ip, userAgent: o.userAgent });
       log.info('store', 'store.auth.register', `注册成功 ${archive.publicId}`, {
         publicId: archive.publicId, tier: archive.progress.tier, points: archive.rating.points,
@@ -511,14 +565,14 @@ function createAuth(options) {
       const token = tokenOf(input);
       if (!token) return fail('unauthorized', '缺少会话 token');
       const tokenHash = tokenHashOf(token);
-      const rec = store.sessions.get(tokenHash);
-      if (!rec) {
-        logReject('logout', { reason: 'unauthorized' });
-        return fail('unauthorized', '会话不存在或已过期');
+      const session = resolveSession(tokenHash);
+      if (!session.ok) {
+        logReject('logout', { reason: session.expired ? 'session_expired' : 'unauthorized' });
+        return session.failure;
       }
       store.sessions.revoke(tokenHash);
       log.debug('store', 'store.write', 'auth.logout', { op: 'logout', publicId: null });
-      return ok({ revoked: true, playerId: rec.playerId });
+      return ok({ revoked: true, playerId: session.rec.playerId });
     } catch (err) {
       return toFailure(err, log, 'logout');
     }
@@ -531,11 +585,12 @@ function createAuth(options) {
       const token = tokenOf(o);
       if (!token) return fail('unauthorized', '缺少会话 token');
       const tokenHash = tokenHashOf(token);
-      const rec = store.sessions.get(tokenHash);
-      if (!rec) {
-        logReject('changePassword', { reason: 'unauthorized' });
-        return fail('unauthorized', '会话不存在或已过期');
+      const session = resolveSession(tokenHash);
+      if (!session.ok) {
+        logReject('changePassword', { reason: session.expired ? 'session_expired' : 'unauthorized' });
+        return session.failure;
       }
+      const rec = session.rec;
       if (o.playerId !== undefined && o.playerId !== null && o.playerId !== rec.playerId) {
         logReject('changePassword', { reason: 'forbidden', playerId: o.playerId });
         return fail('forbidden', '不能修改其他账号的密码');
@@ -579,11 +634,12 @@ function createAuth(options) {
         return fail('unauthorized', '缺少会话 token');
       }
       const tokenHash = tokenHashOf(value);
-      const rec = store.sessions.get(tokenHash);
-      if (!rec) {
-        logReject('authenticate', { reason: 'unauthorized' });
-        return fail('unauthorized', '会话无效或已过期');
+      const session = resolveSession(tokenHash);
+      if (!session.ok) {
+        logReject('authenticate', { reason: session.expired ? 'session_expired' : 'unauthorized' });
+        return session.failure;
       }
+      const rec = session.rec;
       const archive = await store.loadArchive(rec.playerId);
       if (!archive) {
         store.sessions.revoke(tokenHash);
@@ -666,6 +722,7 @@ function createAuth(options) {
 module.exports = {
   createAuth,
   createFailureLimiter,
+  // 纯函数（P7-4 登录/注册端点的预校验与凭据处理；测试直接覆盖）
   hashPassword,
   verifyPassword,
   validatePassword,
@@ -674,10 +731,4 @@ module.exports = {
   tokenHashOf,
   hash16,
   normalizeScrypt,
-  maxmemFor,
-  DEFAULT_SCRYPT,
-  DEFAULT_SESSION,
-  RENEW_THROTTLE_MS,
-  TOKEN_BYTES,
-  MS_PER_DAY,
 };

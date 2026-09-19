@@ -267,7 +267,7 @@ test('AU-8 改密：原密码错误 401；弱新密码 400；成功后旧密码�
   }
 });
 
-test('AU-9 token 过期/伪造/缺失 → 401 unauthorized；封禁档案 → 403 banned', async () => {
+test('AU-9 token 缺失/伪造 → 401 unauthorized、过期 → 401 session_expired；封禁档案 → 403 banned', async () => {
   const fx = await openFixture({ logger: makeLogger() });
   try {
     const u = await registerPlayer(fx.auth, { username: 'Tok_1' });
@@ -275,16 +275,27 @@ test('AU-9 token 过期/伪造/缺失 → 401 unauthorized；封禁档案 → 40
     assert.equal((await fx.auth.authenticate('')).code, 'unauthorized');
     assert.equal((await fx.auth.authenticate('not-a-real-token')).code, 'unauthorized');
     assert.equal((await fx.auth.logout({ token: 'not-a-real-token' })).code, 'unauthorized');
-    // 手工塞一个已过期会话（会话表读时清理 → authenticate 视为无效）
-    const token = authMod.randomToken();
-    fx.store.sessions.put({
-      tokenHash: authMod.tokenHashOf(token), playerId: u.playerId,
-      createdAt: fx.clock.now() - 10 * 86400000, expiresAt: fx.clock.now() - 86400000,
-      lastUsedAt: fx.clock.now() - 10 * 86400000,
-    });
-    const expired = await fx.auth.authenticate(token);
+    // 手工塞已过期会话（必须先 peek 再 get → 区分"不存在"与"刚过期"，否则 session_expired 永不可达）
+    const seedExpiredToken = () => {
+      const t = authMod.randomToken();
+      fx.store.sessions.put({
+        tokenHash: authMod.tokenHashOf(t), playerId: u.playerId,
+        createdAt: fx.clock.now() - 10 * 86400000, expiresAt: fx.clock.now() - 86400000,
+        lastUsedAt: fx.clock.now() - 10 * 86400000,
+      });
+      return t;
+    };
+    const expiredToken = seedExpiredToken();
+    const expired = await fx.auth.authenticate(expiredToken);
     assert.equal(expired.ok, false);
+    assert.equal(expired.code, 'session_expired', '过期会话必须返回 session_expired（§4.4 步骤 2 / §10.3）');
     assert.equal(expired.status, 401);
+    assert.equal(fx.store.sessions.size(), 1, '过期行已被读时懒清理（只剩注册会话）');
+    // 过期 token 走 logout / changePassword 同样报 session_expired（三处共用同一解析）
+    assert.equal((await fx.auth.logout({ token: seedExpiredToken() })).code, 'session_expired');
+    assert.equal((await fx.auth.changePassword({
+      token: seedExpiredToken(), oldPassword: PASSWORD, newPassword: 'newpw12345',
+    })).code, 'session_expired');
     // 封禁（store.setBanned 会撤销全部会话）
     const banned = await fx.store.setBanned({ playerId: u.playerId, banned: true, reason: 'test' });
     assert.equal(banned.flags.banned, true);
@@ -351,6 +362,76 @@ test('AU-11 会话滑动续期：TTL 内每次鉴权延长 expiresAt，但不超
     assert.ok(second.data.session.lastUsedAt > first.data.session.lastUsedAt);
   } finally {
     await fx.cleanup();
+  }
+});
+
+test('AU-13 并发注册同名账号 → 注册临界区保证唯一（大小写变体也只有 1 个成功）', async () => {
+  const fx = await openFixture({});
+  try {
+    // 独立审查实测的原始症状：Race_1 / race_1 / RACE_1 三个并发注册全部成功、盘上 3 份 usernameLower="race_1"
+    const mixed = await Promise.all(['Race_1', 'race_1', 'RACE_1'].map((username) => fx.auth.register({
+      username, password: PASSWORD, nickname: username,
+    })));
+    assert.equal(mixed.filter((r) => r.ok).length, 1, '大小写变体并发注册只允许 1 个成功');
+    assert.equal(mixed.filter((r) => r.code === 'username_taken').length, 2);
+    assert.equal(fx.store.listPlayerIds().length, 1, '盘上只有 1 份档案');
+    const mixedIds = new Set(mixed.filter((r) => r.ok).map((r) => r.data.playerId));
+    assert.equal(mixedIds.size, 1);
+    assert.equal((await fx.auth.login({ username: 'rAcE_1', password: PASSWORD })).ok, true, '可用任意大小写登录');
+    // 再压一轮完全同名（6 路并发）
+    const attempts = await Promise.all(Array.from({ length: 6 }, (_, i) => fx.auth.register({
+      username: 'Race_2', password: PASSWORD, nickname: `竞态${i}`,
+    })));
+    assert.equal(attempts.filter((r) => r.ok).length, 1, '只有一个注册成功');
+    assert.equal(attempts.filter((r) => r.code === 'username_taken').length, 5);
+    assert.equal(fx.store.listPlayerIds().length, 2, '只新增一个档案');
+    assert.equal((await fx.auth.register({ username: 'RACE_2', password: PASSWORD })).code, 'username_taken');
+    // usernameLower 不重复（审查症状的直接断言）
+    const lowers = [];
+    for (const playerId of fx.store.listPlayerIds()) {
+      lowers.push((await fx.store.loadArchive(playerId)).auth.usernameLower);
+    }
+    assert.deepEqual(lowers.slice().sort(), ['race_1', 'race_2'], 'usernameLower 全局唯一');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('AU-14 配置生效：usernameMin/usernameMax/nicknameMax 来自 config.auth（不再硬编码）', async () => {
+  // 走 store.config（service-config 的口径）→ auth 与 account 同时可见
+  const fx = await openFixture({
+    storeOpts: { config: { auth: { usernameMin: 6, usernameMax: 8, nicknameMax: 4, scrypt: { N: 1024 } } } },
+    config: null,
+  });
+  try {
+    assert.equal((await fx.auth.register({ username: 'abcde', password: PASSWORD })).code, 'bad_request', '5 < usernameMin=6');
+    assert.equal((await fx.auth.register({ username: 'abcdefghi', password: PASSWORD })).code, 'bad_request', '9 > usernameMax=8');
+    assert.equal((await fx.auth.register({ username: 'abcd-ef', password: PASSWORD, nickname: '12345' })).code, 'bad_request', '昵称 5 > nicknameMax=4');
+    assert.equal((await fx.auth.register({ username: 'abcd ef', password: PASSWORD })).code, 'bad_request', '字符集仍受限');
+    const okRes = await fx.auth.register({ username: 'abcd_ef', password: PASSWORD, nickname: '四字' });
+    assert.equal(okRes.ok, true, '在界内可通过');
+    assert.equal(okRes.data.nickname, '四字');
+    // 档案侧的写路径吃同一个 nicknameMax
+    assert.equal((await fx.account.setNickname({ playerId: okRes.data.playerId, nickname: '五个字符啊' })).code, 'bad_request');
+    assert.equal((await fx.account.setNickname({ playerId: okRes.data.playerId, nickname: '三字' })).ok, true);
+    // 注意：nicknameMax(4) < usernameMax(8) 时，缺省昵称（=用户名）可能超界 → 需显式给短昵称
+    assert.equal((await fx.auth.register({ username: 'abcdefg', password: 'short', nickname: '短' })).code, 'weak_password');
+    assert.equal((await fx.auth.register({ username: 'abcdefg', password: PASSWORD })).code, 'bad_request',
+      '缺省昵称 = 用户名（7 > nicknameMax=4）→ 拒绝（配置约束优先于缺省）');
+  } finally {
+    await fx.cleanup();
+  }
+  // 纯函数也读配置
+  assert.equal(authMod.validateUsername('abcde', { usernameMin: 6 }).ok, false);
+  assert.equal(authMod.validateUsername('abcdef', { usernameMin: 6 }).ok, true);
+  assert.equal(authMod.validateUsername('abc').ok, true, '缺省 3~24');
+  // 独立审查的探针路径：createAuth({config:{auth:{usernameMin:10}}})
+  const authOnly = await openFixture({ config: { auth: { usernameMin: 10 } } });
+  try {
+    assert.equal((await authOnly.auth.register({ username: 'abc', password: PASSWORD })).code, 'bad_request');
+    assert.equal((await authOnly.auth.register({ username: 'abcdefghij', password: PASSWORD })).ok, true);
+  } finally {
+    await authOnly.cleanup();
   }
 });
 

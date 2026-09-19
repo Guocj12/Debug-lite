@@ -20,6 +20,8 @@ const PUBLIC_ID_RE = /^u_[0-9a-f]{8}$/;
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,24}$/;
 
 // journal 记录类型全表（§6.2；未登记类型 → store.error 而非静默忽略）
+// 说明：`player.removed` 是 P7-3 追加的**墓碑记录**（管理端删除调试/bot 档案用）——journal 是唯一真源，
+//   删除必须可重放，故不能只删档案文件；墓碑 seq 之后的同名玩家记录才会重建档案（见 adapter 的 removedAt 守卫）。
 const RECORD_TYPES = Object.freeze([
   'account.created',
   'account.password.changed',
@@ -28,6 +30,7 @@ const RECORD_TYPES = Object.freeze([
   'player.config.saved',
   'player.nickname.changed',
   'player.pool.changed',
+  'player.removed',
   'ranked.batch',
   'ranked.promoted',
   'admin.bot.injected',
@@ -611,6 +614,10 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
     }
     case 'battle.recorded':
       return applyBattleRecorded(archive, record, playerId, ctx);
+    case 'player.removed':
+      // 墓碑：档案应被删除（文件/索引由适配器负责）。本纯函数只报告"该档案进入已删除态"，
+      //   便于直接调用本函数的测试与上层判断；不在这里改档案字段（避免"删除"语义渗进档案模型）。
+      return { changed: true, removed: true };
     case 'checkpoint':
       return applyCheckpoint(archive, record, playerId);
     default:
@@ -635,6 +642,11 @@ function aggregateRecords(records) {
     return perPlayer[playerId];
   };
   for (const record of records || []) {
+    // 墓碑：该玩家的历史从检查点里一并抹掉（journal 全量重放时账目不得复活，D-134）
+    if (record.type === 'player.removed') {
+      delete perPlayer[record.playerId];
+      continue;
+    }
     if (record.type === 'account.created' || record.type === 'admin.bot.injected') {
       const t = ensure(record.playerId);
       t.publicId = record.publicId || t.publicId;
@@ -777,16 +789,21 @@ function defenseSummaryOf(archive, query) {
 
 // ---------- 对手去重窗口的存储原语（D-136 / §8.2） ----------
 
+// 去重窗口判定：返回 true = 该对手已过冷却、可被抽取。
+// 无档案 / 无 pool 段（P7-3 纯函数路径）→ 视为"无任何历史对手" → true（保守放行，不抛错）
 function opponentCooldownOk(archive, opponentPlayerId, hours, at) {
   if (hours <= 0) return true;
-  const last = archive.pool.lastOpponentAt[opponentPlayerId];
+  const map = archive && archive.pool && archive.pool.lastOpponentAt;
+  if (!map || typeof map !== 'object') return true;
+  const last = map[opponentPlayerId];
   if (!Number.isInteger(last)) return true;
   return at - last >= hours * 3600000;
 }
 
 function recentOpponents(archive, hours, at) {
   const out = new Set();
-  for (const [playerId, last] of Object.entries(archive.pool.lastOpponentAt)) {
+  const map = (archive && archive.pool && archive.pool.lastOpponentAt) || {};
+  for (const [playerId, last] of Object.entries(map)) {
     if (at - last < hours * 3600000) out.add(playerId);
   }
   return out;

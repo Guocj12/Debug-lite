@@ -8,7 +8,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { openFixture, registerPlayer, sampleLoadout, quickRecord } = require('../helpers/account.js');
+const authMod = require('../../server/auth.js');
+const { openFixture, registerPlayer, sampleLoadout, quickRecord, makeLogger } = require('../helpers/account.js');
 
 async function facts(fx, playerId) {
   const archive = await fx.store.loadArchive(playerId);
@@ -61,7 +62,8 @@ test('PS-1 重启一致：重新装配适配器后 summary/configs/records/defen
     assert.deepEqual(after.players, before.players, '档案/配置/战绩/未读/防守视图逐值一致');
     assert.equal(after.seq, before.seq, 'journal 水位不变');
     assert.equal(after.indexSeq, before.indexSeq, '索引水位不变');
-    assert.equal(fx2.store.maxSeq(), r2.record.seq, 'journal 最大 seq 稳定');
+    assert.equal(fx2.store.maxSeq(), before.seq, 'journal 最大 seq 稳定');
+    assert.equal(fx2.store.maxSeq() >= r2.record.seq, true, '两场 battle.recorded 仍在 journal 内');
     // 会话持久化：旧 token 仍有效
     const who = await fx2.auth.authenticate(token);
     assert.equal(who.ok, true, '重启后 token 仍有效');
@@ -71,15 +73,20 @@ test('PS-1 重启一致：重新装配适配器后 summary/configs/records/defen
     const relogin = await fx2.auth.login({ username: 'Persist_A', password: a.password });
     assert.equal(relogin.ok, true);
     assert.equal(relogin.data.playerId, a.playerId);
-    // 干净关闭 → 恢复报告无重放、无索引重建
+    // 干净关闭后的恢复必须幂等：重放只搬运已记录结果，不改任何档案
+    //   （report.replayed 的计数口径由 store 定义——P7-1 已把它改为"实际产生变更的记录数"，
+    //    故此处只断言"档案视图逐值不变"，不绑定计数口径）
+    const beforeRecover = await snapshotViews(fx2, [a.playerId, b.playerId]);
     const report = await fx2.store.recover();
-    assert.equal(report.replayed, 0, '无多余重放');
+    assert.equal(report.journalSeq, before.seq);
     assert.equal(report.rebuiltIndex, false, '索引无需重建');
-    assert.equal(report.journalSeq, r2.record.seq);
-    // 每个档案的水位都收敛到 journal 最大 seq
+    assert.equal(report.quarantined.length, 0, '无损坏档案');
+    assert.deepEqual(await snapshotViews(fx2, [a.playerId, b.playerId]), beforeRecover, '恢复幂等：档案逐值不变');
+    // 每个档案的水位：不超过 journal 水位，且至少覆盖自己参与的最后一场（§6.3 单调水位）
     for (const playerId of [a.playerId, b.playerId]) {
       const archive = await fx2.store.loadArchive(playerId);
-      assert.equal(archive.record.appliedSeq, fx2.store.maxSeq(), `${playerId} appliedSeq 收敛`);
+      assert.ok(archive.record.appliedSeq <= fx2.store.maxSeq(), `${playerId} 水位不超过 journal`);
+      assert.ok(archive.record.appliedSeq >= r2.record.seq, `${playerId} 水位覆盖自己参与的最后一场`);
     }
     await fx2.cleanup();
   } finally {
@@ -88,7 +95,7 @@ test('PS-1 重启一致：重新装配适配器后 summary/configs/records/defen
   }
 });
 
-test('PS-2 journal 记录类型与读写路径：全部状态变更都在 journal 里（D-134，无旁路落盘）', async () => {
+test('PS-2 业务状态变更都在 journal（D-134）；A 类派生标志（未读游标/unverifiedLoadout）不走 journal', async () => {
   const fx = await openFixture({});
   try {
     const a = await registerPlayer(fx.auth, { username: 'Journal_A' });
@@ -96,13 +103,14 @@ test('PS-2 journal 记录类型与读写路径：全部状态变更都在 journa
     await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: sampleLoadout(fx.account) });
     await fx.account.createSlot({ playerId: a.playerId });
     await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot2' });
+    await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot1' });
     await fx.account.deleteSlot({ playerId: a.playerId, slotId: 'slot2' });
     await fx.account.setNickname({ playerId: a.playerId, nickname: '改名' });
     await settle(fx, a, b, { seed: 41 });
     const records = fx.store.readRecords({ includeCheckpoints: false });
     const count = (type) => records.filter((r) => r.type === type).length;
     assert.equal(count('account.created'), 2, '注册 2 条');
-    assert.ok(count('player.config.saved') >= 4, `配置写 ≥4 条（实际 ${count('player.config.saved')}）`);
+    assert.equal(count('player.config.saved'), 5, '保存/新建/激活×2/删除 各 1 条');
     assert.equal(count('player.nickname.changed'), 1);
     assert.equal(count('battle.recorded'), 1);
     // seq 严格递增且连续覆盖
@@ -116,6 +124,17 @@ test('PS-2 journal 记录类型与读写路径：全部状态变更都在 journa
     assert.equal(battle.frames, undefined);
     assert.ok(battle.p1.snapshotHash && battle.p2.snapshotHash);
     assert.ok(battle.versions.configHashP1 && battle.versions.configHashP2);
+    // A 类派生写（未读游标 / 仓库镜像校验标志）不新增 journal 记录、不推进 appliedSeq
+    const seqBefore = fx.store.maxSeq();
+    const appliedBefore = (await fx.store.loadArchive(a.playerId)).record.appliedSeq;
+    await fx.account.markSeen({ playerId: a.playerId, uptoSeq: seqBefore });
+    const wh = await fx.account.saveWarehouseMirror({ playerId: a.playerId, warehouse: { buckets: { role: [] } } });
+    assert.equal(wh.ok, true);
+    assert.equal(fx.store.maxSeq(), seqBefore, 'A 类派生写不写 journal');
+    assert.equal((await fx.store.loadArchive(a.playerId)).record.appliedSeq, appliedBefore, '水位不推进');
+    assert.equal((await fx.store.loadArchive(a.playerId)).flags.unverifiedLoadout, false,
+      '标志直接落在档案（A 类原子写）；因不在 journal，从 journal 全量重建后会回到默认值');
+    assert.equal((await fx.account.getSummary(a.playerId)).data.record.unread.attack, 0, '未读游标同理（派生）');
   } finally {
     await fx.cleanup();
   }
@@ -146,8 +165,39 @@ test('PS-3 重复 apply 幂等：同一 battle 记录再次 apply 不改战绩�
   }
 });
 
-test('PS-4 崩溃点补放：档案水位落后于 journal → 重启自动重放修复（不产生单边记账）', async () => {
+test('PS-5 会话启动清理（§6.7）：过期会话落盘 → 重启 open() 时被 prune 清除', async () => {
   const fx1 = await openFixture({});
+  const dir = fx1.dir;
+  try {
+    const u = await registerPlayer(fx1.auth, { username: 'Prune_1' });
+    assert.equal(u.res.ok, true);
+    // 写一条已过期会话（同时保留注册会话，证明只清过期的）
+    const expiredHash = authMod.tokenHashOf('expired-token-for-prune-test');
+    fx1.store.sessions.put({
+      tokenHash: expiredHash,
+      playerId: u.playerId,
+      createdAt: fx1.clock.now() - 10 * 86400000,
+      expiresAt: fx1.clock.now() - 86400000,
+      lastUsedAt: fx1.clock.now() - 10 * 86400000,
+    });
+    assert.equal(fx1.store.sessions.size(), 2, '盘上 2 条（1 有效 + 1 过期）');
+    const fx2 = await fx1.reopen();
+    assert.equal(fx2.store.sessions.size(), 1, 'open() 内 prune 清掉过期会话');
+    assert.equal(fx2.store.sessions.peek(expiredHash), null, '过期 token 已不存在');
+    assert.equal((await fx2.auth.authenticate(u.token)).ok, true, '有效会话不受影响');
+    // 清理结果已落盘（重启后仍为 1 条）
+    const fx3 = await fx2.reopen();
+    assert.equal(fx3.store.sessions.size(), 1);
+    await fx3.cleanup();
+  } finally {
+    await fx1.close();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  }
+});
+
+test('PS-4 崩溃点补放：档案水位落后于 journal → 重启自动重放修复（不产生单边记账）', async () => {
+  const logger = makeLogger();
+  const fx1 = await openFixture({ logger, storeLogger: logger });
   const dir = fx1.dir;
   try {
     const a = await registerPlayer(fx1.auth, { username: 'Crash_A' });
@@ -168,10 +218,15 @@ test('PS-4 崩溃点补放：档案水位落后于 journal → 重启自动重�
     });
     const broken = (await fx1.account.defenseSummary({ playerId: b.playerId })).data;
     assert.equal(broken.drawnCount, 1, '模拟出的落后状态确实生效');
-    // 重启 → 恢复流程按 journal 补放
+    // 重启 → 恢复流程按 journal 补放（open() 内的 store.open 事件带 replayed 计数）
     const fx2 = await fx1.reopen();
-    const report = await fx2.store.recover();
-    assert.ok(report.replayed >= 1, `应补放记录（实际 ${report.replayed}）`);
+    const opens = logger.records.filter((r) => r.event === 'store.open');
+    assert.ok(opens.length >= 2, 'store.open 事件');
+    const openReport = opens[opens.length - 1].data;
+    assert.ok(openReport.replayed >= 1, `重启时应补放记录（实际 ${openReport.replayed}）`);
+    assert.equal(openReport.seq, fx2.store.maxSeq());
+    const recovered = await fx2.store.recover();
+    assert.equal(recovered.replayed, 0, '补放完成后再恢复无重复 apply');
     const healed = (await fx2.account.defenseSummary({ playerId: b.playerId })).data;
     assert.deepEqual(healed.stats, expected.stats, '防守胜负被 journal 修复');
     assert.equal(healed.drawnCount, expected.drawnCount);

@@ -9,7 +9,7 @@
 | `demo.js` | 跑一场战斗打印逐 tick 摘要；支持 `--log-level trace` | B11 |
 | `play.js` | **离线可玩闭环**（`npm run play`）：开箱 → 合并仓库 → 自动装配 → 选 3 技能 → 内置预设 AI → 角色面板 → 打一场 → 逐 tick 战报（伤害/暴击/背击） | 可玩性（P6 前端之前） |
 | `fe-spec-check.js` | 前端文档自检（`docs/frontend-spec.md` §14 的 C1–C9）：按钮↔动作表闭合、文档字段↔真实响应样本、取值↔后端实现、清单/通道规范 | P6 前端重设计 |
-| `baseline.js` | 测试基线指纹（全量用例数 + 失败用例名 + `digest`）：`node scripts/baseline.js [--write\|--compare]`，并纳入 `gate` 项 7 明细 | P7-7 盲区 1（P0 ①） |
+| `baseline.js` | 测试基线指纹（全量用例数 + 失败用例名 + `digest`）：`node scripts/baseline.js [--write\|--compare]`，锚点入库于 `.audit/test-baseline.json`，并纳入 `gate` 项 7 明细 | P7-7 盲区 1（P0 ①） |
 
 ## `baseline.js` 契约（测试基线指纹，P7-7 审查 §⑤ 盲区 1）
 
@@ -23,14 +23,22 @@
   | 命令 | 行为 | 退出码 |
   |---|---|---|
   | `node scripts/baseline.js` | 打印指纹 JSON + 一行摘要（`baseline: 545 tests / 6 failing [A、B…] digest=ab12cd34ef56`） | 0 |
-  | `node scripts/baseline.js --write` | 采集并写入 `runtime/test-baseline.json`（`runtime/` 已 gitignore；目录不存在自动创建） | 0 |
-  | `node scripts/baseline.js --compare` | 与 `runtime/test-baseline.json` 对比：**新增失败（回归）/ 已修复 / 总数变化 / digest 变化** | 无差异或仅"已修复"=0；**出现新增失败=1**；基线缺失/损坏=2 |
-  | 用法错误（未知参数、`--write`+`--compare` 同时给、采集内部错误） | 打印用法/错误 | 3 |
-- **可复用导出**（供 `gate` 与测试调用，零依赖、CommonJS）：`collectBaseline({projectRoot, files, runner})` / `fingerprintFromEvents(events, root)` / `buildFingerprint(partial)` / `compareBaseline(base, current)`（**纯函数**）/ `readBaseline(p)` / `writeBaseline(fp, p)` / `formatDetail(fp)` / `formatSummary(fp)`。
+  | `node scripts/baseline.js --write` | 采集并写入 `.audit/test-baseline.json`（**受版本控制**；目录不存在自动创建） | 0；**当前有失败 → 拒绝写入，退出 3** |
+  | `node scripts/baseline.js --write --force` | 同 `--write`，但允许在**已知红**状态下锚定（唯一合法用途：确认这批红就是当前基线） | 0 |
+  | `node scripts/baseline.js --compare` | 与 `.audit/test-baseline.json` 对比：**新增失败（回归）/ 已修复 / 总数变化 / digest 变化** | 无差异或仅"已修复"=0；**出现新增失败=1**；基线缺失/损坏=2 |
+  | 用法错误（未知参数、`--write`+`--compare` 同时给、`--write` 被护栏拒绝、采集内部错误） | 打印用法/错误 | 3 |
+- **锚点落点（2026-09-19 迁出 `runtime/`，P7-2 审查 P2）**：默认锚点 = `.audit/test-baseline.json`，**必须入库**。
+  原落点 `runtime/test-baseline.json` 位于 `.gitignore:6` 的忽略目录内 → 锚点永不入库，新克隆 / CI 上 `--compare`
+  必然退出 2（无基线可比），护栏只在"本机已 `--write` 过"时有效。`.audit/` 已入库，与既有审查快照
+  （`fe-samples.json` / `golden-battle.json` / `walkthrough.json`）同处；`--compare` 不写任何文件。
+- **`--write` 护栏（不可放宽）**：**有失败就拒绝覆写锚点**（退出 3），除非显式 `--force`。此前有并行任务在红状态下
+  跑了 `--write`，把绿锚点（643/0）覆写成红快照（665/5），使 `--compare` 永远报"已修复"，护栏形同虚设。
+  判定为纯函数 `writeGuard(fp, {force})`（`{ok, code, failed, forced, message}`），CLI 与测试共用同一判定。
+- **可复用导出**（供 `gate` 与测试调用，零依赖、CommonJS）：`collectBaseline({projectRoot, files, runner})` / `fingerprintFromEvents(events, root)` / `buildFingerprint(partial)` / `compareBaseline(base, current)`（**纯函数**）/ `writeGuard(fp, {force})`（**纯函数**）/ `readBaseline(p)` / `writeBaseline(fp, p)` / `formatDetail(fp)` / `formatSummary(fp)`。
 - **注入缝**：`collectBaseline` 的 `runner(files, projectRoot) → 事件数组` 可注入 —— 因同一进程内**第二次嵌套 `run()` 的流永不结束**（见本文件「已实测的 Node 覆盖率机制」第 3 条），测试套件内一律注入假事件流，绝不真实 `run()`；`runner` 默认 `collectEventsInProcess`。
-- **与 gate 的关系**：`gate.js` 项 7 在**不改判定与阈值**的前提下，把指纹追加进明细（`基线 总 N / 通过 n / 失败 m；失败用例: …（截断 10 + 剩余计数）；digest=…`），PASS/FAIL 都打印。基线文件与判定无关（仅 `--compare` 有判定语义），故 `gate` 不依赖 `runtime/` 是否已 `--write`。
+- **与 gate 的关系**：`gate.js` 项 7 在**不改判定与阈值**的前提下，把指纹追加进明细（`基线 总 N / 通过 n / 失败 m；失败用例: …（截断 10 + 剩余计数）；digest=…`），PASS/FAIL 都打印。基线文件与判定无关（仅 `--compare` 有判定语义），故 `gate` 不依赖 `.audit/test-baseline.json` 是否已 `--write`（该文件已入库，`--compare` 开箱即用）。
 - **空匹配防护**：`tests/**` 下 0 个 `*.test.js` 时**拒绝生成指纹**（同 gate 项 7 的"用例数 ≥ 1"断言，防"0 用例基线"被静默写入）。
-- **禁**：`child_process`、`Math.random`（确定性全部来自用例集合本身）；产物只写 `runtime/`。
+- **禁**：`child_process`、`Math.random`（确定性全部来自用例集合本身）；产物只写 `.audit/`（受版本控制），不写 `runtime/`。
 
 
 ## `fe-spec-check.js` 契约（P6 前端，独立脚本）

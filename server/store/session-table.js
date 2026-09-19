@@ -77,6 +77,13 @@ function createSessionTable(options) {
     return deepClone(rec);
   }
 
+  // 只读探针（P7-2 最小加法）：**不做过期清理、不落盘**，用于区分"会话不存在"与"刚过期"。
+  // 授权路径必须先 peek 再 get：get 会把过期行删掉，此后就只能回 unauthorized（§4.4 步骤 2 / §10.3）。
+  function peek(tokenHash) {
+    const rec = table.get(tokenHash);
+    return rec ? deepClone(rec) : null;
+  }
+
   function touch(tokenHash, patch) {
     const rec = table.get(tokenHash);
     if (!rec) return null;
@@ -128,6 +135,7 @@ function createSessionTable(options) {
     save,
     put,
     get,
+    peek,
     touch,
     revoke,
     revokePlayer,
