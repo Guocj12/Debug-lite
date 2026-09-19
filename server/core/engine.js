@@ -325,7 +325,12 @@ function createBattle(cfgIn, options) {
         plan.rawToX = p.x + intent.dir * intent.cells * CELL;
       } else if (intent.type === 'skill') {
         const sk = p.skills[intent.sid];
-        if (!sk) { plans[owner] = plan; continue; } // 未知技能（normalize 已挡；防御）
+        if (!sk) {
+          // 未知/未装配技能 → 空行动（不静默：记 action.invalid(warn)，可进帧 events，便于玩家自测发现）
+          logger.warn('engine', 'action.invalid', `${owner} 技能 ${intent.sid} 未装配或不存在 → 空行动`, { owner, sid: intent.sid, reason: 'unknown_skill' });
+          plans[owner] = plan;
+          continue;
+        }
         const can = skills.canCast(sk, p);
         if (!can.ok) { plans[owner] = plan; continue; } // 无效技能行动 → 空行动（07 §5 / skill.reject 已记）
         Object.assign(p, can.caster); // 扣资源 + 写 CD

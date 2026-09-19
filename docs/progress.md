@@ -14,7 +14,7 @@
 - **新增决策（计划中，未实现）**：D-129 服务端持久化档案（**部分推翻 D-123**）、D-130 混合权威（段位/积分服务端、仓库仍客户端；**明确登记段位/积分不具备竞技可信度**）、D-131 配置槽规则（≤3、唯一出战、必有出战、注册即默认配置）、D-132 异步排位（保留 D-122 的 10 场 x=6；发起者同步结算 + 双向记账；防守方离线只记战绩不掉段不掉分）、D-133 积分双轨 + 非对称 Elo（0 起、上限 3000、均衡点 `R = cap×(2×胜率−1)`）、D-134 journal + 幂等 apply、D-135 回放只存引用 + 帧 LRU 上限、D-136 仅对手去重。
 - **已同步文档（按计划口径改写，内容属设计）**：`decisions.md`（§13）、`interfaces.md`（模块 ICD/端点/D 落点/日志事件/环境变量）、`server.md`（环境变量/端点/状态码/档案契约/数据表/运行时目录 —— **2026-09-16 复核已把这些重新标注为「计划中」**）、`systems/10-ranked.md`（改为档案驱动）、`v3-design.md`（目录/§1.4/§12.4/路线图 P7）、`tasks.md`（P7 批次 + MS7 + R19–R21）、`.gitignore`（`runtime/`）。
 - **待办**：`docs/frontend-spec.md` 与 `docs/screens.md` **尚未同步**（登录屏、我的战绩、防守战绩、排行榜、token 存储、启动拉取流程）；P7 代码 0 行（复核证据：`server/store/`、`server/auth.js`、`server/account.js`、`server/quickmatch.js` 均不存在；`runtime/` 目录不存在）。
-- **容量结论（实测）**：单场战斗 0.175~0.280 ms、回放帧 7.0~20.5 KB、索引 ~200 B/玩家 → **单进程 JSON 存储在 1 万玩家量级绰绰有余，暂不需要数据库**；>5 万玩家或写 QPS >500 时切 `node:sqlite` 适配器（`11-account-store.md` §11.4）。
+- **容量结论（实测）**：单场战斗 0.175~0.280 ms、**回放帧实测 61–268 KB/场（17–63 tick，≈2.7–3.5 KB/帧；旧口径 7.0~20.5 KB 偏小约一个数量级，2026-09-16 修正）**、索引 ~200 B/玩家 → **单进程 JSON 存储在 1 万玩家量级绰绰有余，暂不需要数据库**；>5 万玩家或写 QPS >500 时切 `node:sqlite` 适配器（`11-account-store.md` §11.4）。
 
 ---
 
@@ -115,9 +115,9 @@ docs/progress.md       本文件
 - [x] **AI 合法性 + 字段枚举校验**：`call` 采用**调用链定点分析**（函数体直接含 `action`，或调用其它行动产出函数才算；"循环体只调用纯检测函数"被拒，纯检测函数本身可定义、顶层调用合法）；`ai/ast.js` 新增字段枚举校验（`logic.op∈{and,or}`、`loop.kind∈{count,while}` 且 count 必填 `times`/while 必填 `cond`、`arith.op∈{+,-,*,/}`、`cmp.op∈{>,<,>=,<=,==,!=}`）。**动作名仍不做校验期拒绝**（D-80：未知名运行期归一化为 `wait` + `action.invalid` warn）。
 - [x] **节点段位口径收口**：`availableNodes(tier)` 只返回真实节点类型（单一数据源 `ai-nodes.json` 的 `nodes`，共 17 类）；`unlock.json` 新增 `nodePermissions`；权限别名 `while` 折叠为 `loop`；预留权限 `arith_ext`（`implemented:false`）不授予任何节点（`isUnlocked` 恒 false）；真实节点累计数 **11/13/15/15/17**（旧口径 11/14/17/17/19 作废）。
 - [x] **示例数据声明**：数据表当前为**示例数据**（角色/技能/插件/解锁内容待用户手动设计）——已在 `server/data/unlock.json`、`skill-mechanics.json` 等表头与 `server/data/README.md` 标注。
-- [x] **安全与防作弊登记册**：新增 `docs/security-backlog.md`（record-only：**SEC-01…SEC-30 共 30 条**（高 6 / 中 16 / 低 8），含现状证据/风险/处置方向/优先级，**不派发任务、不改门禁**）。
+- [x] **安全与防作弊登记册**：新增 `docs/security-backlog.md`（record-only：**SEC-01…SEC-30 共 30 条**（高 7 / 中 16 / 低 7，2026-09-16 复核更正），含现状证据/风险/处置方向/优先级，**不派发任务、不改门禁**）。
 - [x] **`npm run demo` 补齐**：新增 `scripts/demo.js`（默认 seed 20260912、逐 tick 摘要、`--log-level`/`--quality` 可选；`npm run demo:log` ≡ trace）——修掉安全登记册 SEC-19 记录的"脚本指向不存在文件"。
-- [x] **走查 §3.1 按真实引擎重算**：`docs/battle-walkthrough.md` §3.1 由设计期 17 tick 改为**真实引擎结果 18 tick / p2 胜**（复算脚本 `.audit/walkthrough.js` → `.audit/walkthrough.json`，与 `.audit/golden-battle.json` 逐字段一致）。（**遗留**：`docs/ai-handoff-prompt.md` 第 29 行仍写"17 tick 轨迹 / 已知不一致"，未同步；该文件不在本轮可改范围。）
+- [x] **走查 §3.1 按真实引擎重算**：`docs/battle-walkthrough.md` §3.1 由设计期 17 tick 改为**真实引擎结果 18 tick / p2 胜**（复算脚本 `.audit/walkthrough.js` → `.audit/walkthrough.json`，与 `.audit/golden-battle.json` 逐字段一致）。（**2026-09-16 已同步**：`docs/ai-handoff-prompt.md` 第 29 行已改为「**18 tick 轨迹**…已按真实引擎重算」，与本文件一致。）
 - [x] **门禁机器强制 + 文档一致性检查（2026-09-16 落地）**：新增 `.githooks/pre-commit`（代码改动未更新 `tasks.md`/`progress.md` → 拒绝提交；随后强制 `check-docs`）、`.githooks/pre-push`（推送前跑 `scripts/gate.js`）、`scripts/check-docs.js`（D1–D6：npm 脚本双向一致 / 引用文件存在 / 批次计数一致 / 勾选数=批次数 / 审查记录覆盖）、`tests/integration/check-docs.test.js`（纳入 `npm test`）、`.github/workflows/gate.yml`（CI）、`package.json` 的 `check:docs` 与 `hooks:install`。**安装钩子**：`npm run hooks:install`（= `git config core.hooksPath .githooks`）；**本仓库已安装并实测生效**（`git config core.hooksPath` 返回 `.githooks`，本轮两次提交均由 pre-commit 实际执行了 `check-docs`）；新克隆仓库需自行执行一次。
 - [x] **覆盖率回归修复并转绿**：数据驱动改造后 `server/core/skills.js` 分支覆盖率一度 80.17% < 85%（gate 项 7 FAIL，未覆盖的是"注入机制表"才能触发的 4 组防御分支）；修法为导出 `withTables(tables, logger)` 并补 6 个用例（478 → 484 用例），**`npm run gate` 现为 9 PASS / 0 FAIL / 0 PEND**。
 - [x] **文档同步**：`docs/tasks.md`（34 批计数、P0-4 勾选、§5.1 提交前更新任务清单硬性规则、`turn`/枚举/`baseHitMul` 口径）、`docs/interfaces.md`（§1 模块与机制表、§2 端点状态「已实现 / ⏳ 计划」、§4 结构与序列化字段、§6 新增事件）、`docs/systems/07-engine.md`、`docs/systems/09-unlock.md` 已按实现更新。
@@ -164,7 +164,7 @@ docs/progress.md       本文件
 
 ### 5.3 说明
 
-- **门禁实测（2026-09-16，本轮改动后）**：`npm test` = **478 通过 / 0 失败**（含 `tests/unit/mechanics.test.js` 19 用例、`tests/frontend/fe-spec.test.js` 文档自检 C1–C9 + 5 个投毒用例）；**`npm run gate` = 8 PASS / 1 FAIL / 0 PEND**——项 1~6、8、9 全 PASS，**项 7 FAIL**：`server/core/skills.js` 分支覆盖率 80.17% < 85%（行 96.88% / 函数 100%）。`npm run cov` 因按全局阈值判定仍 exit 0（全表分支 85.30%）。根因与修法见 §5.1 **L-6**；**禁止放宽阈值**。
+- **门禁实测（2026-09-16 收尾，本轮改动后）**：`npm test` = **484 通过 / 0 失败**（含 `tests/unit/mechanics.test.js` 19 用例、`tests/integration/check-docs.test.js`、`tests/frontend/fe-spec.test.js` 文档自检 C1–C9 + 5 个投毒用例）；**`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**（曾一度因 `server/core/skills.js` 分支覆盖率 80.17% < 85% 而项 7 FAIL，已通过导出 `withTables` 注入机制表并补 6 个用例修复；根因与修法见 §5.1 **L-6**；**禁止放宽阈值**）。
 - **历史记录（B21 时期）**：`npm test` / `npm run cov` 均为 420/0；测试规模 420 用例 / 48 个测试文件。覆盖率阈值（行 90 / 分支 85 / 函数 90）持续通过。
 - **前一轮实测（2026-09-16 早期复核，本轮改动前）**：`npm run gate` = 9 PASS / 0 FAIL / 0 PEND；`npm test` = 459 通过 / 0 失败。（B25 提交时的同口径记录见 `docs/reviews/B25.md`。）
 - 黄金战斗为 gate 项 8 的冒烟基准（**18 tick，p2 胜**，seed 20260912），B11 黄金回归测试 `tests/regression/golden-battle.test.js` **⏳ 计划（未实现）**。**现状（2026-09-16 复核）：`tests/regression/` 仍只有 `.gitkeep`**；走查 §3.1 已按真实引擎复算（L-2 已处理）。

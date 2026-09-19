@@ -240,10 +240,10 @@
 ### SEC-19 无 CI / 无自动化门禁执行，唯一防线是本机 `npm run gate`
 
 - **现状证据**
-  - **无 `.github/`**（实测 `Test-Path .github` → `False`），无任何 CI 配置（无 `.gitlab-ci.yml`、`Jenkinsfile`、`.circleci/`）。
+  - **无 CI 自动执行门禁**（登记时实测 `Test-Path .github` → `False`，无任何 CI 配置）。**2026-09-16 更新**：同轮已新增 `.github/workflows/gate.yml`（push/PR 跑 `check-docs` + `npm run gate`）——本条**已部分处置**，但"门禁脚本自身可被改写/无 CODEOWNERS"的子项仍成立。
   - 唯一门禁是本地命令：`package.json` `"gate": "node scripts/gate.js"` → `scripts/gate.js:581-604` 的 9 项检查（静态无 `Math.random`/`eval`/`new Function`、`server/core` 无 `console.*`、数据 schema、文档↔数据一致性、日志命名/数值硬编码、全量测试 + 覆盖率、日志冒烟、接口冒烟）。
   - 覆盖率阈值靠门禁项 7 内的判定（`scripts/gate.js:602`，`npm run cov` 的行 ≥90/分支 ≥85/函数 ≥90），**没有 CI 会在 push 时自动跑**。
-  - `package.json` 里还有一个**指向不存在文件**的脚本：`"demo": "node scripts/demo.js"`（实测 `Test-Path scripts/demo.js` → `False`；`scripts/` 只有 `check-arch.js`、`fe-spec-check.js`、`gate.js`、`README.md`），`"demo:log"` 同理。
+  - `package.json` 里还有一个**指向不存在文件**的脚本：`"demo": "node scripts/demo.js"`（登记时实测 `Test-Path scripts/demo.js` → `False`）。**2026-09-16 更新**：`scripts/demo.js` 已补齐并实跑通过——本条**已处置**（保留登记以说明"脚本接线失修"这一工程信号）。
 - **风险**：回归与**恶意改动不会被自动拦截**（本册全部条目都可能被一次"热心重构"重新引入）；门禁可被跳过（改 `scripts/gate.js` 或直接不跑），且没有"谁在什么时候跑过"的记录；坏脚本说明工程面已有失修信号。
 - **建议处置方向**：加最小 CI（push/PR 跑 `npm test` + `npm run gate`，失败即红）；门禁脚本本身纳入 CODEOWNERS/评审；修掉或删除失效脚本（新批次）；把"安全相关检查"（如本册 A/C 节的可自动化项：413 语义、404/405 区分、安全头存在性）逐步加为门禁第 10+ 项。
 - **优先级**：**中**
@@ -394,7 +394,7 @@
 | SEC-28 | 跨源简单请求 + 无 CSRF 判断依据落地（组合面） | F | 中 | 待处理 |
 | SEC-29 | 日志含原始 `req.url`/`query`，日志注入与取证污染 | F | 低 | 待处理 |
 | SEC-30 | 回放注册表进程内状态，随重启丢失（设计取舍，非缺陷） | F | 低 | 待处理 |
-| | **合计** | | **高 6 / 中 16 / 低 8 = 30** | 全部待处理 |
+| | **合计** | | **高 7 / 中 16 / 低 7 = 30**（2026-09-16 复核更正：原写 6/16/8 与正文及分节统计不符） | 全部待处理 |
 
 **按分节统计**：A 网络与可用性 6 条（高 3 / 中 3 / 低 0）；B 经济与防作弊 4 条（高 2 / 中 2 / 低 0）；C 传输与配置 6 条（高 1 / 中 3 / 低 2）；D 运行时与代码面 8 条（高 0 / 中 5 / 低 3）；E 持久化与账号 2 条（高 0 / 中 2 / 低 0）；F 其他 4 条（高 1 / 中 1 / 低 2）。
 

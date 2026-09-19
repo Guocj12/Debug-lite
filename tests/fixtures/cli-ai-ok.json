@@ -13,7 +13,7 @@
         ] },
         "else": { "type": "seq", "statements": [
           { "type": "set", "name": "n", "value": { "type": "literal", "value": 0 } },
-          { "type": "action", "name": "skill1" }
+          { "type": "action", "name": "skill:skill1" }
         ] } }
     ]
   }

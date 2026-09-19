@@ -28,11 +28,11 @@ scripts/fe-spec-check.js    前端文档自检器（C1–C9；`npm test` 内断�
 
 | 主题 | 现状（已实测） | 计划中（未实现） |
 |---|---|---|
-| 分支 | `main`（HEAD `cee2ebf`）为唯一主线，已完成合流；另有 `deepseek-v4.1f`、`glm-5.3f` 两个前端分支未合并。**`dev` 分支不存在** | — |
+| 分支 | `main` 为唯一主线，已完成合流；另有 `deepseek-v4.1f`、`glm-5.3f` 两个前端分支未合并。**`dev` 分支不存在** | — |
 | 后端 | P0–P5 全部收口，34 批（9+11+5+5+2+2） | — |
 | 前端 | **main 上没有任何前端代码**（无 `public/`，`server/index.js` 无静态托管路由） | P6（F1–F7，见 `docs/frontend-spec.md`） |
 | 在线服务 | 无账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/非对称 Elo/回放鉴权 | P7（B27–B33，设计见 `docs/systems/11-account-store.md`） |
-| 回放 | `server/battle.js` 的**进程内无上限 Map**（每场 7–20 KB，无淘汰、无鉴权，未知 id → 404）；重启即失 | D-135 的"只存引用 / 按需重算 / 64 场 LRU / 鉴权 / 410" |
+| 回放 | `server/battle.js` 的**进程内无上限 Map**（**实测单场 61–268 KB**（17–63 tick，≈2.7–3.5 KB/帧）；旧口径"7–20 KB"偏小约一个数量级，2026-09-16 修正）；无淘汰、无鉴权，未知 id → 404；重启即失 | D-135 的"只存引用 / 按需重算 / 64 场 LRU / 鉴权 / 410" |
 | `server.md` 所列 P7 环境变量与端点 | 代码只读 `DL_PORT` / `DL_HOST` / `DL_LOG_LEVEL` | 其余变量与 `/auth/*`、`/me*`、`/quick/*`、`/leaderboard`、`/admin/*` 全部未接线 |
 
 ## 环境要求

@@ -87,14 +87,17 @@ function checkDocs() {
   const progressText = texts['docs/progress.md'] || '';
   const mProg = /共\s*(\d+)\s*批/.exec(progressText);
   if (mProg) counts['docs/progress.md'] = Number(mProg[1]);
-  // D5：批次行 = §6 段内 `| <P0-1 或 B1> [ `[x]` ] | ...`；缺 [x] 视为"未完成但可能有遗漏"
-  const batchRow = /^\|\s*(P\d+-\d+|B\d+)\s*(`\[x\]`)?\s*\|/gm;
+  // D5：批次行 = §6 段内 `| <P0-1 或 B1> | <标记列> | ...`
+  //   2026-09-16 修正：原正则要求 ID 后紧跟 `|`，导致 `| B1 `[ ]` |`（未勾选）**不匹配而被丢弃**，
+  //   从而"已完成未勾选"根本发现不了（独立复审实测可绕过）。现改为捕获标记列内容并判定 `[x]`。
+  const batchRow = /^\|\s*(P\d+-\d+|B\d+)\s*([^|]*)\|/gm;
   const PLANNED_BATCH = /^B(?:2[7-9]|3[0-3])$/; // P7 计划批次：未实现，允许未勾选
   const checked = [];
   const missing = [];
   const planned = [];
   for (const m of batchSection.matchAll(batchRow)) {
-    if (m[2]) checked.push(m[1]);
+    const marked = /\[x\]/.test(m[2] || '');
+    if (marked) checked.push(m[1]);
     else if (PLANNED_BATCH.test(m[1])) planned.push(m[1]);
     else missing.push(m[1]);
   }
