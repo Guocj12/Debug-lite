@@ -180,12 +180,15 @@ function checkC3(reg) {
   return pass('C3', `${reg.actions.length} 个动作均有按钮引用（系统动作 ${[...SYSTEM_ACTIONS].join('/')} 除外）`);
 }
 
+// 七屏齐全性**不在本项重复判定**（2026-09-19 死代码清理，P7-7 §B6）：
+//   此处原有一份 `for (const id of SCREEN_IDS) if (!ids.has(id)) problems.push('缺屏幕 ' + id)`，
+//   但 C1 已做同一判定（见上方 checkC1 的 `注册表缺少屏幕 ${id}`），且 `checkSpec` 在 C1 fail 时
+//   **短路**（`if (items[0].status === 'fail') return`）——实测把 SCREEN_IDS 的 127 个非空删除子集
+//   全部造成夹具：127/127 由 C1 报"注册表缺少屏幕"，C4 **一次也没执行过**（C4 未导出，无旁路绕开短路）。
+//   故该分支永久不可达，已删除。**缺屏的权威判定 = C1**，回归钉 = tests/frontend/fe-spec-poison.test.js FE-P2。
 function checkC4(reg) {
   const problems = [];
   const ids = new Set(reg.screens.map((s) => s.id));
-  for (const id of SCREEN_IDS) {
-    if (!ids.has(id)) problems.push(`缺屏幕 ${id}`);
-  }
   for (const s of reg.screens) {
     if (!s.buttons.some((b) => b.action === 'goto' || b.action === 'retry_boot')) {
       problems.push(`${s.id} 没有任何 goto 出口按钮（进去出不来）`);

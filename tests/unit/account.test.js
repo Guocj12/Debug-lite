@@ -464,6 +464,8 @@ test('ACC-D1 缺口 1：校验通过时把"该配置引用到的插件项"随快
   }
   assert.deepEqual(uids.slice().sort(), ['pa', 'pb', 'qx'], '恰好 3 个被引用插件（rolePlugin pa/pb + skillPlugin qx）');
   assert.deepEqual(bucketNames.sort(), ['rolePlugin', 'skillPlugin'], '不携带未被引用的 role/skill 桶');
+  assert.equal(require('../../server/store/archive.js').excerptCoversRefs(LD.loadout, snap.warehouse), true,
+    '摘录覆盖该配置的全部装配引用（足以重建面板）');
   assert.equal(Object.prototype.hasOwnProperty.call(snap, 'hash'), true);
   assert.equal(snap.hash, hash, '内容寻址键不变（摘录不参与 hash）');
 

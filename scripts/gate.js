@@ -512,7 +512,13 @@ async function checkLogSmoke(options) {
   const c3 = recs.findIndex((r, i) => i > c2 && r.event === 'bullet.hit');
   const c4 = recs.findIndex((r, i) => i > c3 && r.event === 'tick.end');
   if (c2 === -1 || c3 === -1 || c4 === -1) return resultOf('fail', 'cid 链事件缺失（spawn/hit/end）');
-  if (!(c1 < c2 && c2 < c3 && c3 < c4)) return resultOf('fail', 'cid 链顺序异常（cast→spawn→hit→end）');
+  // 此处原有 `if (!(c1 < c2 && c2 < c3 && c3 < c4)) return fail('cid 链顺序异常…')`——
+  //   2026-09-19 死代码清理（P7-7 §B6）：**不可达**。c2/c3/c4 由 `findIndex((r,i) => i > 前一个 && …)`
+  //   求得，findIndex 返回的索引必然 > 前一个；`-1` 已由上一行拦住。故 `c1<c2 && c2<c3 && c3<c4`
+  //   是**重言式**。实测：7 元素事件序列（含重复 bullet.spawn/tick.end）的全部相异排列中，
+  //   133 例顺序成立、1127 例落到上一行的"缺失"分支、**0 例**顺序异常。
+  //   "cid 乱序必 FAIL"这条语义由上一行承担（乱序会让某个后继事件再也找不到）；
+  //   回归钉 = tests/integration/gate-poison-extra.test.js GX-P4（断言"缺失"分支文字，不依赖本分支）。
 
   // 与 silent 同 seed 逐帧一致（日志不影响确定性）
   const silentBattle = battleOf(createLogger({ level: 'silent' }));
