@@ -24,6 +24,9 @@ async function main() {
     process.stdout.write(`PUT B(slot1, 带引用)=${putB.status}\n`);
     const rk = await s.request('POST', '/api/v1/ranked/run', { seed: 11 }, h.authed(A.token));
     process.stdout.write(`ranked/run=${rk.status} ${rk.status === 200 ? JSON.stringify({ matches: rk.body.data.matches, shortfall: rk.body.data.shortfall }) : rk.raw.slice(0, 240)}\n`);
+    // 无冷却干扰的 quick：B 发起（B 与 A 从未交手）
+    const qk0 = await s.request('POST', '/api/v1/quick/run', { seed: 20 }, h.authed(B.token));
+    process.stdout.write(`quick/run(B, 无冷却)=${qk0.status} ${qk0.status === 200 ? JSON.stringify({ winner: qk0.body.data.winner, foe: qk0.body.data.opponent.publicId, self: qk0.body.data.self.pointsAfter, delta: qk0.body.data.self.delta }) : qk0.raw.slice(0, 200)}\n`);
     const qk = await s.request('POST', '/api/v1/quick/run', { seed: 21 }, h.authed(A.token));
     process.stdout.write(`quick/run(A)=${qk.status} ${qk.status === 200 ? JSON.stringify({ winner: qk.body.data.winner, self: qk.body.data.self.pointsAfter, foe: qk.body.data.opponent.pointsAfter }) : qk.raw.slice(0, 160)}\n`);
     // B 尚未与任何人交手 → B 发起的快速对战必然抽到 A（双方都带装配引用）

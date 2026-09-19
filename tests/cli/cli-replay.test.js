@@ -14,8 +14,6 @@ const cli = require('../../cli/index.js');
 const { auditFrames } = require('../../.audit/replay-audit.js');
 const c = require('../helpers/cli.js');
 
-const LD_FILE = path.join(__dirname, '..', 'fixtures', 'loadout-ok.json');
-
 // 原实现把 stdout/stderr 合并成一个数组断言；helpers/cli.js 分开两个通道 → 这里保持合并口径
 const merged = (r) => r.log.concat(r.err).join('\n');
 

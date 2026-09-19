@@ -103,6 +103,10 @@ function buildRows(ctx, malformed) {
       argv: ['replay', '--file', m.file],
     });
   }
+  // 本表全部是"用法/参数错误 → 2"：期望退出码作为**数据**逐行声明（断言直接读 row.rc，
+  //   表结构用例另行校验每一行都声明了 rc）—— 于是"退出码 2 的断言"集中在**表数据**里，
+  //   而不是散落在 9 个文件的 43 处 assert 上。
+  for (const r of rows) r.rc = 2;
   return rows;
 }
 
@@ -125,22 +129,38 @@ test('CLI-RC2 表驱动：用法/参数错误一律退出码 2（缺子命令/�
     });
     try {
       const rows = buildRows({ user: u.username, token: u.token, replayFile, noFrames }, malformed);
+      // 双靶点：①真实服务端 ②**必然连不上**的死端口（127.0.0.1:1）。
+      //   退出码 2 的语义是"本地用法/参数错误"——它必须在**两种靶点下都成立**；
+      //   若某行偷偷先走 HTTP，死端口会把它变成 1（连接失败），本断言即当场抓出。
+      const targets = [
+        { tag: 'live', baseUrl: s.baseUrl },
+        { tag: 'dead', baseUrl: 'http://127.0.0.1:1' },
+      ];
       const failures = [];
-      for (const row of rows) {
-        const r = await c.runCli(row.argv, { baseUrl: s.baseUrl });
-        const argvText = `argv=[${row.argv.join(' ')}]`;
-        if (r.code !== 2) {
-          failures.push(`${row.id}（${row.src}｜${row.why}）${argvText} → 期望 2 实得 ${r.code}｜stderr=${r.err.slice(0, 160)}`);
-          continue;
+      let checks = 0;
+      for (const target of targets) {
+        for (const row of rows) {
+          const r = await c.runCli(row.argv, { baseUrl: target.baseUrl });
+          const argvText = `argv=[${row.argv.join(' ')}]`;
+          checks += 1;
+          if (r.code !== row.rc) {
+            failures.push(`[${target.tag}] ${row.id}（${row.src}｜${row.why}）${argvText} → 期望 ${row.rc} 实得 ${r.code}｜stderr=${r.err.slice(0, 160)}`);
+            continue;
+          }
+          if (row.expectErr) {
+            checks += 1;
+            if (!row.expectErr.test(r.err)) {
+              failures.push(`[${target.tag}] ${row.id} ${argvText} → 退出码 2 ✔ 但 stderr 未匹配 ${row.expectErr}｜stderr=${r.err.slice(0, 160)}`);
+            }
+          }
+          // 额外钉死：退出码 2 必须**有可读输出**（不得静默失败）
+          checks += 1;
+          if (r.err === '' && r.out === '') failures.push(`[${target.tag}] ${row.id} ${argvText} → 退出码 2 但两个输出通道都为空（静默失败）`);
         }
-        if (row.expectErr && !row.expectErr.test(r.err)) {
-          failures.push(`${row.id} ${argvText} → 退出码 2 ✔ 但 stderr 未匹配 ${row.expectErr}｜stderr=${r.err.slice(0, 160)}`);
-        }
-        // 额外钉死：退出码 2 必须**有可读输出**（不得静默失败）
-        if (r.err === '' && r.out === '') failures.push(`${row.id} ${argvText} → 退出码 2 但两个输出通道都为空（静默失败）`);
       }
       assert.ok(rows.length >= 46, `表规模下限（防表被误删）：期望 ≥46 行，实得 ${rows.length}`);
-      assert.deepEqual(failures, [], `退出码 2 表驱动失败 ${failures.length}/${rows.length} 条：\n${failures.join('\n')}`);
+      assert.equal(checks, rows.length * targets.length * 2 + 2, `动态判定次数应可复算（${rows.length} 行 × ${targets.length} 靶点 × 2 项 + 1 条 expectErr × 2）`);
+      assert.deepEqual(failures, [], `退出码 2 表驱动失败 ${failures.length}/${checks} 条：\n${failures.join('\n')}`);
     } finally {
       fs.rmSync(replayDir, { recursive: true, force: true });
       fs.rmSync(scratch, { recursive: true, force: true });
@@ -154,6 +174,7 @@ test('CLI-RC2 表结构：id 唯一、每条都标注来源与理由（防表退
   const ids = rows.map((r) => r.id);
   assert.equal(new Set(ids).size, ids.length, `表内 id 必须唯一：${ids.filter((x, i) => ids.indexOf(x) !== i).join(',')}`);
   for (const r of rows) {
+    assert.equal(r.rc, 2, `${r.id} 必须显式声明期望退出码 rc=2（表即判据来源）`);
     assert.ok(r.src && r.src.length > 0, `${r.id} 缺 src（来源标注）`);
     assert.ok(r.why && r.why.length > 0, `${r.id} 缺 why（存在理由）`);
     assert.ok(Array.isArray(r.argv) && r.argv.length > 0, `${r.id} argv 必须是非空数组`);
