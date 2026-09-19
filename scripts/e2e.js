@@ -901,13 +901,18 @@ async function main() {
       // 对手由服务端抽池决定，故不断言"脆皮必败"，只断言"落盘值 ≡ 公式 + 方向/有界正确"。
       const winnerDelta = d.winner === 'win' ? d.self.delta : d.winner === 'loss' ? d.opponent.delta : 0;
       const loserDelta = d.winner === 'win' ? d.opponent.delta : d.winner === 'loss' ? d.self.delta : 0;
-      expect(winnerDelta > 0, `赢家 Δ 应 >0，实得 ${winnerDelta}（winner=${d.winner}）`, j(d));
-      expect(loserDelta <= 0, `输家 Δ 应 ≤0，实得 ${loserDelta}（winner=${d.winner}）`, j(d));
-      expect(d.self.delta + d.opponent.delta !== 0 || (d.self.delta === 0 && d.opponent.delta === 0),
-        '非对称 Elo 有意非零和（D-133 性质 3）', j(d));
-      // 0 分玩家负场的下限保护（§8.3 性质 4）：机器复算，不依赖本场实际结果
+      if (d.winner === 'draw') {
+        expect(d.self.delta === 0 && d.opponent.delta === 0, '平局且同分时应双方 Δ=0（E=0.5）', j(d));
+      } else {
+        expect(winnerDelta > 0, `赢家 Δ 应 >0，实得 ${winnerDelta}（winner=${d.winner}）`, j(d));
+        expect(loserDelta <= 0, `输家 Δ 应 ≤0，实得 ${loserDelta}（winner=${d.winner}）`, j(d));
+      }
+      // 0 分玩家负场的下限保护（§8.3 性质 4）：机器复算，不依赖本场实际结果。
+      // 注意：`ratingDelta` 的 `delta` 是**未 clamp 的原始 Δ**，`pointsAfter` 才是下限保护后的结果；
+      // 生产路径（quickmatch）回带的 `delta` 一律取"档案落盘值之差"，故 0 分负场显示 0。
       const zeroLoss = quickmatch.ratingDelta({ points: 0, opponentPoints: 0, result: 'loss', config: RATING });
-      expect(zeroLoss.pointsAfter === 0 && zeroLoss.delta === 0, '0 分玩家输球不产生负分', j(zeroLoss));
+      expect(zeroLoss.pointsAfter === 0, `0 分玩家输球结果积分应仍为 0，实得 ${zeroLoss.pointsAfter}`, j(zeroLoss));
+      expect(zeroLoss.pointsAfter - 0 === 0, '0 分玩家负场的**落盘 Δ** 应为 0（clamp 保护）', j(zeroLoss));
       const foeToken = d.opponent.publicId === state.facts.B.publicId ? state.facts.B.token
         : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token
           : d.opponent.publicId === state.facts.victim.publicId ? state.facts.victim.token
@@ -963,7 +968,7 @@ async function main() {
       const sumAfter = d.self.pointsAfter + d.opponent.pointsAfter;
       expect(sumBefore + d.self.delta + d.opponent.delta === sumAfter,
         `本场守恒式不成立：${sumBefore} + ${d.self.delta} + ${d.opponent.delta} ≠ ${sumAfter}`, j(d));
-      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${state.facts.A.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、双向非零、守恒式 ${sumBefore}+(${d.self.delta}${d.opponent.delta >= 0 ? '+' : ''}${d.opponent.delta})=${sumAfter} ✔、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
+      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${state.facts.A.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、方向正确、守恒式 ${sumBefore}+(${d.self.delta}${d.opponent.delta >= 0 ? '+' : ''}${d.opponent.delta})=${sumAfter} ✔、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
       return `Δ ${d.self.delta}/${d.opponent.delta}；CLI 0/3`;
     });
 

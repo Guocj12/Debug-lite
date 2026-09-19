@@ -22,6 +22,7 @@ const { createLogger } = require('../../shared/log.js');
 const serverMod = require('../../server/index.js');
 const itemsApi = require('../../server/core/items.js');
 const astApi = require('../../server/ai/ast.js');
+const loadoutMod = require('../../server/loadout.js');
 const battleApi = require('../../server/battle.js');
 const archiveMod = require('../../server/store/archive.js');
 const ledger = require('../../server/store/ledger.js');
@@ -579,7 +580,26 @@ async function setupPlayer(ctx, p) {
   if (v2.status !== 200) return { ok: false, code: 'ai_compile_failed', status: v2.status, detail, errorCode: v2.errorCode };
   detail.compiledHash = (envelopeData(v2) || {}).programHash || null;
 
-  // 5) 仓库镜像（引用校验用）+ PUT /me/configs/:slot（默认槽，≤3 且唯一出战）
+  // 5b) **后端缺陷兜底**（只报告，不改 server/**）：已装配插件的出战配置在档案驱动对局路径
+  //     （`ranked.js:406` / `quickmatch.js` → `battle.buildPlayer`）拿不到仓库镜像 → loadout 校验报
+  //     `missing_warehouse`，排位 409 loadout_invalid、快速 409 no_opponent（详见报告 notes.backendDefects）。
+  //     为让批量链路可跑通并暴露该缺陷，这里把"含装配引用但无仓库不可自证"的引用剔除后再出战，
+  //     并如实统计 `missingWarehouse`。
+  let strippedRefs = 0;
+  const stageCheck = loadoutMod.validateLoadout(planned.loadout, { warehouse: null, tier: ctx.tier });
+  if (!stageCheck.ok && stageCheck.errors.some((e) => e.code === 'missing_warehouse')) {
+    for (const item of [planned.loadout.role].concat(planned.loadout.skills || [])) {
+      for (const s of item.slots || []) {
+        if (s && s.pluginUid) { s.pluginUid = null; strippedRefs += 1; }
+      }
+    }
+    detail.missingWarehouse = true;
+    detail.strippedRefs = strippedRefs;
+  } else {
+    detail.missingWarehouse = false;
+  }
+
+  // 6) 仓库镜像（引用校验用）+ PUT /me/configs/:slot（默认槽，≤3 且唯一出战）
   const mirror = mirrorOfLoadout(planned.loadout, assembleBase, ctx.warehouseBucketMax);
   const whRes = await call(ctx.metrics, null, ctx.port, 'PUT', '/api/v1/me/warehouse', { warehouse: mirror }, auth);
   if (whRes.status !== 200) return { ok: false, code: 'warehouse_mirror_failed', status: whRes.status, detail, errorCode: whRes.errorCode };
@@ -741,6 +761,9 @@ async function runLoadTest(options) {
       assemble: {
         placed: setup.reduce((n, s) => n + ((s && s.detail && s.detail.equipped) || 0), 0),
         rejections: mergeCounters(setup.map((s) => (s && s.detail && s.detail.rejects) || {})),
+        // 含装配引用的出战配置在档案驱动对局路径无法自证（后端缺陷，见 notes.backendDefects）
+        playersWithStrippedRefs: setup.filter((s) => s && s.detail && s.detail.missingWarehouse).length,
+        strippedRefs: setup.reduce((n, s) => n + ((s && s.detail && s.detail.strippedRefs) || 0), 0),
       },
     };
     if (ready.length !== players.length) {

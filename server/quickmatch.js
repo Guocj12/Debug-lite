@@ -45,6 +45,17 @@ function settle(input) {
   });
 }
 
+// 单场 |Δ| 的真实理论上界（§8.5 突变告警的判据；**不是** kBase/2）：
+//   加分上界 = K_gain(base) = kBase（E→0 时取满，低分玩家赢满积分对手 → +32）；
+//   扣分上界 = K_loss(cap) = kMax（E→1 时取满，满积分玩家输 0 分对手 → −64）。
+//   旧口径误用 "kBase × 0.5 = 16"（同分对手的加分），把合法败局（R=2900 输同分对手 ≈ −31）判成突变（P1-3）。
+function maxSingleMatchDelta(config) {
+  const cfg = (config && config.rating) || config || {};
+  const cap = Number.isInteger(cfg.cap) ? cfg.cap : 3000;
+  const base = Number.isInteger(cfg.base) ? cfg.base : 0;
+  return Math.max(ledger.gainFactor(base, cfg), ledger.lossFactor(cap, cfg));
+}
+
 /* ---------- 匹配（§8.2，纯函数） ---------- */
 
 function matchWindowConfig(config) {
@@ -103,15 +114,18 @@ function findMatch(input) {
       const relaxed = split.strict.length === 0 && split.relaxed.length > 0;
       const usable = relaxed ? split.relaxed : split.strict;
       if (usable.length > 0) {
-        // 最久未对战优先 → 同分用种子随机打破平局（§8.2 步骤 3）
+        // 最久未对战优先（§8.2 步骤 3）：先取 `lastOpponentAt` 的 **argmin 组**，再只在组内用种子随机打破平局。
+        // 🚫 不允许"排序后全池均匀随机"——那会让 100h 未打的最久候选被 76h 的候选挤掉（P1-2）。
         const sorted = usable.slice().sort((a, b) => {
           const la = lastOpponentAtOf(o.foeArchive, a.playerId);
           const lb = lastOpponentAtOf(o.foeArchive, b.playerId);
           if (la !== lb) return la - lb;
           return a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0;
         });
-        const pick = sorted.length === 1 ? 0 : rng.int(0, sorted.length - 1);
-        return { ok: true, window, relaxed, cooldown: relaxed ? relaxHours : cfg.cooldown, opponent: sorted[pick], candidateCount: found.length };
+        const oldest = lastOpponentAtOf(o.foeArchive, sorted[0].playerId);
+        const argminGroup = sorted.filter((c) => lastOpponentAtOf(o.foeArchive, c.playerId) === oldest);
+        const pick = argminGroup.length === 1 ? argminGroup[0] : argminGroup[rng.int(0, argminGroup.length - 1)];
+        return { ok: true, window, relaxed, cooldown: relaxed ? relaxHours : cfg.cooldown, opponent: pick, candidateCount: found.length, argminGroup: argminGroup.length };
       }
     }
     if (window >= maxWindow || cfg.step <= 0) break;
@@ -274,8 +288,8 @@ function createQuickMatch(options) {
     // Δ = 档案落盘值之差（重复结算时为 0）；首次结算时应与公式值一致（测试另有独立复算断言）
     const selfDelta = selfPointsAfter - selfPointsBefore;
     const opponentDelta = opponentPointsAfter - opponentPointsBefore;
-    // 分数突变告警（§8.5：只记 warn，不阻断）——上限 = 满分区间下的最大加分 Δ = K_gain(base) × (1 − E = 0.5)
-    const maxDelta = ledger.gainFactor(config.base === undefined ? 0 : config.base, config) * 0.5;
+    // 分数突变告警（§8.5：只记 warn，不阻断）——判据 = 单场真实理论上界（加分 ≤ kBase、扣分 ≤ kMax，P1-3）
+    const maxDelta = maxSingleMatchDelta(config);
     if (Math.abs(selfDelta) > maxDelta || Math.abs(opponentDelta) > maxDelta) {
       log.warn('store', 'store.abuse.suspect', `积分突变超出单场理论上限（Δ1=${selfDelta} Δ2=${opponentDelta}）`, {
         playerId: o.playerId, opponentPlayerId: found.opponent.playerId, battleId,
@@ -369,6 +383,7 @@ module.exports = {
   matchCandidates,
   splitByCooldown,
   matchWindowConfig,
+  maxSingleMatchDelta,
   // 对外便捷入口：等价于 `const qm = createQuickMatch({store}); await qm.run({playerId, seed})`
   runQuickMatch: (options, input) => createQuickMatch(options).run(input),
   COOLDOWN_RELAX_MULT,
