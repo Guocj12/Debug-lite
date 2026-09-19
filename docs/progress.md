@@ -233,3 +233,5 @@ docs/progress.md       本文件
 - **终局文档同步（2026-09-19，中央文档批）**：`docs/systems/11-account-store.md`（§5.4 快照可选 `warehouse` 装配引用子集 / §7.4 `loadWarehouse` 三级来源 + 逐侧签名 + 归档回放按各自快照取镜像 / §7.2 `relaxed`+`invalids` 落 `ranked.batch` 与去重窗口裁定 / §4.6 限速与 §10.3 错误码 / §5.6 索引合并写语义 / §9.4 `programHash` 口径更正）、`docs/interfaces.md`（§1 补 `server/battle.js`、`server/store/archive.js`、`server/store/ledger.js` 与 `snapshotWarehouseOf`/`snapshotWarehouseRefreshed` 签名）、`docs/server.md`（§1 进程模型 / §2 环境变量 / §3 端点 / §4 状态码与错误码 / §6 状态契约 / §7 CLI / §9.1 runtime 目录全部由「计划中」改为「现状」）、`docs/tasks.md`（B27–B33 勾选 + 共 41 批 + MS7 达成）、`docs/progress.md`（本节）、`docs/security-backlog.md`（SEC-01/SEC-03/SEC-22 处置回填 + 汇总表）、`server/data/README.md`（两张参数表与 `affix-registry` 的 `domain`/`_domainOfKind` 语义）。**实测**：`node scripts/check-docs.js` = PASS（批次勾选 41 / 审查记录 41/41）、`node scripts/fe-spec-check.js` = 9 PASS、`node --test tests/integration/interfaces.test.js tests/integration/check-docs.test.js tests/frontend/fe-spec.test.js` 全绿。
 
 - 终局修复 II 与文档同步（2026-09-19T06:20:41.637Z）。
+
+- 终局修复 II 与文档同步（2026-09-19T06:23:31.257Z）。

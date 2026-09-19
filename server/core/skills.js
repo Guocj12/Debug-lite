@@ -9,7 +9,13 @@
  *   - 词条语义（skillOp 算子 / hitEffect / castEffect）      → server/data/affix-registry.json
  *   代码只解释表里声明的 pattern / op 名称；新增类型或词条 = 改表，不改此处（未登记项由 gate 拦下）。
  * 语义（B6 登记，未变）：
- *   - sid = templateId（物品链 B20 可另行分配实例 uid，引擎 cooldowns 键用 sid）。
+ *   - sid = templateId（技能**模板**身份；实例化时写入，日志与拒绝原因用）。
+ *   - **冷却键 = 槽位键（P1-4 裁定，2026-09-19）**：`canCast(skill, caster, cooldownKey)` 的第三个入参
+ *     即冷却键；引擎传 `intent.sid`（= AI 动作名 `skill:<槽位>` 的槽位，`server/battle.js` 的
+ *     `p.skills[skill1..3]` 也就是按槽位装配的）。**同一模板装两槽 → 两槽 CD 独立**（默认出战配置
+ *     `ranked.PRESET_SKILL_ORDER` 故意重复同一模板，此前两槽共享模板键 CD → `skill.reject cooldown`）。
+ *     未传第三参时回落到 `skill.sid || skill.templateId`（纯函数单测/旧调用点语义不变）。
+ *     旧快照/旧帧里的 `cooldowns` 键读不到 → 视作 0（缺键判定，永不抛错）。
  *   - instantiateSkill 复用 items.generateSkillItem 的参数随机（同构，避免双实现）。
  *   - 消耗补偿：costDeltaByTier 按**插件品质**的 costDeltaBase 缩放：档位 i 增量 = costDeltaBase[quality] × (i+1)（D-113，S-2b rare tier1=mp+3）。
  *   - 减耗类（costDeltaByTier=null）：cost × (1−v) 后 **ceil**（S-3）。
@@ -158,10 +164,13 @@ function makeSkills(logger, tables) {
   }
 
   // 释放判定（S-5；纯函数：成功返回扣资源/写 CD 后的克隆 caster）
-  function canCast(skill, caster) {
+  // 第三参 `cooldownKey` = 冷却键（P1-4：引擎传槽位键 skill1..3 → **按槽位冷却**；缺省回落模板 id）。
+  function canCast(skill, caster, cooldownKey) {
     const sid = skill.sid || skill.templateId;
-    if ((caster.cooldowns && caster.cooldowns[sid]) > 0) {
-      L.warn('skills', 'skill.reject', `skill ${sid} cooldown`, { reason: 'cooldown', sid });
+    const cdKey = typeof cooldownKey === 'string' && cooldownKey !== '' ? cooldownKey : sid;
+    // 缺键 → undefined > 0 为 false（旧存档/旧帧快照的 cooldowns 键与当前不一致时视作 0，不抛错）
+    if ((caster.cooldowns && caster.cooldowns[cdKey]) > 0) {
+      L.warn('skills', 'skill.reject', `skill ${sid} cooldown`, { reason: 'cooldown', sid, slot: cdKey });
       return { ok: false, reason: 'cooldown' };
     }
     const c = skill.cost;

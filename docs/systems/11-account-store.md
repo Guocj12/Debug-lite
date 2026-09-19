@@ -1161,7 +1161,7 @@ admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 
 **新增脚本**
 
-`scripts/bench-store.js`（`npm run bench:store`，非门禁项）。
+`scripts/bench-store.js`（`npm run bench:store`，非门禁项）—— **未实现（后续批次）**：`npm run bench:store` 当前无脚本承载，T-ST-8 容量哨兵因此无脚本（见 `docs/reviews/B33.md` 未决项）。
 
 **CLI 扩展**
 

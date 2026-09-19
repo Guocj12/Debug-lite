@@ -31,13 +31,14 @@
 git branch --show-current              # 应为 main（dev 分支已不存在）
 git log --oneline -6                   # 应看到 B25 收口提交 (6317b3f/ecdd7d4 等) 与前端相关提交；HEAD = cee2ebf
 git status --short                     # 工作区可含未提交的前端文档 v3 改动（2026-09-16 现状）
-Select-String docs\tasks.md -Pattern '\[x\]'   # 批次勾选（注意：tasks.md 头部计数"共 35 批"与实际 34 批不一致，以 §0 为准）
-Get-ChildItem docs\reviews -File       # 34 份审查记录；每批应有「审查 → PASS/FAIL→PASS」结论
+Select-String docs\tasks.md -Pattern '\[x\]'   # 批次勾选：应为 41（P0–P5 的 34 + P7/B27–B33 的 7）
+Get-ChildItem docs\reviews -File       # 41 份审查记录；每批应有「审查 → PASS/FAIL→PASS」结论
+node scripts/check-docs.js             # D1–D6：批次计数/勾选/审查记录覆盖（应为 PASS）
 ```
 
 **判定**：提交消息、勾选数、审查记录三者齐 → PASS。
 
-> 2026-09-16 复核：`docs/reviews/` 实测 **34** 份；`git ls-files ".review-*"` 实测 **53** 个（见 §6 L-3）。
+> 2026-09-19 复核：`docs/reviews/` 含 P0-1…B25 与 B27…B33（41 份批次审查）+ P7-7 审计两份。
 
 ## 2. 门禁（机器判决，唯一硬指标）
 
@@ -61,7 +62,7 @@ npm run gate
 ```bash
 npm run cov        # 末尾应显示行/分支/函数覆盖（四目录达标）
 ```
-- `npm test` 与 `npm run cov` 应同为 **459 通过 / 0 失败**（2026-09-16 复核实测 `npm test` = 459/0；`cov` 本轮未单独实跑，但 gate 项 7 已含同一阈值判定）。
+- `npm test` 与 `npm run cov` 应同为 **903 通过 / 0 失败**（2026-09-19 复核实测 `npm test` = 903/0；`cov` 由 gate 项 7 同阈值判定）。
 - gateway 已含覆盖率判定，故 `npm run gate` 通过即可视为覆盖达标；`cov` 用于看明细。
 
 ## 4. 活体冒烟（起服务后逐条执行）
@@ -78,10 +79,12 @@ npm run cli -- wh list --file wh.json       # 本地仓库摘要（分桶 + 装�
 npm run cli -- panel --loadout <file>       # 面板聚合（need 合法 loadout 文件）
 npm run cli -- battle --p1 a.json --p2 b.json --seed 20260912   # P4：双方对战 → 完整回放帧（B22，已实现）
 npm run cli -- replay --file replay.json --tick 3               # P4：文本回放（B23，本地文件）
-npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离线结算（B24，已实现；`--loadout` 必填，CLI 无独立 promote 子命令）
+npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离线结算（B24，已实现；有 token 时改走档案驱动）
+# P7（已交付）：auth register|login / me / quick run / leaderboard / ranked promote
+# 全链路一键：npm run e2e（22 检查点）｜批量：npm run load-test -- --players 50 --deep（7/7 断言）
 ```
 
-> ⚠ **当前不可执行**：`npm run demo` / `npm run demo:log`（2026-09-16 复核：`scripts/demo.js` 全 git 历史不存在）。§5 的确定性抽查请改用上面的 `ai battle` 或直接比对帧数组。
+> ✅ **已可执行**：`npm run demo` / `npm run demo:log` / `npm run play`（`scripts/demo.js`、`scripts/play.js` 已落地并实跑通过；`play` 为离线可玩闭环，无需 `npm start`）。
 
 **判定**：
 - `ai validate` 的**错误信息必须精确**（示例实测：`action 缺必填字段 name`、`body 必须为 seq（隐式主循环结构契约，D-100）`，带 `path`）——这是 AI 系统质量的试金石。
@@ -89,7 +92,7 @@ npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离�
 
 ## 5. 确定性抽查（本项目灵魂）
 
-1. 同 seed 战斗两次 → `frames` 逐字节一致（golden 问题）。**可用 `npm run cli -- ai battle --file good.json --seed 20260912` 跑两次比对 `frames` 数组**（原 `npm run demo -- --seed 20260912` 因脚本缺失当前不可用）。
+1. 同 seed 战斗两次 → `frames` 逐字节一致（golden 问题）。**可用 `npm run cli -- ai battle --file good.json --seed 20260912` 跑两次比对 `frames` 数组**（也可直接 `npm run demo -- --seed 20260912`，脚本已落地）。
 2. `--log-level trace` 的结果与 `silent` **逐帧一致**（gate 项 8 已断言，手工抽查一次即可）。
 3. 黄金战斗：`.audit/golden-battle.json`（seed 20260912，18 tick，`winner=p2`）可作基线对比（gate 项 8 依赖，属现状）。
 
