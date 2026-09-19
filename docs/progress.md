@@ -191,3 +191,5 @@ docs/progress.md       本文件
 - 黄金战斗为 gate 项 8 的冒烟基准（**18 tick，p2 胜**，seed 20260912），**B11 黄金回归测试 `tests/regression/golden-battle.test.js` 已于 2026-09-16 落地**并进入 `npm test`；走查 §3.1 已按真实引擎复算（L-2 已关闭）。
 
 - **P7 阶段进展（自动同步，2026-09-19T02:43:36.404Z）**：P7-2 身份与会话（P0 并发注册闭合/session_expired/启动 prune/配置生效）、P7-3 排位与快速对战（**去占位 bot + shortfall**、D-136 去重窗口裁定、双向记账、Elo 可复算与积分守恒）、P7-4 HTTP/CLI 鉴权与端点（Bearer/401/403/404/409/410/429/DL_*/回放 LRU64+410/CLI 退出码 3/readBody→413）、存储层两张数据表与 player.removed 墓碑。实测：npm test 803/0、gate 9 PASS/0 FAIL/0 PEND、check-docs PASS、fe-spec-check 9 PASS。
+
+- **P7-5 e2e 落地**（2026-09-19T02:49:51.781Z）：新增 scripts/e2e.js 与 tests/helpers/e2e.js（全链路 22 检查点）。实测 npm test 803/0、gate 9 PASS/0 FAIL/0 PEND、check-docs PASS、fe-spec-check 9 PASS。

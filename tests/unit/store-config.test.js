@@ -272,6 +272,24 @@ test('CFG-10 数据表校验能抓漂移（负例：篡改数值 / 未登记键 
     res = schema.validateStructure(root, assetsDir);
     assert.equal(res.ok, false);
     assert.ok(res.detail.includes('service-config.json 缺失'), res.detail);
+    // ⑤ 跨字段不变量：kMin ≤ kBase ≤ kMax
+    fs.copyFileSync(path.join(dataDir, configMod.SERVICE_CONFIG_FILE), path.join(root, configMod.SERVICE_CONFIG_FILE));
+    const rc3 = read(configMod.RATING_CONFIG_FILE);
+    rc3.cap = 3000;
+    delete rc3.newKnob;
+    rc3.kBase = 100;
+    write(configMod.RATING_CONFIG_FILE, rc3);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('kMin ≤ kBase ≤ kMax'), res.detail);
+    // ⑥ 跨字段不变量：promoteWins < batchSize
+    const rc4 = read(configMod.RATING_CONFIG_FILE);
+    rc4.kBase = 32;
+    rc4.promoteWins = 10;
+    write(configMod.RATING_CONFIG_FILE, rc4);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('promoteWins < batchSize'), res.detail);
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   }
