@@ -88,6 +88,8 @@ async function startServer(options) {
     store: s.store,
     runtime: s.runtime,
     events: () => (typeof logger.records !== 'undefined' ? logger.records.map((r) => r.event) : []),
+    // 只关闭进程（服务 + store 锁），**保留**数据根 → 可对同一 dataDir 再 startServer（重启场景）
+    close: () => s.close(),
     cleanup: async () => {
       await s.close();
       removeTempDir(dataDir);

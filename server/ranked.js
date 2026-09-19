@@ -409,7 +409,8 @@ async function findPriorBatch(store, playerId, batchId) {
 }
 
 // 回放既有批次的结果（P1-4）。**逐场结果来自 journal 原记录**，故与首次响应一致；
-// 两处不可复原、显式标注：`invalids`（invalid 场不进 journal）记 0；`relaxed`（抽取窗口细节不落 journal）记 null。
+// `invalids`/`relaxed` 自 P1 缺口 3 起一并落在 `ranked.batch` 记录里（旧记录缺字段 → 回落旧口径：
+//   invalids=0 / relaxed=null，并在日志中标注为不可复原）。
 function replayBatchPayload(input) {
   const { prior, batchId, seed, requested, tier } = input;
   const battles = prior.battles.slice().sort((a, b) => (a.matchIndex || 0) - (b.matchIndex || 0));
@@ -428,11 +429,13 @@ function replayBatchPayload(input) {
   const matches = battles.length;
   const promoted = prior.promote !== null;
   const tierAfter = promoted ? prior.promote.tierAfter : (prior.batch.tier || tier);
+  const relaxedKnown = typeof prior.batch.relaxed === 'boolean';
   return {
     batchId, seed, tier: prior.batch.tier || tier,
     requested, matches, shortfall: Math.max(0, requested - matches),
-    wins, draws, losses, invalids: 0,
-    relaxed: null,
+    wins, draws, losses,
+    invalids: Number.isInteger(prior.batch.invalids) ? prior.batch.invalids : 0,
+    relaxed: relaxedKnown ? prior.batch.relaxed : null,
     promoted,
     tierAfter,
     reward: tierReward(tierAfter),
@@ -443,9 +446,35 @@ function replayBatchPayload(input) {
   };
 }
 
+/* ---------- 批次互斥（P1 缺口 3：并发同 seed） ---------- */
+// 背景：`batchId` 已由 `(playerId, seed)` 确定性派生，**顺序**重试完全幂等（findPriorBatch 命中 → 回放）；
+//   但 `findPriorBatch` 的检查与"结算 + 落 ranked.batch"之间没有互斥 —— 两个**并发**的同 seed 请求
+//   可以都通过前置检查，各自跑一轮并在 journal 各写一条 `ranked.batch`（`store.append` 不去重：
+//   只有 `battle.recorded` 有 battleId 内容寻址），结果是 `batchesPlayed` +2、可能重复推进段位。
+// 修法：把"查既有批次 → 若无则结算并落批次"整条链放进**同一把按 (playerId, seed) 的键队列**。
+//   不同 seed / 不同玩家互不阻塞（键含两者）；同 seed 的第二个请求在锁内必然命中既有批次 → 回放。
+// 说明：不使用 `store.withSettlementLock([playerId])` —— 锁内还要调 `settleBatch`（内部按参与玩家
+//   再入队），同键自锁会死锁；按 seed 分键也避免把"不同 seed 的正常并发"串行化。
+const batchLocks = new Map();
+
+function withBatchKeyLock(key, fn) {
+  const prev = batchLocks.get(key) || Promise.resolve();
+  const run = prev.then(() => fn());
+  const settled = run.then(() => undefined, () => undefined).then(() => {
+    if (batchLocks.get(key) === settled) batchLocks.delete(key);
+  });
+  batchLocks.set(key, settled);
+  return run;
+}
+
 /* ---------- 档案驱动排位（P7-3 主路径） ---------- */
 
 async function runFromStore(o, deps) {
+  // 键 = (playerId, seed)：与 batchId 的派生口径一致（同键 ⇔ 同批次）
+  return withBatchKeyLock(`${o.playerId}|${o.seed}`, () => runBatchUnlocked(o, deps));
+}
+
+async function runBatchUnlocked(o, deps) {
   const { store, L, nowFn, ratingConfig } = deps;
   const tier = (o.archive.progress && o.archive.progress.tier) || 'common';
   const seed = o.seed;
@@ -601,8 +630,10 @@ async function runFromStore(o, deps) {
   }
 
   // 批次记录 + 晋升判定（wins > 6 → tier+1；D-122/D-132：只有发起者会晋升）
+  // `invalids`/`relaxed` 一并落记录（P1 缺口 3 配套）：并发第二个请求回放时能给出与首次**同值**的结果，
+  //   而不是"unavailable 就写 null/0"——批次级不可复原字段归零（旧口径）在并发验收下会被读成"结果不一致"。
   const batchRecord = await store.append(ledger.buildBatchRecord({
-    playerId: o.playerId, batchId, tier, seed, opponentCount: drawn.length, at,
+    playerId: o.playerId, batchId, tier, seed, opponentCount: drawn.length, at, invalids, relaxed,
   }));
   await store.applyRecord(batchRecord); // 只涉及发起者（A/B 类之外的"批次计数"写）
   const promotion = ledger.promoteAfterBatch({ tier, wins, config: ratingConfig });

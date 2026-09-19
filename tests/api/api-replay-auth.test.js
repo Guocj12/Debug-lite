@@ -247,6 +247,52 @@ test('RP-7 归档回放 aiTrace 按请求者 side 裁剪（P1-1/§9.4）：默�
   }, { server: { adminToken: ADMIN } });
 });
 
+test('RP-8 缺口 2：含装配引用的对局，帧缓存清空后归档回放重算仍 200，且帧与实战（首次重算）逐字节一致', async () => {
+  await h.withServer(null, async (s) => {
+    const a = await h.register(s.port, h.uniqueName('p2a'));
+    const b = await h.register(s.port, h.uniqueName('p2b'));
+    // A 装配 LD 的插件引用（pa/pb/qx）：保存时随快照落"装配引用子集"（缺口 1）
+    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot1', { loadout: LD.loadout, warehouse: LD.warehouse }, h.authed(a.token));
+    assert.equal(save.status, 200, save.raw);
+    const data = await quickBattle(s, a, b);
+    // 修前：归档重算只把 loadout 交给 runBattle（无逐侧 warehouse）→ 含引用的一侧 missing_warehouse → 410
+    const first = await h.request(s.port, 'GET', `/api/v1/replay/${data.battleId}`, undefined, h.authed(a.token));
+    assert.equal(first.status, 200, `含装配引用的归档回放必须 200（修前 410）：${first.raw.slice(0, 200)}`);
+    assert.equal(first.body.data.frames.length, data.ticks, '重算帧数 = 实战 tick 数');
+    assert.equal(first.body.data.winner, data.winner === 'win' ? 'p1' : data.winner === 'loss' ? 'p2' : 'draw',
+      '重算结果与实战一致（逐侧镜像生效 → 面板一致）');
+    // 清掉帧缓存 → 触发按需重算路径
+    const frameId = s.runtime.replayMeta.get(data.battleId).frameId;
+    assert.ok(frameId, '首次取帧已登记进程内缓存');
+    battleApi.REPLAYS.delete(frameId);
+    const recomputed = await h.request(s.port, 'GET', `/api/v1/replay/${data.battleId}`, undefined, h.authed(a.token));
+    assert.equal(recomputed.status, 200, recomputed.raw);
+    assert.deepEqual(recomputed.body.data.frames, first.body.data.frames, '清缓存后按需重算帧与首次逐字节一致');
+    // 逐侧镜像来自各自快照（缺口 1 落盘）——旧签名单仓库无法表达两侧不同的镜像
+    const rec = await s.store.findBattleRecord(data.battleId);
+    const snap1 = await s.store.snapshot.get(rec.p1.snapshotHash);
+    const snap2 = await s.store.snapshot.get(rec.p2.snapshotHash);
+    assert.ok(snap1.warehouse, 'p1 快照自带装配引用子集');
+    assert.equal(snap2.warehouse, undefined, 'p2（默认配置无引用）快照不带镜像');
+    assert.ok(s.logger.records.some((x) => x.event === 'store.read' && x.data.kind === 'archive'), '重算路径记 store.read(archive)');
+  });
+});
+
+test('RP-9 缺口 2 根因对照：单仓库签名（旧调用口径）对含装配引用的一侧 → 409 loadout_invalid/missing_warehouse；逐侧签名 → 200', async () => {
+  const battleApi2 = require('../../server/battle.js');
+  const real = battleApi2.runBattle({ p1: LD.loadout, p2: LD.loadout, warehouse: LD.warehouse, seed: 9, tier: TIER });
+  assert.equal(real.status, 200, '旧签名（单仓库）仍向后兼容');
+  const oldCall = battleApi2.runBattle({ p1: LD.loadout, p2: LD.loadout, seed: 9, tier: TIER });
+  assert.equal(oldCall.status, 409, '修前归档重算的实际调用形态：无 warehouse → 含引用的一侧不合法');
+  assert.ok(oldCall.details.some((d) => d.code === 'missing_warehouse'), '根因即 missing_warehouse（上层映射成 410）');
+  const perSide = battleApi2.runBattle({ p1: LD.loadout, p2: LD.loadout, p1Warehouse: LD.warehouse, p2Warehouse: null, seed: 9, tier: TIER });
+  assert.equal(perSide.status, 409, '逐侧：缺镜像的一侧仍如实拒绝（不放宽）');
+  const both = battleApi2.runBattle({ p1: LD.loadout, p2: LD.loadout, p1Warehouse: LD.warehouse, p2Warehouse: LD.warehouse, seed: 9, tier: TIER });
+  assert.equal(both.status, 200, '逐侧：两侧各自给镜像 → 200');
+  assert.deepEqual(battleApi2.sideWarehouses({ warehouse: LD.warehouse }), { p1: LD.warehouse, p2: LD.warehouse }, '旧签名 → 双方共用');
+  assert.deepEqual(battleApi2.sideWarehouses({ p1Warehouse: LD.warehouse, p2Warehouse: null }).p2, null, '逐侧优先且可一侧为空');
+});
+
 test('RP-6 DL_LEGACY_STATELESS=0：遗留端点 410 deprecated；归档回放不受影响', async () => {
   await h.withServer(null, async (s) => {
     const box = await h.request(s.port, 'POST', '/api/v1/box', { seed: 1 });

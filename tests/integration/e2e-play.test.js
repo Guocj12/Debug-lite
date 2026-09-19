@@ -44,25 +44,48 @@ const PW = h.PASSWORD;
 // 故此处记录本文件运行前的既有键，after 只删除**本文件新增**的键（不干扰其他文件）。
 const REPLAYS_BASELINE = new Set(battleApi.REPLAYS.keys());
 
-// 共用夹具（一个进程内服务 + 3 名真实玩家，其中 outsider 从不参与对局）
+// 共用夹具（一个进程内服务 + 3 名夹具玩家；本文件后续注册的玩家也全部登记在 registered）
 const F = {
-  s: null, A: null, B: null, outsider: null, tokens: {},
+  s: null, A: null, B: null, outsider: null, tokens: {}, registered: new Map(),
   ldA: null, ldB: null, merged: null, battle: null, quick: null, pointsBeforeQuick: null,
 };
 
+// 本文件所有注册都经此包装：登记 publicId → playerId，供"对局双方都是本文件注册的真实玩家"断言使用
+async function reg(s, tag, extra) {
+  const p = await h.registerPlayer(s, tag, extra);
+  if (p.status === 200) {
+    const playerId = await h.playerIdByPublicId(s.store, p.publicId);
+    assert.ok(playerId, `${p.publicId} 必须能反查到 playerId`);
+    F.registered.set(p.publicId, playerId);
+    F.tokens[p.publicId] = p.token;
+  }
+  return p;
+}
+
+// 当前档案索引里的全部 playerId（匹配池的**确定性快照**口径）
+function playersNow(s) {
+  return new Set(s.store.index.playerIds());
+}
+
 before(async () => {
-  const s = await h.startE2E({ rateLimitPerMinute: h.RATE_LIMIT });
+  // `config` 是**最终覆盖**（`server/store/config.js` 合并顺序：文件 > 内置 > opts）：
+  //   `replayCacheSize` 已存在于 `server/data/service-config.json`（=64），只传 `replayLimit` 会被表压过，
+  //   故这里显式注入 `config.config.replayCacheSize = 3`（只覆盖这一个键，其余仍取自数据表）。
+  //   → 帧 LRU 淘汰的"第几条被淘汰"**只由本实例的请求序列决定**，与同进程其它测试文件的模块级 REPLAYS 无关。
+  const s = await h.startE2E({
+    rateLimitPerMinute: h.RATE_LIMIT,
+    config: { replayCacheSize: 3 },
+  });
   F.s = s;
-  F.A = await h.registerPlayer(s, 'e2ea', { nickname: '阿尔法' });
-  F.B = await h.registerPlayer(s, 'e2eb', { nickname: '贝塔' });
-  F.outsider = await h.registerPlayer(s, 'e2eout', { nickname: '旁观' });
+  F.A = await reg(s, 'e2ea', { nickname: '阿尔法' });
+  F.B = await reg(s, 'e2eb', { nickname: '贝塔' });
+  F.outsider = await reg(s, 'e2eout', { nickname: '旁观' });
   assert.equal(F.A.status, 200, F.A.res.raw);
   assert.equal(F.B.status, 200, F.B.res.raw);
   assert.equal(F.outsider.status, 200, F.outsider.res.raw);
   for (const p of [F.A, F.B, F.outsider]) {
-    p.playerId = await h.playerIdByPublicId(s.store, p.publicId);
+    p.playerId = F.registered.get(p.publicId);
     assert.ok(p.playerId, `${p.publicId} 必须能从档案索引反查到 playerId`);
-    F.tokens[p.publicId] = p.token;
   }
   // 旁观者必须从未参与任何对局（回放 403 分支的确定性主体）
   const participants = new Set();
@@ -90,7 +113,7 @@ after(async () => {
 test('E2E-1 auth：注册 200 + token；重名 409 username_taken；登录/错密码 401/连错锁定 429/logout 后旧 token 401', async () => {
   const s = F.s;
   const FIXED = 'e2e_fixed_1';
-  const first = await h.registerPlayer(s, 'e2edup', { username: FIXED, password: PW });
+  const first = await reg(s, 'e2edup', { username: FIXED, password: PW });
   assert.equal(first.status, 200, first.res.raw);
   assert.match(first.token, /^[\w-]{40,}$/, 'token 应为随机 base64url（43 字符量级）');
 
@@ -112,7 +135,7 @@ test('E2E-1 auth：注册 200 + token；重名 409 username_taken；登录/错�
   assert.equal(wrong.body.error.code, 'invalid_credentials', '不区分"用户不存在/密码错误"（§4.6）');
 
   // 锁定：连续失败 5 次 → 第 6 次 429（§4.2 的 5 次/5 分钟，业务锁定而非限速）
-  const victim = await h.registerPlayer(s, 'e2elock');
+  const victim = await reg(s, 'e2elock');
   assert.equal(victim.status, 200, victim.res.raw);
   for (let i = 0; i < 5; i++) {
     const r = await s.request('POST', '/api/v1/auth/login', { username: victim.username, password: 'bad-password-1' });
@@ -305,6 +328,8 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
 
   // 全局积分基线：紧贴本场快速对战之前采集（此后本用例不再产生任何积分变化）
   F.pointsBeforeQuick = s.store.index.playerIds().reduce((a, id) => a + s.store.index.get(id).points, 0);
+  // 匹配池快照（本文件注册过的全部玩家；对手必在其中 —— 不依赖其它测试文件）
+  const poolBeforeQuick = playersNow(s);
 
   const quick = await s.request('POST', '/api/v1/quick/run', { seed: 880231 }, h.authed(F.A.token));
   assert.equal(quick.status, 200, quick.raw);
@@ -313,11 +338,13 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
   assert.equal(qd.opponent.isBot, false, '对手不得是 bot（D-152）');
   assert.ok(!quick.raw.includes('pl_'), '快速对战响应不得回带 playerId（§4.5）');
   F.quick = qd;
+  F.quickOpponentId = await h.playerIdByPublicId(s.store, qd.opponent.publicId);
 
-  // 无 bot 证据链：双方 publicId 都能回查档案 + 快照 + journal 记录
-  assert.equal(await h.playerIdByPublicId(s.store, F.A.publicId), F.A.playerId);
-  const bId = await h.playerIdByPublicId(s.store, qd.opponent.publicId);
+  // 无 bot 证据链：双方 publicId 都能回查档案 + 快照 + journal 记录。
+  // 对手确定性：候选池 = 本夹具 store 的档案索引（只有**本文件**注册的玩家），故对手必在快照内。
+  const bId = F.quickOpponentId;
   assert.ok(typeof bId === 'string' && bId.startsWith('pl_'), '对手 publicId 必须能反查 playerId');
+  assert.ok(poolBeforeQuick.has(bId), `quick/run 的对手必须来自本文件注册表（实得 ${bId}，池=${[...poolBeforeQuick].join(',')}）`);
   const foeArchive = await s.store.loadArchive(bId);
   assert.ok(foeArchive, '对手档案必须存在');
   assert.equal(foeArchive.flags.isBot, false, '对手档案 flags.isBot 必须为 false');
@@ -334,16 +361,15 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
   assert.equal(mine.body.data.id, qd.battleId);
   assert.equal(mine.body.data.frames.length, qd.ticks, '重算帧数应等于 ticks（确定性）');
   const foeToken = F.tokens[qd.opponent.publicId];
-  if (foeToken) {
-    const foeView = await s.request('GET', `/api/v1/replay/${qd.battleId}`, undefined, h.authed(foeToken));
-    assert.equal(foeView.status, 200, '对手（防守方）也应可见（§9.4）');
-  }
+  assert.ok(typeof foeToken === 'string', `夹具应持有对手 ${qd.opponent.publicId} 的会话 token`);
+  const foeView = await s.request('GET', `/api/v1/replay/${qd.battleId}`, undefined, h.authed(foeToken));
+  assert.equal(foeView.status, 200, '对手（防守方）也应可见（§9.4）');
   const anon = await s.request('GET', `/api/v1/replay/${qd.battleId}`);
   assert.equal(anon.status, 401, '归档回放需鉴权');
   // "非参与者"主体：本用例内注册 2 名全新真实玩家，并机器核对二者均未参与任何已结算对局
   const fresh = [];
   for (let i = 0; i < 2; i++) {
-    const p = await h.registerPlayer(s, 'e2efresh');
+    const p = await reg(s, 'e2efresh');
     fresh.push({ ...p, playerId: await h.playerIdByPublicId(s.store, p.publicId) });
   }
   const participants2 = new Set();
@@ -360,27 +386,37 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
   assert.equal(outsider.body.error.code, 'replay_forbidden');
   assert.notEqual(notParticipant.playerId, bId);
 
-  // 410（本用例口径）：帧 LRU（64）淘汰后取旧帧（D-135）——本实例最多保留 64 场。
-  // 只打到"第 1 场被淘汰"即停（65 场），随后清场，尽量少占用**进程级**帧注册表
-  // （`server/battle.js` 的模块级 Map 跨测试文件共享，见文件头注释）。
-  assert.equal(s.runtime.replayLimit, 64, '帧上限应为 store.config.replayCacheSize = 64');
+  // 410（本用例口径）：帧 LRU 淘汰后取旧帧（D-135）。
+  // **确定性设计**（见文件头注释）：本夹具的 server 实例注入 `replayLimit: 3`（`service-config.replayCacheSize`
+  // 的实例级注入，不改全局），淘汰只由 `runtime.ownReplays`（**本实例**登记的帧）决定，
+  // 故"哪几场被淘汰"完全由本用例的请求序列决定，与同进程其它测试文件向模块级 `REPLAYS` 的登记无关。
+  assert.equal(s.runtime.replayLimit, 3, '本夹具实例的帧上限应为注入值 3');
+  assert.equal(s.store.config.replayCacheSize, 3, '本实例 store.config.replayCacheSize 应为注入值 3（只覆盖这一个键）');
+  assert.equal(s.store.config.auth.maxFailures, 5, '其余键仍取自 service-config.json（maxFailures=5）');
+  assert.equal(s.store.config.record.recentLimit, 100, '其余键仍取自 service-config.json（recentLimit=100）');
   const body = { p1: F.ldA, p2: F.ldB, warehouse: F.merged, seed: 7, tier: MODE };
-  const first = await s.request('POST', '/api/v1/battle', body);
-  assert.equal(first.status, 200);
-  const firstId = first.body.data.id;
-  assert.ok(battleApi.REPLAYS.has(firstId), '首场应已登记进帧注册表');
-  let last = null;
-  for (let i = 0; i < 70 && battleApi.REPLAYS.has(firstId); i++) {
-    last = await s.request('POST', '/api/v1/battle', body);
-    assert.equal(last.status, 200, '对战应 200');
+  const ids = [];
+  for (let i = 0; i < 6; i++) { // 3 + 3：上限 3，打 6 场 → 前 3 场必被淘汰
+    const r = await s.request('POST', '/api/v1/battle', body);
+    assert.equal(r.status, 200, '对战应 200');
+    ids.push(r.body.data.id);
   }
-  assert.equal(battleApi.REPLAYS.has(firstId), false, '超过上限后最旧帧应被淘汰出注册表');
-  assert.equal(s.runtime.ownReplays.length, 64, '本实例帧缓存恒 ≤64（D-135：修掉 battle.js 无上限增长）');
-  const evicted = await s.request('GET', `/api/v1/replay/${firstId}`);
-  assert.equal(evicted.status, 410, '被淘汰的最旧帧应 410');
-  assert.equal(evicted.body.error.code, 'replay_expired');
-  const alive = await s.request('GET', `/api/v1/replay/${last.body.data.id}`);
-  assert.equal(alive.status, 200, '最新帧应仍在缓存内');
+  assert.equal(s.runtime.ownReplays.length, 3, '本实例帧缓存恒 ≤ 上限 3（D-135：修掉 battle.js 无上限增长）');
+  assert.deepEqual(s.runtime.ownReplays, ids.slice(3), '本实例应只保留最新 3 场');
+  // 被淘汰者 → 410 replay_expired（本实例登记过的帧被淘汰 ⇒ 记忆集命中）
+  for (const goneId of ids.slice(0, 3)) {
+    const gone = await s.request('GET', `/api/v1/replay/${goneId}`);
+    assert.equal(gone.status, 410, `被淘汰帧 ${goneId} 应 410`);
+    assert.equal(gone.body.error.code, 'replay_expired');
+  }
+  // 存活者 → 200；从未登记过的 id → 404（两者语义必须可分）
+  for (const aliveId of ids.slice(3)) {
+    const alive = await s.request('GET', `/api/v1/replay/${aliveId}`);
+    assert.equal(alive.status, 200, `存活帧 ${aliveId} 应 200`);
+  }
+  const never = await s.request('GET', '/api/v1/replay/r999999999');
+  assert.equal(never.status, 404, '从未登记过的 id 必须 404（不是 410）');
+  assert.equal(never.body.error.code, 'unknown_replay');
 
   // 清场（只删本文件新增的帧 id）——避免污染同进程其它用例对帧注册表的断言
   for (const id of [...battleApi.REPLAYS.keys()]) {
@@ -528,6 +564,12 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
   const atCap = ledger.ratingDelta({ points: RATING.cap, opponentPoints: RATING.cap, result: 'win', config: RATING });
   assert.equal(atCap.pointsAfter, RATING.cap, 'cap 处再胜不得越界');
 
+  // 双向结算都落盘：对手档案现在的积分必须等于响应里的 pointsAfter（按 playerId 直读，不依赖 token 映射）
+  const foeArchNow = await s.store.loadArchive(F.quickOpponentId);
+  assert.ok(foeArchNow, '对手档案必须仍可读');
+  assert.equal(foeArchNow.rating.points, qd.opponent.pointsAfter,
+    `对手积分应已落盘：档案 ${foeArchNow.rating.points} ≠ 响应 ${qd.opponent.pointsAfter}`);
+
   // 对局粒度守恒
   assert.equal(
     qd.self.pointsBefore + qd.opponent.pointsBefore + qd.self.delta + qd.opponent.delta,
@@ -567,7 +609,7 @@ test('E2E-6 开关语义：未启用 DL_DATA_DIR → /me 503；DL_LEGACY_STATELE
     assert.equal(wh.status, 410);
     const health = await s2.request('GET', '/api/v1/health');
     assert.equal(health.status, 200);
-    const p = await h.registerPlayer(s2, 'e2eoff');
+    const p = await h.registerPlayer(s2, 'e2eoff'); // ② 独立实例：不经夹具登记表
     assert.equal(p.status, 200, p.res.raw);
     const me = await s2.request('GET', '/api/v1/me', undefined, h.authed(p.token));
     assert.equal(me.status, 200);

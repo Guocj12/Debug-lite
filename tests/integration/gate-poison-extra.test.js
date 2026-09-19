@@ -188,3 +188,50 @@ test('GX-P9 项 9 投毒：data 端点返回体异常（cellPx 不符）→ FAIL
   assert.equal(r.status, 'fail', r.detail);
   assert.match(r.detail, /data battle-config 异常/);
 });
+
+// ---------- 项 7：覆盖率**口径统一**（P7-7 §P0 第⑨条）----------
+
+test('GX-P10 项 7 明细必须同时给出「四目录逐文件判定」与「全仓聚合诊断值」（两口径不再二选一）', async () => {
+  // 注入假 runner：summary 覆盖磁盘四目录文件（避免盲区判定 fail），并带 totals（聚合口径）
+  const root = makeProject({
+    'tests/ok.test.js': "const {test}=require('node:test');test('t',()=>{});",
+    'shared/README.md': '#',
+    'server/core/rng.js': 'module.exports = {};',
+  });
+  try {
+    const mk = (p) => ({ path: p, coveredLinePercent: 100, coveredBranchPercent: 100, coveredFunctionPercent: 100 });
+    const fakeRunner = async () => ({
+      pass: 7, fail: 0,
+      coverageSummary: {
+        files: [mk(path.join(root, 'server/core/rng.js'))],
+        totals: { coveredLinePercent: 96.09, coveredBranchPercent: 82.62, coveredFunctionPercent: 95.0 },
+      },
+    });
+    const r = await gate.checkTests({ projectRoot: root, runner: fakeRunner });
+    assert.equal(r.status, 'pass', `逐文件达标即门禁 pass（聚合低不得翻转判定）：${r.detail}`);
+    assert.match(r.detail, /四目录覆盖率行≥90\/分支≥85\/函数≥90/, '必须给出每文件口径');
+    assert.match(r.detail, /全仓聚合（含 tests\/scripts\/\.audit，诊断值非门禁）行96\.09\/分支82\.62\/函数95/, '必须同时给出全仓聚合口径（含"非门禁"标注）');
+    // 对照：聚合值本身不参与判定 —— 即使聚合远低于阈值，只要四目录逐文件达标就是 pass
+    const low = await gate.checkTests({
+      projectRoot: root,
+      runner: async () => ({
+        pass: 7, fail: 0,
+        coverageSummary: { files: [mk(path.join(root, 'server/core/rng.js'))], totals: { coveredLinePercent: 10, coveredBranchPercent: 10, coveredFunctionPercent: 10 } },
+      }),
+    });
+    assert.equal(low.status, 'pass');
+    // 反向：四目录内任一文件低于阈值 → fail（并同时带出聚合值，便于一眼分辨"是谁拖的"）
+    const bad = await gate.checkTests({
+      projectRoot: root,
+      runner: async () => ({
+        pass: 7, fail: 0,
+        coverageSummary: { files: [{ path: path.join(root, 'server/core/rng.js'), coveredLinePercent: 10, coveredBranchPercent: 10, coveredFunctionPercent: 10 }], totals: { coveredLinePercent: 96, coveredBranchPercent: 95, coveredFunctionPercent: 95 } },
+      }),
+    });
+    assert.equal(bad.status, 'fail');
+    assert.match(bad.detail, /server\/core\/rng\.js 行10%\/分支10%\/函数10%/);
+    assert.match(bad.detail, /全仓聚合/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

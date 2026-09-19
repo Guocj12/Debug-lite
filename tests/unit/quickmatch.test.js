@@ -425,6 +425,85 @@ test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无�
   assert.ok((ranked3.details || []).some((d) => d.code === 'missing_warehouse'), '排位同样如实报（不放宽）');
 });
 
+test('P1-D1 缺口 1 端到端（重启 / 淘汰）：快照自带镜像使插件词条真实生效；旧快照退化不报错；未校验仍 409', async (t) => {
+  let fx = await h.openFixture({ logger: h.makeLogger() });
+  t.after(() => fx.cleanup());
+  const battleApi = require('../../server/battle.js');
+  const rankedMod = require('../../server/ranked.js');
+  const { warehouse, loadout, refs } = pluginWarehouseFixture();
+  assert.ok(refs > 0, `夹具必须带装配引用（实得 ${refs}）`);
+  const me = h.makePlayerId(301);
+  const created = await fx.account.createPlayerArchive({
+    playerId: me, nickname: '装配·重启', loadout, warehouse, tier: 'common', at: fx.clock(),
+  });
+  assert.equal(created.ok, true, `装配配置应能建档：${JSON.stringify(created).slice(0, 200)}`);
+  await fx.registerPlayer({ playerId: h.makePlayerId(601) }); // 对手（默认配置，无引用）
+  const hash = (await fx.store.loadArchive(me)).configs.slots[0].snapshot.hash;
+  const snapBefore = await fx.store.snapshot.get(hash);
+  assert.ok(snapBefore.warehouse, '出战快照必须自带装配引用子集（缺口 1 的落盘载体）');
+
+  // —— 进程重启：close → 同目录新 store 实例（进程内镜像缓存必然为空） ——
+  fx = await fx.reopen();
+  const archive2 = await fx.store.loadArchive(me);
+  assert.equal(archive2.flags.unverifiedLoadout, false, '重启后仍是"已校验"');
+  const snapAfter = await fx.store.snapshot.get(hash);
+  assert.deepEqual(snapAfter.warehouse, snapBefore.warehouse, '重启后镜像逐值一致');
+
+  // ① 面板逐值一致（这就是"插件词条真实生效"的实测口径）
+  const withSnapshot = battleApi.buildPlayer('p1', loadout, snapAfter.warehouse, 'common');
+  const withRealMirror = battleApi.buildPlayer('p1', loadout, warehouse, 'common');
+  assert.equal(withSnapshot.ok, true);
+  assert.deepEqual(withSnapshot.player, withRealMirror.player, '重启前后玩家运行时（五维/regen/special/技能参数）逐值一致');
+  const degradedPanel = battleApi.buildPlayer('p1', loadout, rankedMod.syntheticVerifiedWarehouse(loadout), 'common');
+  assert.equal(degradedPanel.ok, true);
+  assert.notDeepEqual(degradedPanel.player, withSnapshot.player, '退化（无词条）面板与真实面板不同 → 词条确实生效');
+  const snapBytes = Buffer.byteLength(JSON.stringify(snapAfter.warehouse));
+  const whBytes = Buffer.byteLength(JSON.stringify(warehouse));
+  t.diagnostic(`[缺口1·真实仓库] 装配引用子集 ${snapBytes}B / 整仓 ${whBytes}B（占比 ${(snapBytes / whBytes * 100).toFixed(2)}%）；引用 ${refs} 处`);
+
+  // ② 重启后 quick / ranked 均可打，且判定使用快照镜像（等价 rt.loadWarehouse 的③级来源）
+  const fromSnapshot = async (playerId) => (playerId === me ? snapAfter.warehouse : null);
+  const q1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: fromSnapshot });
+  const r1 = await q1.run({ playerId: me, seed: 41 });
+  assert.equal(r1.status, 200, `重启后 quick 必须能打：${JSON.stringify(r1).slice(0, 220)}`);
+  fx.clock.advance(73 * 3600 * 1000);
+  const rk1 = await rankedMod.withLogger(fx.logger, { loadWarehouse: fromSnapshot })
+    .runRankedBattle({ store: fx.store, playerId: me, seed: 42 });
+  assert.equal(rk1.status, 200, `重启后 ranked 必须能打：${JSON.stringify(rk1).slice(0, 220)}`);
+  assert.equal(rk1.data.invalids, 0);
+
+  // ③ 旧快照（无新字段）+ 已校验 → 退化路径（不报错，记 warn）
+  const legacyLoadout = JSON.parse(JSON.stringify(loadout));
+  legacyLoadout.role.name = '均衡(旧快照)'; // 内容不同 → 不同 hash，可造"缺口 1 之前"的正文
+  const legacySnap = fx.store.freezeSnapshot(legacyLoadout);
+  assert.equal(legacySnap.warehouse, undefined, '旧形状：不落装配引用子集');
+  const legacyId = h.makePlayerId(302);
+  await fx.store.createAccount({
+    playerId: legacyId, username: 'legacy_30', nickname: '旧快照',
+    auth: { algo: 'scrypt', hash: 'h_legacy30', N: 1024 },
+    slot: { slotId: 'slot1', snapshotHash: legacySnap.hash, configHash: legacySnap.configHash, versions: fx.VERSIONS, warehouseVerified: true },
+    at: fx.clock(),
+  });
+  assert.equal((await fx.store.loadArchive(legacyId)).flags.unverifiedLoadout, false, '旧口径：已校验');
+  const q2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => null });
+  fx.clock.advance(73 * 3600 * 1000);
+  const r2 = await q2.run({ playerId: legacyId, seed: 43 });
+  assert.equal(r2.status, 200, `旧快照无镜像 → 退化对局（不报错）：${JSON.stringify(r2).slice(0, 220)}`);
+  assert.ok(fx.logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.reason === 'warehouse_mirror_degraded'),
+    '旧快照退化必须留可观测 warn（不静默）');
+
+  // ④ 未校验 + 无镜像 → 如实 409 missing_warehouse（口径不得放宽）
+  await fx.store.updateArchive(legacyId, (ar) => {
+    ar.flags.unverifiedLoadout = true;
+    for (const slot of ar.configs.slots) if (slot.snapshot) slot.snapshot.verifiedAgainstWarehouse = false;
+    return null;
+  });
+  fx.clock.advance(73 * 3600 * 1000);
+  const r3 = await q2.run({ playerId: legacyId, seed: 44 });
+  assert.equal(r3.status, 409, JSON.stringify(r3).slice(0, 220));
+  assert.ok((r3.details || []).some((d) => d.code === 'missing_warehouse'), '未校验 → 如实 missing_warehouse');
+});
+
 test('T-QM-F1 工厂与入口：缺少已装配 store → TypeError；runQuickMatch 便捷入口等价', async (t) => {
   assert.throws(() => qm.createQuickMatch({}), TypeError);
   const fx = await h.openFixture();

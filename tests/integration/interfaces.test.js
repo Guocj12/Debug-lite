@@ -1,11 +1,19 @@
 'use strict';
 // T-DC-8 接口冻结契约测试 —— docs/interfaces.md 与 decisions/tasks 的机器核对
 // 落点约定：decisions.md 每条 D-xx 必须以整词形式出现在 interfaces.md（或数据表文本）中。
+//
+// 2026-09-19 冗余清理（P7-7 §② R4）：删除原 `IF-5 gate 项 5 激活：真实仓库 T-DC-8 通过` ——
+//   它对**真仓库**跑 `gate.checkDNumberLocations()` + `gate.checkDocData()` 并只断言 pass，
+//   与 gate 项 5（每次 npm run gate 必经）及 `tests/integration/gate-extra.test.js` 的
+//   GX-3（fail：D-999 无落点）/GX-4（真实仓库 pass + pending + fail 三态）**同一实现同一分支重复**。
+//   分层说明：IF-1 本身已独立从 decisions/interfaces 文本复算落点（不是"调 gate"的分层），
+//   IF-5 只是"再调一次 gate"——删它不减少任何独立判据；gate 项 5 的 fail 分支另有 GX-3 投毒。
+//   （刻意**未**放宽 IF-1 的 `decided.size` 计数：那是查"decisions 编号被误删/写坏"的漂移护栏，
+//     不是同层重复断言；代价是新增 D 编号时必须同步该数字，属有意保留的人工闸门。）
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const gate = require('../../scripts/gate.js');
 
 const REPO = path.join(__dirname, '..', '..');
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
@@ -78,11 +86,4 @@ test('IF-4 CLI 契约 v1：子命令与退出码登记', () => {
     assert.ok(INTERFACES.includes(cmd), `interfaces.md 缺 CLI 子命令 ${cmd}`);
   }
   assert.ok(INTERFACES.includes('退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误'), '退出码契约缺失');
-});
-
-test('IF-5 gate 项 5 激活：真实仓库 T-DC-8 通过（P0-7 出口）', () => {
-  const td8 = gate.checkDNumberLocations(); // 默认 REPO：interfaces.md 刚建立
-  assert.equal(td8.status, 'pass', td8.detail);
-  const item5 = gate.checkDocData();
-  assert.equal(item5.status, 'pass', `项 5 应整体 PASS（T-DC-2 + T-DC-8 双过）: ${item5.detail}`);
 });

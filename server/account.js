@@ -239,7 +239,8 @@ function createAccount(options) {
       const loadout = o.loadout === undefined || o.loadout === null ? buildDefaultLoadout() : o.loadout;
       const v = validateLoadoutOf(loadout, { warehouse: o.warehouse, tier: o.tier });
       if (!v.ok) return fail('loadout_invalid', '默认出战配置不合法（服务端构造异常）', v.errors);
-      const snapshot = store.freezeSnapshot(loadout, versions);
+      // 缺口 1：带 warehouse 校验通过时，把该镜像中**本配置引用到的插件项**随快照一起冻结
+      const snapshot = store.freezeSnapshot(loadout, versions, { warehouse: o.warehouse });
       if (!snapshot || !snapshot.hash) return fail('store_internal', '默认出战配置冻结失败（快照库不可用）');
       const slotId = archiveMod.slotIdOf(store.config || {}, 1);
       const archive = await store.createAccount({
@@ -341,6 +342,7 @@ function createAccount(options) {
         activate: o.activate === true,
         versions,
         warehouseVerified,
+        warehouse: o.warehouse, // 缺口 1：随快照冻结本配置引用到的插件项
       });
       logWrite('createSlot', { playerId: o.playerId, slotId: res.slot.slotId });
       return ok({
@@ -376,6 +378,7 @@ function createAccount(options) {
         activate: o.activate === true,
         versions,
         warehouseVerified: v.warehouseVerified,
+        warehouse: o.warehouse, // 缺口 1：随快照冻结本配置引用到的插件项（重启/淘汰后不再依赖进程内镜像）
       });
       logWrite('saveConfig', { playerId: o.playerId, slotId: slot.slotId, snapshotHash: res.snapshot.hash });
       return ok({
@@ -451,6 +454,20 @@ function createAccount(options) {
       }
       const hash = contentHash(o.warehouse);
       mirrorSet(o.playerId, { warehouse: deepClone(o.warehouse), hash, savedAt: nowFn() });
+      // 缺口 1：把该镜像中出战配置**引用到的插件项**附到出战快照（同 hash → 只刷新该附加字段）。
+      //   这样"只提交镜像、不再重存配置"的客户端在进程重启后同样能带着真实词条对局。
+      let snapshotWarehouseRefreshed = false;
+      if (verified && active && active.snapshot && active.snapshot.hash
+        && archiveMod.loadoutRefs(active.loadout).length > 0 && typeof store.freezeSnapshot === 'function') {
+        try {
+          store.freezeSnapshot(active.loadout, versions, { warehouse: o.warehouse });
+          snapshotWarehouseRefreshed = true;
+        } catch (err) {
+          log.warn('store', 'store.write',
+            `仓库镜像未能附到出战快照（不影响本次校验）：${err && err.message ? err.message : err}`,
+            { playerId: o.playerId, op: 'saveWarehouseMirror' });
+        }
+      }
       let applied = false;
       if (verified && archive.flags.unverifiedLoadout !== false) {
         await store.updateArchive(o.playerId, (a) => {
@@ -466,6 +483,7 @@ function createAccount(options) {
         warehouseHash: hash,
         unverifiedLoadout: !verified,
         applied,
+        snapshotWarehouseRefreshed,
         buckets: bucketCounts(o.warehouse),
         warehouse: deepClone(o.warehouse),
       });

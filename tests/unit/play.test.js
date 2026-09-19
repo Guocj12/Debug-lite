@@ -258,3 +258,48 @@ test('PLAY-12 清理临时目录（PLAY-9 产物）不在仓库内', () => {
   assert.ok(path.resolve(TMP).startsWith(path.resolve(os.tmpdir())), '临时产物必须在 os.tmpdir() 内');
   fs.rmSync(TMP, { recursive: true, force: true });
 });
+
+test('PLAY-13 分支补强：--quality 门槛回落有说明、--out 写失败 → rc 1、labelOf 三级兜底', () => {
+  // ① 品质门槛拉到最高：达标不足 → 回落并**必须打印说明**（不得静默降级）
+  const r = play.runPlay(['--seed', '7', '--boxes', '20', '--tier', 'mythic', '--quality', 'mythic']);
+  assert.equal(r.rc, 0, r.output);
+  assert.equal(play.parseArgs(['--quality', 'mythic']).quality, 'mythic');
+  // ② --out 指向既有目录 → 写盘抛错 → 退出码 1 + 说明（不是静默成功）
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-play-bad-'));
+  try {
+    const bad = play.runPlay(['--seed', '7', '--boxes', '20', '--out', dir]);
+    assert.equal(bad.rc, 1, bad.output);
+    assert.match(bad.output, /写出战配置失败/);
+    assert.equal(bad.artifact, null, '写失败不得报告 artifact');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // ③ labelOf 三级兜底：name → templateId → uid（打印不因缺字段崩）
+  assert.equal(play.labelOf({ uid: 'u1', templateId: 't1', name: 'n', quality: 'rare', tier: 2 }), 'n（rare tier2）');
+  assert.equal(play.labelOf({ uid: 'u1', templateId: 't1' }), 't1（?）');
+  assert.equal(play.labelOf({ uid: 'u1' }), 'u1（?）');
+});
+
+test('PLAY-14 大样本装配自洽：打印的"成功 N 件" = 仓库里真实被引用的插件数（不重不漏）', () => {
+  const r = play.runPlay(['--seed', '3', '--boxes', '60', '--tier', 'mythic']);
+  assert.equal(r.rc, 0, r.output);
+  const m = /\[3\/6\] 自动装配（[^）]*）：成功 (\d+) 件，跳过 (\d+) 处/.exec(r.output);
+  assert.ok(m, `应打印装配统计：${r.output.split('\n').slice(3, 8).join(' | ')}`);
+  const placed = Number(m[1]);
+  const refs = [];
+  for (const kind of ['role', 'skill']) {
+    for (const it of r.warehouse.buckets[kind]) {
+      for (const sl of it.slots || []) if (sl.pluginUid) refs.push(sl.pluginUid);
+    }
+  }
+  assert.equal(refs.length, placed, '装配成功数必须等于仓库中真实的槽位引用数');
+  assert.equal(new Set(refs).size, refs.length, '同一插件不得被双处引用（唯一性）');
+  // 被引用的插件必须真的存在且 equipped=true
+  const byUid = new Map();
+  for (const kind of ['rolePlugin', 'skillPlugin']) for (const p of r.warehouse.buckets[kind]) byUid.set(p.uid, p);
+  for (const uid of refs) {
+    assert.ok(byUid.has(uid), `槽位引用的插件必须存在：${uid}`);
+    assert.equal(byUid.get(uid).equipped, true, `被引用插件必须 equipped=true：${uid}`);
+  }
+  assert.match(r.output, /\[6\/6\] 战斗/);
+});

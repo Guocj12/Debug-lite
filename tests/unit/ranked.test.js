@@ -463,6 +463,66 @@ test('P1-4 批次级幂等：同 (playerId, seed) 重发 → 同 batchId、batch
   assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 2, '新 seed 才 +1');
 });
 
+test('P1-5 缺口 3 并发互斥：并发同 seed → 仅一个批次落盘（batchesPlayed +1 / journal 批次记录恰 1 条 / 两响应同批同结果）；不同 seed 并发各记一次', async (t) => {
+  const fx = await h.openFixture();
+  t.after(() => fx.cleanup());
+  const players = await fx.registerPlayers(3);
+  const me = players[0];
+  const countOf = async (pred) => {
+    const hits = [];
+    await fx.store.replayJournal({ fromSeq: 0 }, (rec) => { if (pred(rec)) hits.push(rec); });
+    return hits;
+  };
+  const seqBefore = fx.store.maxSeq();
+
+  // ① 并发同 seed：两个请求同时进入（无锁实现下会各自跑一轮、各写一条 ranked.batch）
+  const [a, b] = await Promise.all([
+    ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260919 }),
+    ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260919 }),
+  ]);
+  assert.equal(a.status, 200, JSON.stringify(a).slice(0, 200));
+  assert.equal(b.status, 200, JSON.stringify(b).slice(0, 200));
+  assert.equal(a.data.batchId, b.data.batchId, '同 seed → 同 batchId');
+  // 结果一致（逐场 winner/ticks/battleId/对手）
+  const key = (d) => d.results.map((x) => [x.match, x.opponentPlayerId, x.winner, x.ticks, x.battleId]);
+  assert.deepEqual(key(a.data), key(b.data), '两响应逐场结果一致');
+  assert.equal(a.data.wins, b.data.wins);
+  assert.equal(a.data.draws, b.data.draws);
+  assert.equal(a.data.losses, b.data.losses);
+  assert.equal(a.data.invalids, b.data.invalids, 'invalids 随批次落盘 → 回放同值');
+  assert.equal(a.data.relaxed, b.data.relaxed, 'relaxed 随批次落盘 → 回放同值');
+  assert.equal(a.data.matches, b.data.matches);
+  assert.equal(a.data.tierAfter, b.data.tierAfter);
+  assert.equal([a.data.replayed, b.data.replayed].filter(Boolean).length, 1, '恰好一个走回放路径（另一个首次结算）');
+
+  // 批次记录恰 1 条；battle.recorded 恰 matches 条；batchesPlayed 仅 +1
+  const batches = await countOf((r) => r.type === 'ranked.batch' && r.batchId === a.data.batchId);
+  assert.equal(batches.length, 1, `journal 中该批次记录必须恰 1 条（实得 ${batches.length}）`);
+  assert.equal(batches[0].invalids, a.data.invalids, 'invalids 已随批次落盘');
+  const battles = await countOf((r) => r.type === 'battle.recorded' && r.batchId === a.data.batchId);
+  assert.equal(battles.length, a.data.matches, 'battle.recorded 无重复');
+  const ids = new Set(battles.map((r) => r.battleId));
+  assert.equal(ids.size, battles.length, 'battleId 内容寻址天然去重');
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 1, 'batchesPlayed 只 +1');
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.lastBatchId, a.data.batchId);
+  const seqAdded = fx.store.maxSeq() - seqBefore;
+  assert.equal(seqAdded, 1 + a.data.matches + (a.data.promoted ? 1 : 0), `journal 新增 = 1 批次 + N 场${a.data.promoted ? ' + 1 晋升' : ''}（实得 ${seqAdded}）`);
+  t.diagnostic(`[缺口3] 并发同 seed：matches=${a.data.matches} journal新增=${seqAdded} 批次记录=1 batchesPlayed=1 replayed=[${a.data.replayed === true}, ${b.data.replayed === true}]`);
+
+  // ② 对照组：不同 seed 并发 → 各成一批（互不阻塞、各记一次）
+  const [c, d] = await Promise.all([
+    ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260920 }),
+    ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 20260921 }),
+  ]);
+  assert.equal(c.status, 200);
+  assert.equal(d.status, 200);
+  assert.notEqual(c.data.batchId, d.data.batchId, '不同 seed → 不同 batchId');
+  assert.equal(c.data.replayed, undefined);
+  assert.equal(d.data.replayed, undefined);
+  assert.equal((await fx.store.loadArchive(me.playerId)).progress.batchesPlayed, 3, '两个不同 seed 各 +1');
+  assert.equal((await countOf((r) => r.type === 'ranked.batch')).length, 3, 'journal 三个批次记录');
+});
+
 test('P2-5 默认出战配置全同 + 兜底 AI 只 move_left → 真实玩家池几乎恒平局（回归防护：至少 3 族差异）', () => {
   // 修前：所有玩家的默认 AI 都是 `move_left`（全同）→ 6/6 平。此处钉死"默认 AI 分族 + 会开火"
   const families = new Set();

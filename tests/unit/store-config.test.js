@@ -294,3 +294,61 @@ test('CFG-10 数据表校验能抓漂移（负例：篡改数值 / 未登记键 
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   }
 });
+
+// P7-7 遗留项 S-3（2026-09-19 闭环）：`unlock.json` 的 `gating.enabled` 必须是**布尔**。
+//   运行期口径是 `enabled !== false`（缺省/非 false → 按启用处理，旧表行为不变，见 core/unlock.js:34、
+//   core/items.js:34、ai/ast.js:729、loadout.js），所以写成字符串 `"false"` 会被判成**启用**——
+//   一个字符就静默翻转全部门控语义（段位门控/节点门控/掉落池/装配），必须在结构校验处拦住。
+test('CFG-11 S-3：unlock.json 的 gating.enabled 非布尔 → validateStructure 必须 FAIL；缺省 gating 不阻塞', () => {
+  const root = mkTmp();
+  const assetsDir = path.join(__dirname, '..', '..', 'assets');
+  const dataDir = configMod.defaultConfigDir();
+  const schema = require('../../server/data/schema.js');
+  const read = (f) => JSON.parse(fs.readFileSync(path.join(root, f), 'utf8'));
+  const write = (f, o) => fs.writeFileSync(path.join(root, f), JSON.stringify(o, null, 2), 'utf8');
+  try {
+    for (const f of fs.readdirSync(dataDir)) {
+      if (f.endsWith('.json')) fs.copyFileSync(path.join(dataDir, f), path.join(root, f));
+    }
+    // 基线：真实表（gating.enabled=false 布尔）通过，且运行期口径确实是"关闭门控"
+    assert.equal(schema.validateStructure(root, assetsDir).ok, true, '复制后应通过');
+    const unlockJson = read('unlock.json');
+    assert.equal(typeof unlockJson.gating.enabled, 'boolean', '真实表应为布尔');
+    assert.equal(unlockJson.gating.enabled, false, '当前默认 = 门控关闭（用户决策 2026-09-16）');
+
+    // ① 字符串 "false" → FAIL（会被 `!== false` 判为启用 = 静默翻转语义）
+    unlockJson.gating.enabled = 'false';
+    write('unlock.json', unlockJson);
+    let res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false, '字符串 "false" 必须被拦住（否则门控被静默打开）');
+    assert.ok(res.detail.includes('gating.enabled 必须是布尔'), res.detail);
+
+    // ② 数字 0 → FAIL（同理：0 !== false）
+    unlockJson.gating.enabled = 0;
+    write('unlock.json', unlockJson);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('gating.enabled 必须是布尔'), res.detail);
+
+    // ③ gating 本身不是对象 → FAIL
+    unlockJson.gating = 'off';
+    write('unlock.json', unlockJson);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, false);
+    assert.ok(res.detail.includes('unlock.gating 必须是对象'), res.detail);
+
+    // ④ 布尔 true（回退到旧行为）→ PASS（结构合法；语义由各自模块的 withGating 用例覆盖）
+    unlockJson.gating = { enabled: true };
+    write('unlock.json', unlockJson);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, true, `布尔 true 应通过结构校验：${res.detail}`);
+
+    // ⑤ 完全不写 gating 字段（旧表兼容）→ 结构校验不阻塞（运行期按"启用"处理）
+    delete unlockJson.gating;
+    write('unlock.json', unlockJson);
+    res = schema.validateStructure(root, assetsDir);
+    assert.equal(res.ok, true, `旧表（无 gating 字段）应继续通过：${res.detail}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  }
+});

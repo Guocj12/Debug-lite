@@ -3,26 +3,20 @@
 //   确定性（同 seed 完整战斗逐帧一致）= T-EN-1/T-BT-5；快照锚定（走查可复算）= T-BT-13/14
 // 依据：.audit/golden-battle.js（固定 loadout × 固定 AI 序列 × seed 20260912，p1 critChance 0.5 走随机路径）；快照 .audit/golden-battle.json
 // 语义：任何"同 seed 两次 runFull 逐帧一致"失败 = 确定性破坏；任何与快照不一致 = 机制数值漂移（需复核后 --write 重锚）。
+//
+// 2026-09-19 冗余清理（P7-7 §② R1/R2 的低风险项，只删**同层同分支逐字重复**）：
+//   · 原 `T-EN-1/T-BT-5 同 seed 两次逐帧一致` 整条删除 —— `tests/regression/golden-battle.test.js`
+//     第 2 条对同一 `runGolden()` 调两次并 deepEqual 整份 summary + diffs JSON，覆盖同一实现同一分支且更强。
+//   · 原 `T-BT-13/14 全帧摘要与磁盘快照逐值一致` 的**快照 equality 断言**删除（regression 第 1 条已做
+//     整份 summary deepEqual + 逐帧 diff 并带可读定位），本文件只保留 regression 未覆盖的**结构合理性抽查**。
+//   · 分层说明：`tests/unit` 断言语义、`tests/regression` 断言快照锚定 —— 但上述两条是本文件**对同一
+//     `runGolden()` 结果做同一比较**（不是"单测语义 vs 回归锚定"的分层），故属纯冗余。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { runGolden, SEED } = require('../../.audit/golden-battle.js');
 
-const SNAP = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', '.audit', 'golden-battle.json'), 'utf8'));
-
-test('T-EN-1/T-BT-5 黄金复现：同 seed 两次完整战斗逐帧一致（确定性，含随机路径）', () => {
-  const a = runGolden();
-  const b = runGolden();
-  assert.equal(a.summary.ticks, b.summary.ticks);
-  assert.equal(a.summary.winner, b.summary.winner);
-  assert.deepEqual(a.summary.frames, b.summary.frames, '同 seed 两次 runFull 逐帧一致（含 crit 流）');
-  assert.equal(a.diffs.length, b.diffs.length);
-});
-
-test('T-BT-13/14 走查可复算：全帧摘要与磁盘快照逐值一致（机制漂移即红）', () => {
+test('T-BT-13/14 走查可复算：快照结构合理性抽查（逐值锚定见 tests/regression/golden-battle.test.js）', () => {
   const { summary } = runGolden();
-  assert.deepEqual(summary, SNAP, '黄金战斗与 .audit/golden-battle.json 逐值一致；若机制有意变更需独立复核后 --write 重锚');
   assert.equal(summary.seed, SEED);
   assert.ok(summary.ticks <= 64, '64 tick 上界内结束');
   assert.ok(summary.winner === 'p1' || summary.winner === 'p2' || summary.winner === 'draw');

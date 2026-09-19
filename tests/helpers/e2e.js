@@ -71,6 +71,10 @@ function authed(token) {
 }
 
 // 起服务（随机端口 + 临时数据根）。start() 缺省端口 0 = 系统分配 → 不冲突。
+// `config` / `configDir`：透传给 `server.start({ config })` → `store.openStore` —— 注意
+//   `server/store/config.js` 的合并顺序是「文件 > 内置 > opts」，所以想覆盖某个**已存在于**
+//   `server/data/service-config.json` 的键（如 `replayCacheSize`），必须走 `config`（它是最终覆盖，
+//   在文件之后合并）；仅传 configDir 指向临时表也可，但需要把整张表复制过去。
 async function startE2E(options) {
   const o = options || {};
   const dataDir = o.dataDir || makeTempDataDir(o.prefix);
@@ -81,6 +85,9 @@ async function startE2E(options) {
     authConfig: o.authConfig || FAST_AUTH,
     rateLimitPerMinute: o.rateLimitPerMinute === undefined ? RATE_LIMIT : o.rateLimitPerMinute,
     env: { DL_DATA_DIR: dataDir, ...(o.env || {}) },
+    configDir: o.configDir,
+    config: o.config,
+    replayLimit: o.replayLimit,
   });
   const state = {
     server: s.server,

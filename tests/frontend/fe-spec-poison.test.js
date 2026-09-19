@@ -247,3 +247,59 @@ test('FE-P13 C9 注入缝本身：publicDir 不存在 → pass 但 applicable=fa
   assert.equal(c9.applicable, false);
   assert.match(c9.detail, /尚未实现/);
 });
+
+// ---------- ⑤ 解析器分支（围栏/表格）：R-1 CRLF 回归 + 前缀干扰 + 缺围栏 ----------
+
+test('FE-P14 R-1 回归：整篇文档是 CRLF 时 checkSpec 必须仍全绿（fenced 容忍 \\r）', () => {
+  // 背景：仓库 core.autocrlf=true 且无 .gitattributes → 新克隆/checkout 后 frontend-spec.md 会是 CRLF。
+  //   旧实现 `fenced()` 的标签行正则 `/^[ \t]*$/` 不容忍 `\r` → C1 报"缺少围栏"并连带 8 条 FE-SPEC 测试红
+  //   （审查 R-1 实测 CRLF→0 PASS / LF→9 PASS）。修复已落地但**当时没有回归用例**。
+  const text = fs.readFileSync(SPEC, 'utf8');
+  const crlf = text.split('\n').join('\r\n');
+  assert.notEqual(crlf, text, '前提：确实转成了 CRLF');
+  const { file, dir } = withSpec(() => crlf);
+  try {
+    const res = check.checkSpec({ specFile: file });
+    const failed = res.items.filter((i) => i.status === 'fail');
+    assert.equal(failed.length, 0, `CRLF 下必须与 LF 同结果：${failed.map((f) => `${f.id} ${f.detail}`).join(' | ')}`);
+    assert.equal(itemOf(res, 'C1').status, 'pass', 'C1 不得因 \\r 报"缺少围栏"');
+    // 围栏内容解析结果必须与 LF 版逐字一致（只差换行）
+    const lfRaw = check.fenced(text, 'json', 'fe-spec-registry');
+    const crlfRaw = check.fenced(crlf, 'json', 'fe-spec-registry');
+    assert.equal(crlfRaw.replace(/\r/g, ''), lfRaw, '注册表围栏内容应与 LF 版一致（忽略 \\r）');
+  } finally { cleanup(dir); }
+});
+
+test('FE-P15 fenced 分支：标签行有多余内容 → null（防把 `foo public/` 当围栏）；尾部空白容忍', () => {
+  const t = (label, body) => `${label}\n${body}\n\`\`\`\n`;
+  assert.equal(check.fenced(t('```json fe-spec-registryXXX', '{}'), 'json', 'fe-spec-registry'), null,
+    '标签行残留非空白字符时必须拒绝（否则会把别的围栏内容当注册表）');
+  assert.equal(check.fenced(t('```public 目录清单', 'js/app.js'), '', 'public'), null, '同上（前缀干扰分支）');
+  assert.equal(check.fenced(t('```json fe-spec-registry   ', '{"a":1}'), 'json', 'fe-spec-registry'), '{"a":1}\n',
+    '标签行尾部空白应容忍（返回内容含行尾换行）');
+  assert.equal(check.fenced('没有任何围栏', 'json', 'fe-spec-registry'), null, '缺标签 → null');
+  assert.equal(check.fenced('```json fe-spec-registry', 'json', 'fe-spec-registry'), null, '只有标签行没有换行 → null');
+  assert.equal(check.fenced('```json fe-spec-registry\n{"a":1}\n', 'json', 'fe-spec-registry'), null, '缺闭栏 → null');
+});
+
+test('FE-P16 tableRows 分支：多列表（跳过分隔行/遇标题停止）与单列约定表（裸行也算内容）', () => {
+  const multi = [
+    '| 元素 | data-id | 数据源 | 行为 |',
+    '|---|---|---|---|',
+    '| 段位 | tier | `unlock` | `common`/`rare` |',
+    '| 种子 | seed | `state` | 数字 |',
+    '',
+  ].join('\n');
+  const rows = check.tableRows(multi, '元素');
+  assert.equal(rows.length, 2, '分隔行不得计入');
+  assert.deepEqual(rows[0].cells, ['段位', 'tier', '`unlock`', '`common`/`rare`']);
+  assert.equal(check.tableRows(multi, '不存在的表头').length, 0);
+
+  const single = ['| 通道 |', '`store`', '`view`', ''].join('\n');
+  assert.deepEqual(check.tableRows(single, '通道').map((r) => r.cells[0]), ['`store`', '`view`'], '单列表：裸行也是内容');
+  // 遇标题（#）停止收集
+  const stopped = ['| 通道 |', '`store`', '## 下一节', '`view`', ''].join('\n');
+  assert.deepEqual(check.tableRows(stopped, '通道').map((r) => r.cells[0]), ['`store`']);
+  // tickValues / unquote 由 inject 的检查路径覆盖；此处断言基础解析契约
+  assert.deepEqual(check.tickValues('`a` / `b`'), ['a', 'b']);
+});

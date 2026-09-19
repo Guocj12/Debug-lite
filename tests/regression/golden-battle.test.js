@@ -4,14 +4,19 @@
  *   快照 = .audit/golden-battle.json（本测试**只读**快照：口径变更时由人工复核后用 `node .audit/golden-battle.js --write` 重算，
  *   不在测试内自动改写，避免"实现漂移被快照悄悄吸收"）。
  * 覆盖：①同 seed 逐帧与快照一致（ticks/winner/phase + 逐帧 x/hp/mp/sp/碰撞/命中）②同 seed 两次运行完全一致（确定性）
- *   ③trace↔silent 逐帧一致 + 关键事件/cid 链（轻量复用 scripts/gate.js 项 8 的 checkLogSmoke，不重写行动计划）。
+ *
+ * 2026-09-19 冗余清理（P7-7 §② R3）：原第 3 条 `checkLogSmoke({projectRoot:ROOT})` 只断言 status==='pass'，
+ *   与 gate 项 8（本身每次 npm run gate 必跑）+ `tests/integration/gate-extra.test.js` 的 GX-13（真仓库 pass + 无
+ *   golden → pending）**同一实现同一分支、逐字重复**，且其 FAIL 分支当时全无投毒。
+ *   现删除该条，改由 GX-13（pass/pending）与新增的 `tests/integration/gate-poison-extra.test.js`
+ *   GX-P2..GX-P5（缺事件 / 缺 cast / cid 乱序 / trace≠silent 四条 FAIL 投毒）覆盖 —— 保护面只增不减。
+ *   分层说明：项 8 是"门禁冒烟"，在 gate 里已是必经项，本文件再调一次不构成独立的回归锚定。
  */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const { runGolden, SEED } = require('../../.audit/golden-battle.js');
-const { checkLogSmoke } = require('../../scripts/gate.js');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SNAPSHOT_FILE = path.join(ROOT, '.audit', 'golden-battle.json');
@@ -49,9 +54,4 @@ test('黄金战斗回归：同 seed 两次运行逐帧完全一致（确定性 T
   const b = runGolden();
   assert.deepEqual(a.summary, b.summary, '两次运行摘要应完全一致');
   assert.equal(JSON.stringify(a.diffs), JSON.stringify(b.diffs), '两次运行 diff 帧应完全一致');
-});
-
-test('黄金战斗回归：trace 与 silent 逐帧一致 + 关键事件/cid 链齐备（T-LG-11/T-LG-5）', async () => {
-  const res = await checkLogSmoke({ projectRoot: ROOT });
-  assert.equal(res.status, 'pass', `日志冒烟（gate 项 8 同逻辑）应通过：${res.detail}`);
 });

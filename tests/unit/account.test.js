@@ -9,8 +9,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const accountMod = require('../../server/account.js');
+const loadoutMod = require('../../server/loadout.js');
+const rankedMod = require('../../server/ranked.js');
 const { StoreError } = require('../../server/store/errors.js');
-const { openFixture, registerPlayer, sampleLoadout, quickRecord } = require('../helpers/account.js');
+const { openFixture, registerPlayer, sampleLoadout, quickRecord, makeLogger } = require('../helpers/account.js');
+const LD = require('../fixtures/loadout-ok.json');
 
 const REPO = path.join(__dirname, '..', '..');
 
@@ -433,4 +436,91 @@ test('ACC-12 模块级纯工具与信封：defaultLoadout/校验器/错误码→
   assert.equal(mapped.status, 409);
   assert.equal(mapped.details.length, 1);
   assert.equal(accountMod.toFailure(new TypeError('boom'), null, 'unit').code, 'store_internal');
+});
+
+/* ---------- 缺口 1（P1 最终报告 ⑧）：快照自带镜像，"已校验"状态可持久 ---------- */
+
+test('ACC-D1 缺口 1：校验通过时把"该配置引用到的插件项"随快照落盘（有界 / 重启可回读 / 旧快照兼容）', async (t) => {
+  let fx = await openFixture({ logger: makeLogger() });
+  t.after(() => fx.cleanup());
+  const u = await registerPlayer(fx.auth, { username: 'P1Wh_1', nickname: '装配' });
+
+  // 保存带装配引用的配置（LD.loadout 引用 pa/pb/qx；装配校验必须带镜像）
+  const save = await fx.account.saveConfig({
+    playerId: u.playerId, slotId: 'slot1', loadout: LD.loadout, warehouse: LD.warehouse,
+  });
+  assert.equal(save.ok, true, JSON.stringify(save.details).slice(0, 240));
+  assert.equal(save.data.unverifiedLoadout, false, '带镜像保存 → 已校验');
+  const hash = save.data.slot.snapshot.hash;
+
+  // ① 快照正文携带装配引用子集，且只含**该配置引用到的**插件项（不整仓拷贝）
+  const snap = await fx.store.snapshot.get(hash);
+  assert.ok(snap.warehouse && snap.warehouse.buckets, '快照必须自带装配引用子集');
+  const uids = [];
+  const bucketNames = [];
+  for (const [key, list] of Object.entries(snap.warehouse.buckets)) {
+    bucketNames.push(key);
+    for (const it of list) uids.push(it.uid);
+  }
+  assert.deepEqual(uids.slice().sort(), ['pa', 'pb', 'qx'], '恰好 3 个被引用插件（rolePlugin pa/pb + skillPlugin qx）');
+  assert.deepEqual(bucketNames.sort(), ['rolePlugin', 'skillPlugin'], '不携带未被引用的 role/skill 桶');
+  assert.equal(Object.prototype.hasOwnProperty.call(snap, 'hash'), true);
+  assert.equal(snap.hash, hash, '内容寻址键不变（摘录不参与 hash）');
+
+  // ② 面板可重建：与真镜像逐值一致；与"退化（no-op 占位插件）"面板不同 → 词条真实生效
+  const fromExcerpt = loadoutMod.buildPanel(LD.loadout, { warehouse: snap.warehouse, tier: 'mythic' });
+  const fromReal = loadoutMod.buildPanel(LD.loadout, { warehouse: LD.warehouse, tier: 'mythic' });
+  assert.equal(fromExcerpt.ok, true);
+  assert.deepEqual(fromExcerpt.panel, fromReal.panel, '摘录重建的面板与真镜像逐值一致');
+  const noop = rankedMod.syntheticVerifiedWarehouse(LD.loadout);
+  const degraded = loadoutMod.buildPanel(LD.loadout, { warehouse: noop, tier: 'mythic' });
+  assert.equal(degraded.ok, true);
+  assert.notDeepEqual(degraded.panel, fromReal.panel, '退化面板 ≠ 真实面板（证明插件词条确实生效）');
+
+  // ③ 数据量：单快照体积 + 摘录体积 + 磁盘文件体积（KB 级，见报告）
+  const digest = hash.slice('sha256:'.length);
+  const file = path.join(fx.dir, 'snapshots', digest.slice(0, 2), `${digest}.json`);
+  const bytes = {
+    snapshotFile: fs.statSync(file).size,
+    snapshotJson: Buffer.byteLength(JSON.stringify(snap)),
+    excerptJson: Buffer.byteLength(JSON.stringify(snap.warehouse)),
+    wholeWarehouseJson: Buffer.byteLength(JSON.stringify(LD.warehouse)),
+  };
+  t.diagnostic(`[缺口1] 单快照 ${bytes.snapshotFile}B / 正文JSON ${bytes.snapshotJson}B；装配引用子集 ${bytes.excerptJson}B（整仓 ${bytes.wholeWarehouseJson}B，占比 ${(bytes.excerptJson / bytes.wholeWarehouseJson * 100).toFixed(1)}%）`);
+  assert.ok(bytes.excerptJson < bytes.wholeWarehouseJson / 2, '摘录必须显著小于整仓（只存被引用项）');
+  assert.ok(bytes.snapshotFile < 8 * 1024, `单快照应保持 KB 级（实得 ${bytes.snapshotFile}B）`);
+
+  // ④ 保存镜像后**刷新**同 hash 快照的摘录（"只提交镜像、不再重存配置"的客户端同样持久）
+  const refreshed = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: LD.warehouse });
+  assert.equal(refreshed.ok, true);
+  assert.equal(refreshed.data.snapshotWarehouseRefreshed, true, 'PUT /me/warehouse 会把引用子集附到出战快照');
+
+  // ⑤ 重启（同目录新 store 实例：进程内镜像缓存必然为空）→ 摘录仍可回读且逐值一致
+  const before = snap.warehouse;
+  fx = await fx.reopen();
+  const after = (await fx.store.snapshot.get(hash)).warehouse;
+  assert.deepEqual(after, before, '重启后摘录逐值一致（不再依赖进程内缓存）');
+  assert.equal((await fx.store.loadArchive(u.playerId)).flags.unverifiedLoadout, false);
+});
+
+test('ACC-D2 缺口 1 兼容：无摘录的旧快照（无新字段）不报错；未校验/无镜像仍如实 missing_warehouse', async () => {
+  const fx = await openFixture({});
+  try {
+    const u = await registerPlayer(fx.auth, { username: 'P1Wh_2' });
+    // 旧形状快照：freezeSnapshot 不带 warehouse → 正文无该字段
+    const legacy = fx.store.freezeSnapshot(LD.loadout);
+    assert.equal(legacy.warehouse, undefined, '无镜像 → 快照形状与旧版一致（不落该字段）');
+    // 同 loadout 再冻结**不会**丢已有摘录（无新字段 → 不改写）
+    const save = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: LD.loadout, warehouse: LD.warehouse });
+    assert.equal(save.ok, true);
+    const again = fx.store.freezeSnapshot(LD.loadout);
+    assert.ok(again.warehouse, '同 hash 再冻结（不带 warehouse）保留既有摘录');
+    // 旧快照 + 未校验 → 生产路径必须如实 409（绝不放宽）
+    const res = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: { role: null, skills: [], ai: null } });
+    assert.equal(res.code, 'loadout_invalid');
+    assert.equal(loadoutMod.validateLoadout(LD.loadout, { warehouse: null, tier: 'mythic' }).errors
+      .some((e) => e.code === 'missing_warehouse'), true, '无镜像 → missing_warehouse（不放宽口径）');
+  } finally {
+    await fx.cleanup();
+  }
 });

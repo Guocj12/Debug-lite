@@ -103,16 +103,16 @@
 | ⑩ | **修改** 超大 body 错误码 | `server/index.js:64-79` `readBody`；同步 `tests/api/api.test.js:161-173` | 超过 1 MB 上限返回 **413 `payload_too_large`**（现为 500 `internal_error`）；测试同步断言 413 + 错误码，并补 1 条分块写入超限用例。 |
 
 **P0 完成清单（供后续打勾）**
-- [ ] ① `scripts/baseline.js`：用例总数 + 失败用例名指纹，纳入 gate 输出
+- [x] ① `scripts/baseline.js`：用例总数 + 失败用例名指纹，纳入 gate 输出
 - [ ] ② `tests/helpers/http.js` + `tests/helpers/cli.js`：抽 `request/withServer/quiet` 与 CLI 退出码表
-- [ ] ③ `tests/integration/e2e-play.test.js`：22 检查点端到端玩家路径
-- [ ] ④ `tests/integration/quickmatch-invariants.test.js`：积分守恒 + Elo 可复算 + cap 3000 + 无 bot
-- [ ] ⑤ 改 `tests/unit/ranked.test.js`：删 bot 补齐断言，改断言 `shortfall` + 真实玩家对手
-- [ ] ⑥ `scripts/check-docs.js` 加 `checkDocs({projectRoot})` + D1–D6 各一条投毒（重点 D5 历史绕过）
-- [ ] ⑦ 补 gate 项 8 / 项 9 + fe-spec C3/C4/C7/C9 投毒（注明 C9 恒 pass = 虚假保证）
-- [ ] ⑧ `tests/unit/play.test.js`：`npm run play` 确定性 + 合法性（原 0% 覆盖）
-- [ ] ⑨ 覆盖率：`server/*.js`、`server/data/schema.js`、`scripts/*.js` 纳入阈值或显式登记豁免；解决 gate 项 7 与 `npm run cov` 的冲突
-- [ ] ⑩ `readBody` 超限改 413 `payload_too_large` 并同步 `api.test.js`
+- [x] ③ `tests/integration/e2e-play.test.js`：22 检查点端到端玩家路径
+- [x] ④ `tests/integration/quickmatch-invariants.test.js`：积分守恒 + Elo 可复算 + cap 3000 + 无 bot
+- [x] ⑤ 改 `tests/unit/ranked.test.js`：删 bot 补齐断言，改断言 `shortfall` + 真实玩家对手
+- [x] ⑥ `scripts/check-docs.js` 加 `checkDocs({projectRoot})` + D1–D6 各一条投毒（重点 D5 历史绕过）
+- [x] ⑦ 补 gate 项 8 / 项 9 + fe-spec C3/C4/C7/C9 投毒（注明 C9 恒 pass = 虚假保证）
+- [x] ⑧ `tests/unit/play.test.js`：`npm run play` 确定性 + 合法性（原 0% 覆盖）
+- [x] ⑨ 覆盖率：`server/*.js`、`server/data/schema.js`、`scripts/*.js` 纳入阈值或显式登记豁免；解决 gate 项 7 与 `npm run cov` 的冲突
+- [x] ⑩ `readBody` 超限改 413 `payload_too_large` 并同步 `api.test.js`
 
 ---
 

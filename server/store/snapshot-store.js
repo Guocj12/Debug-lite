@@ -4,6 +4,13 @@
  * 结构：`snapshots/<hex[0:2]>/<hex>.json`（**注意**：hash 字符串为 `sha256:<64hex>`，Windows 文件名
  *       不允许 ':'，故磁盘名只取 hex 部分；完整 hash 保存在快照正文里，回读时以正文为准）。
  * 语义：写入幂等（同 hash 只存一份，保留首个版本戳）；快照不可变 → 对外一律深拷贝。
+ *
+ * 缺口 1（2026-09-19）：快照正文可携带 **`warehouse`（装配引用子集，见 archive.warehouseExcerpt）**——
+ *   即"该次冻结时校验所用的仓库镜像里、本配置实际引用到的插件项"。它是**附加元数据**，不参与
+ *   `hash`/`configHash` 计算（内容寻址键恒为 loadout 本体），因此：
+ *     · 旧快照（无该字段）读取路径完全不变 → 上层仍走"已校验 → 基准面板退化"（记 warn）；
+ *     · 同一 loadout 再次以**新镜像**冻结时，仅**覆盖**该字段（最后写入者胜）——面板随镜像刷新，
+ *       而 loadout 本体仍内容寻址去重（快照文件仍只有一份）。
  */
 const path = require('node:path');
 const { nullLogger } = require('../../shared/log.js');
@@ -13,13 +20,13 @@ const { StoreError } = require('./errors.js');
 
 const MS_PER_DAY = 86400000;
 
-// 冻结内容 = 完整 loadout 深拷贝 + 版本戳（§5.4）
+// 冻结内容 = 完整 loadout 深拷贝 + 版本戳（§5.4）+ 可选装配引用子集（缺口 1）
 function buildSnapshot(input) {
   const opts = input || {};
   const copy = deepClone(opts.loadout);
   const engineVersion = opts.engineVersion === undefined ? '0.0.0' : opts.engineVersion;
   const dataVersion = opts.dataVersion === undefined ? 'unknown' : opts.dataVersion;
-  return {
+  const out = {
     hash: contentHash(copy),
     engineVersion,
     dataVersion,
@@ -27,6 +34,8 @@ function buildSnapshot(input) {
     loadout: copy,
     frozenAt: Number.isInteger(opts.frozenAt) ? opts.frozenAt : Date.now(),
   };
+  if (opts.warehouse && typeof opts.warehouse === 'object') out.warehouse = deepClone(opts.warehouse);
+  return out;
 }
 
 function shardOf(hash) {
@@ -86,6 +95,21 @@ function createSnapshotStore(options) {
     cache.delete(hash);
   }
 
+  // 缺口 1：同 hash 再次冻结时，若带了新的装配引用子集且与既有不同 → 只覆盖该附加字段。
+  //   返回 null = 无需改写（无新字段 / 内容相同 / 本体不一致）。
+  function amendWarehouse(existing, snapshot) {
+    if (!existing || existing.hash !== snapshot.hash) return null;
+    if (!snapshot.warehouse || typeof snapshot.warehouse !== 'object') return null;
+    if (existing.warehouse && contentHash(existing.warehouse) === contentHash(snapshot.warehouse)) return null;
+    return { ...existing, warehouse: deepClone(snapshot.warehouse) };
+  }
+
+  function excerptRefs(excerpt) {
+    let n = 0;
+    for (const list of Object.values((excerpt && excerpt.buckets) || {})) if (Array.isArray(list)) n += list.length;
+    return n;
+  }
+
   function put(snapshot) {
     if (!snapshot || !isHash(snapshot.hash)) throw new StoreError('bad_request', '快照缺少合法 hash');
     fsatomic.ensureDir(dir);
@@ -93,6 +117,16 @@ function createSnapshotStore(options) {
     if (fsatomic.pathExists(file)) {
       const existing = fsatomic.readJsonSync(file, null);
       if (existing && existing.hash === snapshot.hash) {
+        const amended = amendWarehouse(existing, snapshot);
+        if (amended) {
+          fsatomic.writeJsonAtomicSync(file, amended, { logger: log, canonical: true });
+          cacheSet(snapshot.hash, amended);
+          log.debug('store', 'store.snapshot.write',
+            `快照已存在（内容寻址去重）；装配引用子集已刷新 ${snapshot.hash.slice(0, 15)}…`, {
+              hash: snapshot.hash, written: false, warehouseUpdated: true, refs: excerptRefs(amended.warehouse),
+            });
+          return { snapshot: deepClone(amended), written: false, warehouseUpdated: true };
+        }
         cacheSet(snapshot.hash, existing);
         log.debug('store', 'store.snapshot.write', `快照已存在（内容寻址去重）${snapshot.hash.slice(0, 15)}…`, {
           hash: snapshot.hash, written: false,
@@ -101,10 +135,11 @@ function createSnapshotStore(options) {
       }
     }
     const body = { ...snapshot, loadout: deepClone(snapshot.loadout) };
+    if (body.warehouse === undefined) delete body.warehouse;
     fsatomic.writeJsonAtomicSync(file, body, { logger: log, canonical: true });
     cacheSet(snapshot.hash, body);
     log.debug('store', 'store.snapshot.write', `快照落盘 ${snapshot.hash.slice(0, 15)}…`, {
-      hash: snapshot.hash, written: true, file,
+      hash: snapshot.hash, written: true, file, refs: excerptRefs(body.warehouse),
     });
     return { snapshot: deepClone(body), written: true };
   }

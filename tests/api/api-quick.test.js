@@ -9,6 +9,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const h = require('../helpers/http.js');
+const battleApi = require('../../server/battle.js');
+const loadoutApi = require('../../server/loadout.js');
+const LD = require('../fixtures/loadout-ok.json');
 
 test('QU-1 POST /quick/run：抽真实档案对手 + 双向 Elo 落盘 + 回放引用 + 排行榜联动', async () => {
   await h.withServer(null, async (s) => {
@@ -51,6 +54,61 @@ test('QU-1 POST /quick/run：抽真实档案对手 + 双向 Elo 落盘 + 回放�
     assert.ok(s.logger.records.some((x) => x.event === 'quick.match' && x.channel === 'ranked'));
     assert.ok(s.logger.records.some((x) => x.event === 'quick.settle' && x.channel === 'ranked'));
   });
+});
+
+test('QU-6 缺口 1 端到端：重启进程（新 store 实例、进程内镜像清空）后 quick/ranked 仍可打且插件词条真实生效', async (t) => {
+  const dir = h.makeTempDataDir('dl-p1-restart-');
+  let s = await h.startServer({ dataDir: dir });
+  try {
+    const a = await h.register(s.port, h.uniqueName('dwa'));
+    const b = await h.register(s.port, h.uniqueName('dwb'));
+    const c = await h.register(s.port, h.uniqueName('dwc')); // 第二名对手：24h 去重窗口内 quick 已抽走 B
+    // ① 注册 → 装配配置保存（LD.loadout 引用 pa/pb/qx）+ PUT /me/warehouse
+    const putWh = await h.request(s.port, 'PUT', '/api/v1/me/warehouse', { warehouse: LD.warehouse }, h.authed(a.token));
+    assert.equal(putWh.status, 200, putWh.raw);
+    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot1', { loadout: LD.loadout, warehouse: LD.warehouse }, h.authed(a.token));
+    assert.equal(save.status, 200, save.raw);
+    assert.equal(save.body.data.unverifiedLoadout, false);
+    const hash = save.body.data.slot.snapshot.hash;
+    const panelBefore = loadoutApi.buildPanel(LD.loadout, { warehouse: LD.warehouse, tier: 'mythic' });
+    assert.equal(panelBefore.ok, true);
+    const snapshotBytes = Buffer.byteLength(JSON.stringify(await s.store.snapshot.get(hash)));
+
+    // ② 重启进程：关服务（保留数据根）→ 同目录新实例（新 store、新 runtime，进程内镜像缓存必然为空）
+    await s.close();
+    s = await h.startServer({ dataDir: dir });
+    const anon = await h.request(s.port, 'GET', `/api/v1/me/warehouse`, undefined, h.authed(a.token));
+    assert.equal(anon.status, 404, '重启后进程内镜像确实已丢失（D-130：正文不落盘）');
+    const snapAfter = await s.runtime.snapshotWarehouseOf(await h.playerIdByPublicId(s.store, a.publicId));
+    assert.ok(snapAfter && snapAfter.buckets, '落地载体 = 快照自带的装配引用子集');
+    // 面板逐值一致（这就是"插件词条真实生效"的实测口径）
+    const panelAfter = loadoutApi.buildPanel(LD.loadout, { warehouse: snapAfter, tier: 'mythic' });
+    assert.deepEqual(panelAfter.panel, panelBefore.panel, '重启后从快照重建的面板与重启前逐值一致');
+    const rtOk = battleApi.buildPlayer('p1', LD.loadout, snapAfter, 'mythic');
+    assert.equal(rtOk.ok, true);
+    assert.deepEqual(rtOk.player, battleApi.buildPlayer('p1', LD.loadout, LD.warehouse, 'mythic').player,
+      '战斗运行时逐值一致（hp/atk/def/regen/special/技能参数）');
+
+    // ③ 重启后 quick / ranked 必须能打（修前：已校验 + 镜像不可得 → 基准面板退化；未校验 → 409）
+    const quick = await h.request(s.port, 'POST', '/api/v1/quick/run', { seed: 20260919 }, h.authed(a.token));
+    assert.equal(quick.status, 200, `重启后 quick 必须能打：${quick.raw.slice(0, 200)}`);
+    const ranked = await h.request(s.port, 'POST', '/api/v1/ranked/run', { seed: 20260920 }, h.authed(a.token));
+    assert.equal(ranked.status, 200, `重启后 ranked 必须能打：${ranked.raw.slice(0, 200)}`);
+    assert.ok(ranked.body.data.matches >= 1, `排位必须真的打满（实得 ${ranked.body.data.matches} 场）`);
+    assert.equal(ranked.body.data.invalids, 0, '不得出现"抽中却实例化失败"的 invalid 场');
+    // 对手（默认配置无引用）不受影响：两场都真实结算到防守战绩
+    let drawn = 0;
+    for (const p of [b, c]) {
+      const def = await h.request(s.port, 'GET', '/api/v1/me/defense', undefined, h.authed(p.token));
+      assert.equal(def.status, 200);
+      drawn += def.body.data.drawnCount;
+    }
+    assert.equal(drawn, 1 + ranked.body.data.matches, 'quick + ranked 的场次都被真实对手接下（非退化空跑）');
+    t.diagnostic(`[缺口1] 单快照 ${snapshotBytes}B（含装配引用子集）；重启后 quick+ranked 均 200，对手防守 ${drawn} 场`);
+  } finally {
+    await s.close();
+    h.removeTempDir(dir);
+  }
 });
 
 test('QU-2 快速对战负例：池中无对手 409 no_opponent / 无 token 401 / 非法 seed 400 / 坏 JSON 400', async () => {

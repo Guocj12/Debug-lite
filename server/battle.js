@@ -44,6 +44,20 @@ function buildPlayer(owner, ld, wh, tier) {
   return { ok: true, player: p, ctx };
 }
 
+// 逐侧仓库解析（P1 缺口 2）：优先级 = 逐侧显式值（p1Warehouse/p2Warehouse 或 {p1,p2} 形态）
+//   → 兼容旧签名 `warehouse`（单仓库 = 双方共用）。
+// 为什么需要逐侧：匹配路径（ranked.battleOne）双方是**不同玩家**，各自镜像独立；归档回放重算时
+//   两侧的镜像来自各自快照（缺口 1 落盘的装配引用子集）。只接受单个 warehouse 会让含装配引用的
+//   一侧拿不到镜像 → buildPanel 报 missing_warehouse → 回放 410（snapshot_gc/版本不匹配类）。
+function sideWarehouses(opts) {
+  const base = opts.warehouse && typeof opts.warehouse === 'object' ? opts.warehouse : null;
+  if (base && base.buckets === undefined && (base.p1 !== undefined || base.p2 !== undefined)) {
+    return { p1: base.p1 || null, p2: base.p2 || null };
+  }
+  const pick = (side, legacy) => (side === undefined || side === null ? (legacy || null) : side);
+  return { p1: pick(opts.p1Warehouse, base), p2: pick(opts.p2Warehouse, base) };
+}
+
 // 跑一场（双方 loadout + AI + seed）：返回 {status, code?, data?}
 function runBattle(opts) {
   const tier = opts.tier || 'mythic';
@@ -54,10 +68,10 @@ function runBattle(opts) {
   if (typeof seed !== 'number' || !Number.isInteger(seed) || seed < 1 || seed > 0x7fffffff) {
     return { status: 400, code: 'bad_seed', message: `非法 seed ${seed}` };
   }
-  const wh = opts.warehouse || null;
-  const b1 = buildPlayer('p1', opts.p1, wh, tier);
+  const wh = sideWarehouses(opts);
+  const b1 = buildPlayer('p1', opts.p1, wh.p1, tier);
   if (!b1.ok) return { status: 409, code: 'loadout_invalid', details: b1.errors, message: 'p1 出战配置不合法' };
-  const b2 = buildPlayer('p2', opts.p2, wh, tier);
+  const b2 = buildPlayer('p2', opts.p2, wh.p2, tier);
   if (!b2.ok) return { status: 409, code: 'loadout_invalid', details: b2.errors, message: 'p2 出战配置不合法' };
 
   // 整场事件缓冲（回放帧 events[] 契约：记录带 cid/tick；B22 P1-2：now 归零保证同 seed 帧字节级可复现）
@@ -104,4 +118,4 @@ function getReplay(id, from, to) {
   return { status: 200, data: { id: rep.id, seed: rep.seed, winner: rep.winner, phase: rep.phase, ticks: rep.ticks, frames: rep.frames.slice(lo - 1, hi) } };
 }
 
-module.exports = { runBattle, getReplay, buildPlayer, REPLAYS };
+module.exports = { runBattle, getReplay, buildPlayer, sideWarehouses, REPLAYS };

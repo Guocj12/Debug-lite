@@ -56,6 +56,14 @@ node scripts/check-arch.js   →   exit 1
 
 **由此得到第 0 号缺陷（P0）：没有任何"基线绿"的机器断言。** `npm test` 的绿/红只体现在人眼；一旦全量变红，2 条与 11 条一样都只是"红"，无法区分"我改坏了 1 条"与"别人半写了 9 条"。→ 见 §P0 清单第 ①条。
 
+> **2026-09-19 状态更新（P7-7 执行轮实测）**：本节的"非绿基线"已不成立 —— 交付轮实测
+> `npm test` = **839 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、
+> `node scripts/check-docs.js` PASS、`node scripts/fe-spec-check.js` = 9 PASS / 0 FAIL。
+> §0 的 `fail 3 → 11 → 10` 三份结果保留为**历史证据**（它正是 §⑤ 盲区 1 的原始观测）。
+> 本轮执行期间仍复现了同类抖动（两次 `tests/integration/e2e-play.test.js` 单条失败，隔离运行 6/6 全过，
+> 且该文件在本轮被**另一条并行线实时改写**：12:05 34 506 B → 13:00 36 755 B）——即"并行半写 + 顺序抖动"
+> 依旧存在，机器区分手段（§P0 第①条基线指纹）已就位。本节各 P0 条的闭环状态见 §④ 顶部表。
+
 ---
 
 ## ① 统计摘要（实测）
@@ -405,19 +413,24 @@ node scripts/check-arch.js   →   exit 1
 
 ### P0（必须补 —— 不补则"完全可玩的后端"无法验证）
 
-| 动作 | 文件 → 用例 → 操作 | 收益 |
-|---|---|---|
-| 新增 | `scripts/baseline.js`（或用例总数 + 失败用例名指纹），纳入 gate 输出 | 让"红 1 条"与"红 11 条"可区分（第 0 号缺陷） |
-| 新增 | `tests/helpers/http.js` ← `request()`/`withServer()`（7 + 14 份） | 一次删 ~250 行脚手架；P7-4 加 `Authorization` 头只改 1 处 |
-| 新增 | `tests/helpers/cli.js` ← `quiet()`/`capture()` + `[argv, 期望退出码]` 表 | 7 文件 12 处退出码契约合并；新增 `auth/me/quick` 子命令时零复制 |
-| 新增 | `tests/integration/e2e-play.test.js`（§B1 的 22 个检查点） | 唯一能证明"完善可玩"的用例 |
-| 新增 | `tests/integration/quickmatch-invariants.test.js`：**积分守恒**（ΣΔ 闭合）+ Elo 可复算 + cap 3000 + **无 bot**（断言对手 ID ∈ 注册表） | 直接对应用户明令 + P7-3 验收 |
-| 修改 | `tests/unit/ranked.test.js:20-49,78-85` → 删"bot 补齐"断言，改为 `pool:[]` → **断言 `shortfall` 且 `matches<10`、`results.every(r => 对手是真实玩家)`** | 解除"测试保护占位 bot"（§B2） |
-| 修改 | `scripts/check-docs.js` 增 `checkDocs({projectRoot})` 注入缝；新增 `tests/integration/check-docs-poison.test.js`（**D1–D6 各 1 条投毒**，重点回归 D5 的"ID 后紧跟竖线但未勾选"历史绕过，见 `check-docs.js:91-92`） | 关闭最大空转风险（§B6） |
-| 新增 | `tests/integration/gate-poison-extra.test.js`：gate **项 8** 3 条（缺事件 / cid 乱序 / silent≠trace）+ **项 9** 2 条（health 信封坏 / CLI 退出码非 0），用 `projectRoot` fixture（同 `GX-9` 手法） | 补齐 gate 9 项中最后 2 个无投毒项 |
-| 新增 | `tests/frontend/fe-spec-poison.test.js`：**C3**（僵尸动作）、**C4**（缺 goto / 不可达 / goto 目标不存在 共 3 条）、**C7**（清单漏条目 / 实现文件未登记）、**C9**（`data-action` 未命中）各 1 条；并给 `fe-spec-check.js` 增加 `publicDir`/`repoRoot` 注入缝（现 C6/C7/C9 硬读 `REPO`，无法投毒） | fe-spec 从 ≈4/9 → 9/9 |
-| 新增 | `tests/unit/play.test.js`：`scripts/play.js` 同 seed 两次输出逐字节一致 + 每步合法性（开箱品质 ≤ 段位上限、装配后 panel 五维 ≥1、`winner ∈ {p1,p2,draw}`） | `npm run play` 是唯一可玩入口，当前 **0%** 覆盖 |
-| 修改 | `scripts/gate.js:14` `THRESHOLD_DIRS` 增 `server`（或 `server/data`）与 `scripts`；给 `battle.js`/`runner.js`/`schema.js`/`check-docs.js`/`fe-spec-check.js` 补测或**显式登记豁免** | 消除"两套阈值互不覆盖"（§B8） |
+> **闭环状态（2026-09-19，P7-7 执行轮实测）**：本表各条已按下述状态处置；**实测证据**见每条末列。
+> 基线同时更新（本报告 §0 的"7 PASS / 2 FAIL、fail 3→11→10"是 2026-09-16 审查窗口的历史状态）：
+> `npm test` = **839 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`check-docs` PASS、`fe-spec-check` 9 PASS。
+
+| 动作 | 文件 → 用例 → 操作 | 收益 | 闭环（2026-09-19） |
+|---|---|---|---|
+| 新增 | `scripts/baseline.js`（或用例总数 + 失败用例名指纹），纳入 gate 输出 | 让"红 1 条"与"红 11 条"可区分（第 0 号缺陷） | ✅ 已完成：`scripts/baseline.js` 存在，gate 项 7 明细含 `基线 总N/通过n/失败m；失败用例:…；digest=`；`tests/integration/baseline.test.js` |
+| 新增 | `tests/helpers/http.js` ← `request()`/`withServer()`（7 + 14 份） | 一次删 ~250 行脚手架；P7-4 加 `Authorization` 头只改 1 处 | ✅ 已完成：`tests/helpers/http.js`（10 个 api/cli 文件改为 require） |
+| 新增 | `tests/helpers/cli.js` ← `quiet()`/`capture()` + `[argv, 期望退出码]` 表 | 7 文件 12 处退出码契约合并；新增 `auth/me/quick` 子命令时零复制 | ❌ **未完成**：`tests/helpers/cli.js` 不存在，0 个文件 require；归属 §② R5 需改 `tests/cli/*`（P7-7 文件所有权外）→ 见 §⑦ 结论 |
+| 新增 | `tests/integration/e2e-play.test.js`（§B1 的 22 个检查点） | 唯一能证明"完善可玩"的用例 | ✅ 已完成：E2E-1..E2E-6，含 401/403/409/410/429 分支 |
+| 新增 | `tests/integration/quickmatch-invariants.test.js`：**积分守恒**（ΣΔ 闭合）+ Elo 可复算 + cap 3000 + **无 bot**（断言对手 ID ∈ 注册表） | 直接对应用户明令 + P7-3 验收 | ✅ 已完成：INV-1..INV-5（守恒/Elo/cap/真实玩家/排行榜一致/journal 幂等） |
+| 修改 | `tests/unit/ranked.test.js:20-49,78-85` → 删"bot 补齐"断言，改为 `pool:[]` → **断言 `shortfall` 且 `matches<10`、`results.every(r => 对手是真实玩家)`** | 解除"测试保护占位 bot"（§B2） | ✅ 已完成：T-RK-1a `pool:[]` → matches=0/shortfall=requested；T-RK-1b 池 3 → 只打 3 场 |
+| 修改 | `scripts/check-docs.js` 增 `checkDocs({projectRoot})` 注入缝；新增 `tests/integration/check-docs-poison.test.js`（**D1–D6 各 1 条投毒**，重点回归 D5 的"ID 后紧跟竖线但未勾选"历史绕过，见 `check-docs.js:91-92`） | 关闭最大空转风险（§B6） | ✅ 已完成：注入缝落地（无参仍走真实仓库）+ **16 条**用例（D1×2 / D2/D3×3 / D4×2 / D5×5 / D6×1 / 对照×3），D5 历史绕过 3 种形态全部 FAIL |
+| 新增 | `tests/integration/gate-poison-extra.test.js`：gate **项 8** 3 条（缺事件 / cid 乱序 / silent≠trace）+ **项 9** 2 条（health 信封坏 / CLI 退出码非 0），用 `projectRoot` fixture（同 `GX-9` 手法） | 补齐 gate 9 项中最后 2 个无投毒项 | ✅ 已完成：**10 条**用例（项 8 ×5 含对照 / 项 9 ×4 含对照 / 项 7 口径 ×1）；实测发现项 8 的"cid 链顺序异常"分支为**不可达死代码**（见下） |
+| 新增 | `tests/frontend/fe-spec-poison.test.js`：**C3**（僵尸动作）、**C4**（缺 goto / 不可达 / goto 目标不存在 共 3 条）、**C7**（清单漏条目 / 实现文件未登记）、**C9**（`data-action` 未命中）各 1 条；并给 `fe-spec-check.js` 增加 `publicDir`/`repoRoot` 注入缝（现 C6/C7/C9 硬读 `REPO`，无法投毒） | fe-spec 从 ≈4/9 → 9/9 | ✅ 已完成：注入缝 `{repoRoot, publicDir}` + **17 条**用例（C3/C4×4/C7×3/C9×4 + 解析器 3 + R-1 CRLF 回归）；C9 增加 `applicable:false` 标记关闭"恒 pass 虚假保证" |
+| 新增 | `tests/unit/play.test.js`：`scripts/play.js` 同 seed 两次输出逐字节一致 + 每步合法性（开箱品质 ≤ 段位上限、装配后 panel 五维 ≥1、`winner ∈ {p1,p2,draw}`） | `npm run play` 是唯一可玩入口，当前 **0%** 覆盖 | ✅ 已完成：`play.js` 增 `runPlay(argv,{sink})` 可测入口（stdout 与重构前**逐字节一致**，SHA256 实测相同）+ PLAY-7..PLAY-14；`play.js` 覆盖率 0% → 行 92.94 / 分支 78.79 |
+
+| 修改 | `scripts/gate.js:14` `THRESHOLD_DIRS` 增 `server`（或 `server/data`）与 `scripts`；给 `battle.js`/`runner.js`/`schema.js`/`check-docs.js`/`fe-spec-check.js` 补测或**显式登记豁免** | 消除"两套阈值互不覆盖"（§B8） | ✅ 已完成（**选 (b) 登记豁免 + 部分 (a) 补测**，未动阈值）：`scripts/README.md` 新增「覆盖率口径统一」小节（冻结"gate 项 7 = 每文件门禁 / `npm run cov` = 全仓聚合诊断"的单一裁定 + 逐文件豁免登记表与理由）；gate 项 7 明细同时打印两种口径（`全仓聚合…（诊断值非门禁）`）；补测后实测 `check-docs.js` 分支 52.27→**87.50**、`play.js` 0→**92.94 行/78.79 分支**、`fe-spec-check.js` 64.73→**72.46**、`schema.js` 67.22→**69.40**、`battle.js` 84→**86.00**、`runner.js` 75.76→**76.12**；全仓聚合 = 行 96.09 / 分支 **82.62** / 函数 95.00（**仍红，原因与归属见豁免表**） |
 
 ### P1（应该补）
 

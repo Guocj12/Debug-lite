@@ -510,17 +510,29 @@ function createJsonAdapter(options) {
     return loadArchive(o.playerId);
   }
 
-  function freezeSnapshot(loadout, versionOverride) {
+  // 冻结快照。`extras.warehouse`（缺口 1）：本次冻结**校验所用的仓库镜像**——只把其中该配置
+  //   实际引用到的插件项（archive.warehouseExcerpt，有界）随快照正文落盘，使对局/回放不再依赖
+  //   进程内镜像缓存（重启/淘汰后仍可用）。缺省 undefined → 快照形状与旧版逐字节一致。
+  function freezeSnapshot(loadout, versionOverride, extras) {
     if (!loadout || typeof loadout !== 'object' || Array.isArray(loadout)) {
       throw new StoreError('loadout_invalid', '配置必须是对象（loadout = {role, skills[3], ai}）', [
         { path: 'loadout', code: 'loadout_invalid', message: 'loadout 必须是对象' },
       ]);
+    }
+    const wh = extras && extras.warehouse ? extras.warehouse : null;
+    const excerpt = wh ? archiveMod.warehouseExcerpt(loadout, wh) : null;
+    if (wh && !excerpt && archiveMod.loadoutRefs(loadout).length > 0) {
+      // 有装配引用却取不到任何引用项（理论上不可能：调用方已通过引用完整性校验）→ 显式留痕，不静默丢
+      log.warn('store', 'store.snapshot.write',
+        '仓库镜像未能提取装配引用子集（快照不携带镜像，重启后退化为基准面板）',
+        { refs: archiveMod.loadoutRefs(loadout).length });
     }
     const built = snapMod.buildSnapshot({
       loadout,
       engineVersion: (versionOverride && versionOverride.engine) || versions.engine,
       dataVersion: (versionOverride && versionOverride.data) || versions.data,
       frozenAt: nowFn(),
+      warehouse: excerpt,
     });
     const stored = snapshots.put(built);
     if (stored.snapshot.configHash !== built.configHash) {
@@ -545,7 +557,7 @@ function createJsonAdapter(options) {
           { path: 'baseUpdatedAt', code: 'config_conflict', message: `期望 ${slot.updatedAt}，收到 ${o.baseUpdatedAt}` },
         ]);
       }
-      const snapshot = freezeSnapshot(o.loadout, o.versions);
+      const snapshot = freezeSnapshot(o.loadout, o.versions, { warehouse: o.warehouse });
       const record = ledger.buildConfigRecord({
         playerId: o.playerId, slotId: slot.slotId, name: o.name, at: nowFn(),
         snapshotHash: snapshot.hash, configHash: snapshot.configHash,
@@ -586,7 +598,7 @@ function createJsonAdapter(options) {
         ]);
       }
       const slotId = nextSlotId(archive);
-      const snapshot = freezeSnapshot(source, o.versions);
+      const snapshot = freezeSnapshot(source, o.versions, { warehouse: o.warehouse });
       const record = ledger.buildConfigRecord({
         playerId: o.playerId, slotId, name: o.name === undefined ? slotId : o.name, at: nowFn(),
         snapshotHash: snapshot.hash, configHash: snapshot.configHash,
@@ -1121,7 +1133,7 @@ function createJsonAdapter(options) {
     },
     // 快照
     snapshot: {
-      freeze: (loadout, versionOverride) => freezeSnapshot(loadout, versionOverride),
+      freeze: (loadout, versionOverride, extras) => freezeSnapshot(loadout, versionOverride, extras),
       put: (snapshot) => snapshots.put(snapshot),
       get: (hash) => snapshots.get(hash),
       require: (hash) => snapshots.requireSnapshot(hash),

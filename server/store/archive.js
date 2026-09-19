@@ -351,6 +351,62 @@ function playersOfRecord(record) {
   return typeof record.playerId === 'string' ? [record.playerId] : [];
 }
 
+// ---------- 装配引用子集（缺口 1：快照自带镜像） ----------
+// 背景：仓库由客户端权威持有（D-130），服务端**只**在进程内缓存镜像；进程重启/缓存淘汰后，
+//   `flags.unverifiedLoadout === false` 的玩家的装配引用无法再解析 → 只能用基准面板退化实例化
+//   （插件词条不生效）。修法：把"该次校验所用的镜像"中**该配置实际引用到的那几个插件项**
+//   随冻结快照一起持久化（进快照库正文），此后对局与回放不再依赖进程内缓存。
+// 数据量有界：只取 `loadout.role.slots[].pluginUid` 与 `loadout.skills[].slots[].pluginUid`
+//   命中的项（上限 = 槽位数），不整仓拷贝；无引用 → null（不落该字段，旧快照形状不变）。
+// 语义：本函数**只取值、不校验**（校验由 loadout.validateLoadout 在前置步骤完成）；
+//   取不到任何引用项 → 返回 null（宁可不落，也不落一份不足以重建面板的空壳）。
+function warehouseExcerpt(loadout, warehouse) {
+  if (!loadout || typeof loadout !== 'object') return null;
+  if (!warehouse || typeof warehouse !== 'object') return null;
+  const bucketsIn = warehouse.buckets;
+  if (!bucketsIn || typeof bucketsIn !== 'object' || Array.isArray(bucketsIn)) return null;
+  const refs = loadoutRefs(loadout);
+  if (refs.length === 0) return null;
+  const wanted = new Set(refs);
+  const buckets = {};
+  let found = 0;
+  for (const key of Object.keys(bucketsIn)) {
+    const list = bucketsIn[key];
+    if (!Array.isArray(list)) continue;
+    const picked = list.filter((it) => it && typeof it === 'object' && wanted.has(it.uid));
+    if (picked.length > 0) {
+      buckets[key] = deepClone(picked);
+      found += picked.length;
+    }
+  }
+  return found > 0 ? { buckets } : null;
+}
+
+// 出战配置引用的插件 uid 列表（role.slots[] + skills[].slots[]；顺序稳定、含重复以便双引用检测）
+function loadoutRefs(loadout) {
+  const refs = [];
+  const collect = (slots) => {
+    for (const s of Array.isArray(slots) ? slots : []) {
+      if (s && typeof s.pluginUid === 'string' && s.pluginUid !== '') refs.push(s.pluginUid);
+    }
+  };
+  if (!loadout || typeof loadout !== 'object') return refs;
+  collect(loadout.role && loadout.role.slots);
+  for (const sk of Array.isArray(loadout.skills) ? loadout.skills : []) collect(sk && sk.slots);
+  return refs;
+}
+
+// 摘录是否覆盖该配置的全部装配引用（自省/诊断用；缺口 1 的"足够重建面板"判定）
+function excerptCoversRefs(loadout, excerpt) {
+  const refs = loadoutRefs(loadout);
+  if (refs.length === 0) return false;
+  const uids = new Set();
+  for (const list of Object.values((excerpt && excerpt.buckets) || {})) {
+    for (const it of Array.isArray(list) ? list : []) if (it && it.uid) uids.add(it.uid);
+  }
+  return refs.every((uid) => uids.has(uid));
+}
+
 // ---------- 槽位纯操作（§5.3） ----------
 
 function findSlot(archive, slotId) {
@@ -892,6 +948,9 @@ module.exports = {
   assertArchiveInvariants,
   checkSlotDeletable,
   checkSlotLimit,
+  warehouseExcerpt,
+  excerptCoversRefs,
+  loadoutRefs,
   createArchive,
   createArchiveShell,
   createSlot,

@@ -251,10 +251,12 @@ async function createRuntime(logger, options) {
     ownReplays: [],          // 本实例登记的帧 id（LRU 淘汰记账）
     runBattle: typeof opts.runBattle === 'function' ? opts.runBattle : null, // 测试接缝（P2-1：排位/快速同源）
   };
-  // 缺陷 B：仓库镜像解析（进程内）。来源 ① account 模块镜像缓存（PUT /me/warehouse）；
-  //   ② 携带 warehouse 的配置保存/注册请求（校验通过后登记，见 rememberWarehouse/路由接线）。
-  //   D-130：仓库由客户端权威持有、服务端**不落盘** → 重启后镜像为空；此时装配引用的对局按
-  //   ranked 的"已校验 → 跳过仓库引用校验（基准面板退化）"口径进行，未校验者仍 409 missing_warehouse。
+  // 缺陷 B：仓库镜像解析。来源 ① account 模块镜像缓存（PUT /me/warehouse）；
+  //   ② 携带 warehouse 的配置保存/注册请求（校验通过后登记，见 rememberWarehouse/路由接线）；
+  //   ③ **快照自带镜像**（P1 缺口 1，2026-09-19）：配置保存时随冻结快照落盘的"装配引用子集"
+  //      （server/store/archive.js warehouseExcerpt）——进程重启/进程内缓存淘汰后，已校验玩家
+  //      仍能拿到足以重建面板的镜像（插件词条真实生效），不再退化为基准面板。
+  //   D-130 不变：仓库正文仍由客户端权威持有；服务端只持久化**该配置引用到的那几个插件项**，永不整仓落盘。
   rt.warehouses = new Map();
   rt.rememberWarehouse = (playerId, warehouse) => {
     if (typeof playerId !== 'string' || playerId === '' || !warehouse || typeof warehouse !== 'object') return false;
@@ -264,7 +266,7 @@ async function createRuntime(logger, options) {
     return true;
   };
   rt.loadWarehouse = async (playerId) => {
-    // 优先级：account 模块镜像（PUT /me/warehouse 的显式提交）→ 配置保存请求登记的镜像
+    // 优先级：account 模块镜像（PUT /me/warehouse 的显式提交）→ 配置保存请求登记的镜像 → 快照自带镜像
     if (typeof playerId === 'string' && playerId !== '' && rt.account && typeof rt.account.getWarehouseMirror === 'function') {
       const r = await rt.account.getWarehouseMirror(playerId);
       if (r && r.ok === true && r.data && r.data.warehouse) {
@@ -272,7 +274,35 @@ async function createRuntime(logger, options) {
         return r.data.warehouse;
       }
     }
-    return rt.warehouses.get(playerId) || null;
+    const cached = rt.warehouses.get(playerId);
+    if (cached) return cached;
+    const durable = await rt.snapshotWarehouseOf(playerId);
+    if (durable) {
+      rt.rememberWarehouse(playerId, durable);
+      logger.trace('store', 'store.read', '装配引用子集取自快照（不依赖进程内镜像缓存）', {
+        op: 'loadWarehouse', playerId, source: 'snapshot',
+      });
+      return durable;
+    }
+    return null;
+  };
+  // 出战快照自带的装配引用子集（缺口 1 的落盘载体；旧快照无该字段 → null，走既有退化路径）
+  rt.snapshotWarehouseOf = async (playerId) => {
+    if (!rt.store || typeof playerId !== 'string' || playerId === '') return null;
+    try {
+      const archive = await rt.store.loadArchive(playerId);
+      const active = archive ? archiveFx.activeSlot(archive) : null;
+      const hash = active && active.snapshot ? active.snapshot.hash : null;
+      if (!hash) return null;
+      const snap = await rt.store.snapshot.get(hash);
+      if (!snap || snap.hash !== hash) return null;
+      return snap.warehouse && typeof snap.warehouse === 'object' ? snap.warehouse : null;
+    } catch (err) {
+      logger.warn('store', 'store.snapshot.missing', `读取快照自带镜像失败：${err && err.message ? err.message : err}`, {
+        playerId, reason: 'snapshot_warehouse_read_failed',
+      });
+      return null;
+    }
   };
   if (storeWanted(opts, env)) {
     rt.store = await storeMod.openStore({
@@ -773,7 +803,14 @@ function createHandler(logger, extraRoutes, runtime) {
       return failStatus(410, 'replay_expired', `回放过期：快照已不可用（snapshot_gc）`);
     }
     const tier = (record.p1 && record.p1.tierBefore) || 'common';
-    const r = battleApi.runBattle({ p1: snap1.loadout, p2: snap2.loadout, seed: record.seed, tier });
+    // 缺口 2：归档回放重算必须**逐侧**给出仓库镜像——含装配引用的一侧若拿不到镜像，
+    //   buildPlayer → buildPanel 会报 missing_warehouse，本端点只能如实 410（replay_expired）。
+    //   镜像来源 = 各自快照正文里的装配引用子集（缺口 1 落盘；旧快照无该字段 → null，保持原 410 行为）。
+    const r = battleApi.runBattle({
+      p1: snap1.loadout, p2: snap2.loadout, seed: record.seed, tier,
+      p1Warehouse: snap1.warehouse || null,
+      p2Warehouse: snap2.warehouse || null,
+    });
     if (r.status !== 200) return failStatus(410, 'replay_expired', `回放过期：快照无法实例化（${r.code}）`);
     registerReplay({
       id, frameId: r.data.id, participants, kind: 'archive',

@@ -409,6 +409,23 @@ function judgeCoverage(coverageSummary, projectRoot) {
   return { ok: under.length === 0, under };
 }
 
+// 全仓聚合覆盖率（**诊断值，不参与判定**）：P7-7 §P0 第⑨条口径统一 ——
+//   门禁项 7 是**每文件**语义（仅 THRESHOLD_DIRS 四目录）；`npm run cov` 是**聚合**语义（全文件合计）。
+//   两套语义「互不覆盖」曾导致"gate 绿 / cov 红"的自我欺骗（审查 §B8）。现把聚合值一并打印在项 7 明细里，
+//   于是**同一条命令输出两个口径**；判定仍只按每文件阈值（scripts/README.md「覆盖率口径统一」）。
+function aggregateCoverage(coverageSummary) {
+  const t = coverageSummary && coverageSummary.totals;
+  if (!t) return null;
+  const pct = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : null);
+  return { line: pct(t.coveredLinePercent), branch: pct(t.coveredBranchPercent), func: pct(t.coveredFunctionPercent) };
+}
+
+function aggregateText(coverageSummary) {
+  const agg = aggregateCoverage(coverageSummary);
+  if (!agg) return '';
+  return `；全仓聚合（含 tests/scripts/.audit，诊断值非门禁）行${agg.line}/分支${agg.branch}/函数${agg.func}`;
+}
+
 // options: {projectRoot, runner, withCoverage}
 //   runner(files, withCoverage) 可注入（测试用假 runner 避免第二次嵌套 run）
 //   withCoverage 默认 true（gate 主流程）；测试传 false —— 嵌套 coverage 会话会破坏外层覆盖率
@@ -430,7 +447,7 @@ async function checkTests(options) {
     total: res.pass + res.fail, passed: res.pass, failed: res.fail, failedNames: [],
   });
   const fpText = formatDetail(fp);
-  if (res.fail > 0) return resultOf('fail', `${res.fail} 个用例失败（总 ${res.pass + res.fail}）；${fpText}`);
+  if (res.fail > 0) return resultOf('fail', `${res.fail} 个用例失败（总 ${res.pass + res.fail}）${aggregateText(res.coverageSummary)}；${fpText}`);
   if (res.pass === 0) return resultOf('fail', `0 个用例通过；${fpText}`);
   if (!withCoverage) {
     // 非 coverage 模式（仅测试/诊断）：不断言覆盖率
@@ -438,10 +455,11 @@ async function checkTests(options) {
   }
   if (!res.coverageSummary) return resultOf('fail', `未产生覆盖率报告（可疑）；${fpText}`);
   const judged = judgeCoverage(res.coverageSummary, root);
+  const aggText = aggregateText(res.coverageSummary);
   if (!judged.ok) {
-    return resultOf('fail', `覆盖率低于阈值（行${LINE_PCT}/分支${BRANCH_PCT}/函数${FUNC_PCT}）：${judged.under.join('；')}；${fpText}`);
+    return resultOf('fail', `覆盖率低于阈值（行${LINE_PCT}/分支${BRANCH_PCT}/函数${FUNC_PCT}）：${judged.under.join('；')}${aggText}；${fpText}`);
   }
-  return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}；${fpText}`);
+  return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}${aggText}；${fpText}`);
 }
 
 // ---------- 项 8：日志冒烟（B11 激活） ----------
@@ -651,7 +669,8 @@ async function main(options) {
 module.exports = {
   REPO, checkStaticRandEval, checkStaticConsole, checkNumericHardcode,
   checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency,
-  checkTests, runSuite, judgeCoverage, validateEvent, checkApiSmoke, checkLogSmoke, runGate, main,
+  checkTests, runSuite, judgeCoverage, aggregateCoverage, aggregateText,
+  validateEvent, checkApiSmoke, checkLogSmoke, runGate, main,
 };
 
 if (require.main === module) {
