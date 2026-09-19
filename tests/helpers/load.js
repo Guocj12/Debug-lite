@@ -52,6 +52,7 @@ const DEFAULTS = Object.freeze({
   authRateLimitPerMinute: 5000,
   keepDataDir: false,
   fastAuth: false,
+  level: 'warn',
 });
 
 /* ---------- 种子化 RNG（禁 Math.random；xorshift32） ---------- */
@@ -244,11 +245,14 @@ async function call(metrics, group, port, method, urlPath, payload, headers) {
     const res = await httpRequest(port, method, urlPath, payload, headers);
     const ms = Date.now() - t0;
     const code = res.body && res.body.ok === false && res.body.error ? res.body.error.code : null;
+    const details = res.body && res.body.ok === false && res.body.error && Array.isArray(res.body.error.details)
+      ? res.body.error.details.slice(0, 3) : null;
+    const message = res.body && res.body.ok === false && res.body.error ? res.body.error.message : null;
     metrics.record(group, method, urlPath, res.status, ms, code);
-    return { status: res.status, body: res.body, raw: res.raw, errorCode: code, ms };
+    return { status: res.status, body: res.body, raw: res.raw, errorCode: code, errorMessage: message, errorDetails: details, ms };
   } catch (err) {
     metrics.recordError(group, method, urlPath, err && err.message ? err.message : err);
-    return { status: null, body: null, raw: '', errorCode: 'transport_error', ms: Date.now() - t0 };
+    return { status: null, body: null, raw: '', errorCode: 'transport_error', errorMessage: err && err.message ? err.message : String(err), errorDetails: null, ms: Date.now() - t0 };
   }
 }
 
@@ -659,8 +663,7 @@ async function closeReport(report) {
  */
 async function runLoadTest(options) {
   const o = { ...DEFAULTS, ...(options || {}) };
-  const logger = o.logger || createLogger({ level: o.level || 'warn', ringSize: o.ringSize || 2000 });
-  const dataDir = o.dataDir || makeTempDir();
+  const logger = o.logger || createLogger({ level: o.level || 'warn', ringSize: o.ringSize || 2000 });  const dataDir = o.dataDir || makeTempDir();
   const metrics = createMetrics();
   const rng = new SeededRng(o.seed);
   const startedAt = Date.now();
@@ -826,6 +829,15 @@ async function runLoadTest(options) {
     let quickAttempts = 0; let quickOk = 0; let quickNoOpponent = 0;
     const quickOutcomes = {};
     const rankedRunsOutcome = {};
+    const matchFailures = [];
+    const noteFailure = (kind, res) => {
+      if (matchFailures.length >= 10) return;
+      matchFailures.push({
+        kind, status: res.status, code: res.errorCode,
+        message: res.errorMessage ? String(res.errorMessage).slice(0, 200) : null,
+        details: res.errorDetails,
+      });
+    };
     for (const slot of matchResults) {
       for (const res of slot.ranked) {
         rankedRuns += 1;
@@ -839,6 +851,7 @@ async function runLoadTest(options) {
         } else {
           const k = res.errorCode || `status_${res.status}`;
           rankedRunsOutcome[k] = (rankedRunsOutcome[k] || 0) + 1;
+          noteFailure('ranked', res);
         }
       }
       for (const res of slot.quick) {
@@ -851,6 +864,7 @@ async function runLoadTest(options) {
           const k = res.errorCode || `status_${res.status}`;
           if (k === 'no_opponent') quickNoOpponent += 1;
           quickOutcomes[k] = (quickOutcomes[k] || 0) + 1;
+          noteFailure('quick', res);
         }
       }
     }
@@ -869,6 +883,7 @@ async function runLoadTest(options) {
       },
       totalMatches,
       throughputPerSecond: Math.round((totalMatches / Math.max(1, phase4Ms)) * 1000),
+      failures: matchFailures,
     };
 
     /* ---- 阶段 5：完整性断言 ---- */

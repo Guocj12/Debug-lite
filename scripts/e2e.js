@@ -805,7 +805,7 @@ async function main() {
         verdict: { winner: 'p1', reason: 'hero_dead', ticks: 12 },
         versions: { engine: s.store.versions.engine, data: s.store.versions.data },
       });
-      const goneId = appended.record.battleId;
+      const goneId = defeatedB.record.battleId;
       const gone = await request(port, 'GET', `/api/v1/replay/${goneId}`, undefined, authed(state.facts.B.token));
       expect(gone.status === 410, `快照缺失的归档回放应 410，实得 ${gone.status}`, gone.raw);
       expect(gone.body.error.code === 'replay_expired', `410 错误码应为 replay_expired，实得 ${j(gone.body.error)}`, gone.raw);
@@ -897,9 +897,17 @@ async function main() {
       expect(d.opponent.pointsAfter === foeCalc.pointsAfter, `对手积分可复算：${d.opponent.pointsAfter} ≠ ${foeCalc.pointsAfter}`, j(d.opponent));
       expect(d.self.pointsAfter >= 0 && d.self.pointsAfter <= RATING.cap, `A 积分越界 ${d.self.pointsAfter}`, j(d.self));
       expect(d.opponent.pointsAfter >= 0 && d.opponent.pointsAfter <= RATING.cap, `对手积分越界 ${d.opponent.pointsAfter}`, j(d.opponent));
-      // 双向非零（脆皮一方必败）：输家 Δ<0、赢家 Δ>0，且差额可复算
-      expect(d.self.delta < 0 && d.opponent.delta > 0,
-        `脆皮发起者必败 → 双向 Δ 应一负一正，实得 self=${d.self.delta} opponent=${d.opponent.delta}（winner=${d.winner}）`, j(d));
+      // 双向结算：赢家 Δ>0；输家 Δ ≤0（0 分玩家负场被下限保护为 0，§8.3 性质 4）——
+      // 对手由服务端抽池决定，故不断言"脆皮必败"，只断言"落盘值 ≡ 公式 + 方向/有界正确"。
+      const winnerDelta = d.winner === 'win' ? d.self.delta : d.winner === 'loss' ? d.opponent.delta : 0;
+      const loserDelta = d.winner === 'win' ? d.opponent.delta : d.winner === 'loss' ? d.self.delta : 0;
+      expect(winnerDelta > 0, `赢家 Δ 应 >0，实得 ${winnerDelta}（winner=${d.winner}）`, j(d));
+      expect(loserDelta <= 0, `输家 Δ 应 ≤0，实得 ${loserDelta}（winner=${d.winner}）`, j(d));
+      expect(d.self.delta + d.opponent.delta !== 0 || (d.self.delta === 0 && d.opponent.delta === 0),
+        '非对称 Elo 有意非零和（D-133 性质 3）', j(d));
+      // 0 分玩家负场的下限保护（§8.3 性质 4）：机器复算，不依赖本场实际结果
+      const zeroLoss = quickmatch.ratingDelta({ points: 0, opponentPoints: 0, result: 'loss', config: RATING });
+      expect(zeroLoss.pointsAfter === 0 && zeroLoss.delta === 0, '0 分玩家输球不产生负分', j(zeroLoss));
       const foeToken = d.opponent.publicId === state.facts.B.publicId ? state.facts.B.token
         : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token
           : d.opponent.publicId === state.facts.victim.publicId ? state.facts.victim.token
