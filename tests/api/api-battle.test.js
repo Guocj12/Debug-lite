@@ -50,6 +50,12 @@ test('T-AP-1 POST /battle 完整帧 + GET /replay/:id 全量与分片', async ()
     }
     assert.ok(f0.events.length > 0, '事件带 cid/tick（回放帧契约）');
     assert.equal(f0.events[0].tick, 1, 'events 归属 tick 1');
+    // 每帧 aiTrace 必须非空（2026-09-16 回归：runtime 改为每 tick 重置 trace 后，
+    //   battle.js 若仍按 slice(prevLen) 取增量，第 2 tick 起 aiTrace 会恒为空——此处钉死该契约）
+    const emptyTraceFrames = r.body.data.frames.filter((fr) => !Array.isArray(fr.diff.aiTrace) || fr.diff.aiTrace.length === 0);
+    assert.equal(emptyTraceFrames.length, 0, `每帧 aiTrace 必须非空（空帧：${emptyTraceFrames.map((fr) => fr.tick).join(',')}）`);
+    const traceTicks = r.body.data.frames.map((fr) => fr.diff.aiTrace[0].tick);
+    assert.deepEqual(traceTicks, r.body.data.frames.map((fr) => fr.tick), 'aiTrace 条目归属各自的 tick');
     // 全量
     const full = await request(port, 'GET', `/api/v1/replay/${id}`);
     assert.equal(full.status, 200);

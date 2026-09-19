@@ -3,51 +3,26 @@
  * 依据：systems/02-roles.md；examples/02-roles.md R-1..R-8（数值期望唯一出处）；decisions D-45/D-46/D-110。
  * 纯函数内核（L11）：随机走注入 rng；无 IO / 无 console；日志经 withLogger 注入。
  * 事件：role.instantiate(debug) / role.panel(debug)（§4.6）。
- * 语义（B5 登记）：
+ * 语义（B5 登记 + 2026-09-16 合并）：
  *   - instantiateRole：基础值 → 类型修饰 → 品质系数 → 取整（R-3 顺序冻结）；消耗顺序 =
  *     修饰随机 ints → 5×品质系数 float → slotCount int → 每槽类型 float（测试 stubSeq 依赖此顺序）。
- *   - equipPlugins：只做"校验 + 登记"（不改 stats）；失败原子（返回 {ok:false, role:undefined}）。
- *   - getFinalStats：每次从原始五维 + 已装词条**幂等重算**面板（多次调用结果一致）。
+ *   - applyTypeModifier：委托 items.applyTypeModifier（**单一实现**；开箱生成同用一份，见 items.generateRoleItem）。
+ *   - equipPlugins：只做"校验 + 登记"（不改 stats、**不改 regen**）；失败原子（返回 {ok:false, role:undefined}）。
+ *   - getFinalStats：调用 items.buildRolePanel（**单一聚合实现**，与 loadout.buildPanel 同源）——
+ *     每次从原始五维 + 已装词条幂等重算面板，regen 只在此处叠加一次（消除与 buildPanel 的双写）。
  */
 const { nullLogger } = require('../../shared/log.js');
-const items = require('./items.js'); // validateUnlock/rollSlotCount/applyAffixes（B3；UL-7 已证与 unlock 口径一致）
+const items = require('./items.js'); // validateUnlock/rollSlotCount/applyAffixes/buildRolePanel（B3；UL-7 已证与 unlock 口径一致）
 
 const FLAT_STATS = require('../data/affix-registry.json').stats; // 五维口径单一来源（词条注册表）
-const AFFIXES = require('../data/affix-registry.json').affixes;  // regen 等词条去向由此表声明
 const QUALITIES = require('../data/qualities.json').qualities;
 const qMap = Object.fromEntries(QUALITIES.map((q) => [q.id, q]));
-// 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
-const TYPE_MODIFIERS = require('../data/role-templates.json').typeModifiers;
 
 function makeRoles(logger) {
   const L = logger || nullLogger;
 
-  // 类型修饰（R-2/R-3）：只作用于基础值，返回修饰后五维（浮点）
-  function applyTypeModifier(template, rng) {
-    const base = template.baseStats;
-    const stats = { hp: base.hp, atk: base.atk, def: base.def, sp: base.sp, mp: base.mp };
-    if (template.type === 'specialized') {
-      stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.specialized.high;
-      const others = FLAT_STATS.filter((k) => k !== template.highStat);
-      const lowIdx = rng.int(0, others.length - 1);
-      stats[others[lowIdx]] = base[others[lowIdx]] * TYPE_MODIFIERS.specialized.low;
-    } else if (template.type === 'expert') {
-      stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.expert.high;
-      const others = FLAT_STATS.filter((k) => k !== template.highStat);
-      const spread = [...TYPE_MODIFIERS.expert.spread];
-      // Fisher–Yates（消耗 3 个 int：i=3→int(0,3)、i=2→int(0,2)、i=1→int(0,1)）
-      for (let i = spread.length - 1; i > 0; i--) {
-        const j = rng.int(0, i);
-        const tmp = spread[i];
-        spread[i] = spread[j];
-        spread[j] = tmp;
-      }
-      others.forEach((k, idx) => {
-        stats[k] = base[k] * spread[idx];
-      });
-    }
-    return stats;
-  }
+  // 类型修饰（R-2/R-3）：单一实现移至 items.applyTypeModifier（开箱与实例化共用；顺序冻结）。
+  const applyTypeModifier = items.applyTypeModifier;
 
   // 实例化（R-1..R-4；T-RO-7 regen 由模板必填字段直入）
   function instantiateRole(template, qualityId, rng) {
@@ -82,60 +57,80 @@ function makeRoles(logger) {
   }
 
   // 装配校验 + 登记（R-7 全分支；原子性：任一失败不产出新实例）
+  // 形状容错（2026-09-16 合并）：角色对象可以是运行时角色（instantiateRole 产物）或角色物品
+  //   （warehouse/openBox 产物）。缺 equipped/slots/pluginPoints 时按缺省处理并给出**明确错误码**，
+  //   不再抛 TypeError（此前 `role.equipped.map` 对角色物品直接崩）。
   function equipPlugins(role, plugins, options) {
     const opts = options || {};
     const tier = opts.tier || 'mythic';
-    const candidate = plugins || [];
+    if (!role || typeof role !== 'object') return { ok: false, error: 'role_invalid' };
+    const candidate = Array.isArray(plugins) ? plugins : [];
+    const slots = Array.isArray(role.slots) ? role.slots : [];
+    const equipped = Array.isArray(role.equipped) ? role.equipped : [];
+    // 点数预算：未声明 pluginPoints → 0（任何正点数插件都会被 points_exceeded 明确拒绝）
+    const budget = Number.isFinite(role.pluginPoints) ? role.pluginPoints : 0;
     // 先全量校验
-    const consumed = new Set(role.equipped.map((e) => e.plugin.uid || e.plugin.id));
-    const usedSlots = new Set(role.equipped.map((e) => e.slotIndex));
-    let spent = role.equipped.reduce((a, e) => a + e.plugin.pointCost, 0);
+    const consumed = new Set(equipped.map((e) => pluginUidOf(e)).filter(Boolean));
+    const usedSlots = new Set(equipped.map((e) => e && e.slotIndex));
+    let spent = equipped.reduce((a, e) => a + pluginCostOf(e), 0);
     const plan = [];
     for (const p of candidate) {
-      if (p.kind !== 'rolePlugin') return { ok: false, error: 'kind_mismatch' };
+      if (!p || p.kind !== 'rolePlugin') return { ok: false, error: 'kind_mismatch' };
       const uid = p.uid || p.id;
+      const cost = Number.isFinite(p.pointCost) ? p.pointCost : 0;
       if (consumed.has(uid) || p.equipped === true) return { ok: false, error: 'already_equipped' }; // R-7d
       if (!items.validateUnlock(p, tier)) return { ok: false, error: 'tier_locked' }; // R-7c（items.validateUnlock 同 unlock 口径）
-      const slotIdx = role.slots.findIndex((s, i) => s.type === p.slot && s.pluginUid === null && !usedSlots.has(i));
+      const slotIdx = slots.findIndex((s, i) => s.type === p.slot && s.pluginUid === null && !usedSlots.has(i));
       if (slotIdx === -1) return { ok: false, error: 'slot_type_mismatch' }; // R-7a（含无空槽）
-      if (spent + p.pointCost > role.pluginPoints) return { ok: false, error: 'points_exceeded' }; // R-7b
+      if (spent + cost > budget) return { ok: false, error: 'points_exceeded' }; // R-7b
       plan.push({ p, slotIdx });
-      spent += p.pointCost;
+      spent += cost;
       consumed.add(uid);
       usedSlots.add(slotIdx);
     }
-    // 全部通过 → 登记（不改 stats；面板由 getFinalStats 幂等重算）
+    // 全部通过 → 登记（**不改 stats、不写 regen**；面板由 getFinalStats / buildPanel 幂等重算，
+    //   两处共用 items.buildRolePanel —— regen 只在那一次叠加，杜绝双计）
     const next = {
       ...role,
-      slots: role.slots.map((s, i) => {
+      slots: slots.map((s, i) => {
         const hit = plan.find((x) => x.slotIdx === i);
         return hit ? { ...s, pluginUid: hit.p.uid || hit.p.id } : s;
       }),
-      equipped: [...role.equipped, ...plan.map((x) => ({ slotIndex: x.slotIdx, plugin: x.p }))],
+      equipped: [...equipped, ...plan.map((x) => ({ slotIndex: x.slotIdx, plugin: x.p }))],
     };
-    // regen 词条叠加（R-4b/c）：目标维度由词条注册表 def.regen 声明（affix-registry.json）
-    for (const { p } of plan) {
-      for (const a of p.affixes || []) {
-        const def = AFFIXES[a.id];
-        if (def && def.regen) {
-          next.regen = { ...next.regen, [def.regen]: (next.regen[def.regen] || 0) + a.params.v };
-        }
-      }
-    }
     return { ok: true, role: next };
   }
 
-  // 最终面板（R-8）：五维聚合（D-45 顺序）+ special 概率封顶（D-46）+ max*
-  function getFinalStats(role) {
-    const affixes = role.equipped.flatMap((e) => e.plugin.affixes || []);
-    const aggr = items.applyAffixes(role.stats, affixes);
-    const panel = {
-      stats: aggr.stats,
-      regen: { ...role.regen },
-      special: aggr.special,
-      maxHp: aggr.stats.hp, maxMp: aggr.stats.mp, maxSp: aggr.stats.sp,
-    };
-    L.debug('roles', 'role.panel', `panel ${role.templateId}`, { templateId: role.templateId, stats: panel.stats });
+  // equipped 条目读取（形状容错：缺失字段按缺省，不抛）
+  function pluginUidOf(entry) {
+    const p = entry && (entry.plugin || entry);
+    return p ? (p.uid || p.id || null) : null;
+  }
+
+  function pluginCostOf(entry) {
+    const p = entry && entry.plugin;
+    return p && Number.isFinite(p.pointCost) ? p.pointCost : 0;
+  }
+
+  // 已装插件解析（形状容错）：运行时角色 → equipped[]；角色物品形态 → slots[].pluginUid + role.plugins 索引
+  function equippedPlugins(role) {
+    const r = role || {};
+    if (Array.isArray(r.equipped)) return r.equipped.map((e) => (e && (e.plugin || e)) || null).filter(Boolean);
+    const pool = new Map();
+    for (const p of (Array.isArray(r.plugins) ? r.plugins : [])) if (p) pool.set(p.uid || p.id, p);
+    const out = [];
+    for (const s of (Array.isArray(r.slots) ? r.slots : [])) {
+      if (s && s.pluginUid && pool.has(s.pluginUid)) out.push(pool.get(s.pluginUid));
+    }
+    return out;
+  }
+
+  // 最终面板（R-8）：单一聚合实现 items.buildRolePanel（= loadout.buildPanel 同源）；
+  //   plugins 可显式传入（第二参），缺省按角色形状解析。
+  function getFinalStats(role, plugins) {
+    const r = role || {};
+    const panel = items.buildRolePanel(r, plugins === undefined ? equippedPlugins(r) : plugins);
+    L.debug('roles', 'role.panel', `panel ${r.templateId}`, { templateId: r.templateId, stats: panel.stats });
     return panel;
   }
 

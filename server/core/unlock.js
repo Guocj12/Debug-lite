@@ -3,7 +3,7 @@
  * 依据：systems/09-unlock.md；examples/09-unlock.md U-1..U-6（全分支）；decisions D-112/D-120。
  * 纯函数内核（L11）：无 IO / 无随机 / 无 console；日志经 withLogger 注入（缺省 nullLogger）。
  * 事件：unlock.check(debug) / unlock.reject(warn)（§4.6）。
- * 数据：unlock.json（增量 aiNodes）+ 三表 unlockTier；10 个基础节点恒可用。
+ * 数据：unlock.json（增量 aiNodes）+ 三表 unlockTier；9 个基础节点恒可用。
  * 注：AI 程序校验（结构/合法性/段位门控）由 ai/ast.js（B12/B13）统一承担——validateAi 于 B13 退役；
  * 本模块保留段位原语（tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout）。
  */
@@ -17,7 +17,7 @@ const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 
 const TIERS = require('../data/qualities.json').qualities.map((q) => q.id); // 段位序 = 品质表顺序（单一来源）
-// 基础节点恒可用（单一数据源 ai-nodes.json；examples/09-unlock §1：common=10 基础 + if = 11）
+// 基础节点恒可用（单一数据源 ai-nodes.json；examples/09-unlock §1：common=9 基础 + if = 10）
 const BASE_NODES = AI_NODES.base;
 const REAL_NODES = new Set(AI_NODES.nodes);
 
@@ -41,7 +41,7 @@ function tierIndex(tier) {
   return i === -1 ? null : i;
 }
 
-// 增量表（unlock.json 每段位新解锁的权限名；10 基础 + 累计展开 = 该段位可用**节点类型**集）
+// 增量表（unlock.json 每段位新解锁的权限名；9 基础 + 累计展开 = 该段位可用**节点类型**集）
 const NODE_GAIN = Object.fromEntries(UNLOCK.map((u) => [u.tier, u.aiNodes]));
 
 function makeUnlock(logger) {

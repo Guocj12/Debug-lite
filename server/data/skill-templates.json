@@ -1,57 +1,57 @@
 {
   "_sample": true,
-  "_note": "示例数据（2026-09-16）：技能内容为占位示例，正式技能设计由用户完成。类型必须已在 server/data/skill-mechanics.json 登记；词条必须已在 affix-registry.json 登记（门禁会校验）。",
+  "_note": "示例数据（2026-09-16）：技能内容为占位示例，正式技能设计由用户完成。类型必须已在 server/data/skill-mechanics.json 登记；词条必须已在 affix-registry.json 登记（门禁会校验）。每项带 drop（是否进掉落池，缺省 true）与 dropWeight（同类池内相对权重，缺省 1），掉落完全由 JSON 配置。",
   "skillTemplates": [
     { "id": "skill_melee_whirl", "name": "旋风斩", "type": "melee",
       "baseMultiplier": 1.0, "baseCost": { "hp": 0, "mp": 0, "sp": 12 }, "cooldown": 2,
       "bulletLevel": 2, "range": [-1, 1], "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "common" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "common", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_melee_heavy", "name": "重击", "type": "melee",
       "baseMultiplier": 1.3, "baseCost": { "hp": 0, "mp": 10, "sp": 8 }, "cooldown": 4,
       "bulletLevel": 2, "range": [0, 2], "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_straight_precise", "name": "精准射击", "type": "straight",
       "baseMultiplier": 0.9, "baseCost": { "hp": 0, "mp": 0, "sp": 6 }, "cooldown": 2,
       "bulletLevel": 3, "range": 8, "bulletCount": 1, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "common" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "common", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_straight_rapid", "name": "连续射击", "type": "straight",
       "baseMultiplier": 0.5, "baseCost": { "hp": 0, "mp": 8, "sp": 0 }, "cooldown": 4,
       "bulletLevel": 4, "range": 5, "bulletCount": 4, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_straight_ice", "name": "冰锥", "type": "straight",
       "baseMultiplier": 1.3, "baseCost": { "hp": 0, "mp": 8, "sp": 0 }, "cooldown": 3,
       "bulletLevel": 4, "range": 5, "bulletCount": 1, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "rare", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_straight_poison", "name": "毒瓶", "type": "straight",
       "baseMultiplier": 0.5, "baseCost": { "hp": 0, "mp": 6, "sp": 0 }, "cooldown": 4,
       "bulletLevel": 4, "range": 5, "bulletCount": 1, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "epic" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "epic", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_vert_rain", "name": "箭雨", "type": "vertical",
       "baseMultiplier": 0.9, "baseCost": { "hp": 0, "mp": 12, "sp": 0 }, "cooldown": 5,
       "bulletLevel": 4, "range": 8, "area": [-2, 2], "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "epic" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "epic", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_vert_fireball", "name": "火球术", "type": "vertical",
       "baseMultiplier": 0.8, "baseCost": { "hp": 0, "mp": 14, "sp": 0 }, "cooldown": 5,
       "bulletLevel": 3, "range": 8, "area": [-1, 1], "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "legendary" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "legendary", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_dash_bash", "name": "突击盾", "type": "displacement",
       "baseMultiplier": 0.8, "baseCost": { "hp": 0, "mp": 0, "sp": 10 }, "cooldown": 3,
       "bulletLevel": 2, "distance": 4,
       "passThroughEnemy": false, "dealDamage": true, "fullDodgeDuring": false, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "mythic" },
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "mythic", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_dash_shadow", "name": "暗影步", "type": "displacement",
       "baseMultiplier": 0, "baseCost": { "hp": 0, "mp": 0, "sp": 8 }, "cooldown": 3,
       "bulletLevel": 3, "distance": 3,
       "passThroughEnemy": true, "dealDamage": false, "fullDodgeDuring": true, "falloff": 0,
-      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "mythic" }
+      "slotWeights": { "basic": 2, "special": 1 }, "unlockTier": "mythic", "drop": true, "dropWeight": 1 }
   ]
 }

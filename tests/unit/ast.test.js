@@ -12,10 +12,10 @@ const FIXTURES = require('../fixtures/ai-programs.json');
 // 深克隆夹具（防止测试间共享引用）
 const prog = (key) => JSON.parse(JSON.stringify(FIXTURES[key].program));
 
-test('AF-1 白名单：17 节点类型全覆盖 fixture 合法通过；未知类型拒绝', () => {
+test('AF-1 白名单：16 节点类型全覆盖 fixture 合法通过；未知类型拒绝', () => {
   const r = ast.validateProgram(prog('coverageProgram'));
   assert.equal(r.ok, true, JSON.stringify(r.errors));
-  // 全部 17 个类型各出现（白名单 17 = 16 语义节点 + seq；fixture 覆盖型）
+  // 全部 16 个类型各出现（白名单 16 = 15 语义节点 + seq；fixture 覆盖型）
   const used = ast.collectUsedNodeTypes(prog('coverageProgram'));
   assert.equal(used.length, ast.NODE_TYPES.size, '全部节点类型出现');
   assert.equal(new Set(used).size, ast.NODE_TYPES.size);

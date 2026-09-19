@@ -6,15 +6,18 @@
  * 状态机约定（B14 登记）：
  *   - 程序引用存于 ctx.program（内存态）；帧 = {kind, container(节点引用), childIndex, remaining, condValue, fnScope}，
  *     path 仅作 trace 描述（B16 serializeContext/restoreContext 兑现序列化契约：path→node 反查 + 表达式索引）。
- *   - 表达式（literal/get/bullets/arith/cmp/logic/random 与 var/set 值）在语句推进中立即求值——无跨 resume 状态。
+ *   - 表达式（literal/get/arith/cmp/logic/random 与 var/set 值）在语句推进中立即求值——无跨 resume 状态。
  *   - 隐式主循环（D-100）：顶层 body seq 完成 → frames 重置回入口（vars 保留，A-1/A-4）。
  *   - action 断点 = 父 seq childIndex 已推进到 action 之后（A-2）。
  *   - break = 信号：向上弹掉最近 loop 帧（终止迭代），继续外层。
  *   - 变量：根作用域 ctx.vars；函数体独立作用域（D-103：内部 var 不泄漏、可读外层）；getVar 未声明 → 0。
- *   - random 仅实际求值时消费 ai 流（A-7c/d）。
+ *   - random 两种用法（2026-09-17 用户决策 A 修语义）：语句位 = 概率分支（真执行 then/else，与 if 同规则、缺 else 跳过）；
+ *     表达式位 = 布尔（求值为 rng.chance(prob,'ai') 的 true/false，不再返回 AST 子树）。
+ *     两种用法都只在**实际求值**时消费一次 ai 流（A-7c/d；D-91 每 tick 每用途派生流）。
  * B15 登记：步数兜底统一（guard 耗尽即 wait + 重置入口 + ai.step.limit(warn)，D-81/A-9a）；
  *   递归上限 64（ai.depth.limit(warn)，弹栈到入口，A-5/A-9b；vars 保留故弹栈后仍可推进）；
- *   trace 条目 {seq,path,nodeType,phase,result,depth} + ai.node(trace) 事件 + 超限 2000 截断（trace.truncated(warn) 一次，A-9e）；
+ *   trace 条目 {seq,path,nodeType,phase,result,depth} + ai.node(trace) 事件 + **单 tick**上限 2000 截断
+ *   （trace 每 tick 重置，seq 为本 tick 内序号；trace.truncated(warn) 每 tick 至多一次，A-9e + v3-design §11.10）；
  *   内部异常捕获 → wait + ai.error(err) 日志，绝不抛穿引擎（A-9d）。
  */
 const { nullLogger } = require('../../shared/log.js');
@@ -49,20 +52,31 @@ function makeRuntime(logger) {
     };
   }
 
-  // 快照路径读取（白名单投影；越界 → 安全默认，A-8b）
+  // 快照路径读取（B26 泛化）：通用点分路径 + 索引——a / a.b / a.b[i].c / a[i][j] / a.b[i][j].c …
+  //   旧实现只支持"基名 + 可选 [i] + 可选单层 .prop"，因此读不到 self.effects[0].remaining 这类新投影字段。
+  //   兜底语义不变（A-8b）：路径非法 / 缺字段 / 非对象 / 索引越界 / 索引落到非数组 → 安全默认 0，绝不抛。
+  //   只读保证：取值对象来自 deepFreeze 后的只读快照副本（容器亦冻结），不泄漏引擎可变引用；
+  //   危险段（__proto__/constructor/prototype）一律拒绝——否则可经原型链取到引擎之外的可变对象。
+  const SNAP_PATH_RE = /^\w+(?:\[\d+\])*(?:\.\w+(?:\[\d+\])*)*$/;
+  const FORBIDDEN_SEG_RE = /^(?:__proto__|constructor|prototype)$/;
   function getPath(snap, path) {
-    if (!path || typeof path !== 'string') return 0;
-    const m = path.match(/^([\w]+)(?:\[(\d+)\])?(?:\.([\w]+))?$/);
-    if (!m) return 0;
-    let v = snap[m[1]];
-    if (v === undefined || v === null) return 0;
-    if (m[2] !== undefined) {
-      v = Array.isArray(v) ? v[parseInt(m[2], 10)] : undefined;
-      if (v === undefined || v === null) return 0;
-    }
-    if (m[3] !== undefined) {
-      v = v[m[3]];
-      if (v === undefined || v === null) return 0;
+    if (!path || typeof path !== 'string' || !SNAP_PATH_RE.test(path)) return 0;
+    let v = snap;
+    for (const chunk of path.split('.')) {
+      const parts = chunk.split(/[[\]]/); // 'effects[0][1]' → ['effects','0','1']；'hp' → ['hp']
+      for (let i = 0; i < parts.length; i++) {
+        const seg = parts[i];
+        if (seg === '') continue; // 尾随空段（'effects[0]' → ['effects','0','']）
+        if (v === null || typeof v !== 'object') return 0; // 缺失/标量继续下钻 → 安全默认
+        if (i === 0) {
+          if (FORBIDDEN_SEG_RE.test(seg)) return 0;
+          v = v[seg];
+        } else {
+          if (!Array.isArray(v)) return 0; // 索引只能落在数组上（对象键走 .prop，不做数字键兜底）
+          v = v[Number(seg)];
+        }
+        if (v === undefined || v === null) return 0;
+      }
     }
     return v;
   }
@@ -87,7 +101,6 @@ function makeRuntime(logger) {
     switch (node.type) {
       case 'literal': return node.value;
       case 'get': return getPath(snap, node.path);
-      case 'bullets': return snap.bullets;
       case 'getVar': {
         const v = lookupVar(scopes, node.name);
         return v === undefined ? 0 : v;
@@ -120,13 +133,16 @@ function makeRuntime(logger) {
         return node.op === 'and' ? !!r : node.op === 'or' ? !!r : false;
       }
       case 'random': {
+        // 表达式位：布尔（true 概率 = prob）；每次求值消费一次 ai 流。
+        //   语句位的概率分支执行见 resumeInner 的 st === 'random' 处理（同一个节点两种用法，按位置分派）。
         const prob = evalExpr(node.prob, snap, rng, scopes);
-        return rng.chance(prob, 'ai') ? node.then : node.else;
+        return !!rng.chance(prob, 'ai');
       }
       default: return 0;
     }
   }
 
+  // trace 条目：seq = **本 tick 内**序号（每 tick 重置，见 resumeInner）；单 tick 上限 traceLimit
   function traceNode(ctx, path, stmt) {
     if (ctx.trace.length < ctx.traceLimit) {
       const nodeType = stmt && stmt.type ? stmt.type : 'stmt';
@@ -135,8 +151,8 @@ function makeRuntime(logger) {
       ctx.trace.push(entry);
       L.trace('ai.runtime', 'ai.node', `node ${path}`, { path, nodeType });
     } else if (!ctx.traceTruncated) {
-      ctx.traceTruncated = true; // A-9e：超限截断、后续不再记录；trace.truncated(warn) 仅一次
-      L.warn('ai.runtime', 'trace.truncated', `trace 超限 ${ctx.traceLimit} 截断`, { limit: ctx.traceLimit });
+      ctx.traceTruncated = true; // A-9e：本 tick 内超限 → 截断、本 tick 后续不再记录；trace.truncated(warn) 每 tick 至多一次
+      L.warn('ai.runtime', 'trace.truncated', `trace 超限 ${ctx.traceLimit} 截断（单 tick）`, { limit: ctx.traceLimit });
     }
   }
 
@@ -156,6 +172,11 @@ function makeRuntime(logger) {
     const snap = deepFreeze(Object.assign({}, snapshot));
     ctx.stepCount = 0;
     ctx.halted = false;
+    // B26（并行任务移交的语义变更）：trace 每 tick 重置——resume 是"单 tick 续执行"的边界，
+    //   故本次 resume 产出的 trace 恰为**该 tick 全量**（单 tick 上限仍为 traceLimit=2000）。
+    //   司机（server/runner.js / server/battle.js）据此直接取全量，不再按 prevLen 取增量。
+    ctx.trace = [];
+    ctx.traceTruncated = false; // 截断标记语义：**本 tick 内**是否被截断（随 trace 一起按 tick 重置）
     const program = ctx.program;
     if (!program || !program.body) return { action: 'wait', trace: ctx.trace, error: 'ai_invalid' };
     const scopes = [ctx.vars]; // 作用域链（栈底根）
@@ -208,6 +229,18 @@ function makeRuntime(logger) {
         }
         if (st === 'if') {
           const condVal = !!evalExpr(stmt.cond, snap, rng, scopes);
+          const br = condVal ? stmt.then : stmt.else;
+          if (br) {
+            const brList = br.type === 'seq' ? br.statements : [br];
+            ctx.frames.push({ kind: 'seq', list: brList, childIndex: 0, path: `${base}.${condVal ? 'then' : 'else'}`, fnScope: null });
+          }
+          continue;
+        }
+        if (st === 'random') {
+          // 语句位：概率分支——求值 prob + 消费一次 ai 流 → 压入 then/else 分支帧（与 if 分支同规则：
+          //   分支为 seq 取 statements，单节点包成 [node]；else 缺省 → 跳过，不产出行动）。
+          const prob = evalExpr(stmt.prob, snap, rng, scopes);
+          const condVal = !!rng.chance(prob, 'ai');
           const br = condVal ? stmt.then : stmt.else;
           if (br) {
             const brList = br.type === 'seq' ? br.statements : [br];

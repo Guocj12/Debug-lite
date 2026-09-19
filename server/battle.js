@@ -65,15 +65,12 @@ function runBattle(opts) {
   const battleLogger = createLogger({ level: 'all', ringSize: 50000, now: () => 0, onRecord: (r) => battleEvents.push(r) });
   const b = engine.createBattle(undefined, { seed, players: { p1: b1.player, p2: b2.player }, logger: battleLogger });
   const aiTrace = [];
-  const driver = (owner, bp) => {
-    let prevLen = 0;
-    return (state) => {
-      const r = runtime.resume(bp.ctx, runner.projectSnapshot(state, owner), state.rng.deriveStream(state.tick, 'ai'));
-      const fresh = bp.ctx.trace.slice(prevLen);
-      prevLen = bp.ctx.trace.length;
-      for (const e of fresh) aiTrace.push(Object.assign({ tick: state.tick, owner }, e));
-      return r.action;
-    };
+  const driver = (owner, bp) => (state) => {
+    const r = runtime.resume(bp.ctx, runner.projectSnapshot(state, owner), state.rng.deriveStream(state.tick, 'ai'));
+    // runtime 已改为**每 tick 重置** ctx.trace（单 tick 上限 2000）→ 必须取该 tick 全量，
+    // 不能再用 slice(prevLen) 增量（否则第 2 tick 起 aiTrace 恒为空；2026-09-16 修复）。
+    for (const e of runner.takeTrace(bp.ctx)) aiTrace.push(Object.assign({ tick: state.tick, owner }, e));
+    return r.action;
   };
   const result = b.runFull({ actions: { aiTrace, p1: driver('p1', b1), p2: driver('p2', b2) }, eventsBuf: battleEvents });
   runtime.destroyContext(b1.ctx);

@@ -202,6 +202,25 @@ test('T-EN-4 超时扣血：tick≥48 双方基地与角色同时扣 ceil(maxHp�
   assert.equal(b.state.bases.p2.hp, 100 - 7);
 });
 
+test('T-EN-4b 超时扣血口径修正（2026-09-16）：基地按**自身 maxHp** 扣、角色按**角色 maxHp** 扣；基地缺 maxHp 回退 hp', () => {
+  // 角色 maxHp 180 → ceil(180×0.0625)=12；基地 maxHp 100 → ceil(100×0.0625)=7
+  const b = mkBattle(mkPlayer({ x: 400, hp: 180, maxHp: 180 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
+  for (let i = 0; i < 47; i++) stepActions(b, ['wait'], ['wait']);
+  assert.equal(b.state.tick, 47);
+  assert.equal(b.state.players.p1.hp, 180, 'tick<48 不扣');
+  assert.equal(b.state.bases.p1.hp, 100);
+  stepActions(b, ['wait'], ['wait']);
+  assert.equal(b.state.tick, 48);
+  assert.equal(b.state.players.p1.hp, 168, '角色：180−12=168（按角色 maxHp）');
+  assert.equal(b.state.bases.p1.hp, 93, '基地：100−7=93（按基地 maxHp，旧口径会 −12 → 88）');
+  assert.equal(b.state.bases.p2.hp, 93, '对手基地同口径（p2 角色 maxHp 100 → 7）');
+  // 防御路径：基地条目缺 maxHp → 回退自身 hp（同样扣 7）
+  const cfgNoMax = Object.assign({}, CONFIG, { bases: { p1: { hp: 100, def: 64 }, p2: { hp: 100, def: 64 } } });
+  const b2 = engine.createBattle(cfgNoMax, { seed: 5, players: { p1: mkPlayer({ x: 400 }), p2: mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }) } });
+  for (let i = 0; i < 48; i++) stepActions(b2, ['wait'], ['wait']);
+  assert.equal(b2.state.bases.p1.hp, 93, '缺 maxHp → 按 hp 扣 7');
+});
+
 test('T-EN-2/judge：基地 ≤0 优先胜出 + runFull 结束', () => {
   const b = mkBattle(mkPlayer({ x: 400 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
   b.state.bases.p1.hp = 1;

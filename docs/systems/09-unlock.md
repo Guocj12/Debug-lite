@@ -16,9 +16,9 @@
 ## 3. 数据结构
 
 - 解锁表：每段位一条，含 `tier`、`aiNodes[]`（该段位新解锁的**权限名**）、`roleTemplates[]`、`skills[]`；表根另含 `nodePermissions`（权限名 → 真实节点类型的展开声明）。
-  - **权限名 ≠ 节点类型**：`aiNodes[]` 里的 `while`（= `loop` 的 `kind:'while'`，折叠为节点 `loop`）与 `arith_ext`（"扩展算术权限"预留位，标记 `implemented:false`）在 `ai/ast.js` 的 17 类节点白名单里**并不存在**；仅 `if`/`loop`/`break`/`random`/`logic`/`function`/`call` 是真实节点类型（真实节点单一数据源 = `server/data/ai-nodes.json` 的 `nodes`，共 17 类）。
+  - **权限名 ≠ 节点类型**：`aiNodes[]` 里的 `while`（= `loop` 的 `kind:'while'`，折叠为节点 `loop`）与 `arith_ext`（"扩展算术权限"预留位，标记 `implemented:false`）在 `ai/ast.js` 的 16 类节点白名单里**并不存在**；仅 `if`/`loop`/`break`/`random`/`logic`/`function`/`call` 是真实节点类型（真实节点单一数据源 = `server/data/ai-nodes.json` 的 `nodes`，共 16 类）。
   - **口径已于 2026-09-16 收口（已实现）**：`server/data/unlock.json` 新增 `nodePermissions`；`core/unlock.js` 的 `availableNodes(tier)` **只返回真实节点类型**，权限名不再出现在返回值里，调用方**无需**再自行忽略非节点类型项。展开规则三条：①显式 `grants` 覆盖；②`implemented:false` 的预留权限**不授予任何节点**；③未声明者 = 权限名本身即真实节点类型。
-  - **累计真实节点数（已实测，2026-09-16）**：`common 11` / `rare 13` / `epic 15` / `legendary 15` / `mythic 17`（`common` = 10 个基础节点 + `if`）。旧口径 11/14/17/17/19（"权限名个数"）**已作废**。
+  - **累计真实节点数（已实测，2026-09-17）**：`common 10` / `rare 12` / `epic 14` / `legendary 14` / `mythic 16`（`common` = 9 个基础节点 + `if`；`bullets` 节点已按用户决策移除——AI 无法观测弹幕，弹幕当 tick 全解算）。旧口径 11/13/15/15/17（含 `bullets`）与 11/14/17/17/19（"权限名个数"）**均已作废**。
 - 段位序号：`common=0`、`rare=1`、`epic=2`、`legendary=3`、`mythic=4`。
 
 ## 4. 核心流程（代码逻辑）
@@ -59,8 +59,8 @@
 
 ### 4.6 编辑器 `availableNodes(tier)`
 
-1. 返回该段位可用的**真实节点类型**集合（累计：10 个基础节点 + 各段位 `aiNodes` 经 `nodePermissions` 展开后的并集），供编辑器"可添加节点"菜单渲染（**不再供 Blockly 工具盒**：现行前端为表单式 AST 编辑器，见 `docs/frontend-spec.md` v3 §12；Blockly 已废弃）。
-   - 返回值为**累计列表且只含真实节点类型**（`while` 已折叠为 `loop`，`arith_ext` 不出现，见 §3）——调用方**无需**再过滤别名项。段位累计数：11/13/15/15/17。
+1. 返回该段位可用的**真实节点类型**集合（累计：9 个基础节点 + 各段位 `aiNodes` 经 `nodePermissions` 展开后的并集），供编辑器"可添加节点"菜单渲染（**不再供 Blockly 工具盒**：现行前端为表单式 AST 编辑器，见 `docs/frontend-spec.md` v3 §12；Blockly 已废弃）。
+   - 返回值为**累计列表且只含真实节点类型**（`while` 已折叠为 `loop`，`arith_ext` 不出现，见 §3）——调用方**无需**再过滤别名项。段位累计数：10/12/14/14/16。
 
 ## 5. 边界与异常
 
@@ -73,7 +73,7 @@
 
 ## 7. 测试要点
 
-- 各段位解锁项正确（累计真实节点数 11/13/15/15/17）。
+- 各段位解锁项正确（累计真实节点数 10/12/14/14/16）。
 - 低段位内容高段位可用（继承）。
 - 过滤掉落池、AI 校验、装配校验。
 - 未知 key 返回 false；`while` 折叠为 `loop`；`arith_ext`（`implemented:false`）恒 false。

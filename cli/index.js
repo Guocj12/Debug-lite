@@ -21,7 +21,7 @@ commands:
   panel --loadout <file> [--tier <t>]          # 最终面板（B19，经 HTTP）
   battle --p1 a.json --p2 b.json [--seed <n>] [--tier <t>] [--out replay.json]
                                                # 双方 loadout 对战 → 完整回放帧（B22，经 HTTP）
-  replay --file replay.json [--tick N]         # 文本回放（px 位置/碰撞/事件；B23，本地文件）
+  replay --file replay.json [--tick N]         # 文本回放（px 位置/碰撞/伤害值+暴击/背击标注；B23，本地文件）
   ranked run --seed <n> [--tier <t>] [--loadout <file>] [--pool <file>]
                                                # 排位 10 场离线结算（B24，经 HTTP；D-123 不持久化）
 exit codes: 0 成功 / 1 业务拒绝 / 2 参数错误`;
@@ -46,6 +46,52 @@ function httpJson(baseUrl, method, urlPath, body) {
     if (body !== undefined) req.write(JSON.stringify(body));
     req.end();
   });
+}
+
+/* ---- replay 伤害标注（B23 可读性增强；用户 2026-09-19 勾选项 2）----
+ * 素材来源：帧 events[] 里 damage.calc 的 data（attacker/target/dmg/crit/critM/backstab/backM/hitUid）。
+ * 关联规则：hitUid 与帧 bulletHits[].uid 一一对应；hitUid 为空（碰撞/附加真实伤害）单独归入「伤害[]」段。
+ * 只读帧数据，不 require core/ai（L14：CLI 只走 HTTP/本地文件）。
+ */
+function damageByHit(events) {
+  const map = new Map();
+  for (const e of events || []) {
+    if (e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.hitUid) {
+      map.set(e.data.hitUid, e.data);
+    }
+  }
+  return map;
+}
+
+// 伤害标注：`9` / `9 (暴击×1.5)` / `9 (暴击×1.5 背击×1.5)`
+function damageTag(dm) {
+  const marks = [];
+  if (dm.crit) marks.push(`暴击×${dm.critM}`);
+  if (dm.backstab) marks.push(`背击×${dm.backM}`);
+  return `${dm.dmg}${marks.length > 0 ? ` (${marks.join(' ')})` : ''}`;
+}
+
+// 逐 tick 文本行：px 位置/碰撞 + 命中（uid->目标@坐标->伤害）+ 无弹幕归属的伤害（碰撞/附加真伤）
+function replayLine(f) {
+  const d = f.diff;
+  const p = (o) => `${o} ${d.players[o].fromX}->${d.players[o].toX} hp=${d.players[o].hp} mp=${d.players[o].mp} sp=${d.players[o].sp}`;
+  const coll = d.collision ? ` | 碰撞@${d.collision.contactX}` : '';
+  const evs = Array.isArray(d.events) ? d.events : [];
+  const dmgByUid = damageByHit(evs);
+  const hits = d.bulletHits && d.bulletHits.length
+    ? ` | 命中[${d.bulletHits.map((h) => {
+      const base = `${h.uid}->${h.target}@${h.atX}`;
+      const dm = dmgByUid.get(h.uid);
+      return dm ? `${base}->${dm.attacker}->${dm.target} ${damageTag(dm)}` : base;
+    }).join(' ')}]`
+    : '';
+  const loose = [];
+  for (const e of evs) {
+    if (!e || e.channel !== 'damage' || e.event !== 'damage.calc' || !e.data) continue; // 非伤害事件/畸形项跳过
+    if (!e.data.hitUid) loose.push(e.data); // 碰撞/附加真实伤害（无弹幕 uid）
+  }
+  const extra = loose.length ? ` | 伤害[${loose.map((dm) => `${dm.attacker}->${dm.target} ${damageTag(dm)}`).join(' ')}]` : '';
+  return `tick ${f.tick}: ${p('p1')} | ${p('p2')}${coll}${hits}${extra}`;
 }
 
 async function main(argv, options) {
@@ -412,13 +458,6 @@ async function main(argv, options) {
               console.error(`回放文件帧内容非法（缺 diff/players 或位置非 1px）`);
               code = 2;
             } else {
-              const line = (f) => {
-                const d = f.diff;
-                const p = (o) => `${o} ${d.players[o].fromX}->${d.players[o].toX} hp=${d.players[o].hp} mp=${d.players[o].mp} sp=${d.players[o].sp}`;
-                const coll = d.collision ? ` | 碰撞@${d.collision.contactX}` : '';
-                const hits = d.bulletHits && d.bulletHits.length ? ` | 命中[${d.bulletHits.map((h) => `${h.uid}->${h.target}@${h.atX}`).join(' ')}]` : '';
-                return `tick ${f.tick}: ${p('p1')} | ${p('p2')}${coll}${hits}`;
-              };
               if (tickArg !== null) {
                 const n = Number(tickArg);
                 const frame = Number.isInteger(n) && n >= 1 ? frames.find((f) => f.tick === n) : null;
@@ -427,7 +466,7 @@ async function main(argv, options) {
                   code = 2;
                 } else {
                   const d = frame.diff;
-                  console.log(line(frame));
+                  console.log(replayLine(frame));
                   if (d.verdict) console.log(`verdict: winner=${d.verdict.winner} phase=${d.verdict.phase}`);
                   const evs = Array.isArray(d.events) ? d.events : [];
                   console.log(`events (${evs.length}):`);
@@ -436,7 +475,7 @@ async function main(argv, options) {
                 }
               } else {
                 for (const f of frames) {
-                  if (frameOk(f)) console.log(line(f));
+                  if (frameOk(f)) console.log(replayLine(f));
                 }
                 const last = frames[frames.length - 1];
                 const v = last && last.diff && last.diff.verdict;
@@ -546,7 +585,8 @@ async function bootstrap(options) {
   }
 }
 
-module.exports = { main, bootstrap, USAGE, httpJson };
+// replayLine 额外导出：scripts/play.js（离线试玩）复用同一战报行格式，避免两套渲染漂移。
+module.exports = { main, bootstrap, USAGE, httpJson, replayLine };
 
 if (require.main === module) {
   bootstrap();

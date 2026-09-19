@@ -11,7 +11,6 @@
           { "type": "var", "name": "cd1", "value": { "type": "literal", "value": 0 } },
           { "type": "set", "name": "cd1", "value": { "type": "arith", "op": "+", "left": { "type": "getVar", "name": "cd1" }, "right": { "type": "literal", "value": 1 } } },
           { "type": "get", "path": "self.hp" },
-          { "type": "bullets" },
           { "type": "cmp", "op": "<", "left": { "type": "getVar", "name": "cd1" }, "right": { "type": "literal", "value": 3 } },
           { "type": "logic", "op": "and", "left": { "type": "literal", "value": true }, "right": { "type": "literal", "value": false } },
           { "type": "random", "prob": { "type": "literal", "value": 0.5 }, "then": { "type": "seq", "statements": [{ "type": "action", "name": "move_right" }] }, "else": { "type": "seq", "statements": [{ "type": "action", "name": "move_left" }] } },

@@ -7,6 +7,7 @@
 | `gate.js` | 9 项门禁（`tasks.md` §3.4），任一失败即非零退出 | P0-5 |
 | `check-arch.js` | 架构依赖方向检查（反向/循环/core 越界） | P0-5 |
 | `demo.js` | 跑一场战斗打印逐 tick 摘要；支持 `--log-level trace` | B11 |
+| `play.js` | **离线可玩闭环**（`npm run play`）：开箱 → 合并仓库 → 自动装配 → 选 3 技能 → 内置预设 AI → 角色面板 → 打一场 → 逐 tick 战报（伤害/暴击/背击） | 可玩性（P6 前端之前） |
 | `fe-spec-check.js` | 前端文档自检（`docs/frontend-spec.md` §14 的 C1–C9）：按钮↔动作表闭合、文档字段↔真实响应样本、取值↔后端实现、清单/通道规范 | P6 前端重设计 |
 
 ## `fe-spec-check.js` 契约（P6 前端，独立脚本）
@@ -16,6 +17,23 @@
 - **C1–C9**：注册表可解析 / 按钮动作命中动作表 / 无僵尸动作 / 七屏 goto 可达 / 文档字段命中真实样本 / 取值与后端一致 / 文件清单一致 / 日志事件与通道规范 / 实现侧 data-action·data-id 命中注册表（`public/js` 落地后自动生效）。
 - **与 gate 的关系**：**不进** `gate.js` 九项（gate 项 7 覆盖率目录为 `server/core|server/ai|shared|cli`，不含 `public/`）；由 `tests/frontend/fe-spec.test.js` 在 `npm test` 内断言（含 5 个投毒用例，防止检查空转）。
 - **维护**：改前端文档/改后端取值 → 跑 `node scripts/fe-spec-check.js`；样本过期 → 重跑 `.audit/fe-samples.js`。
+
+## `play.js` 契约（离线试玩闭环，`npm run play`）
+
+- **定位**：在 P6 前端与 P7 服务端新系统（账号/存档/匹配）之前，让"零件齐备但不能玩"变成"一条命令能玩（文本版）"。**不新增任何服务端接口**，也不依赖服务端在跑。
+- **流程**（每步打印在做什么）：开箱（`--boxes` 次，材料不足按同一 seed 流补齐）→ 合并进**内存**仓库（`items.emptyWarehouse` 语义，不依赖尚不存在的服务端仓库）→ 自动装配（`items.assemble`：槽位类型 + 段位门控 + 点数预算 + 插件唯一性；失败即跳过并说明原因）→ 选 3 个技能槽 → 内置预设 AI → 角色面板（五维/regen/special/技能参数）→ 打一场 → 逐 tick 战报 + 胜负。
+- **动作名口径**：引擎只认 `skill:<sid>`；本脚本按出战槽位把技能命名为 `skill1/skill2/skill3`（与 `server/battle.js` 的 `buildPlayer` 同口径），预设 AI 因此发 `skill:skill1`。
+- **内置预设 AI**（`--preset`，只使用 base 节点 + `if`，任意段位都能过 `ast.validate`；程序 `version: 2`＝当前版本）：
+  | 预设 | 语义 |
+  |---|---|
+  | `steady`（稳健，默认） | 残血先防 → 拉近到中距 → 敌在背后则转身靠近 → 否则主技能开火 |
+  | `aggressive`（激进） | 贴脸为主（gap>96 就靠近），近身交二技能 |
+  | `kite`（风筝） | 太近拉开（槽位 3 是位移技就用位移，否则后撤）→ 太远靠近 → 射程内开火 |
+- **参数**：`--seed`（默认 20260912，与 gate 项 8 黄金战斗同 seed）/ `--boxes`（默认 12，1..100）/ `--tier`（默认 mythic）/ `--preset` / `--quality`（装配选取的品质门槛，达标不足时回落并说明）/ `--out <file>` / `--help`。**只看不写**：除 `--out` 外不落盘（建议 `runtime/`，已 gitignore）。
+- **对手**：`server/ranked.js` 的 `buildBotLoadout()`（均衡/common、无插件、直线逼近）——二选一中的 bot 方案，不改服务端接口。
+- **战报**：逐 tick 行**复用 `cli/index.js` 导出的 `replayLine`**（与 `cli replay` 同一渲染，避免两套格式漂移），含碰撞、命中（`uid->目标@坐标->攻方->受方 伤害`）与无弹幕伤害（碰撞/附加真伤）；暴击/背击以 `(暴击×1.5 背击×1.5)` 标注（引擎 `critChance`/追尾背击触发时出现）。
+- **铁律**：脚本内禁 `child_process` / `Math.random`（确定性全部来自 seed 派生的 rng 流）；零依赖。
+- **与 CLI 的衔接**：`npm run play -- --out runtime/play-loadout.json` 的产物是 `{loadout, warehouse}`，可直接 `npm run cli -- battle --p1 runtime/play-loadout.json ...`（需先 `npm start`）。
 
 ---
 

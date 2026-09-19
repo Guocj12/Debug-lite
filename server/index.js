@@ -179,7 +179,9 @@ function createHandler(logger, extraRoutes) {
           // 信封主码固定 ai_invalid（interfaces §2 行），每条错误的具体 code/path 在 details
           return { status: 400, payload: errEnvelope('ai_invalid', 'AI 程序不合法', v.errors) };
         }
-        return { status: 200, payload: okEnvelope({ ok: true }, logger) };
+        // B26：warnings 通道回带（非阻断提示，如"动作名不在引擎词汇表"；D-80 保持运行期归一化）。
+        //   防御：并行任务尚未在 ast.validate 落地 warnings 时字段缺席 → || []，接口不崩。
+        return { status: 200, payload: okEnvelope({ ok: true, warnings: Array.isArray(v.warnings) ? v.warnings : [] }, logger) };
       },
       '/api/v1/ai/compile': async (ctx) => {
         // B16：规范化 + programHash + 统计（结构校验；不查合法性/门控）

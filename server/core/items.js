@@ -14,6 +14,8 @@ const ROLE_TEMPLATES = require('../data/role-templates.json').roleTemplates;
 const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 const ITEMS_CONFIG = require('../data/items-config.json');
+// 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
+const TYPE_MODIFIERS = require('../data/role-templates.json').typeModifiers;
 
 // 机制表（数据驱动）：词条语义 + 技能类型机制。代码只做解释，不按 id/类型写分支。
 const REGISTRY = require('../data/affix-registry.json');
@@ -26,6 +28,37 @@ const STAT_PRECISION = MECHANICS.precision.stat;
 // 已登记词条；未登记 = 配置错误（gate 会拦；运行期记 warn 并跳过，不静默失效）
 function affixDef(id) {
   return Object.prototype.hasOwnProperty.call(AFFIXES, id) ? AFFIXES[id] : null;
+}
+
+// 类型修饰（R-2/R-3；systems/02-roles.md §4.2）：只作用于基础值，返回修饰后五维（浮点）。
+// **单一实现**：roles.applyTypeModifier 委托本函数 —— 开箱生成（generateRoleItem）与角色实例化
+//   （roles.instantiateRole）不再各写一份；随机消耗顺序冻结为「修饰随机 → 品质系数 → 取整」：
+//   specialized 消耗 1 次 int（随机低属性索引）；expert 消耗 3 次 int（Fisher–Yates 洗牌）；
+//   balanced 不消耗随机（既有确定性测试的字节级行为由此保持）。
+function applyTypeModifier(template, rng) {
+  const base = template.baseStats;
+  const stats = { hp: base.hp, atk: base.atk, def: base.def, sp: base.sp, mp: base.mp };
+  if (template.type === 'specialized') {
+    stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.specialized.high;
+    const others = FLAT_STATS.filter((k) => k !== template.highStat);
+    const lowIdx = rng.int(0, others.length - 1);
+    stats[others[lowIdx]] = base[others[lowIdx]] * TYPE_MODIFIERS.specialized.low;
+  } else if (template.type === 'expert') {
+    stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.expert.high;
+    const others = FLAT_STATS.filter((k) => k !== template.highStat);
+    const spread = [...TYPE_MODIFIERS.expert.spread];
+    // Fisher–Yates（消耗 3 个 int：i=3→int(0,3)、i=2→int(0,2)、i=1→int(0,1)）
+    for (let i = spread.length - 1; i > 0; i--) {
+      const j = rng.int(0, i);
+      const tmp = spread[i];
+      spread[i] = spread[j];
+      spread[j] = tmp;
+    }
+    others.forEach((k, idx) => {
+      stats[k] = base[k] * spread[idx];
+    });
+  }
+  return stats;
 }
 
 let uidSeq = 0;
@@ -100,12 +133,15 @@ function makeItems(logger) {
   }
 
   // 生成角色物品（I-2/I-4；T-RO-7：物品携带模板 regen）
+  // 2026-09-16 修正（用户拍板 A）：开箱物品**真正套用类型修饰**——此前只在 roles.instantiateRole 生效，
+  //   导致同品质的 11 个角色在数值上完全相同（特化 ±15% / 专家 1.30 与 spread 全部失效）。
   function generateRoleItem(template, qualityId, rng) {
     const q = getQuality(qualityId);
     const t = typeof template === 'string' ? roleMap[template] : template;
+    const modified = applyTypeModifier(t, rng); // R-2/R-3 顺序：修饰随机 → 品质系数 → 取整
     const stats = {};
     for (const k of FLAT_STATS) {
-      const v = Math.round(t.baseStats[k] * rand(rng, q.statRange[0], q.statRange[1]));
+      const v = Math.round(modified[k] * rand(rng, q.statRange[0], q.statRange[1]));
       stats[k] = v < 1 ? 1 : v;
     }
     const slotCount = rollSlotCount('role', qualityId, rng);
@@ -180,12 +216,12 @@ function makeItems(logger) {
   }
 
   // 生成插件（I-5/I-6）：词条 = 基础值 × U(档位区间系数)；角色 pointCost=tier
-  // poolOverride：openBox 门控池（I-7a/b）；缺省全量池
+  // poolOverride：openBox 门控池（I-7a/b）；缺省全量池（仍按 kind + drop 过滤）
   function generatePlugin(kind, qualityId, rng, poolOverride) {
     const q = getQuality(qualityId);
-    const pool = (poolOverride || pluginList).filter((p) => p.kind === kind);
+    const pool = (poolOverride || pluginList).filter((p) => p.kind === kind && p.drop !== false);
     if (pool.length === 0) throw new RangeError(`插件池为空: ${kind}`);
-    const def = rng.pick(pool);
+    const def = pickFromPool(rng, pool, `插件: ${kind}`);
     const coeff = rand(rng, q.statRange[0], q.statRange[1]);
     const tier = tierOfValue(coeff, q);
     // 词条入包：滚动方式取自词条注册表 roll（int = 即时取整 I-6b；stat = 保留 precision.stat 位 I-6a）
@@ -206,7 +242,32 @@ function makeItems(logger) {
     return plugin;
   }
 
-  // 开箱（I-7）：品质（tier 截断，D-122）→ 类别 → 生成；tier 门控池过滤（I-9/validateUnlock）
+  // ---- 掉落池原语（用户拍板 A：是否掉落 / 权重 / 解锁段位全部由内容层 JSON 配置）----
+  //   `drop`      布尔：false → 不进入掉落池；缺省（未写字段）视为 true（旧表兼容）
+  //   `dropWeight` 数值：同类池内相对权重；缺省 / 非正数 / 非数值 → 1
+  //   `unlockTier` 段位门控：≤ tier 才进池（I-9 / D-112；缺省已解锁）
+  function dropPool(list, tier) {
+    return (list || []).filter((x) => x && x.drop !== false && validateUnlock(x, tier));
+  }
+
+  function dropWeightOf(x) {
+    return x && Number.isFinite(x.dropWeight) && x.dropWeight > 0 ? x.dropWeight : 1;
+  }
+
+  // 池内抽取：权重全为 1（含缺省）→ 均匀取一，与旧 `rng.pick` **逐字节一致**；
+  //   存在显式权重 → 按 dropWeight 加权（两条路径都恰好消耗 1 次 float，故默认表下随机流不变）。
+  function pickFromPool(rng, pool, label) {
+    if (pool.length === 0) throw new RangeError(`该段位无可用${label}`);
+    if (pool.every((x) => dropWeightOf(x) === 1)) return rng.pick(pool);
+    let r = rand(rng, 0, 1) * pool.reduce((a, x) => a + dropWeightOf(x), 0);
+    for (const x of pool) {
+      r -= dropWeightOf(x);
+      if (r < 0) return x;
+    }
+    return pool[pool.length - 1]; // rng 返回值越界（≥1 的防御路径）→ 尾项兜底
+  }
+
+  // 开箱（I-7）：品质（tier 截断，D-122）→ 类别 → 生成；掉落池按 drop/unlockTier 过滤、按 dropWeight 加权
   function openBox(rng, options) {
     const opts = options || {};
     const tier = opts.tier || 'mythic';
@@ -222,17 +283,14 @@ function makeItems(logger) {
     }
     if (kind === null) kind = kinds[kinds.length - 1]; // v=1 防御路径
     if (kind === 'role') {
-      const pool = ROLE_TEMPLATES.filter((x) => validateUnlock(x, tier));
-      if (pool.length === 0) throw new RangeError('该段位无可用角色模板');
-      return generateRoleItem(rng.pick(pool), quality, rng);
+      const pool = dropPool(ROLE_TEMPLATES, tier);
+      return generateRoleItem(pickFromPool(rng, pool, '角色模板'), quality, rng);
     }
     if (kind === 'skill') {
-      const pool = SKILL_TEMPLATES.filter((x) => validateUnlock(x, tier));
-      if (pool.length === 0) throw new RangeError('该段位无可用技能模板');
-      return generateSkillItem(rng.pick(pool), quality, rng);
+      const pool = dropPool(SKILL_TEMPLATES, tier);
+      return generateSkillItem(pickFromPool(rng, pool, '技能模板'), quality, rng);
     }
-    const pool = pluginList.filter((x) => x.kind === kind && validateUnlock(x, tier));
-    if (pool.length === 0) throw new RangeError(`该段位无可用插件: ${kind}`);
+    const pool = dropPool(pluginList.filter((x) => x.kind === kind), tier);
     return generatePlugin(kind, quality, rng, pool);
   }
 
@@ -269,6 +327,32 @@ function makeItems(logger) {
     }
     L.trace('items', 'items.affix.apply', `affixes=${affixes ? affixes.length : 0}`, { count: affixes ? affixes.length : 0, stats, special });
     return { stats, special };
+  }
+
+  // ---- 角色面板聚合（R-4/R-5/R-8 的**单一实现**）----
+  // 2026-09-16 合并（用户拍板 A）：`roles.getFinalStats` 与 `loadout.buildPanel` 此前各算一遍词条聚合，
+  //   且 regen 两侧各加一次（角色先经 equipPlugins 再进 buildPanel 会**双计**）。现在两者都调用本函数：
+  //   五维（applyAffixes，D-45 顺序）+ special（D-46 封顶）+ regen（模板值 + 词条值，**只加一次**）。
+  // plugins：已装配插件实例数组；调用方按各自形状解析（运行时角色 equipped[] / 仓库 slots[].pluginUid）。
+  // 形状容错：role 缺 stats/regen/slots 等字段时按缺省处理（不抛 TypeError）。
+  function buildRolePanel(role, plugins) {
+    const r = role || {};
+    const list = (plugins || []).filter(Boolean);
+    const affixes = [];
+    for (const p of list) for (const a of p.affixes || []) affixes.push(a);
+    const aggr = applyAffixes(r.stats || {}, affixes);
+    // regen 目标维度由注册表 def.regen 声明（sp_regen→sp / mp_regen→mp / hp_regen→hp），代码不按 id 分支
+    const regen = Object.assign({ mp: 0, sp: 0 }, r.regen || {});
+    for (const a of affixes) {
+      const def = affixDef(a.id);
+      if (def && def.regen) regen[def.regen] = (regen[def.regen] || 0) + ((a.params && a.params.v) || 0);
+    }
+    return {
+      stats: aggr.stats, special: aggr.special || {}, regen,
+      maxHp: aggr.stats.hp, maxMp: aggr.stats.mp, maxSp: aggr.stats.sp,
+      pluginPoints: r.pluginPoints === undefined ? null : r.pluginPoints,
+      quality: r.quality === undefined ? null : r.quality,
+    };
   }
 
   // 段位门控（I-9；D-112 缺省已解锁）
@@ -380,7 +464,7 @@ function makeItems(logger) {
   return {
     getQuality, rollQuality, rollSlotCount, tierOf,
     generateRoleItem, generateSkillItem, generatePlugin, openBox,
-    applyAffixes, validateUnlock,
+    applyAffixes, buildRolePanel, applyTypeModifier, dropPool, pickFromPool, validateUnlock,
     emptyWarehouse, assemble, disassemble,
   };
 }

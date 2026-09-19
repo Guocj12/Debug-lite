@@ -2,6 +2,8 @@
 // B15 ai/runtime 兜底与轨迹契约测试 —— 依据 examples/08-ai.md A-9 全案 + systems/08-ai.md §4.3(3/4/6)；
 // 日志事件 §4.6 L5 ai.runtime 行（ai.step.limit/ai.depth.limit/trace.truncated/ai.node/ai.error，B14~B15 冻结）。
 // 归属：tasks.md §6 B15（T-AI-6/10 + T-AF-4/6）；A-8（T-AI-8/T-AF-1）由 B14 runtime.test.js 覆盖。
+// trace 口径（本次修正，对齐 v3-design §11.10「单 tick 上限 2000」）：ctx.trace **每 tick 重置**，
+//   故 traceLimit=2000 是**单 tick**上限（不是累计上限）；seq 为**本 tick 内**序号；trace.truncated(warn) 每 tick 至多一次。
 // 注意：病态 fixtures（pBurnSteps/pDeepRec）绕过 ast 校验直接注入运行时——测的是"运行时兜底，绝不抛穿引擎"。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -44,24 +46,47 @@ test('T-AF-4/A-9a 步数兜底：guard 耗尽无行动 → wait + 重置入口 +
   assert.equal(runtime.getVar(ctx, 'n'), 2 * Math.floor(runtime.STEP_LIMIT / 3), '两次 burn 各推进 floor(STEP_LIMIT/3) 次 set（每次迭代 3 步：loop/body/pop）');
 });
 
-test('A-9e trace 截断：超过 2000 条不再记录 + trace.truncated(warn) 仅一次', () => {
+test('A-9e trace 截断：**单 tick**超过 2000 条不再记录（trace 每 tick 重置）+ trace.truncated(warn) 每 tick 至多一次', () => {
   const logger = createLogger({ level: 'all', ringSize: 30000 });
   const rt = runtime.withLogger(logger);
   const ctx = rt.createContext(prog('pBurnSteps'));
   const snap = mkSnapshot();
   const rng = mkRng([]);
   rt.resume(ctx, snap, rng);
-  assert.equal(ctx.trace.length, ctx.traceLimit, 'trace 封顶 = TRACE_LIMIT(2000)（A-9e）');
-  assert.equal(ctx.traceTruncated, true, '截断标记');
+  assert.equal(ctx.trace.length, ctx.traceLimit, '**单 tick** trace 封顶 = TRACE_LIMIT(2000)（A-9e 单 tick 上限，非累计）');
+  assert.equal(ctx.traceTruncated, true, '截断标记（语义：本 tick 内是否被截断）');
   const trunc = logger.records.filter((x) => x.event === 'trace.truncated');
-  assert.equal(trunc.length, 1, 'trace.truncated 仅记一次');
+  assert.equal(trunc.length, 1, '本 tick trace.truncated 仅记一次');
   assert.equal(trunc[0].data.limit, runtime.TRACE_LIMIT);
   const nodes = logger.records.filter((x) => x.event === 'ai.node');
-  assert.equal(nodes.length, ctx.traceLimit, 'ai.node(trace)：每入一条 trace 记一次（封顶 2000）');
-  // 第二 tick：不再追加、也不再记截断事件
+  assert.equal(nodes.length, ctx.traceLimit, 'ai.node(trace)：每入一条 trace 记一次（单 tick 封顶 2000）');
+  // 第二 tick：trace 按 tick 重置 → 重新记录本 tick 全量（不再"累计封顶后恒空/不再追加"），截断事件按 tick 各记一次
   rt.resume(ctx, snap, rng);
-  assert.equal(ctx.trace.length, ctx.traceLimit, '截断后不再记录');
-  assert.equal(logger.records.filter((x) => x.event === 'trace.truncated').length, 1, '不重复记截断');
+  assert.equal(ctx.trace.length, ctx.traceLimit, '第二 tick 同样是本 tick 全量（封顶 2000），不是累计残留');
+  assert.equal(ctx.traceTruncated, true, '第二 tick 仍被截断（本 tick 标记被重新置位）');
+  assert.equal(logger.records.filter((x) => x.event === 'trace.truncated').length, 2, '每 tick 至多一次（两 tick → 2 次）');
+  assert.equal(ctx.trace[0].seq, 0, 'seq = 本 tick 内序号（每 tick 重置回 0）');
+});
+
+test('A-9e2 回归（单 tick 上限）：约 41 条/tick 的复杂程序到第 50+ tick，trace 仍为本 tick 全量（不再恒为空数组）', () => {
+  // 旧实现按**累计** ctx.trace 判上限且从不重置：41 条/tick × 50 tick > 2000 → 第 50 tick 起 trace 恒空
+  //   （用户实测 62 帧里 13 帧空）。修正后单 tick 上限 2000，长跑每帧都必须有本 tick 轨迹。
+  const statements = [];
+  for (let i = 0; i < 40; i++) statements.push({ type: 'set', name: `v${i}`, value: { type: 'literal', value: i } });
+  statements.push({ type: 'action', name: 'move_right' }); // 41 条语句/tick
+  const ctx = runtime.createContext({ type: 'program', version: 1, body: { type: 'seq', statements } });
+  const snap = mkSnapshot();
+  const rng = mkRng([]);
+  const lengths = [];
+  for (let tick = 0; tick < 60; tick++) {
+    const r = runtime.resume(ctx, snap, rng);
+    assert.equal(r.action, 'move_right', `tick ${tick + 1} 正常产出`);
+    assert.equal(r.trace.length, 41, `tick ${tick + 1} 返回本 tick 全量 trace 41 条（累计口径下第 49 tick 起为 0）`);
+    assert.equal(ctx.traceTruncated, false, `tick ${tick + 1} 未触及单 tick 上限`);
+    lengths.push(r.trace.length);
+  }
+  assert.equal(lengths.filter((n) => n === 0).length, 0, '60 帧无空 trace 帧（旧实现 13 帧空）');
+  assert.equal(ctx.trace[0].seq, 0, '每 tick seq 从 0 起');
 });
 
 test('A-9b 递归上限：65 层 → wait + 弹栈到入口 + ai.depth.limit(warn){limit:64,depth:65}，之后继续执行', () => {
@@ -87,7 +112,7 @@ test('A-9b 递归上限：65 层 → wait + 弹栈到入口 + ai.depth.limit(war
   assert.ok(!logger.records.some((x) => x.event === 'ai.step.limit'), '深度兜底不触发步数兜底');
 });
 
-test('T-AI-10/T-AF-6 trace 一致：顺序=求值顺序、末条 action==返回值、跨 tick 连续编号', () => {
+test('T-AI-10/T-AF-6 trace 一致：顺序=求值顺序、末条 action==返回值（trace = 本 tick 全量轨迹）', () => {
   const logger = createLogger({ level: 'all', ringSize: 2000 });
   const rt = runtime.withLogger(logger);
   const program = { type: 'program', version: 1, body: { type: 'seq', statements: [
@@ -107,13 +132,18 @@ test('T-AI-10/T-AF-6 trace 一致：顺序=求值顺序、末条 action==返回�
   const last = ctx.trace[ctx.trace.length - 1];
   assert.equal(last.nodeType, 'action', '末条为 action');
   assert.equal(last.result, r1.action, '末条 action == 返回值（T-AF-6）');
-  assert.deepEqual(ctx.trace.map((e) => e.seq), [0, 1, 2], 'seq 连续编号');
-  // 跨 tick：主循环回绕 → 编号连续
+  assert.deepEqual(ctx.trace.map((e) => e.seq), [0, 1, 2], 'seq = 本 tick 内连续编号');
+  // 跨 tick：trace 每 tick 重置（B26/单 tick 上限语义）→ 第二 tick 是本 tick 全量，seq 从 0 重新起算
   const r2 = rt.resume(ctx, snap, rng);
   assert.equal(r2.action, 'A');
-  assert.deepEqual(ctx.trace.map((e) => e.seq), [0, 1, 2, 3, 4, 5], '跨 tick 编号连续');
+  assert.deepEqual(ctx.trace.map((e) => e.seq), [0, 1, 2], '每 tick 重置：seq 为本 tick 内序号（非跨 tick 累计）');
+  assert.deepEqual(ctx.trace.map((e) => [e.path, e.nodeType]), [
+    ['body.s[0]', 'var'],
+    ['body.s[1]', 'if'],
+    ['body.s[1].then.s[0]', 'action'],
+  ], '第二 tick 返回本 tick 全量轨迹（与第一 tick 同形）');
   const nodes = logger.records.filter((x) => x.event === 'ai.node');
-  assert.equal(nodes.length, 6, 'ai.node 事件 = trace 条目数');
+  assert.equal(nodes.length, 6, 'ai.node 事件 = 两 tick 各 3 条');
   assert.equal(nodes[5].data.path, 'body.s[1].then.s[0]', 'ai.node data.path 与 trace 一致');
 });
 

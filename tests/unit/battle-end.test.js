@@ -59,6 +59,17 @@ test('T-BT-4/T-EN-3 64 tick 上界：wait-only 双方同死同时 → 平局（�
   assert.equal(b.state.verdict.phase, 'base', '双方基地同 tick 归零 → base 优先');
 });
 
+test('T-BT-11b 超时口径修正（2026-09-16，用户拍板 A）：hp180 vs hp100 纯对峙不再"谁强谁先死"', () => {
+  // 旧口径：双方基地都被扣「对方角色 maxHp 的份额」——p1 基地 −ceil(180×0.0625)=−12 → 第 9 次归零（tick 56）→ p1 必败；
+  // 新口径：基地按**自身 maxHp** 100 扣 7 → 双方基地同 tick 归零 → 平局（角色 maxHp 180 只影响自己角色 −12）。
+  const b = mkBattle(31, { hp: 180, maxHp: 180 }, null);
+  const r = b.runFull(waitBoth);
+  assert.equal(r.ticks, 62, '基地 100 按自身 maxHp 扣 7 → 48+15−1 = 62');
+  assert.equal(r.winner, 'draw', '新口径：双方基地同 tick 归零 → base 平局（旧口径 p2 胜 @tick 56）');
+  assert.equal(b.state.verdict.phase, 'base');
+  assert.equal(b.state.players.p1.hp, 0, 'p1 角色按自身 180 扣 12 → 同样在 62 tick 归零');
+});
+
 test('T-BT-2 数值边界（补，审查 P1）：整场全程 x∈[32,992]、hp/mp/sp∈[0,max]、atk/def≥0', () => {
   const b = mkBattle(41);
   const r = b.runFull({ actions: (state) => (state.tick % 3 === 0 ? 'dodge_right' : state.tick % 3 === 1 ? 'move_left' : 'wait') });

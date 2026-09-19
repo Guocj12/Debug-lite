@@ -147,7 +147,7 @@
   - 暴击率 = `min(caps.probability, 角色面板 critChance + payload.specials.critChance)`，命中时消费引擎每 tick 派生的 `crit` 随机流；倍率取 `battle-config.crit`；
   - 吸血率 = `min(caps.probability, 角色面板 lifesteal + payload.specials.lifesteal)`，回复 `floor(本次伤害 × 吸血率)`（`maxHp` 封顶）。
   - 即：**技能插件词条叠加在角色面板值之上，并按 `caps.probability=1` 封顶**。
-  - ⚠️ **短路点（待接线）**：`specials` 目前由 `applySkillPlugins` 写入技能实例、`buildSkillAction` 原样放进 `payload`——**只要实例带着 `specials` 就能生效**；但经 `POST /api/v1/battle`（`server/battle.js buildPlayer`）时，`Object.assign(inst, agg)` 会用 `loadout.buildPanel` 的白名单聚合结果**把 `specials` 覆盖为空对象**（`castEffects` 同理），故**经 API 的战斗中这两个词条与 `cast_buff` 均不生效**。属**实现待接线项**（`tests/unit/mechanics.test.js` 覆盖的是"实例直通引擎"链路）。
+  - ✅ **接线已确认（2026-09-16 复核）**：`specials` 由 `applySkillPlugins` 写入技能实例、`buildSkillAction` 原样放进 `payload`；经 `POST /api/v1/battle`（`server/battle.js buildPlayer`）的 `Object.assign(inst, agg)` 使用的是 `loadout.buildPanel` 的白名单聚合结果，而该白名单**已包含 `specials` / `castEffects` / `affixes`**（其余非标准字段按 P2-② 透传），故经 API 的战斗中 `crit_chance` / `lifesteal` / `cast_buff` **均生效**（`tests/unit/mechanics.test.js` 的投影用例断言这三个字段必须穿过面板；此前文档声称"被覆盖为空"是旧实现的失真陈述）。
 - **命中类词条的附加效果由引擎步骤 9 逐条按 `affix-registry.json` 的 `hitEffect` 结算**：
 
 | 词条 | `hitEffect.kind` | 结算语义 |
@@ -176,7 +176,7 @@
 2. 效果系统的"新效果下一 tick 起效"规则（D-70）→ **释放当 tick 的持续结算（步骤 2）已经过去**，所以 **下一 tick 才起效**。
 3. 持续 `params.duration` tick（缺省取注册表 `fallbackDuration = 2`）；形态为 `continuous / stat=atk / delta=v`，逐 tick 结算并递减，归零移除。
 4. 该效果与命中无关——**没打中也会生效**（"释放"即触发）。
-5. ⚠️ **同样受 §4.5 的短路点影响**：经 `/api/v1/battle` 时 `castEffects` 被聚合结果覆盖为空数组，故该词条在 API 战斗链路中暂不生效（实现待接线项）。
+5. ✅ **API 链路已接线**（2026-09-16 复核）：`loadout.buildPanel` 的技能投影白名单含 `castEffects`，故经 `/api/v1/battle` 时 `cast_buff` 正常入队（见 §4.5 注）。
 
 ## 5. 边界与异常
 

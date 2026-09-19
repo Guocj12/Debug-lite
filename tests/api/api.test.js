@@ -145,7 +145,7 @@ test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14
   await withServer(null, async ({ port }) => {
     const ok = await request(port, 'GET', '/api/v1/unlock?tier=common');
     assert.equal(ok.status, 200);
-    assert.equal(ok.body.data.nodes.length, 11, 'common 可用节点 11（09-unlock §1）');
+    assert.equal(ok.body.data.nodes.length, 10, 'common 可用节点 10（09-unlock §1；基础 9 + if）');
     assert.ok(!ok.body.data.nodes.includes('random'), 'common 无 random');
     assert.ok(ok.body.data.roleTemplates.includes('role_bal'), '均衡角色可用');
     assert.ok(!ok.body.data.skills.includes('skill_dash_bash'), '突击盾（mythic）不可用');

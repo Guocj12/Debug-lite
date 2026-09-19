@@ -122,6 +122,18 @@ docs/progress.md       本文件
 - [x] **覆盖率回归修复并转绿**：数据驱动改造后 `server/core/skills.js` 分支覆盖率一度 80.17% < 85%（gate 项 7 FAIL，未覆盖的是"注入机制表"才能触发的 4 组防御分支）；修法为导出 `withTables(tables, logger)` 并补 6 个用例（478 → 484 用例），**`npm run gate` 现为 9 PASS / 0 FAIL / 0 PEND**。
 - [x] **文档同步**：`docs/tasks.md`（34 批计数、P0-4 勾选、§5.1 提交前更新任务清单硬性规则、`turn`/枚举/`baseHitMul` 口径）、`docs/interfaces.md`（§1 模块与机制表、§2 端点状态「已实现 / ⏳ 计划」、§4 结构与序列化字段、§6 新增事件）、`docs/systems/07-engine.md`、`docs/systems/09-unlock.md` 已按实现更新。
 
+### 3.4 第二波完成项（2026-09-16：核心/数据重构 + AI 语言修正 + 校验硬化 + 可玩性工具）
+
+> 实测（2026-09-16 收尾）：`npm test` = **505 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`npm run check:docs` = **PASS**；`node scripts/fe-spec-check.js` = **9 PASS**。
+
+- [x] **核心/数据重构**：超时扣血改为**基地按自身 maxHp** 扣（消除"变强即变弱"）；`typeModifiers` 接入开箱生成路径（11 角色不再数值同质）；掉落改为**每项可控**（`drop`/`dropWeight`）；`schema.js` 去掉硬编码数量（改机制自洽校验，`_sample` 仅控示例期望表比对）；合并 `roles.equipPlugins/getFinalStats` 与 `loadout.buildPanel` 双实现（消除 regen 双写与角色 shape 分歧）。
+- [x] **AI 语言修正**：`random` 双语义修复（语句位执行 then/else 分支 + 表达式位返回布尔）；**删除 `bullets` 节点**（"AI 不可观测弹幕"＝设计而非缺陷；节点 16 类 / base 9；段位累计 **10/12/14/14/16**）；`aiTrace` 改为**每 tick**重置（单 tick 上限 2000）；`server/battle.js` 的 trace 司机同步修正，并在 `tests/api/api-battle.test.js` 增加"**每帧 aiTrace 非空且归属各自 tick**"的契约断言。
+- [x] **校验硬化**：`get.path` 白名单 + 泛化路径解析（支持 `bases.self.hp`、`self.cooldowns.<sid>`、`self.effects[i].<f>`）；变量名拼错、表达式位写语句节点、无 action 程序 → **校验期拒绝**；`/api/v1/ai/validate|compile` 新增 **warnings** 通道（非法动作名不拒绝，保持 D-80）。
+- [x] **AI 投影与端点**：快照补齐 `tick`/`maxHp|maxMp|maxSp`/`cooldowns`/`effects`/`bases.*`，并修正 `baseHp` ＝**基地当前血量**（旧实现误填角色 maxHp）；`/api/v1/ai/battle` 明确回报未生效动作（`actionsEffective`/`ineffectiveActions`/`frames[].actions|events`）。
+- [x] **可玩性工具**：`scripts/play.js`（`npm run play` 离线文本闭环：开箱→装配→预设 AI→面板→战斗→逐 tick 战报）；`cli replay` 增加**伤害数字与暴击/背击标注**；`tests/regression/golden-battle.test.js`（黄金战斗正式回归，进入 `npm test` 计数）。
+- [x] **新增计划文档**：`docs/plan-p7-playable.md`（P7 冲刺蓝图：关段位门控 → 存储层 → 身份档案 → 排位/快速对战 → HTTP/CLI 接线 → 全链路 e2e → 批量测试；含每阶段验收标准与风险）。
+- [ ] **待办（下一波）**：**P7-0** 关闭段位门控（默认全解锁、段位不参与判定；保留开关 + 两模式测试）；**P7-1** 存储层 `server/store/*`（进行中）；**P7-2~P7-4** 身份与档案 / 排位与快速对战 / HTTP·CLI 接线；**P7-5** 全链路 e2e；**P7-6** 批量测试。
+
 ---
 
 ## 4. 关键约定（避免走弯路）

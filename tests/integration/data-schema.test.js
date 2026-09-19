@@ -253,7 +253,7 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
     ['品质 id 非法', 'qualities.json', (q) => { q.qualities[0].id = 'epix'; }, '品质 id'],
     ['品质 statRange 倒置', 'qualities.json', (q) => { q.qualities[0].statRange = [1.05, 0.80]; }, 'statRange'],
     ['解锁缺段位', 'unlock.json', (u) => { u.unlocks = u.unlocks.filter((x) => x.tier !== 'epic'); }, '缺段位 epic'],
-    ['解锁 aiNodes 集错', 'unlock.json', (u) => { u.unlocks.find((x) => x.tier === 'rare').aiNodes.push('function'); }, 'aiNodes'],
+    ['解锁 aiNodes 非数组', 'unlock.json', (u) => { u.unlocks.find((x) => x.tier === 'rare').aiNodes = { if: true }; }, 'aiNodes 必须是数组'],
     ['角色 unlockTier 非法', 'role-templates.json', (t) => { t.roleTemplates[0].unlockTier = 'gold'; }, 'unlockTier 非法'],
     ['技能 slotWeights 缺失', 'skill-templates.json', (t) => { delete t.skillTemplates[0].slotWeights; }, 'slotWeights'],
     ['近战 range 非法', 'skill-templates.json', (t) => { t.skillTemplates[0].range = [2, 1]; }, 'melee'],
@@ -265,9 +265,14 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
     ['品质重复 id', 'qualities.json', (q) => { q.qualities[1].id = 'common'; }, '品质 id 重复'],
     ['dropRates 键缺失', 'items-config.json', (ic) => { delete ic.dropRates.common; }, 'dropRates'],
     ['kindWeights 键缺失', 'items-config.json', (ic) => { delete ic.kindWeights.skill; }, 'kindWeights'],
-    ['角色数量错', 'role-templates.json', (t) => { t.roleTemplates.pop(); }, '应 11 个'],
-    ['技能数量错', 'skill-templates.json', (t) => { t.skillTemplates.pop(); }, '应 10 个'],
-    ['插件数量错', 'plugins.json', (p) => { p.plugins.pop(); }, '14 角色 + 15 技能'],
+    // 2026-09-16 拍板 A：数量不再锁 —— 空表只报"至少 1 项"（原"应 11/10/14+15 个"用例已删）
+    ['角色表清空', 'role-templates.json', (t) => { t.roleTemplates = []; }, '至少 1 项'],
+    ['技能表清空', 'skill-templates.json', (t) => { t.skillTemplates = []; }, '至少 1 项'],
+    ['插件表清空', 'plugins.json', (p) => { p.plugins = []; }, '至少 1 项'],
+    ['品质表清空', 'qualities.json', (q) => { q.qualities = []; }, '至少 1 项'],
+    ['drop 非布尔', 'role-templates.json', (t) => { t.roleTemplates[0].drop = 'yes'; }, 'drop 必须是布尔'],
+    ['dropWeight 非正数', 'plugins.json', (p) => { p.plugins[0].dropWeight = 0; }, 'dropWeight 必须是正数'],
+    ['技能 dropWeight 非数值', 'skill-templates.json', (t) => { t.skillTemplates[0].dropWeight = 'x'; }, 'dropWeight 必须是正数'],
     ['基地缺失', 'battle-config.json', (b) => { delete b.bases.p2; }, 'bases.p2 缺失'],
     ['costDelta 维度键非法', 'plugins.json', (p) => { p.plugins[14].costDeltaByTier = { x: [1, 2, 3] }; }, 'costDeltaByTier'],
   ];
@@ -309,7 +314,7 @@ test('DS-12 typeModifiers 入表（B5 审查 P1）：漂移 → fail；roles.js 
   ).atk, 11.5, '修饰系数取表值：10×1.15（high 漂移会被 schema 拦）');
 });
 
-test('DS-11 assets 占位表（P0-9）：真实通过；缺条目/描边色漂移/形状枚举/帧非法 → fail', () => {
+test('DS-11 assets 占位表（P0-9；2026-09-16 拍板 A：允许多余条目 / 不锁形状枚举 / 缺失不阻塞）', () => {
   // 真实仓库（默认推导 assets 路径）
   assert.equal(schema.validateStructure(REPO_DATA).ok, true, '真实仓库 assets 校验应通过');
   const withAssets = (mutate) => withRoot((root) => {
@@ -318,34 +323,52 @@ test('DS-11 assets 占位表（P0-9）：真实通过；缺条目/描边色漂�
     writeJSON(path.join(root, 'assets'), 'sprites.json', sp);
   }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
 
-  // 破坏 1：缺一条角色占位（与 role-templates 交叉不一致）
-  const r1 = withAssets((sp) => { sp.roleTemplates = sp.roleTemplates.filter((x) => x.templateId !== 'role_bal'); });
-  assert.equal(r1.ok, false, '缺 role_bal 占位应 fail');
-  assert.ok(r1.detail.includes('role_bal'), r1.detail);
-  // 破坏 2：品质描边色与 qualities.json 不一致
-  const r2 = withAssets((sp) => { sp.palette.quality.common = '#ffffff'; });
-  assert.equal(r2.ok, false, '描边色漂移应 fail');
-  assert.ok(r2.detail.includes('quality.common'), r2.detail);
-  // 破坏 3：形状不在枚举
-  const r3 = withAssets((sp) => { sp.skillTemplates[0].shape = 'circle'; });
-  assert.equal(r3.ok, false, '形状枚举外应 fail');
-  assert.ok(r3.detail.includes('circle'), r3.detail);
-  // 破坏 4：动画帧非法
-  const r4 = withRoot((root) => {
+  // ① 多余条目（新增形状 + 新模板占位）→ 通过：改表即扩展，不因"sprites 里多了一条"失败
+  const r1 = withAssets((sp) => {
+    sp.roleTemplates.push({ templateId: 'role_new_placeholder', color: '#123456', shape: 'hexagon16' });
+    sp.skillTemplates[0].shape = 'totally_new_shape';
+  });
+  assert.equal(r1.ok, true, `多余条目/新形状应通过：${r1.detail}`);
+  // ② 缺失占位 → 不阻塞（表现层缺失不属机制）
+  const r2 = withAssets((sp) => { sp.roleTemplates = sp.roleTemplates.filter((x) => x.templateId !== 'role_bal'); });
+  assert.equal(r2.ok, true, `缺 role_bal 占位不再 FAIL：${r2.detail}`);
+  // ③ 品质描边色与 qualities.json 不一致 → 仍拦（机制自洽：调色板必须与品质表同源）
+  const r3 = withAssets((sp) => { sp.palette.quality.common = '#ffffff'; });
+  assert.equal(r3.ok, false, '描边色漂移应 fail');
+  assert.ok(r3.detail.includes('quality.common'), r3.detail);
+  // ④ 重复条目 / 颜色非法 / shape 缺失 → 结构错误
+  const r4 = withAssets((sp) => { sp.skillTemplates.push({ ...sp.skillTemplates[0] }); });
+  assert.equal(r4.ok, false, '重复 templateId 应 fail');
+  assert.ok(r4.detail.includes('重复'), r4.detail);
+  const r5 = withAssets((sp) => { sp.roleTemplates[0].color = 'red'; });
+  assert.equal(r5.ok, false, '颜色非 #rrggbb 应 fail');
+  assert.ok(r5.detail.includes('颜色'), r5.detail);
+  const r6 = withAssets((sp) => { delete sp.roleTemplates[0].shape; });
+  assert.equal(r6.ok, false, 'shape 缺失应 fail');
+  assert.ok(r6.detail.includes('形状缺失'), r6.detail);
+  // ⑤ 动画：帧非法 → fail；缺 role.idle（基础六件套）→ fail；多余动画 → 通过
+  const r7 = withRoot((root) => {
     const an = readJSON(path.join(root, 'assets'), 'animations.json');
     an.animations.role.idle.frames = 0;
     writeJSON(path.join(root, 'assets'), 'animations.json', an);
   }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
-  assert.equal(r4.ok, false, 'frames=0 应 fail');
-  assert.ok(r4.detail.includes('frames'), r4.detail);
-  // 破坏 5：缺 animations.role.idle
-  const r5 = withRoot((root) => {
+  assert.equal(r7.ok, false, 'frames=0 应 fail');
+  assert.ok(r7.detail.includes('frames'), r7.detail);
+  const r8 = withRoot((root) => {
     const an = readJSON(path.join(root, 'assets'), 'animations.json');
     delete an.animations.role.idle;
     writeJSON(path.join(root, 'assets'), 'animations.json', an);
   }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
-  assert.equal(r5.ok, false, '缺 role.idle 应 fail');
+  assert.equal(r8.ok, false, '缺 role.idle 应 fail（基础六件套）');
+  assert.ok(r8.detail.includes('六件套'), r8.detail);
+  const r9 = withRoot((root) => {
+    const an = readJSON(path.join(root, 'assets'), 'animations.json');
+    an.animations.role.custom_spin = { frames: 3, durationMs: 100, loop: true, offsetPx: [0, 0] };
+    writeJSON(path.join(root, 'assets'), 'animations.json', an);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(r9.ok, true, `多余动画条目应通过：${r9.detail}`);
 });
+
 
 // ---------- 机制表完整性（2026-09-16 新增）：投毒用例，证明检查不空转 ----------
 // 内容层引用的词条/类型/权限必须在机制层登记；否则运行期会静默失效（词条被跳过、类型抛错、编辑器插入无效节点）
@@ -389,3 +412,131 @@ test('机制表完整性：注册表声明未登记算子 → FAIL', () => {
   assert.equal(r.ok, false);
   assert.match(r.detail, /no_such_op/);
 });
+
+// ---------- 2026-09-16 用户拍板 A：改表即扩展（门禁不再锁数量/枚举） ----------
+
+test('DS-13 扩展性：+1 角色 / +1 技能 / +1 插件 / +1 技能类型 均不再 FAIL（只需表内部自洽）', () => {
+  // ① +1 角色模板（同步 unlock 登记；sprites 不再要求占位）
+  const addRole = withRoot((root) => {
+    const t = readJSON(root, 'role-templates.json');
+    t.roleTemplates.push({ ...t.roleTemplates[0], id: 'role_new', name: '新角色', unlockTier: 'common', drop: true, dropWeight: 2 });
+    writeJSON(root, 'role-templates.json', t);
+    const u = readJSON(root, 'unlock.json');
+    u.unlocks.find((x) => x.tier === 'common').roleTemplates.push('role_new');
+    writeJSON(root, 'unlock.json', u);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(addRole.ok, true, `+1 角色应通过：${addRole.detail}`);
+
+  // ② +1 技能模板（已登记类型）
+  const addSkill = withRoot((root) => {
+    const t = readJSON(root, 'skill-templates.json');
+    t.skillTemplates.push({ ...t.skillTemplates[2], id: 'skill_new_straight', name: '新平射', unlockTier: 'common', drop: true, dropWeight: 1 });
+    writeJSON(root, 'skill-templates.json', t);
+    const u = readJSON(root, 'unlock.json');
+    u.unlocks.find((x) => x.tier === 'common').skills.push('skill_new_straight');
+    writeJSON(root, 'unlock.json', u);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(addSkill.ok, true, `+1 技能应通过：${addSkill.detail}`);
+
+  // ③ +1 插件（词条已登记）
+  const addPlugin = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    p.plugins.push({ ...p.plugins[0], id: 'rp_new_atk', name: '新攻击插件', drop: false, dropWeight: 0.5 });
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(addPlugin.ok, true, `+1 插件应通过：${addPlugin.detail}`);
+
+  // ④ +1 技能类型（只改机制表 skill-mechanics.json + 一个使用它的模板）
+  const addType = withRoot((root) => {
+    const m = readJSON(root, 'skill-mechanics.json');
+    m.types.beam = { params: {}, slots: {}, emit: null };
+    writeJSON(root, 'skill-mechanics.json', m);
+    const t = readJSON(root, 'skill-templates.json');
+    t.skillTemplates.push({
+      id: 'skill_beam_new', name: '光束', type: 'beam',
+      baseMultiplier: 1.0, baseCost: { hp: 0, mp: 5, sp: 0 }, cooldown: 2, bulletLevel: 2,
+      falloff: 0, slotWeights: { basic: 2, special: 1 }, unlockTier: 'common', drop: true, dropWeight: 1,
+    });
+    writeJSON(root, 'skill-templates.json', t);
+    const u = readJSON(root, 'unlock.json');
+    u.unlocks.find((x) => x.tier === 'common').skills.push('skill_beam_new');
+    writeJSON(root, 'unlock.json', u);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(addType.ok, true, `+1 技能类型（登记在机制表）应通过：${addType.detail}`);
+
+  // ⑤ 未登记类型仍然被拦（机制自洽不得放松）
+  const badType = withRoot((root) => {
+    const t = readJSON(root, 'skill-templates.json');
+    t.skillTemplates.push({ ...t.skillTemplates[0], id: 'skill_ghost_type', type: 'ghost_type' });
+    writeJSON(root, 'skill-templates.json', t);
+    const u = readJSON(root, 'unlock.json');
+    u.unlocks.find((x) => x.tier === 'common').skills.push('skill_ghost_type');
+    writeJSON(root, 'unlock.json', u);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(badType.ok, false, '未在机制表登记的类型 → FAIL');
+  assert.match(badType.detail, /ghost_type/);
+});
+
+test('DS-14 `_sample` 语义（逐表开关）：带标记的表逐值比对；去掉标记的表跳过（数量从不比对）', () => {
+  // ① 四表都去掉 _sample → T-DC-2 整体跳过（结构/机制仍由 T-DC-1 负责）
+  const noSample = withRoot((root) => {
+    for (const f of ['role-templates.json', 'skill-templates.json', 'qualities.json', 'plugins.json']) {
+      const o = readJSON(root, f);
+      delete o._sample;
+      writeJSON(root, f, o);
+    }
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(noSample.ok, true, noSample.detail);
+  assert.match(noSample.detail, /未标 _sample|非示例内容/);
+
+  // ② 去掉 plugins 的 _sample 后，即使词条基础值偏离示例期望也不再 FAIL（该表跳过逐值比对）
+  const pluginOff = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    delete p._sample;
+    p.plugins.find((x) => x.id === 'rp_atk_pct').affixes[0].params.v = 0.5;
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(pluginOff.ok, true, `plugins 去标记后不再逐值比对：${pluginOff.detail}`);
+
+  // ③ 逐表独立：只保留 plugins 的 _sample，则角色表随便改也不 FAIL，但插件表偏离仍 FAIL
+  const mixed = withRoot((root) => {
+    const r = readJSON(root, 'role-templates.json');
+    delete r._sample;
+    r.roleTemplates[0].name = '改名了';
+    writeJSON(root, 'role-templates.json', r);
+    const p = readJSON(root, 'plugins.json');
+    p.plugins.find((x) => x.id === 'rp_atk_pct').affixes[0].params.v = 0.5;
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(mixed.ok, false, '仍带 _sample 的表继续逐值比对');
+  assert.match(mixed.detail, /rp_atk_pct/);
+  assert.doesNotMatch(mixed.detail, /改名了|名称\/类型应为/, '去标记的角色表不再比对');
+
+  // ④ 示例期望表的 id 缺失 → FAIL（数量不比对，但"该 id 若在则应…"仍有效）
+  const missing = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    p.plugins = p.plugins.filter((x) => x.id !== 'rp_atk_pct');
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(missing.ok, false);
+  assert.match(missing.detail, /rp_atk_pct/);
+});
+
+test('DS-15 掉落字段（drop / dropWeight）结构校验 + 全表显式携带', () => {
+  // 真实数据：每一项都有显式 drop / dropWeight（"是否掉落 / 权重都在 JSON 里"）
+  const roles = readJSON(REPO_DATA, 'role-templates.json').roleTemplates;
+  const skills = readJSON(REPO_DATA, 'skill-templates.json').skillTemplates;
+  const plugins = readJSON(REPO_DATA, 'plugins.json').plugins;
+  for (const x of [...roles, ...skills, ...plugins]) {
+    assert.equal(typeof x.drop, 'boolean', `${x.id} 缺 drop`);
+    assert.ok(typeof x.dropWeight === 'number' && x.dropWeight > 0, `${x.id} dropWeight 应为正数`);
+  }
+  // 结构违规仍被拦（drop 非布尔 / dropWeight 非正数）——见 DS-10 破坏矩阵；这里补"缺省兼容"：
+  const legacy = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    for (const x of p.plugins) { delete x.drop; delete x.dropWeight; } // 旧表（无字段）→ 视为 true / 1
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => schema.validateStructure(root, path.join(root, 'assets')));
+  assert.equal(legacy.ok, true, `缺省 drop/dropWeight 应通过（向后兼容）：${legacy.detail}`);
+});
+

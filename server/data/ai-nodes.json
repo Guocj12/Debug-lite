@@ -2,9 +2,9 @@
   "_comment": "AI 语言节点清单（单一数据源）：base = 恒可用节点；nodes = 全部真实节点类型（与 server/ai/ast.js 白名单、runtime.js 实现一致）。段位权限名→节点类型的映射见 unlock.json 的 nodePermissions。",
   "_contract": "docs/systems/08-ai.md §3；docs/interfaces.md §1 server/ai/ast.js",
   "version": 1,
-  "base": ["seq", "literal", "get", "bullets", "var", "set", "getVar", "arith", "cmp", "action"],
+  "base": ["seq", "literal", "get", "var", "set", "getVar", "arith", "cmp", "action"],
   "nodes": [
-    "seq", "literal", "get", "bullets", "var", "set", "getVar", "arith", "cmp", "action",
+    "seq", "literal", "get", "var", "set", "getVar", "arith", "cmp", "action",
     "if", "loop", "break", "random", "logic", "function", "call"
   ],
 

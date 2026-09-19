@@ -20,9 +20,9 @@
   - `ai-nodes.json`：AI 真实节点类型清单（不属物品链）。
 - **内容层（示例数据，待用户设计）**：
   - `qualities.json`：品质表（系数区间、插槽数区间）。
-  - `role-templates.json` / `skill-templates.json`：模板定义。
-  - `plugins.json`：插件定义（每个词条只写 `id` 与**基础值 v**）。
-  - `items-config.json`：开箱概率、类别权重。
+  - `role-templates.json` / `skill-templates.json`：模板定义（**每项带 `drop` / `dropWeight`**，见 §4.6）。
+  - `plugins.json`：插件定义（每个词条只写 `id` 与**基础值 v**；**每项带 `drop` / `dropWeight`**）。
+  - `items-config.json`：品质掉落概率、类别权重。
   - `unlock.json`：段位解锁表。
 - `rng.js`：种子随机。
 - ⚠️ **内容层表当前均为示例数据**，正式数值由用户设计后冻结（见 `server/data/README.md`）。
@@ -37,9 +37,9 @@
 | 注册表字段 | 去向 | 消费方 |
 |---|---|---|
 | （无，仅内容） | 该词条只有名称/描述 | — |
-| `agg{target,mode}` | 五维面板：`pct` → `base×(1+Σv)`；`flat` → 参与 `base×(1+Σpct)+Σv` | `items.applyAffixes` → `roles.getFinalStats` |
+| `agg{target,mode}` | 五维面板：`pct` → `base×(1+Σv)`；`flat` → 参与 `base×(1+Σpct)+Σv` | `items.applyAffixes` → `items.buildRolePanel`（`roles.getFinalStats` / `loadout.buildPanel` 共用） |
 | `special` | 概率标志（`dodgeChance` / `critChance` / `lifesteal`），累加后按 `caps.probability=1` 封顶 | `items.applyAffixes`（角色）/ `skills.applySkillPlugins` + 引擎（技能） |
-| `regen` | 逐 tick 回复维度（`sp` / `mp` / `hp`） | `roles.equipPlugins` 叠加 → 引擎步骤 10 |
+| `regen` | 逐 tick 回复维度（`sp` / `mp` / `hp`） | `items.buildRolePanel`（**单一聚合**）→ 引擎步骤 10 |
 | `skillOp{op,field,…}` | 技能实例字段改写（6 种算子） | `skills.applySkillPlugins` |
 | `hitEffect{kind,…}` | 命中时入效果队列 / 附加伤害 | 引擎步骤 9 `addAffixEffect` |
 | `castEffect{kind,…}` | 释放时入效果队列 | 引擎步骤 6 |
@@ -51,6 +51,7 @@
 
 - 品质：`id`、`name`、`color`、`statRange[lo,hi]`、`roleSlotRange`、`skillSlotRange`、`pluginPoints`、`tiers`、`costDeltaBase`（各品质消耗补偿基准，`common=2…mythic=6`）。
 - 物品实例：`uid`、`kind`（role / skill / rolePlugin / skillPlugin）、`templateId`、`quality`、`name`、`desc`、`category`（插件）、`slotCount`、`slots[]`（模板）、`stats{}`（模板）、`affixes[]`（插件）、`unlockTier`。
+- 掉落配置（**内容层，逐项可配**）：模板/插件条目的 `drop`（布尔，`false` = 不进掉落池；缺省视为 `true`）与 `dropWeight`（同类池内相对权重；缺省 / 非正数 / 非数值 → `1`）——见 §4.6。
 - 词条（**已生成实例**）：`id`、`desc`、`params`（含滚动后的 `v`）。
 - 词条（**注册表定义**）：`domain`、`roll`、`agg`、`special`、`regen`、`skillOp`、`hitEffect`、`castEffect`（见 §2A 表）。
 - 插槽：`type`（角色：atk/def/hp/sp/mp/special；技能：basic/special）、`pluginUid`（装配的插件，可空）。
@@ -103,12 +104,15 @@
 
 ### 4.3 生成角色物品 `generateRoleItem(template, quality, rng)`
 
-1. 对模板的每个五维属性（hp/atk/def/sp/mp）：
-   - 数值 = 基础值 ×（品质 `statRange` 内均匀随机系数）。
+1. **先套类型修饰**（`applyTypeModifier`，§4.2 的同一份实现）：`balanced` 五维不动；`specialized` 高属性 ×1.15、其余随机 1 个 ×0.85；`expert` 高属性 ×1.30、其余四维随机分配 `[1.1, 0.7, 0.9, 1.0]`。
+   - 随机消耗顺序（冻结）：**修饰随机（specialized 1 次 int / expert 3 次 int）→ 5 次品质系数 float → 插槽数 → 每槽类型**；`balanced` 不消耗修饰随机。
+   - 2026-09-16 修正（用户拍板 A）：此前开箱物品**不**套类型修饰，只有 `roles.instantiateRole` 套 → 同品质的 11 个角色数值完全相同；现在两条路径共用 `items.applyTypeModifier`，逐值一致。
+2. 对模板的每个五维属性（hp/atk/def/sp/mp）：
+   - 数值 = **修饰后基础值** ×（品质 `statRange` 内均匀随机系数）。
    - 四舍五入取整，下限 1。
-2. 生成插槽列表：数量 = `rollSlotCount`；每个插槽类型按模板 `slotWeights` 加权随机分配；初始 `pluginUid` 为空。
-3. 写入 `quality`、`unlockTier`、`pluginPoints`（取模板/品质定义），返回物品实例。
-4. 角色物品携带 `regen{mp,sp}`（模板必填字段直入，D-110）；`hp` 维度由 `hp_regen` 词条在装配时叠加（§4.9）。
+3. 生成插槽列表：数量 = `rollSlotCount`；每个插槽类型按模板 `slotWeights` 加权随机分配；初始 `pluginUid` 为空。
+4. 写入 `quality`、`unlockTier`、`pluginPoints`（取模板/品质定义），返回物品实例。
+5. 角色物品携带 `regen{mp,sp}`（模板必填字段直入，D-110）；`hp` 维度由 `hp_regen` 词条在聚合面板时叠加（§4.9）。
 
 ### 4.4 生成技能物品 `generateSkillItem(template, quality, rng)`
 
@@ -119,18 +123,30 @@
 
 ### 4.5 生成插件 `generatePlugin(kind, quality, rng, poolOverride)`
 
-1. 从 `plugins.json` 中筛出 `kind` 匹配的插件定义池（`poolOverride` 用于 `openBox` 的段位门控池）。
-2. 随机抽取一个插件定义，并掷一次品质区间系数 `coeff = U(statRange)`。
+1. 从 `plugins.json` 中筛出 `kind` 匹配**且 `drop !== false`** 的插件定义池（`poolOverride` 用于 `openBox` 的段位门控池，已按 `drop`/`unlockTier` 过滤）。
+2. 池内抽取一个插件定义（权重全为 1 走均匀抽取，否则按 `dropWeight` 加权——见 §4.6），并掷一次品质区间系数 `coeff = U(statRange)`。
 3. 掷档位：按品质 `tiers` 三段判断 `coeff` 落在 1/2/3 档（`tierOfValue`）。
 4. **词条数值滚动方式取自注册表 `roll`**：`int` → `round(基础值 × coeff)`（I-6b）；`stat` → `round2(基础值 × coeff)`（保留 `precision.stat` 位，I-6a）；写入 `params.v` 并记录 `tier`。未登记词条 id → `warn`（`items.affix.unknown`）并跳过。
 5. 角色插件：`pointCost = tier`；技能插件：`costDeltaByTier` 直通（`null` 表示减耗类）。**实际消耗增量在装配时结算**：`delta = costDeltaBase[插件品质] × tier`，只加在**声明了数组的维度**上（D-113；见 `03-skills` §4.2.5）。
 6. 写入 `category`、`name`、`desc`、`unlockTier`。
 
-### 4.6 开箱 `openBox(rng, options)`
+### 4.6 开箱 `openBox(rng, options)` 与掉落池配置（2026-09-16 用户拍板 A）
 
 1. `rollQuality` 得到品质（`options.tier` 存在时按段位序号截断品质池并按剩余池重归一，D-122/B17）。
-2. 按 `kindWeights` 加权随机选类别（role / skill / rolePlugin / skillPlugin）。
-3. 依类别先用 `validateUnlock` 过滤出该段位可用池（空池抛错），再调用对应的生成函数。
+2. 按 `items-config.json` 的 `kindWeights` 加权随机选类别（role / skill / rolePlugin / skillPlugin）。
+3. 依类别构造**掉落池**（`items.dropPool`）：过滤条件是「条目 `drop !== false`」**且**「`unlockTier` ≤ 当前段位」（I-9/D-112）；**空池抛 `RangeError`**（服务端映射 409 `tier_locked`）。
+4. 池内抽取（`items.pickFromPool`）：权重全为 `1`（含缺省）→ 均匀取一，与旧 `rng.pick` **逐字节一致**；存在显式权重 → 按 `dropWeight` 加权（两条路径都只消耗 1 次 float，故默认内容下随机流不变）。再调用对应的生成函数。
+
+**「是否掉落 / 权重 / 解锁段位」全部是数据字段**（每个角色模板、技能模板、插件的条目）：
+
+| 字段 | 类型 | 语义 | 缺省 |
+|---|---|---|---|
+| `drop` | 布尔 | `false` = **不进掉落池**（该模板/插件无法从开箱获得；仍可存在于配置、装配引用与文档中） | `true`（缺省/未写 → 可掉落） |
+| `dropWeight` | 正数 | **同类池内**的相对权重（同类 = 同为角色 / 技能 / 角色插件 / 技能插件；与 `kindWeights` 的**类别**权重相乘） | `1`（非正数/非数值也按 1） |
+| `unlockTier` | 段位名 | 从该段位起进池（D-112）；与 `unlock.json` 的按段位清单交叉校验 | 已解锁 |
+
+- 想单独关掉某个模板/插件：把它的 `drop` 改成 `false`；想调刷新比例：改 `dropWeight`（同类池内相对值）。
+- **当前内容全为示例数据**（四张内容表带 `_sample: true`）：所有条目的 `drop` 均为 `true`、`dropWeight` 均为 `1`，即与旧版（只看类别权重）**零行为差异**；正式设计时由用户在 JSON 里直接配置。
 
 ### 4.7 词条应用 `applyAffixes(baseStats, affixes)`
 
@@ -139,10 +155,17 @@
 1. 归类累加：
    - `agg.mode='pct'` → `pct[target] += v`；`agg.mode='flat'` → `flat[target] += v`；
    - 有 `special` 字段 → `special[名] = min(caps.probability, 现值 + v)`（**概率类累加后封顶 1**）；
-   - 有 `regen` 字段 → **本函数不处理**，由 `roles.equipPlugins` 叠加（见 §4.13）；
+   - 有 `regen` 字段 → **本函数不处理**，由面板聚合 `items.buildRolePanel` 叠加一次（见 §4.9）；
    - 有 `skillOp` / `hitEffect` / `castEffect` → **本函数不处理**，由 `03-skills` / 引擎消费。
 2. 对五维逐项一次性结算：`result = round(base × (1 + Σpct) + Σflat)`，**下限 1**（I-8f）。
 3. 返回最终面板数值 + `special` 概率集合。
+
+### 4.7b 角色面板聚合 `buildRolePanel(role, plugins)`（**单一实现**，2026-09-16 合并）
+
+1. 调用 `applyAffixes(role.stats, 所有已装插件词条)` 得五维与 `special`（D-45 顺序 / D-46 封顶）。
+2. `regen` = **模板 regen**（`role.regen`）+ 各词条 `def.regen` 声明的维度值，**只叠加一次**；返回 `{stats, special, regen, maxHp, maxMp, maxSp, pluginPoints, quality}`。
+3. **谁在调用**：`roles.getFinalStats`（运行时角色，插件来自 `equipped[]`，或 `slots[].pluginUid` + `plugins[]` 索引）与 `loadout.buildPanel`（仓库角色物品，插件按 `slots[].pluginUid` 从 warehouse 解析）——两者输出逐值一致。
+4. **历史缺陷（本轮修复）**：旧实现里 `roles.equipPlugins` 把 regen 词条写回 `role.regen`，`loadout.buildPanel` 又按槽位再叠一次 → 同一个 `hp_regen`/`sp_regen` 会被计两次（API 路径若先经 `equipPlugins` 即复现）。现在 `equipPlugins` **只做校验 + 登记**，regen 只在 `buildRolePanel` 叠一次。
 
 ### 4.8 门控 `validateUnlock(item, tier)`
 
@@ -151,10 +174,10 @@
 
 ### 4.9 角色 `regen` 的叠加（词条 `regen` 字段声明）
 
-1. 角色模板必填 `regen{mp,sp}`（D-110）；角色物品实例携带该值（`items.generateRoleItem`）。
-2. `roles.equipPlugins(role, plugins)` 在装配登记阶段按注册表 `def.regen` 把词条的 `v` **叠加到对应维度**（`sp_regen`→`regen.sp`、`mp_regen`→`regen.mp`、`hp_regen`→`regen.hp`）——**目标维度由注册表声明，代码不按 id 分支**。
+1. 角色模板必填 `regen{mp,sp}`（D-110）；角色物品实例与运行时角色都携带该值（`items.generateRoleItem` / `roles.instantiateRole`）。
+2. **叠加发生在面板聚合**：`items.buildRolePanel` 按注册表 `def.regen` 把词条的 `v` 加到对应维度（`sp_regen`→`regen.sp`、`mp_regen`→`regen.mp`、`hp_regen`→`regen.hp`）——目标维度由注册表声明，代码不按 id 分支；**只加一次**（`roles.equipPlugins` 不再写回 `role.regen`，`loadout.buildPanel` 也不再自己叠一遍）。
 3. 引擎步骤 10 逐 tick 结算：`hp/mp/sp` 各自 `min(max, 当前 + regen[维度])`；**`regen.hp` 仅在 `hp > 0` 时回复**（不在阵亡后复活，死亡时序统一在步骤 12）。
-4. ⚠️ **接线范围**：`regen.hp` 的逐 tick 回复在引擎中已生效（`tests/unit/mechanics.test.js` 覆盖）；但 `roles.equipPlugins` 目前**只被 `core/roles.js` 自身与单测调用**，现行 `/api/v1/panel` 与 `/api/v1/battle` 走 `loadout.buildPanel`（直接读角色物品的 `regen{mp,sp}` 并做 `Object.assign({mp:0,sp:0}, role.regen)`），**不经过 `equipPlugins` 的 regen 叠加**——即经 API 的战斗中 `hp_regen` 词条不会进入 `regen.hp`。属**实现待接线项**（见本轮汇报），本文档不为其定义新语义。
+4. **接线范围（2026-09-16 更新）**：`/api/v1/panel` 与 `/api/v1/battle` 走 `loadout.buildPanel` → `items.buildRolePanel`，因此 `hp_regen` 词条**确实会进入 `regen.hp` 并在战斗中逐 tick 回复**（`tests/unit/mechanics.test.js` 与 `tests/unit/loadout.test.js` 覆盖）；此前文档声称"经 API 不生效"是**旧实现的失真陈述**——旧代码里 `buildPanel` 确实叠了 regen，但 `equipPlugins` 也叠一次，真正的缺陷是**双计**而非缺失。
 
 ### 4.10 仓库与出战配置（L3；D-123 不持久化）
 
@@ -176,15 +199,20 @@
 
 - `getQuality` / `rollQuality` / `rollSlotCount` / `tierOf`：品质与档位原语。
 - `generateRoleItem` / `generateSkillItem` / `generatePlugin` / `openBox`：供开箱与初始配置生成。
+- `applyTypeModifier`：类型修饰（**单一实现**；`roles.applyTypeModifier` 即本函数，开箱与实例化共用）。
 - `applyAffixes`：面板词条聚合（返回 `{stats, special}`）；`validateUnlock`：段位门控。
+- `buildRolePanel`：角色面板聚合（**单一实现**：五维 + special + regen 一次算清）。
+- `dropPool` / `pickFromPool`：掉落池过滤（`drop`/`unlockTier`）与池内抽取（`dropWeight` 加权）。
 - `emptyWarehouse` / `assemble` / `disassemble`：仓库装配（纯函数）。
-- **聚合入口**：现行服务端面板为 `loadout.buildPanel`（调 `items.applyAffixes` + `skills.applySkillPlugins`）；`roles.getFinalStats` 为角色层等价聚合（含 `regen` 叠加），目前仅单测调用。
+- **聚合入口**：现行服务端面板为 `loadout.buildPanel`（调 `items.buildRolePanel` + `skills.applySkillPlugins`）；`roles.getFinalStats` 与它**共用同一份角色聚合算法**（含 regen 一次叠加），不再是两份独立实现。
+- ⚠️ 本节新增的四个原语（`applyTypeModifier` / `buildRolePanel` / `dropPool` / `pickFromPool`）尚未登记进 `docs/interfaces.md` §1 的模块 ICD 清单（该文件不在本轮所有权范围内），需中央文档同步时补登。
 
 ## 7. 测试要点
 
 - 品质分布接近 `dropRates`（大样本）。
 - 插槽数落在对应 `roleSlotRange` / `skillSlotRange` 内。
-- 属性值落在「基础值 × 系数区间」内。
+- 属性值落在「基础值 × 系数区间」内；**角色物品套用类型修饰**（同品质同系数区间下 `atk` 下界：均衡 10 / 特化 12 / 专家 13）。
+- 掉落由数据决定：`drop: false` 的条目**永不出现**在掉落池；`dropWeight` 决定同类池内比例（权重全 1 时与旧均匀抽逐字节一致）。
 - 百分比与数值词条叠加结果正确（`base×(1+Σpct)+Σflat`，一次取整、下限 1）。
 - 概率词条封顶 `caps.probability`。
 - 门控：高段位物品在低段位被拒绝。
@@ -192,4 +220,4 @@
 - 出战配置：含 1 角色 + 3 技能 + AI；服务端校验后回带（D-123 不持久化）。
 - 档位：同品质三档分布正确，档位与词条数值、点数/消耗成正比。
 - 点数：超限装配被拒绝。
-- regen：`sp_regen` / `mp_regen` / `hp_regen` 按注册表维度叠加。
+- regen：`sp_regen` / `mp_regen` / `hp_regen` 按注册表维度叠加，且**只叠一次**（`items.buildRolePanel` 与 `loadout.buildPanel` 逐值对照）。

@@ -145,6 +145,36 @@ test('P1-2 回归：同一插件双引用（同目标双槽/跨目标）→ load
   assert.ok(v2.errors.some((e) => e.message.includes('双处引用')), JSON.stringify(v2.errors));
 });
 
+// P2-③ 回归（2026-09-16 合并，用户拍板 A）：面板聚合只有一份实现 —— buildPanel.panel.role
+//   与 items.buildRolePanel 逐值一致；regen 只叠加一次（旧实现 equipPlugins/buildPanel 各加一次会双计）。
+test('单一聚合实现：buildPanel.panel.role ≡ items.buildRolePanel（含 regen 一次叠加）', () => {
+  const itemsMod = require('../../server/core/items.js');
+  const f = fixture();
+  const p = loadout.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'mythic' });
+  assert.equal(p.ok, true, JSON.stringify(p.errors));
+  const role = f.loadout.role;
+  const rPlugins = role.slots.filter((s) => s.pluginUid).map((s) => loadout.findItem(f.warehouse, s.pluginUid));
+  const direct = itemsMod.buildRolePanel(role, rPlugins);
+  assert.deepEqual(p.panel.role.stats, direct.stats, '五维同一份算法');
+  assert.deepEqual(p.panel.role.special, direct.special, 'special 同一份算法');
+  assert.deepEqual(p.panel.role.regen, direct.regen, 'regen 同一份算法（只加一次）');
+  assert.equal(p.panel.role.pluginPoints, direct.pluginPoints);
+  assert.equal(p.panel.role.quality, direct.quality);
+  // regen 机器复算：模板 {mp:1,sp:2} + 插件 mp_regen +2 → mp 3（若两侧各加一次会是 5）
+  const f2 = fixture();
+  f2.warehouse.buckets.rolePlugin.push({
+    uid: 'pr', kind: 'rolePlugin', id: 'rp_mp_regen', slot: 'mp', quality: 'rare', tier: 2, pointCost: 1,
+    affixes: [{ id: 'mp_regen', params: { v: 2 } }], equipped: true,
+  });
+  f2.loadout.role.slots.push({ type: 'mp', pluginUid: 'pr' });
+  f2.warehouse.buckets.role[0].slots.push({ type: 'mp', pluginUid: 'pr' });
+  f2.loadout.role.pluginPoints = 6;
+  const p2 = loadout.buildPanel(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
+  assert.equal(p2.ok, true, JSON.stringify(p2.errors));
+  assert.equal(p2.panel.role.regen.mp, 3, '模板 1 + 词条 2 = 3（一次叠加）');
+  assert.equal(p2.panel.role.regen.sp, 2, '未装插件维度不变');
+});
+
 // P1-3 回归：带装配引用但无 warehouse → missing_warehouse（引用校验不得空转）；空装配无 warehouse 放行
 test('P1-3 回归：装配引用缺 warehouse → missing_warehouse；空装配放行；插件门控复核', () => {
   const f1 = fixture();

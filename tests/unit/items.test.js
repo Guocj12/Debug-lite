@@ -269,3 +269,117 @@ test('IT-12 词条聚合统计：概率聚合只取概率类，数值类不进 s
   assert.equal(r.special.lifesteal, 0.102, 'R-6e');
   assert.equal(r.special.dodgeChance, undefined, '未装闪避不出现');
 });
+
+// ---- 2026-09-16 用户拍板 A：类型修饰进开箱路径 + 掉落完全由 JSON 配置 ----
+
+// 序列化 stub：float/int 按序弹值（与 roles.test.js 同构；消耗顺序 = 修饰 ints → 5×品质系数 → slotCount → 槽）
+function stubSeq(values) {
+  let i = 0;
+  return { float: () => values[i++], int: (lo, hi) => values[i++], pick: (a) => a[0] };
+}
+
+test('IT-15 开箱角色物品套用类型修饰（修正前 11 个角色数值完全相同）', () => {
+  // 特化·攻击 rare：base atk 10 ×1.15 = 11.5 → ×品质系数后取整（下限 12）
+  // 机器复算：stubSeq[0]=int(0,3) 低属性索引（hp/def/sp/mp），随后 5 个品质系数
+  const lowMp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([3, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.deepEqual(lowMp.stats, { hp: 100, atk: 12, def: 8, sp: 60, mp: 34 }, '11.5→12；低属性 mp 40×0.85=34');
+  const lowHp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.deepEqual(lowHp.stats, { hp: 85, atk: 12, def: 8, sp: 60, mp: 40 }, '低属性随机：hp 100×0.85=85');
+  // 专家·攻击 rare：base atk 10 ×1.30 = 13；spread [1.1,0.7,0.9,1.0] 经 FY（ints 全 0）后
+  //   → hp 0.7 / def 0.9 / sp 1.0 / mp 1.1
+  const exp = it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.deepEqual(exp.stats, { hp: 70, atk: 13, def: 7, sp: 60, mp: 44 }, '专家 atk 13；spread 四修饰各一次');
+  // 均衡不变（零漂移）：与修正前一致
+  assert.deepEqual(it.generateRoleItem(ROLE.role_bal, 'rare', stubSeq([1.12, 1.08, 1.05, 1.20, 1.02, 0, 0, 0, 0])).stats,
+    { hp: 112, atk: 11, def: 8, sp: 72, mp: 41 }, 'balanced 不消耗修饰随机 → 与修正前逐值一致');
+  // 区间实测（seed 1..300，确定性）：均衡 10×[1.00,1.25]；特化 11.5×…；专家 13×…
+  //   修正前三条完全相同（都用 baseStats 10 → 10..12）——本断言即"11 个角色数值完全相同"的回归证据
+  const range = (templateId) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let s = 1; s <= 300; s++) {
+      const v = it.generateRoleItem(ROLE[templateId], 'rare', createRng(s)).stats.atk;
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    return [lo, hi];
+  };
+  assert.deepEqual(range('role_bal'), [10, 12], '均衡：无修饰（与修正前一致）');
+  assert.deepEqual(range('role_spc_atk'), [12, 14], '特化 +15%：下限抬到 12（修正前同样本为 10）');
+  assert.deepEqual(range('role_exp_atk'), [13, 16], '专家 +30%：下限抬到 13（修正前同样本为 10）');
+  // 确定性上下界（stub 系数取品质区间端点；品质系数按五维顺序 hp,atk,def,sp,mp 逐个消耗 → atk 是第 2 个 float）
+  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 12, '11.5×1.00→12');
+  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 14, '11.5×1.25=14.375→14');
+  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 13, '13×1.00→13');
+  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 16, '13×1.25=16.25→16');
+});
+
+test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / 缺省 true+1（旧表兼容）', () => {
+  const pool = [
+    { id: 'a', drop: true, dropWeight: 1, unlockTier: 'common' },
+    { id: 'b', drop: false },
+    { id: 'unknown' },
+    { id: 'c', drop: true, dropWeight: 3, unlockTier: 'mythic' },
+  ];
+  assert.deepEqual(it.dropPool(pool, 'mythic').map((x) => x.id), ['a', 'unknown', 'c'], 'drop=false 被过滤；缺省字段视为可掉落');
+  assert.deepEqual(it.dropPool(pool, 'common').map((x) => x.id), ['a', 'unknown'], '段位门控仍生效（c 需 mythic）');
+  assert.deepEqual(it.dropPool(null, 'mythic'), [], '空/缺表 → 空池（不抛）');
+  // 段内权重直观可见（选项 3）：可以只凭 JSON 关掉某一项 / 调它的相对权重
+  assert.ok(!it.dropPool(pool, 'mythic').some((x) => x.id === 'b'));
+
+  // 权重全为 1（含缺省）→ 与 rng.pick **逐次一致**（默认表零行为漂移，消耗同样 1 次 float）
+  const uni = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  const r1 = createRng(99);
+  const r2 = createRng(99);
+  const viaPool = [];
+  const viaPick = [];
+  for (let i = 0; i < 50; i++) {
+    viaPool.push(it.pickFromPool(r1, uni, '样本').id);
+    viaPick.push(r2.pick(uni).id);
+  }
+  assert.deepEqual(viaPool, viaPick, '均匀路径 = rng.pick（逐次相同）');
+  // 加权路径：权重 3:1 → 75%/25%（大样本 ±5%）；stub 无 pick → 证明走的是权重分支
+  const noPick = { float: (lo, hi) => (hi === undefined ? 0.5 : lo + (hi - lo) * 0.5) };
+  assert.equal(it.pickFromPool(noPick, [{ id: 'w3', dropWeight: 3 }, { id: 'w1', dropWeight: 1 }], '样本').id, 'w3');
+  const weighted = [{ id: 'w3', dropWeight: 3 }, { id: 'w1', dropWeight: 1 }];
+  const rw = createRng(2026);
+  let n3 = 0;
+  const N = 2000;
+  for (let i = 0; i < N; i++) if (it.pickFromPool(rw, weighted, '样本').id === 'w3') n3++;
+  assert.ok(Math.abs(n3 / N - 0.75) < 0.05, `权重 3:1 → 约 75%（实际 ${(n3 / N * 100).toFixed(1)}%）`);
+  // 非法 dropWeight（0 / 负 / 字符串）一律按 1：四项权重 [1,1,1,2] → 20%/20%/20%/40%
+  const sanitized = [{ id: 'z0', dropWeight: 0 }, { id: 'neg', dropWeight: -5 }, { id: 's', dropWeight: 'z' }, { id: 'two', dropWeight: 2 }];
+  const rs = createRng(31);
+  const cnt = {};
+  for (let i = 0; i < 2000; i++) {
+    const id = it.pickFromPool(rs, sanitized, '样本').id;
+    cnt[id] = (cnt[id] || 0) + 1;
+  }
+  assert.ok(Math.abs(cnt.z0 / 2000 - 0.2) < 0.05 && Math.abs(cnt.neg / 2000 - 0.2) < 0.05 && Math.abs(cnt.s / 2000 - 0.2) < 0.05,
+    `非法权重视为 1（各 20%）：${JSON.stringify(cnt)}`);
+  assert.ok(Math.abs(cnt.two / 2000 - 0.4) < 0.05, `合法权重 2 → 40%：${JSON.stringify(cnt)}`);
+  // rng 返回值越界（float=1.0）→ 权重和用尽 → 尾项兜底（不返回 undefined）
+  assert.equal(it.pickFromPool({ float: () => 1.0 }, [{ id: 'a', dropWeight: 2 }, { id: 'b', dropWeight: 1 }], '样本').id, 'b');
+  // 空池 → 明确 RangeError（开箱 409 tier_locked 的来源）
+  assert.throws(() => it.pickFromPool(createRng(1), [], '角色模板'), /该段位无可用角色模板/);
+
+  // generatePlugin 走同一池逻辑：poolOverride 内 drop=false 永不出现，dropWeight 生效
+  const plugPool = [
+    { id: 'w_hi', kind: 'rolePlugin', slot: 'atk', name: 'h', desc: 'h', dropWeight: 9, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+    { id: 'w_lo', kind: 'rolePlugin', slot: 'atk', name: 'l', desc: 'l', dropWeight: 1, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+    { id: 'w_off', kind: 'rolePlugin', slot: 'atk', name: 'o', desc: 'o', drop: false, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+  ];
+  const rg = createRng(4242);
+  const seen = new Set();
+  for (let i = 0; i < 200; i++) seen.add(it.generatePlugin('rolePlugin', 'rare', rg, plugPool).id);
+  assert.ok(!seen.has('w_off'), 'drop=false 的插件永不掉落');
+  assert.ok(seen.has('w_hi') && seen.has('w_lo'), `加权池两项都会出：${[...seen]}`);
+
+  // 真实数据：每一项都显式带 drop / dropWeight（"是否掉落/权重都在 JSON 里"可人工核对）
+  for (const t of TEMPLATES) {
+    assert.equal(typeof t.drop, 'boolean', `${t.id} 缺 drop`);
+    assert.ok(t.dropWeight > 0, `${t.id} dropWeight 应为正数`);
+  }
+  for (const t of SKILLS) assert.equal(typeof t.drop, 'boolean', `${t.id} 缺 drop`);
+  for (const t of PLUGINS) assert.equal(typeof t.drop, 'boolean', `${t.id} 缺 drop`);
+});

@@ -72,7 +72,7 @@ public/
   js/views/*.js              七屏视图（纯函数：state → 节点描述数组）
   js/render/battle.js        战场绘制（唯一绝对定位处）
   js/mount/index.js          唯一 DOM 写入点 + 事件委托
-  js/editor/nodes.js         17 类 AST 节点的表单元数据（标签/字段/枚举）
+  js/editor/nodes.js         16 类 AST 节点的表单元数据（标签/字段/枚举）
   js/util/log.js             DLLog 接线（已注册通道）+ ui 层级日志辅助
   js/util/format.js          数字/品质/段位/cost 文案
 tests/frontend/              前端测试（§17）
@@ -359,8 +359,8 @@ change → 同上；再按控件类型补值：
 ### 6.1 `/api/v1/unlock?tier=<t>`
 `{ok, data:{tier, nodes:[string], roleTemplates:[id], skills:[id], plugins:[id]}, log}`
 - `nodes` 是**累计可用**节点类型（§12 用它过滤编辑器节点菜单）：`common→[…,'if']`，`rare→['loop','while','break']`，`epic→['random','logic','arith_ext']`，`legendary→[]`，`mythic→['function','call']`。
-- ⚠️ **`nodes` 里混有"权限名（别名）"而非纯节点类型**：`while` 与 `arith_ext` **不在** `ai/ast.js` 的 17 类节点白名单里（`while` 对应 `loop` 的 `kind:'while'`，`arith_ext` 是"扩展算术"权限名）；`mythic` 下 `nodes` 共 **17 项 = 15 个真实节点类型 + 2 个别名**。编辑器过滤节点菜单时**必须忽略这两个别名**，否则会渲染出不存在的节点。⏳ **计划（未实现）**：权限名与节点类型的口径收口（登记于 `systems/09-unlock.md` §3）。
-- 注意：`nodes` 里出现的是 `loop`/`while` 两种循环写法，编辑器循环控件用 `kind:'count'|'while'` 覆盖二者（§12.3）。
+- ✅ **口径已收口（B4，2026-09-16）**：`nodes` **只含真实节点类型**——`unlock.json` 的 `aiNodes[]`（权限名）经 `nodePermissions` 展开后返回：`while` 折叠为 `loop`、`arith_ext`（`implemented:false`）不授予任何节点，故二者**不会**出现在 `nodes` 里，编辑器**无需**再自行过滤别名。`ai/ast.js` 白名单共 **16 类**，`mythic` 下 `nodes` 即这 **16 类**（累计 10/12/14/14/16）。注意 `.audit/fe-samples.json` 里的 `unlock_*` 样本是**收口前**抓取的（仍含 `bullets`/`while`/`arith_ext`），需重跑 `node .audit/fe-samples.js` 刷新。
+- 注意：`nodes` 里出现的是 `loop`（`while` 是它 `kind` 的取值，不是独立节点）；编辑器循环控件用 `kind:'count'|'while'` 覆盖二者（§12.3）。
 
 ### 6.2 `/api/v1/box`（POST `{seed?, tier, times}`）
 `{ok, data:{seed, tier, times, items:[item]}}`；`items` 是**平铺数组**（不分桶），前端按 `kind` 入桶。
@@ -713,7 +713,7 @@ showSettle = summary !== null
 - `version` 固定写 `2`（当前 `CURRENT_VERSION=2`；`version:1` 会被服务端迁移，前端不主动产生旧版本）。
 - 根 `body` 必须是 `seq`（D-100 隐式主循环契约），界面不提供修改。
 
-### 12.2 节点类型（17 类，来自 `ai/ast.js` 白名单 + `unlock.nodes` 门控）
+### 12.2 节点类型（16 类，来自 `ai/ast.js` 白名单 + `unlock.nodes` 门控）
 
 | 类别 | 节点 | 表达式/语句 | 关键字段 |
 |---|---|---|---|
@@ -726,16 +726,16 @@ showSettle = summary !== null
 | | `action` | 语句 | `name`(string，§12.4) |
 | 变量 | `var` / `set` / `getVar` | 语句/表达式 | `name`(string), `value`(表达式，var/set) |
 | 值 | `literal` | 表达式 | `value`(数字/布尔) |
-| | `get` | 表达式 | `path`(string，白名单前缀 `self|enemy|bullets|field`，可带 `[i]` 与 `.字段`) |
-| | `bullets` | 表达式 | —（返回当 tick 弹幕数组） |
+| | `get` | 表达式 | `path`(string，白名单前缀 `self|enemy|field`，可带 `[i]` 与 `.字段`) |
 | 运算 | `arith` | 表达式 | `op ∈ + - * /`, `left`, `right` |
 | | `cmp` | 表达式 | `op ∈ < > <= >= == !=`, `left`, `right` |
 | | `logic` | 表达式 | `op ∈ and, or`（**与 `runtime.js` 逐值核对**；`&&`/`||`/`not` **均未实现**——非 `and`/`or` 的取值一律求值为 `false`，`ast.js` 暂无枚举校验，见 `systems/08-ai.md` §3）, `left`, `right` |
 | | `random` | 表达式 | `prob`(表达式), `then`(表达式), `else`(表达式) |
 
-- **门控**：节点是否出现在"可添加"菜单，取决于 `/unlock` 的 `nodes`。该数组**只含真实节点类型**（`server/data/ai-nodes.json` 的 `nodes`，共 17 类）：权限别名 `while` 折叠为 `loop`、未实现的预留权限 `arith_ext` 不授予任何节点（故 `isUnlocked(tier,'arith_ext')===false`）——编辑器**无需再自行过滤别名**。`function/call` 归 `function/call` 权限。段位不足时节点显示为不可添加并给出「需 <tier> 段位」。
+- **门控**：节点是否出现在"可添加"菜单，取决于 `/unlock` 的 `nodes`。该数组**只含真实节点类型**（`server/data/ai-nodes.json` 的 `nodes`，共 16 类）：权限别名 `while` 折叠为 `loop`、未实现的预留权限 `arith_ext` 不授予任何节点（故 `isUnlocked(tier,'arith_ext')===false`）——编辑器**无需再自行过滤别名**。`function/call` 归 `function/call` 权限。段位不足时节点显示为不可添加并给出「需 <tier> 段位」。
 - **合法性**（服务端会拒，前端在编辑时就提示）：循环体内所有 `if` 的**每个分支**（含隐式空 `else`）必须含 `action`，**或调用一个"能（传递）产出 action"的函数**（调用链定点分析：函数体直接含 action，或调用其它行动产出函数）；`break` 只能在循环体内；`call` 的目标函数必须存在。纯检测函数（无 action）可以定义，但不能用来满足"分支须含 action"——这样 `while(true){ call 纯检测() }` 这类**空死循环**会在校验期被拒。
-- 表达式可用的 `get` 路径（来自运行时快照白名单）：`self.hp|atk|def|sp|mp|x|baseHp|facing`、`enemy.<同前>`、`field.fieldPx|cellPx`、`bullets[i].owner|level|dir|x|type`。
+- 表达式可用的 `get` 路径（与 `ai/ast.js` 的 `get.path` 白名单一致）：`tick`、`self|enemy.<字段>`（`hp|maxHp|mp|maxMp|sp|maxSp|atk|def|x|facing|baseHp`）、`self|enemy.cooldowns.<sid>`、`self|enemy.effects[i].<字段>`（`uid|kind|stat|delta|displacement|remaining`）、`bases.self|enemy.<字段>`（`hp|maxHp|def`）、`field.fieldPx`、`field.cellPx`。**容器不可当值读**（`self` / `self.cooldowns` / `self.effects[i]` / `bases.self` 等本身不是合法路径）；非法/越界路径在**校验层**报 `bad_path`，运行层兜底为安全默认 `0`（不抛）。
+- **AI 无法观测弹幕**：`get` 读不到弹幕，也**不存在** `bullets` 节点——**弹幕在生成当 tick 全解算完毕**，这是设计而非缺陷。编辑器不应提供任何"读弹幕"节点或路径；回放帧 `diff.bullets[]` 与日志通道 `bullets` 是**展示/诊断**用途，与 AI 快照无关。
 
 ### 12.3 表单生成（`editor/nodes.js` 数据结构）
 
@@ -1003,7 +1003,7 @@ __DL__.exportLog()              // = DLLog.dump() 下载
     "tiers": ["common", "rare", "epic", "legendary", "mythic"],
     "opponents": ["kiter", "charger"],
     "qualities": ["common", "rare", "epic", "legendary", "mythic"],
-    "aiNodes": ["seq", "literal", "get", "bullets", "var", "set", "getVar", "arith", "cmp", "logic", "random", "if", "loop", "break", "function", "call", "action"],
+    "aiNodes": ["seq", "literal", "get", "var", "set", "getVar", "arith", "cmp", "logic", "random", "if", "loop", "break", "function", "call", "action"],
     "actionNames": ["move_left", "move_right", "dodge_left", "dodge_right", "wait", "defend", "turn"],
     "skillActions": ["skill:skill1", "skill:skill2", "skill:skill3"],
     "channels": ["store", "view", "api", "render", "editor"]
@@ -1143,7 +1143,7 @@ __DL__.exportLog()              // = DLLog.dump() 下载
 | `tests/frontend/effects.test.js` | 假 api 注入：每屏动作的成功/失败两路；错误 code → toast 文案；timeout/network 归一；`battle/run` 两模式端点与请求体形状 |
 | `tests/frontend/views.test.js` | 七屏四态各一次；每屏渲染结果中每个 `data-action` ∈ 动作表；`data-id` 无重复；空态必含引导按钮 |
 | `tests/frontend/frame.test.js` | `frameAt(frames,tick)` 累积规则（含 tick=0、末帧、缺 bases）；`planFrame` 图元整数化；碰撞/命中/结算三态 |
-| `tests/frontend/editor.test.js` | 17 类节点表单元数据完整；预设程序通过 `/ai/validate`（用**离线** ast 模块直接校验，不走网络）；错误 path → 节点定位 |
+| `tests/frontend/editor.test.js` | 16 类节点表单元数据完整；预设程序通过 `/ai/validate`（用**离线** ast 模块直接校验，不走网络）；错误 path → 节点定位 |
 | `tests/frontend/persist.test.js` | 往返一致；坏档拒绝；版本不符迁移/丢弃 |
 
 **人工验收（必须做，机器测不出"能不能玩"）**：
@@ -1199,7 +1199,7 @@ __DL__.exportLog()              // = DLLog.dump() 下载
 
 // A2 GET /api/v1/unlock?tier=common → data（节选）
 { "tier": "common",
-  "nodes": ["seq","literal","get","bullets","var","set","getVar","arith","cmp","action","if"],
+  "nodes": ["seq","literal","get","var","set","getVar","arith","cmp","action","if"],
   "roleTemplates": ["role_bal"],
   "skills": ["skill_melee_whirl","skill_straight_precise"],
   "plugins": ["rp_atk_pct","rp_atk_flat", "…共 27 项"] }

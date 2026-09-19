@@ -8,15 +8,20 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createLogger } = require('../../shared/log.js');
 const runtime = require('../../server/ai/runtime.js');
+const { createRng } = require('../../server/core/rng.js'); // 真实 ai 流（D-91）：prob=1/0 的确定性断言
 const FIXTURES = require('../fixtures/ai-programs.json');
 const prog = (key) => JSON.parse(JSON.stringify(FIXTURES[key].program));
 
 // 只读快照（B14 测试基具；引擎注入 D-107 投影）
+// 注意：快照**不投影 bullets**（用户决策：取消弹幕观测——AI 无法看到弹幕，弹幕当 tick 全解算完毕）。
 function mkSnapshot(overrides) {
   return Object.assign({
-    self: { hp: 100, atk: 12, def: 8, sp: 60, mp: 40, x: 224, baseHp: 100, facing: 1 },
+    self: {
+      hp: 100, atk: 12, def: 8, sp: 60, mp: 40, x: 224, baseHp: 100, facing: 1,
+      cooldowns: { skill1: 3 },
+      effects: [{ uid: 'e1', kind: 'slow', stat: 'sp', delta: -10, remaining: 2, displacement: null }],
+    },
     enemy: { hp: 100, atk: 19, def: 9, sp: 60, mp: 40, x: 800, baseHp: 100, facing: -1 },
-    bullets: [{ owner: 'p1', level: 2, dir: 1, x: 416, type: 'aoe' }],
     field: { fieldPx: 1024, cellPx: 64 },
   }, overrides);
 }
@@ -92,6 +97,7 @@ test('T-AF-11/A-5 函数：独立作用域 + 调用栈 + 词法读取外层（�
 });
 
 test('T-AI-9/A-7 随机：random 节点仅在求值消耗 ai 流；未走到不消耗（random 置 if cond 位）', () => {
+  // 表达式位的 random 求值为布尔（此处 stub 恒 false → if 走 else）；then/else 字段在表达式位不参与（决策 A）
   const p = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: null, else: null }, then: { type: 'seq', statements: [{ type: 'action', name: 'skill1' }] }, else: { type: 'seq', statements: [{ type: 'action', name: 'defend' }] } },
     { type: 'if', cond: { type: 'literal', value: false }, then: { type: 'seq', statements: [
@@ -121,7 +127,7 @@ test('T-I-1 条件/算术/逻辑/比较全谱：if 分支选择与操作符语�
   assert.deepEqual(actions, ['dodge_left', 'dodge_left'], '真实快照 getVar(n)=0 安全默认；0<100 and true → then');
 });
 
-test('T-AF-1/A-8 只读快照：写入无效、安全默认、bullets 只读数组（深度相等）', () => {
+test('T-AF-1/A-8 只读快照：写入无效、安全默认、嵌套只读对象深度冻结', () => {
   const p = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'set', name: 'x', value: { type: 'get', path: 'self.hp' } },
     { type: 'set', name: 'y', value: { type: 'get', path: 'enemy.no_such_field' } },
@@ -134,19 +140,23 @@ test('T-AF-1/A-8 只读快照：写入无效、安全默认、bullets 只读数�
   assert.equal(runtime.getVar(ctx, 'x'), 100, 'A-8a 读 self.hp');
   assert.equal(runtime.getVar(ctx, 'y'), 0, 'A-8b 越界字段安全默认 0');
   assert.equal(snap.self.hp, 100, '快照不可变（set 不生效）');
-  // bullets 只读
+  // 嵌套只读对象（深冻结）：cooldowns 逐键副本 / effects 重建摘要，均为只读副本，写入无效
   const p2 = { type: 'program', version: 1, body: { type: 'seq', statements: [
-    { type: 'set', name: 'b', value: { type: 'bullets' } },
+    { type: 'set', name: 'cd', value: { type: 'get', path: 'self.cooldowns' } },
+    { type: 'set', name: 'ef', value: { type: 'get', path: 'self.effects' } },
     { type: 'action', name: 'wait' },
   ] } };
   const ctx2 = runtime.createContext(p2);
   runtime.resume(ctx2, snap, mkRng([]));
-  const b = runtime.getVar(ctx2, 'b');
-  assert.equal(b.length, 1);
-  assert.throws(() => { b[0].x = 0; }, TypeError, '深冻结');
+  const cd = runtime.getVar(ctx2, 'cd');
+  const ef = runtime.getVar(ctx2, 'ef');
+  assert.equal(cd.skill1, 3, 'cooldowns 只读副本可读');
+  assert.equal(ef.length, 1, 'effects 只读数组可读');
+  assert.throws(() => { cd.skill1 = 0; }, TypeError, '深冻结（cooldowns 对象）');
+  assert.throws(() => { ef[0].delta = 0; }, TypeError, '深冻结（effects 数组元素）');
 });
 
-test('RT-9 get 路径语义：self/enemy/bullets/field 白名单投影', () => {
+test('RT-9 get 路径语义：self/enemy/field 白名单投影；bullets 不可读（AI 无法观测弹幕——设计：弹幕当 tick 全解算）', () => {
   const p = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'set', name: 'a', value: { type: 'get', path: 'enemy.x' } },
     { type: 'set', name: 'c', value: { type: 'get', path: 'field.cellPx' } },
@@ -157,7 +167,7 @@ test('RT-9 get 路径语义：self/enemy/bullets/field 白名单投影', () => {
   runtime.resume(ctx, mkSnapshot(), mkRng([]));
   assert.equal(runtime.getVar(ctx, 'a'), 800);
   assert.equal(runtime.getVar(ctx, 'c'), 64);
-  assert.equal(runtime.getVar(ctx, 'd'), 'p1');
+  assert.equal(runtime.getVar(ctx, 'd'), 0, '快照不投影 bullets → 安全默认 0（AI 无法观测弹幕，设计）');
 });
 
 test('RT-10 while 循环：条件每迭代求值；while(false) 直接跳过', () => {
@@ -188,23 +198,29 @@ test('RT-11 break：跳出最近循环（信号对象语义）', () => {
   assert.deepEqual(actions, ['after_loop', 'after_loop', 'after_loop', 'after_loop'], '循环被 break 立即终止，后续语句执行');
 });
 
-test('T-AF-2 确定性：同 seed 同程序 → 同行动序列与 trace（随机流可控）', () => {
+test('T-AF-2 确定性：同 seed 同程序 → 同行动序列与 trace（random 语句位真分支）', () => {
   const p = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'seq', statements: [{ type: 'action', name: 'a1' }] }, else: { type: 'seq', statements: [{ type: 'action', name: 'a2' }] } },
   ] } };
-  const run1 = [];
-  const ctx1 = runtime.createContext(p);
-  // 固定 ai 流：true/false 交替
-  let flip = true;
-  const rng1 = { chance: () => { flip = !flip; return flip; } };
-  for (let i = 0; i < 3; i++) run1.push(runtime.resume(ctx1, mkSnapshot(), rng1).action);
-  const run2 = [];
-  let flip2 = true;
-  const rng2 = { chance: () => { flip2 = !flip2; return flip2; } };
-  const ctx2 = runtime.createContext(p);
-  for (let i = 0; i < 3; i++) run2.push(runtime.resume(ctx2, mkSnapshot(), rng2).action);
-  assert.deepEqual(run1, run2, '同程序同随机流 → 同行动序列');
-  assert.deepEqual(ctx1.trace, ctx2.trace, '同 trace（确定性）');
+  // 同一真实 seed 的 ai 流跑两遍（每 tick 消费一次，D-91）→ 行动序列与 trace 必须逐条一致
+  const runOnce = () => {
+    const ctx = runtime.createContext(p);
+    const rng = createRng(20260917);
+    const actions = [];
+    for (let i = 0; i < 8; i++) actions.push(runtime.resume(ctx, mkSnapshot(), rng).action);
+    return { actions, trace: ctx.trace };
+  };
+  const r1 = runOnce();
+  const r2 = runOnce();
+  assert.deepEqual(r1.actions, r2.actions, '同程序同随机流 → 同行动序列');
+  assert.deepEqual(r1.trace, r2.trace, '同 trace（确定性；trace = 本 tick 轨迹）');
+  // 语义修正（旧实现：evalExpr 返回 node.then/else 子树对象并被语句位丢弃 → 分支永不执行、恒 wait）：
+  //   语句位 random 必须真的按概率执行分支
+  assert.deepEqual(r1.actions, ['a2', 'a1', 'a1', 'a1', 'a2', 'a1', 'a1', 'a2'], 'seed=20260917 的分支序列（真分支，非 wait）');
+  assert.ok(r1.actions.includes('a1') && r1.actions.includes('a2'), '两分支都被走到（证明是概率分支而非恒一支）');
+  const last = r1.trace[r1.trace.length - 1];
+  assert.equal(last.nodeType, 'action', 'trace 末条为本 tick 的 action');
+  assert.ok(last.path === 'body.s[0].then.s[0]' || last.path === 'body.s[0].else.s[0]', `分支帧路径按 nodePathOf 规则：${last.path}`);
 });
 
 test('RT-13 stepLimit 兜底：超限 → wait + 重置入口（B15 完整语义前置验证）', () => {
@@ -231,7 +247,7 @@ test('RT-14 补充分支：while(false) 直接跳过；getPath 深层缺失；se
   ] } };
   const ctx1 = runtime.createContext(p1);
   assert.equal(runtime.resume(ctx1, mkSnapshot(), mkRng([])).action, 'move_right', 'while(false) 直接跳过');
-  // getPath：深层缺失 → 0；对象根（无剩余段）→ 原样
+  // getPath：深层缺失 → 0；bullets 不在快照 → 0（AI 无法观测弹幕——设计：弹幕当 tick 全解算）
   const p2 = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'set', name: 'a', value: { type: 'get', path: 'self.hp.deep.missing' } },
     { type: 'set', name: 'b', value: { type: 'get', path: 'bullets[0].x' } },
@@ -240,7 +256,7 @@ test('RT-14 补充分支：while(false) 直接跳过；getPath 深层缺失；se
   const ctx2 = runtime.createContext(p2);
   runtime.resume(ctx2, mkSnapshot(), mkRng([]));
   assert.equal(runtime.getVar(ctx2, 'a'), 0, '深层缺失安全默认');
-  assert.equal(runtime.getVar(ctx2, 'b'), 416, '数组索引+属性');
+  assert.equal(runtime.getVar(ctx2, 'b'), 0, 'bullets 未投影 → 安全默认 0（数组索引路径也无从命中）');
   // set 词法写外层（A-5 变体：函数内 set 修改根变量 → 对外可见）
   const p3 = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'var', name: 'g', value: { type: 'literal', value: 1 } },
@@ -295,7 +311,7 @@ test('RT-12 日志：ai.resume/ai.action 事件（§4.6 L5 行）与缺省 logge
 // ---- RT-16：兜底分支全谱（表达式/取值/结构边界；B14 契约的防御性语义） ----
 const seqOf = (...names) => ({ type: 'seq', statements: names.map((n) => ({ type: 'action', name: n })) });
 
-test('RT-16a 表达式兜底：未知 arith/cmp/logic 操作符与未知类型 → 0/false；getPath 边界；random then 支路', () => {
+test('RT-16a 表达式兜底：未知 arith/cmp/logic 操作符与未知类型 → 0/false；getPath 边界；random 表达式位布尔', () => {
   const program = { type: 'program', version: 1, body: { type: 'seq', statements: [
     { type: 'if', cond: { type: 'arith', op: '**', left: { type: 'literal', value: 2 }, right: { type: 'literal', value: 3 } }, then: seqOf('bad_arith_then'), else: seqOf('bad_arith_else') },
     { type: 'if', cond: { type: 'cmp', op: '~=', left: { type: 'literal', value: 1 }, right: { type: 'literal', value: 1 } }, then: seqOf('bad_cmp_then'), else: seqOf('bad_cmp_else') },
@@ -304,18 +320,19 @@ test('RT-16a 表达式兜底：未知 arith/cmp/logic 操作符与未知类型 �
     { type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'literal', value: 1 }, else: { type: 'literal', value: 0 } }, then: seqOf('random_then'), else: seqOf('random_else') },
     { type: 'if', cond: { type: 'logic', op: 'or', left: { type: 'get', path: undefined }, right: { type: 'get', path: 'self[0]' } }, then: seqOf('g1_then'), else: seqOf('g1_else') },
     { type: 'if', cond: { type: 'get', path: '???' }, then: seqOf('g2_then'), else: seqOf('g2_else') },
+    // bullets 不在快照投影里（AI 无法观测弹幕——设计：弹幕当 tick 全解算）→ 两条均安全默认 0 → else
     { type: 'if', cond: { type: 'get', path: 'bullets[9].level' }, then: seqOf('g3_then'), else: seqOf('g3_else') },
     { type: 'if', cond: { type: 'get', path: 'enemy.nothing' }, then: seqOf('g4_then'), else: seqOf('g4_else') },
     { type: 'if', cond: { type: 'get', path: 'bullets[0].dir' }, then: seqOf('g5_then'), else: seqOf('g5_else') },
     { type: 'if', cond: { type: 'get', path: 5 }, then: seqOf('g6_then'), else: seqOf('g6_else') },
   ] } };
   const ctx = runtime.createContext(program);
-  const rngTrue = { chance: () => true }; // random then 支路
+  const rngTrue = { chance: () => true }; // 表达式位 random：返回布尔 true → if 必走 then
   const actions = resumeN(ctx, mkSnapshot(), rngTrue, 11);
   assert.deepEqual(actions.slice(0, 10), [
     'bad_arith_else', 'bad_cmp_else', 'bad_logic_else', 'random_then',
-    'g1_else', 'g2_else', 'g3_else', 'g4_else', 'g5_then', 'g6_else',
-  ], '未知操作符/类型 → falsy；random then；getPath 越界/非数组/缺字段/缺失path/非字符串 → 0');
+    'g1_else', 'g2_else', 'g3_else', 'g4_else', 'g5_else', 'g6_else',
+  ], '未知操作符/类型 → falsy；random 表达式位 true → then；getPath 越界/非数组/缺字段/缺失path/非字符串/bullets 未投影 → 0');
   assert.equal(actions[10], 'bad_arith_else', '隐式主循环回绕（无 action 的语句不产出）');
 });
 
@@ -443,4 +460,44 @@ test('RT-17c P0-1 回归：递归跨 resume 作用域链重建（多层 fnScope 
   const acts = resumeN(ctx, mkSnapshot(), mkRng([]), 4);
   assert.deepEqual(acts, ['dec', 'dec', 'base', 'base'], '递归跨 resume：2 层递减 → base；第二轮回 base（不抛）');
   assert.equal(runtime.getVar(ctx, 'n'), 0, 'n=0（递减到基）');
+});
+
+// ---- RT-18：random 两种用法（2026-09-17 用户决策 A）——语句位=概率分支 / 表达式位=布尔 ----
+
+test('RT-18 random 两用法：语句位真执行分支（prob=1 必 then、prob=0 必 else、缺 else 同 if）；表达式位返回布尔并消费 ai 流', () => {
+  const branchProg = (prob) => ({ type: 'program', version: 1, body: { type: 'seq', statements: [
+    { type: 'random', prob: { type: 'literal', value: prob }, then: seqOf('then_ok'), else: seqOf('else_ok') },
+  ] } });
+  // 语句位：真实 rng（chance(p) 对 p=1 恒 true、p=0 恒 false，不依赖随机运气）
+  const draws = [];
+  const countingRng = { chance: (p, purpose) => { draws.push(purpose); return createRng(9).chance(p, purpose); } };
+  const ctx1 = runtime.createContext(branchProg(1));
+  assert.deepEqual(resumeN(ctx1, mkSnapshot(), countingRng, 3), ['then_ok', 'then_ok', 'then_ok'], 'prob=1 → 语句位必走 then');
+  const ctx0 = runtime.createContext(branchProg(0));
+  assert.deepEqual(resumeN(ctx0, mkSnapshot(), countingRng, 3), ['else_ok', 'else_ok', 'else_ok'], 'prob=0 → 语句位必走 else');
+  assert.deepEqual(draws.slice(0, 6), ['ai', 'ai', 'ai', 'ai', 'ai', 'ai'], '语句位每次求值消费一次 ai 流（purpose=ai，D-91）');
+
+  // 语句位 + else 缺省 → 与 if 同规则：空分支跳过（无行动产出 → 隐式主循环 → 步数兜底 wait）
+  const ctxNoElse = runtime.createContext({ type: 'program', version: 1, body: { type: 'seq', statements: [
+    { type: 'random', prob: { type: 'literal', value: 0 }, then: seqOf('then_ok'), else: null },
+  ] } });
+  ctxNoElse.stepLimit = 20;
+  const rNoElse = runtime.resume(ctxNoElse, mkSnapshot(), createRng(1));
+  assert.equal(rNoElse.action, 'wait', 'prob=0 且 else 缺省 → 跳过（与 if 无 else 一致）');
+  assert.equal(rNoElse.stepLimited, true, '空分支不产出行动 → 步数兜底（防御语义）');
+
+  // 表达式位：返回布尔 true/false（不是 AST 子树：既不是 then/else 节点对象，也不是其 literal 值）
+  const exprProg = (prob) => ({ type: 'program', version: 1, body: { type: 'seq', statements: [
+    { type: 'set', name: 'r', value: { type: 'random', prob: { type: 'literal', value: prob }, then: { type: 'literal', value: 111 }, else: { type: 'literal', value: 222 } } },
+    { type: 'action', name: 'wait' },
+  ] } });
+  const exprDraws = [];
+  const exprRng = { chance: (p, purpose) => { exprDraws.push(purpose); return createRng(9).chance(p, purpose); } };
+  const ctxE1 = runtime.createContext(exprProg(1));
+  runtime.resume(ctxE1, mkSnapshot(), exprRng);
+  assert.strictEqual(runtime.getVar(ctxE1, 'r'), true, '表达式位 prob=1 → 布尔 true（旧实现返回 {type:"literal",value:111} 节点对象）');
+  const ctxE0 = runtime.createContext(exprProg(0));
+  runtime.resume(ctxE0, mkSnapshot(), exprRng);
+  assert.strictEqual(runtime.getVar(ctxE0, 'r'), false, '表达式位 prob=0 → 布尔 false（旧实现返回 {type:"literal",value:222}）');
+  assert.deepEqual(exprDraws, ['ai', 'ai'], '表达式位每次求值消费一次 ai 流（purpose=ai）');
 });

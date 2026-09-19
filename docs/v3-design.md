@@ -563,8 +563,10 @@ flowchart LR
 |---|---|
 | 我方 | `hp` `atk` `def` `sp` `mp` `x` `baseHp`（我方基地血量）`facing` |
 | 敌方 | `hp` `atk` `def` `sp` `mp` `x` `baseHp`（敌方基地血量）`facing` |
-| 场上弹幕 | 弹幕位置、速度、等级、归属（`bullets` 数组） |
+| 战场 | `field.fieldPx` / `field.cellPx`、`tick` |
 | 局部变量 | AI 程序自己声明的变量（跨 tick 持久） |
+
+> **AI 无法观测弹幕**（弹幕当 tick 全解算）——**非缺陷**：弹幕在生成它的那一个 tick 内就飞完射程并结算完毕（§7.1），下一 tick 战场上必然为空，"读弹幕"没有任何可用语义，因此语言层**没有** `bullets` 节点，快照也**不投影** `bullets`。需要"反应式"策略时，AI 只能依据可观测量（`self`/`enemy` 的 `hp/x/facing`、`field` 等）判断，例如"敌方逼近 → 后撤/格挡"。
 
 ### 11.2 运算
 
@@ -614,8 +616,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端生成 AST（
 | 节点 | 字段 | 说明 |
 |---|---|---|
 | `literal` | `value` | 数值/布尔常量 |
-| `get` | `path`（**单个字符串**，非 `target`+`field`） | 按白名单路径读取，如 `self.hp` / `enemy.x` / `bullets[0].level` / `field.cellPx` |
-| `bullets` | —（**无 `filter`**） | 读取场上弹幕数组（当 tick 全量；过滤由 `get`/`cmp` 自行表达） |
+| `get` | `path`（**单个字符串**，非 `target`+`field`） | 按白名单路径读取，如 `self.hp` / `enemy.x` / `self.facing` / `field.cellPx` |
 | `var` | `name`, `value`（**非 `init`**） | 声明局部变量（跨 tick 持久；已存在则跳过赋值） |
 | `set` | `name`, `value` | 给局部变量赋值 |
 | `getVar` | `name` | 读取局部变量 |
@@ -630,6 +631,8 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端生成 AST（
 | `call` | `name` | 调用函数 |
 | `action` | `name` | 输出行动并挂起 |
 | `seq` | `statements` | 顺序执行 |
+
+> **AI 无法观测弹幕（弹幕当 tick 全解算）——非缺陷**：`bullets` 节点已从语言白名单删除（`ai-nodes.json` 的 `nodes` 现为 **16 类**，`base` 为 **9 类**），快照亦不投影 `bullets`。理由见 §11.1 与 §7.1：弹幕只在生成它的那个 tick 内存在，AI 读不到有意义的弹幕数据。
 
 ### 11.6 解释器约定
 
@@ -997,7 +1000,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端生成 AST（
 
 ### 15.5 前端编辑器
 
-> ⚠️ **本节整体已废弃（Blockly 方案）**：现行前端设计改为**纯 DOM 表单式 AST 编辑器**（无第三方依赖、可无头测），权威规格见 `docs/frontend-spec.md` v3 §12（含 17 类节点的表单元数据）。
+> ⚠️ **本节整体已废弃（Blockly 方案）**：现行前端设计改为**纯 DOM 表单式 AST 编辑器**（无第三方依赖、可无头测），权威规格见 `docs/frontend-spec.md` v3 §12（含 16 类节点的表单元数据）。
 
 - ~~采用 Blockly，自定义积木覆盖 §11 的全部节点。~~ **已废弃**。
 - ~~积木 ↔ AST 双向转换：编辑 → 生成 AST 存盘；载入 → AST 还原积木。~~ **已废弃**（表单式编辑器直接编辑 AST 字段；另提供 JSON 导入/导出）。

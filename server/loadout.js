@@ -4,11 +4,9 @@
  * （I-12e：物品级 items.validateUnlock + AI 节点 ast.validate(tier)）+ 面板聚合（五维/regen/special/技能参数）。
  * D-123：不持久化——POST 校验后回带；GET 返回规范骨架。事件：api.*（api 行）；unlock.reject/ai.validate（既有行）。
  */
-const items = require('./core/items.js');
+const items = require('./core/items.js'); // 含 buildRolePanel：角色面板聚合的单一实现（与 roles.getFinalStats 同源）
 const skills = require('./core/skills.js'); // B20：技能插件词条聚合（消耗补偿/减耗/倍率冷却，L2 → L6 合法）
 const ast = require('./ai/ast.js');
-// 词条注册表（regen 等词条去向的唯一来源；L6 → 数据层合法）
-const AFFIX_REGISTRY = require('./data/affix-registry.json');
 
 // 技能实例化基准 rng（面板聚合只需确定性基=1；物品参数随后覆盖）
 const STUB_RNG = { float: () => 1, int: () => 0, pick: () => 0 };
@@ -105,34 +103,30 @@ function validateLoadout(loadout, opts) {
   return { ok: errors.length === 0, errors };
 }
 
-// 最终面板（B19 基础聚合）：角色五维/regen/special（applyAffixes 已装插件词条）+ 技能参数直透（消耗补偿 B20）
+// 最终面板（B19 基础聚合）：角色五维/regen/special + 技能参数直透（消耗补偿 B20）。
+// 2026-09-16 合并（用户拍板 A）：角色面板聚合改由 **items.buildRolePanel 单一实现**完成
+//   （与 roles.getFinalStats 同源）——五维 + special + regen 一次算清，regen 不再两侧各加一次。
 function buildPanel(loadout, opts) {
   const v = validateLoadout(loadout, opts);
   if (!v.ok) return { ok: false, errors: v.errors };
   const wh = (opts && opts.warehouse) || null;
   const role = loadout.role;
-  const rAffixes = [];
+  const rPlugins = [];
   for (const s of role.slots || []) {
     if (!s || !s.pluginUid) continue;
     const p = findItem(wh, s.pluginUid);
-    if (p && Array.isArray(p.affixes)) rAffixes.push(...p.affixes);
+    if (p) rPlugins.push(p);
   }
-  const aff = items.applyAffixes(Object.assign({}, role.stats || {}), rAffixes);
-  // 角色插件 regen 词条叠加（R-4b/c）：目标维度由词条注册表 def.regen 声明（hp/sp/mp）
-  const regen = Object.assign({ mp: 0, sp: 0 }, role.regen || {});
-  for (const a of rAffixes) {
-    const def = AFFIX_REGISTRY.affixes[a.id];
-    if (def && def.regen) regen[def.regen] = (regen[def.regen] || 0) + ((a.params && a.params.v) || 0);
-  }
+  const rp = items.buildRolePanel(role, rPlugins);
   return {
     ok: true,
     panel: {
       role: {
-        stats: aff.stats,
-        special: aff.special || {},
-        regen,
-        pluginPoints: role.pluginPoints === undefined ? null : role.pluginPoints,
-        quality: role.quality === undefined ? null : role.quality,
+        stats: rp.stats,
+        special: rp.special,
+        regen: rp.regen,
+        pluginPoints: rp.pluginPoints,
+        quality: rp.quality,
       },
       skills: loadout.skills.map((sk) => {
         // B20：技能插件词条聚合——消耗补偿（D-113：costDeltaBase×tier）/减耗 ceil（S-3）/倍率·冷却·射程等

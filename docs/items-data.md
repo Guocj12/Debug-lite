@@ -8,8 +8,9 @@
 > ## ⚠️ 示例数据声明（必读）
 >
 > - 本文档列出的**全部名称、数值、词条、贴图形状**都是**示例/占位数据**，与 `server/data/` 下的内容层表（`role-templates.json` / `skill-templates.json` / `plugins.json` / `qualities.json` / `items-config.json` / `unlock.json`）一一对应，**任何数值都不是最终设计**。
-> - **正式内容待用户手动完整设计后冻结**：本文档与上述内容层表都是"待替换"的载体，改动内容时**只改表 + 本文档**，不需要改代码（机制层见 `systems/01-items.md` §2A / `systems/03-skills.md` §2A）。
-> - 本文档与表的逐值一致性由 `server/data/schema.js`（T-DC-2）与 `scripts/gate.js` 项 5 校验——**改表必须同步改本文档**，否则门禁失败。
+> - **正式内容待用户手动完整设计后冻结**：本文档与上述内容层表都是"待替换"的载体，**改内容只需改表**（机制层见 `systems/01-items.md` §2A / `systems/03-skills.md` §2A）。
+> - **门禁不再锁内容数量**（2026-09-16 用户拍板 A）：增删角色/技能/插件/品质条目都不会让 `scripts/gate.js` 失败；`server/data/schema.js`（T-DC-1）只校验**结构 + 机制自洽**（类型/词条/AI 权限必须在机制层登记、`typeModifiers` 等机制字段必填）。
+> - **逐值比对由 `_sample` 开关控制**：内容表带 `_sample: true` 时，T-DC-2（`validateConsistency`，gate 项 5）才按本文档的示例期望表逐值核对；**去掉该标记（可逐表去）后，该表不再与本文档比对**——正式内容与示例不同不会失败。当前四张内容表都保留 `_sample: true`。
 > - 机制层表（`skill-mechanics.json` / `affix-registry.json` / `ai-nodes.json`）是**机制词汇**，不是内容，不随内容重构而变。
 
 ---
@@ -46,13 +47,15 @@
 
 - **`sp_true_dmg` 的真实语义（B21/D-128）**：命中后**额外直扣 `v` 点真实伤害**（`hp ← max(0, hp − v)`），**不是**"把本次伤害改为真实伤害"。若将来要改成 D-40 的 `trueDamage = max(1, floor(atk×倍率))` 公式语义，属**设计变更**（需同时改机制表 `affix-registry.json` 的 `hitEffect` 与引擎，并补测试）。⚠️ 内容层 `plugins.json` 中 `sp_true_dmg` 的 `desc` 仍写"改为真实伤害"（内容层待用户设计时一并订正）。
 
-## 3. 角色模板（共 11 种）
+## 3. 角色模板（示例 11 种；**数量不锁定**）
 
 > 基础五维（均衡、绿品质）：hp 100 / atk 10 / def 8 / sp 60 / mp 40。
 > **每个模板都必须给出 `regen{mp,sp}`（必填，D-110）**：每 tick 自动回复量；均衡模板建议 `{mp:1, sp:2}`，特化/专家模板按流派差异化（**B21 定稿维持数据表现值**，D-128④）；插件词条「回复 +1」在其上叠加。
 > 命名规则：均衡叫「均衡」；特化与专家都**只按最高属性**分类命名「特化·xx」「专家·xx」，**其余属性随机**。
 > 特化：最高属性 +15%；其余 4 属性随机取 1 个 -15%、3 个标准。
 > 专家：最高属性 +30%；其余 4 属性随机分配 略高 +10% / 极低 -30% / 略低 -10% / 标准。
+> **类型修饰在开箱生成时即生效**（2026-09-16 修正）：`items.generateRoleItem` 与 `roles.instantiateRole` 共用 `items.applyTypeModifier`，同品质下「特化·攻击」的 `atk` 下界 12、「专家·攻击」13、均衡 10（此前三者完全相同）。
+> 每个模板还带 **`drop` / `dropWeight`**（是否进掉落池 / 同类池内相对权重，见 §5 末尾的"掉落与解锁配置"）。
 
 **均衡（1 种）**
 
@@ -149,8 +152,9 @@
 | 特殊槽位 | `rp_regen` | 回复 | 每 tick hp +1 | 1/2/3 | 持续回复 |
 
 > `rp_sp_regen` / `rp_mp_regen` 的"回复 +1"叠加在**角色模板的 `regen{mp,sp}`** 之上（D-110）；`rp_regen` 的 `hp_regen` 叠加出 `regen.hp`，由引擎**步骤 10 逐 tick 回复 hp**（`hp≤0` 时不复活）。
-> ⚠️ **接线范围**：`hp_regen → regen.hp` 的叠加实现于 `roles.equipPlugins`，而现行 `/api/v1/panel` / `/api/v1/battle` 走 `loadout.buildPanel`（不经 `equipPlugins`），故**经 API 的战斗中该词条暂不生效**——属实现待接线项（见 `systems/01-items.md` §4.9）。
+> **叠加位置（2026-09-16 更新）**：regen 词条的叠加由**单一聚合实现** `items.buildRolePanel` 完成（`roles.getFinalStats` 与 `loadout.buildPanel` 共用），**只加一次**——旧实现里 `roles.equipPlugins` 与 `loadout.buildPanel` 各叠一次会**双计**；经 `/api/v1/panel` 与 `/api/v1/battle` 的战斗中 `hp_regen` 正常生效。
 > 表中的"`+1` / `+8%` / `+20`"等均为**基础值 v**，实例化时按档位系数滚动（`int` 取整 / `stat` 保留 2 位），实际数值随档位变化（§2.1）。
+> 每个插件条目还带 **`drop` / `dropWeight`**（是否进掉落池 / 同类池内相对权重，见 §5 末尾的"掉落与解锁配置"）。
 
 ## 6. 技能插件（按插槽分类）
 
@@ -178,12 +182,28 @@
 > **列含义**：表中数值均为**基础值**（实例化时按档位系数滚动）；`costDelta` 列的**维度（mp/sp）**取自 `plugins.json` 的 `costDeltaByTier` 键，**逐档数值**由 `costDeltaBase[品质]×tier` 导出（D-113，例如 rare tier1 = 3）。
 > **实现语义（以代码为准）**：① 减耗类按 `ceil(cost×(1−v))` 结算，而 `v` 是**滚动值**（品质×档位系数后保留 2 位），所以实际减耗率随品质/档位浮动，**恒定 −20% 只是基础值口径**；② `cost` 的各维基础值**不随品质缩放**（模板 `baseCost` 直入，见 `systems/01-items.md` §4.4）。
 > **两个"叠加"语义**：暴击/吸血词条**叠加在角色面板值之上**并按 `caps.probability=1` 封顶；释放增益生成 `continuous/stat=atk` 效果，持续 `params.duration`（缺省取注册表 `fallbackDuration=2`）。
-> ⚠️ 与角色插件同理：**经 `/api/v1/battle` 的战斗链路上，`specials` / `castEffects` 尚未被 `loadout.buildPanel` 投影到技能实例**（属实现待接线项，见 `systems/03-skills.md` §8）。
+> **投影（2026-09-16 更新）**：`loadout.buildPanel` 的技能参数白名单**已包含** `specials` / `castEffects` / `affixes`，因此 `crit_chance` / `lifesteal` / `cast_buff` / `stun` 等词条会随 `/api/v1/battle` 的面板投影进入技能实例并真实生效（`tests/unit/mechanics.test.js` 覆盖）；此前"尚未投影"的说法是旧实现的失真陈述。
+
+### 6.1 掉落与解锁配置（全部是数据字段，2026-09-16 用户拍板 A）
+
+**"某个模板/插件是否掉落、掉落权重多少、在哪个段位解锁"都不写代码，直接改 JSON：**
+
+| 字段 | 位置 | 语义 | 缺省 |
+|---|---|---|---|
+| `drop` | `role-templates.json` / `skill-templates.json` / `plugins.json` 的**每一条** | `false` = 不进掉落池（开箱永不产出；条目本身仍可用于装配/文档） | `true`（缺省可掉落，兼容旧表） |
+| `dropWeight` | 同上 | **同类池内**相对权重（同类 = 角色 / 技能 / 角色插件 / 技能插件） | `1`（非正数/非数值也按 1） |
+| `unlockTier` | 同上（可选） | 从该段位起进掉落池、可装配（D-112） | 已解锁 |
+| `kindWeights` / `dropRates` | `items-config.json` | **类别**权重与**品质**概率（全局，与 `dropWeight` 相乘生效） | — |
+| `unlocks[].roleTemplates` / `skills` / `aiNodes` | `unlock.json` | 按段位的模板/技能清单与该段位新增 AI 权限名（与各表 `unlockTier` 交叉校验，防双源漂移） | — |
+
+- 开箱流程：品质（`dropRates`，段位截断）→ 类别（`kindWeights`）→ **掉落池 = `drop !== false` 且 `unlockTier ≤ 玩家段位`** → 池内抽取（权重全 1 时均匀，存在权重时按 `dropWeight` 加权）。
+- **当前四张内容表都是示例数据（`_sample: true`），待用户设计**；示例内容里所有条目都是 `drop: true` / `dropWeight: 1`（等价于旧行为）。
+- 数量不锁定：增删条目由 `schema.js` 的结构校验兜底（至少 1 项），只有 "条目引用的类型/词条/AI 权限未在机制表登记" 才会 FAIL。
 
 ## 7. 备注
 
 - **本文档全部内容为示例数据（见文首声明）**：名称均为**占位专有名称**，数值为标准值；最终命名与词条数值由用户独立文档确定，本文档固定「种类 + 标准数值 + 描述 + 贴图占位」结构。
 - **机制层 vs 内容层**：本文档（及 `server/data/` 的内容层表）描述**内容**；"某个词条怎么滚、打到哪个字段、命中做什么"属**机制**，写在 `server/data/affix-registry.json` 与 `server/data/skill-mechanics.json`（说明见 `systems/01-items.md` §2A / `systems/03-skills.md` §2A）。
 - 「最大插件点数」「各品质基础 costDelta」为建议值，数值平衡阶段可调。
-- ⏳ **计划（未实现）**：本文档的"贴图占位"（§1）目前只有形状枚举与 `assets/sprites.json` 占位表；真实素材（PNG）替换与加载器未实现。
+- ⏳ **计划（未实现）**：本文档的"贴图占位"（§1）目前只有 `assets/sprites.json` / `assets/animations.json` 占位表（`shape` 为自由字符串，schema **不再锁形状枚举与条数**：可增形状、可缺占位）；真实素材（PNG）替换与加载器未实现。
 - 数值平衡可继续沿用 `legacy/docs/技能点数换算系统.md` 的点数框架校验。

@@ -2,11 +2,12 @@
 /* server/ai/ast.js —— AI 程序 AST 静态校验（P2 B12/B13，契约 docs/interfaces.md §1）
  * 依据：systems/08-ai.md §3（节点清单）/§4.2（结构校验 + 合法性检测 D-101 + 段位门控）；B13 落地 checkLegality。
  * 纯函数内核（L11）：日志经 withLogger 注入；事件 ai.validate(debug)/ai.validate.reject(warn)（§4.6 L5 行）。
- * 路径 id 规范（B12 登记，08-ai A-6h 格式）：seq→s[i]、if→then/else、loop→body、function→body（body 内再 s[i]）；
+ * 路径 id 规范（B12 登记，08-ai A-6h 格式）：seq→s[i]、if/random→then/else、loop→body、function→body（body 内再 s[i]）；
  *   表达式子节点 → .expr；其余节点为叶子。
  * B13 登记：validateAi 自 unlock.js 退役（B4→B13），段位门控由本模块 validate(program, tier) 统一承担
  *   （unlock 保留 tierIndex/isUnlocked/filterByTier/availableNodes/validateLoadout 原语；ai L5 → core L1 方向合法）。
- * 分支行动规则（D-101）：loop 体内所有 if 的每个分支（含隐式空 else）必须含至少一个 action 或已定义函数 call；
+ * 分支行动规则（D-101）：loop 体内所有 if/random（语句位概率分支）的每个分支（含隐式空 else）必须含至少一个 action
+ *   或已定义函数 call；random 与 if 同规则（2026-09-17 随机语义修正配套）；
  *   call 视为行动产出点（静态保守）；break 必须位于同一函数作用域内的 loop 体内（跨函数 break 拒绝）；call 必须已定义（hoisting）。
  */
 
@@ -82,6 +83,48 @@ const NODE_TYPES = new Set(AI_LANG.nodes);
 //   依据 D-80 与 frontend-spec §6.9，action.name 是自由标签，未知名由引擎 normalizeAction 归一化为 wait
 //   并记 action.invalid(warn)；前端下拉只允许给词汇表内的值（自检器 C6 负责）。
 const ACTION_SPEC = AI_LANG.actions || { fixed: [], parametric: [] };
+// 动作词汇表（D-80：仅用于 warnings 通道，**不在校验期拒绝**）——fixed 固定名 + 前缀式（如 'skill:'）
+const ACTION_FIXED = new Set(ACTION_SPEC.fixed || []);
+const ACTION_PREFIXES = ACTION_SPEC.parametric || ACTION_SPEC.params || []; // 兼容并行任务对 actions 键的命名
+
+// 快照读路径白名单（B26，D-107 投影；字段清单权威来源 = server/runner.js projectSnapshot 的投影注释）：
+//   tick
+//   self|enemy.<f>                  f ∈ {hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}
+//   self|enemy.cooldowns.<sid>      sid = 标识符（只读副本；未装配技能不出现）
+//   self|enemy.effects[<i>].<f>     f ∈ {uid,kind,stat,delta,displacement,remaining}
+//   bases.self|enemy.<f>            f ∈ {hp,maxHp,def}
+//   field.fieldPx / field.cellPx
+//   容器（self / self.cooldowns / self.effects[i] / bases.self …）不可当值读；bullets 已从语言与快照移除 → 一律非法。
+//   分层原则：校验层拒绝（bad_path）**不替代**运行层兜底（runtime.getPath 非法/缺失/越界 → 0），
+//   绕过校验直接注入运行时的程序仍须安全退化（tests/unit/runtime-limit.test.js 的病态 fixtures 即此层）。
+const SNAPSHOT_ACTOR_FIELDS = new Set(['hp', 'maxHp', 'mp', 'maxMp', 'sp', 'maxSp', 'atk', 'def', 'x', 'facing', 'baseHp']);
+const SNAPSHOT_EFFECT_FIELDS = new Set(['uid', 'kind', 'stat', 'delta', 'displacement', 'remaining']);
+const SNAPSHOT_BASE_FIELDS = new Set(['hp', 'maxHp', 'def']);
+const SNAPSHOT_PATH_EXAMPLES = 'tick / self.hp / self.cooldowns.<sid> / self.effects[0].remaining / bases.enemy.hp / field.cellPx';
+const PATH_IDENT_SRC = '[A-Za-z_$][A-Za-z0-9_$]*';
+const RE_ACTOR_FIELD = new RegExp(`^(?:self|enemy)\\.(${PATH_IDENT_SRC})$`);
+const RE_COOLDOWN_FIELD = new RegExp(`^(?:self|enemy)\\.cooldowns\\.(${PATH_IDENT_SRC})$`);
+const RE_EFFECT_FIELD = new RegExp(`^(?:self|enemy)\\.effects\\[(\\d+)\\]\\.(${PATH_IDENT_SRC})$`);
+const RE_BASE_FIELD = new RegExp(`^bases\\.(?:self|enemy)\\.(${PATH_IDENT_SRC})$`);
+const FORBIDDEN_PATH_SEGS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// 路径白名单判定（非字符串/容器/未知字段/危险段/已移除的 bullets → false）
+function isAllowedSnapshotPath(p) {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  if (p === 'tick' || p === 'field.fieldPx' || p === 'field.cellPx') return true;
+  let m = RE_ACTOR_FIELD.exec(p);
+  if (m) return SNAPSHOT_ACTOR_FIELDS.has(m[1]);
+  m = RE_COOLDOWN_FIELD.exec(p);
+  if (m) return !FORBIDDEN_PATH_SEGS.has(m[1]);
+  m = RE_EFFECT_FIELD.exec(p);
+  if (m) return SNAPSHOT_EFFECT_FIELDS.has(m[2]);
+  m = RE_BASE_FIELD.exec(p);
+  if (m) return SNAPSHOT_BASE_FIELDS.has(m[1]);
+  return false;
+}
+
+// 表达式位允许的节点类型（值语义）：语句节点出现在表达式位 → not_expression（运行层会把它们静默当 0 求值）
+const EXPR_TYPES = new Set(['literal', 'get', 'getVar', 'arith', 'cmp', 'logic', 'random']);
 
 // 全局上限（systems §4.2①/§4.3；程序上限常量与战斗数值无关，撞值豁免见 cl:）
 const LIMITS = {
@@ -155,12 +198,12 @@ function makeAst(logger) {
     const errors = [];
     const state = { nodes: 0, maxDepthSeen: 0, visited: new Set() };
     if (!program || program.type !== 'program') {
-      return { ok: false, errors: [{ path: '', code: 'not_program', message: '根节点必须是 program' }] };
+      return { ok: false, errors: [{ path: '', code: 'not_program', message: '根节点必须是 program' }], warnings: [] };
     }
     // 版本迁移（A-10d/e）：低版本先迁移（克隆），高版本在此拒绝
     const mig = migrateProgram(program);
     if (mig.error) {
-      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }] };
+      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }], warnings: [] };
     }
     if (mig.migrated) program = mig.program;
     // 根节点自身也要查危险键（visit 从 body 开始，根不经过）
@@ -175,9 +218,9 @@ function makeAst(logger) {
     const rootBody = program.body;
     if (!rootBody || rootBody.type !== 'seq') {
       errors.push({ path: 'body', code: 'bad_root', message: 'body 必须为 seq（隐式主循环结构契约，D-100）' });
-      return { ok: errors.length === 0, errors };
+      return { ok: errors.length === 0, errors, warnings: [] };
     }
-    if (errors.length > 0) return { ok: false, errors };
+    if (errors.length > 0) return { ok: false, errors, warnings: [] };
 
     // 字节上限（JSON 序列化长度）
     let bytes;
@@ -200,8 +243,39 @@ function makeAst(logger) {
       errors.push({ path: '', code: 'ai_too_deep', message: `深度 ${state.maxDepthSeen} 超上限 ${LIMITS.maxDepth}` });
     }
     const ok = errors.length === 0;
+    // warnings 通道（D-80，**不阻断**校验）：仅扫描结构合法的程序（拒绝态/含环结构不重复遍历，warnings 恒为数组）
+    const warnings = ok ? collectActionWarnings(program) : [];
     L.debug('ai.ast', 'ai.validate', `validate ok=${ok}`, { ok, version: program.version, nodes: state.nodes });
-    return { ok, errors };
+    return { ok, errors, warnings };
+  }
+
+  // 统一带路径遍历（seq→s[i]、if/random→then/else、loop/function→body、表达式→.expr；与 nodePathOf 同规则）
+  function walkNodes(root, cb) {
+    (function walk(n, path) {
+      if (!n || typeof n !== 'object') return;
+      cb(n, path);
+      const ch = childList(n);
+      ch.list.forEach((c, i) => {
+        const cp = ch.pathName === 's' ? `${path}.s[${i}]` : ch.key === null ? `${path}.${i === 0 ? 'then' : 'else'}` : `${path}.${ch.pathName}`;
+        walk(c, cp);
+      });
+      for (const c of exprChildren(n)) walk(c, `${path}.expr`);
+    })(root, 'body');
+  }
+
+  // 动作名不在引擎词汇表 → warning（**不拒绝**：D-80 运行期仍由 normalizeAction 归一化为 wait + action.invalid）
+  function collectActionWarnings(program) {
+    const warnings = [];
+    if (!program || !program.body) return warnings;
+    walkNodes(program.body, (n, path) => {
+      if (n.type !== 'action' || typeof n.name !== 'string') return;
+      if (ACTION_FIXED.has(n.name)) return;
+      for (const p of ACTION_PREFIXES) {
+        if (n.name.startsWith(p)) return;
+      }
+      warnings.push({ path, code: 'unknown_action', name: n.name, message: `动作名 ${n.name} 不在引擎词汇表（运行期归一化为 wait，见 D-80）` });
+    });
+    return warnings;
   }
 
   // 递归遍历（path 记录；返回节点总数用于计数）
@@ -267,6 +341,10 @@ function makeAst(logger) {
         errors.push({ path: `${path}.${rule.require}`, code: 'bad_field', message: `${type}.${rule.field}=${rule.value} 时必填 ${rule.require}` });
       }
     }
+    // get.path 白名单（B26）：非法路径 → 校验期拒绝（运行层另有安全默认 0 兜底；分层见文件头注释）
+    if (type === 'get' && typeof node.path === 'string' && !isAllowedSnapshotPath(node.path)) {
+      errors.push({ path: `${path}.path`, code: 'bad_path', message: `get.path 非法（不在快照白名单）: ${JSON.stringify(node.path)}；合法示例: ${SNAPSHOT_PATH_EXAMPLES}` });
+    }
     // 子节点递归（list 非数组时 bad_field 已记，防御空遍历）
     const ch = childList(node);
     const chList = Array.isArray(ch.list) ? ch.list : [];
@@ -284,6 +362,11 @@ function makeAst(logger) {
     }
     // 表达式子节点（值语义，仅类型校验，不产生路径段）
     for (const c of exprChildren(node)) {
+      // 表达式位只能是表达式节点（literal/get/getVar/arith/cmp/logic/random）；
+      //   语句节点（action/var/set/seq/if/loop/break/function/call）落在表达式位 → 运行期被静默当 0 求值 → 校验期拒绝
+      if (!EXPR_TYPES.has(c.type)) {
+        errors.push({ path: `${path}.expr`, code: 'not_expression', message: `表达式位只能是表达式节点（${[...EXPR_TYPES].join('/')}），当前 ${JSON.stringify(c.type)}` });
+      }
       visit(c, `${path}.expr`, depth + 1, errors, state);
     }
   }
@@ -348,14 +431,15 @@ function makeAst(logger) {
     return actionFns;
   }
 
-  // 分支行动规则：loop 体内所有 if 的每个分支（含隐式空 else）必须含 action 或调用**行动产出**函数（A-6 全案）
+  // 分支行动规则：loop 体内所有 if/random（语句位概率分支）的每个分支（含隐式空 else）必须含 action
+  //   或调用**行动产出**函数（A-6 全案；random 与 if 同规则——2026-09-17 随机语义修正配套）
   function branchHasAction(node, fns, actionFns, depth) {
     if (!node || typeof node !== 'object') return false;
     if (depth > LIMITS.analyzeDepth) return false; // 保守上限（B13 登记：静态分析防爆炸）
     if (node.type === 'action') return true;
     if (node.type === 'call') return actionFns.has(node.name); // 只有能（传递）产出 action 的函数才算
     if (node.type === 'seq') return (node.statements || []).some((s) => branchHasAction(s, fns, actionFns, depth + 1));
-    if (node.type === 'if') return branchHasAction(node.then, fns, actionFns, depth + 1) && (!node.else || branchHasAction(node.else, fns, actionFns, depth + 1));
+    if (node.type === 'if' || node.type === 'random') return branchHasAction(node.then, fns, actionFns, depth + 1) && (!node.else || branchHasAction(node.else, fns, actionFns, depth + 1));
     if (node.type === 'loop') return branchHasAction(node.body, fns, actionFns, depth + 1);
     return false;
   }
@@ -394,6 +478,18 @@ function makeAst(logger) {
           if (node.then) scan(node.then, `${path}.then`, ctx, fns, errors);
           if (node.else) scan(node.else, `${path}.else`, ctx, fns, errors);
           for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors); // P2-1：cond 位不逃逸
+          break;
+        }
+        case 'random': {
+          // 语句位概率分支：与 if 同规则（循环体内每个分支必须含 action；缺 else 视为空分支）；
+          //   表达式位的 random（如 set 值 / if.cond）不在此检查，仅按表达式递归（exprChildren）。
+          if (ctx.loopDepth > 0) {
+            if (!branchHasAction(node.then, fns, actionFns, 0)) errors.push({ path: `${path}.then`, code: 'branch_without_action', message: 'random 的 then 分支必须包含 action' });
+            if (!node.else || !branchHasAction(node.else, fns, actionFns, 0)) errors.push({ path: `${path}.else`, code: 'branch_without_action', message: 'random 的 else 分支必须包含 action（缺 else 视为空分支）' });
+          }
+          if (node.then) scan(node.then, `${path}.then`, ctx, fns, errors);
+          if (node.else) scan(node.else, `${path}.else`, ctx, fns, errors);
+          for (const c of exprChildren(node)) scan(c, `${path}.expr`, ctx, fns, errors);
           break;
         }
         case 'break': {

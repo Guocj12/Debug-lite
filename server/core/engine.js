@@ -439,13 +439,19 @@ function createBattle(cfgIn, options) {
     }
     stepLog(10, '资源恢复');
 
-    // 步骤 11：超时扣血（tick ≥ overtimeStart：双方基地与角色同时扣 ceil(本方 maxHp×ratio)，B8 审查 P2-1）
+    // 步骤 11：超时扣血（tick ≥ overtimeStart：双方基地与角色同时扣**各自 maxHp**×ratio）
+    //   2026-09-16 修正（用户拍板 A）：基地此前被扣「角色 maxHp 的同额」，而基地 maxHp 固定 100、角色
+    //   maxHp 随品质涨到 ~180 → hp 越高的一方超时越先阵亡（"变强即变弱"）。现改为：
+    //   角色扣 ceil(角色.maxHp × ratio)，基地扣 ceil(基地.maxHp × ratio)（base.maxHp 缺省回退 base.hp）。
     if (tick >= cfg.overtimeStart) {
       for (const owner of ['p1', 'p2']) {
         const p = players[owner];
+        const base = state.bases[owner];
+        const baseMaxHp = base.maxHp === undefined ? base.hp : base.maxHp;
         const cut = Math.ceil(p.maxHp * cfg.overtimeRatio);
+        const baseCut = Math.ceil(baseMaxHp * cfg.overtimeRatio);
         p.hp = Math.max(0, p.hp - cut);
-        state.bases[owner].hp = Math.max(0, state.bases[owner].hp - cut);
+        base.hp = Math.max(0, base.hp - baseCut);
       }
       logger.info('engine', 'battle.overtime', `tick ${tick} 超时扣血`, { tick });
     }
