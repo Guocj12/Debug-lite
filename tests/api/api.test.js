@@ -141,14 +141,23 @@ test('AP-7 坏表名/边界路径：../ 与目录穿越 → 400 bad_table；精�
   });
 });
 
-test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14）', async () => {
+test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14；门控默认关闭 = 全解锁）', async () => {
   await withServer(null, async ({ port }) => {
+    // 门控关闭（默认，用户决策 2026-09-16）：任意段位都返回**全部真实节点/模板/技能/插件**（段位仅回带）
     const ok = await request(port, 'GET', '/api/v1/unlock?tier=common');
     assert.equal(ok.status, 200);
-    assert.equal(ok.body.data.nodes.length, 10, 'common 可用节点 10（09-unlock §1；基础 9 + if）');
-    assert.ok(!ok.body.data.nodes.includes('random'), 'common 无 random');
+    assert.equal(ok.body.data.tier, 'common', 'tier 仍回带（参数校验/回带不受门控影响）');
+    assert.equal(ok.body.data.nodes.length, 16, '门控关闭：全部 16 类真实节点（= ai-nodes.json nodes）');
+    assert.ok(ok.body.data.nodes.includes('random'), '门控关闭：common 也给 random');
+    assert.ok(ok.body.data.nodes.includes('function') && ok.body.data.nodes.includes('call'), 'function/call 亦全解锁');
     assert.ok(ok.body.data.roleTemplates.includes('role_bal'), '均衡角色可用');
-    assert.ok(!ok.body.data.skills.includes('skill_dash_bash'), '突击盾（mythic）不可用');
+    assert.ok(ok.body.data.skills.includes('skill_dash_bash'), '门控关闭：mythic 技能在 common 也可用');
+    // 与最低段位相比无差异（段位不参与判定）
+    const mythic = await request(port, 'GET', '/api/v1/unlock?tier=mythic');
+    assert.deepEqual(mythic.body.data.nodes, ok.body.data.nodes, 'common 与 mythic 节点集相同');
+    assert.deepEqual(mythic.body.data.roleTemplates, ok.body.data.roleTemplates, '模板集相同');
+    assert.deepEqual(mythic.body.data.plugins, ok.body.data.plugins, '插件集相同');
+    // 参数校验与门控是两件事：非法/缺省 tier 仍必须 400 bad_tier
     const bad = await request(port, 'GET', '/api/v1/unlock');
     assert.equal(bad.status, 400);
     assert.equal(bad.body.error.code, 'bad_tier');

@@ -134,14 +134,44 @@ test('T-RO-4/R-7 装配失败分支：槽型不匹配 / 点数超限 / 段位不
   const r7b = roles.equipPlugins(ok2.role, [{ uid: 'p3', id: 'x3', kind: 'rolePlugin', slot: 'def', pointCost: 1, affixes: [] }]);
   assert.equal(r7b.ok, false, 'R-7b points_exceeded');
   assert.equal(r7b.role, undefined);
-  // R-7c 段位不足
-  const r7c = roles.equipPlugins(mkBase(), [{ id: 'p9', kind: 'rolePlugin', slot: 'def', pointCost: 1, unlockTier: 'legendary', affixes: [] }], { tier: 'rare' });
-  assert.equal(r7c.ok, false, 'R-7c tier_locked');
+  // R-7c 段位不足（门控开启 = 回退模式：roles.withGating(true) 内部持有 items.withGating(true)）；
+  //   门控关闭（默认，用户决策 2026-09-16）时同一调用必须放行 —— 两条路径都钉住（细节见 RO-14）。
+  const r7c = roles.withGating(true).equipPlugins(mkBase(), [{ id: 'p9', kind: 'rolePlugin', slot: 'def', pointCost: 1, unlockTier: 'legendary', affixes: [] }], { tier: 'rare' });
+  assert.equal(r7c.ok, false, 'R-7c tier_locked（门控开启）');
+  const r7cOff = roles.equipPlugins(mkBase(), [{ id: 'p9', kind: 'rolePlugin', slot: 'def', pointCost: 1, unlockTier: 'legendary', affixes: [] }], { tier: 'rare' });
+  assert.equal(r7cOff.ok, true, '门控关闭：R-7c 不再因段位拒绝');
   // R-7d 同一插件已装（equipped=true）再装 → 唯一性拒绝
   const b4 = mkBase();
   const dup = { uid: 'dup1', id: 'x9', kind: 'rolePlugin', slot: 'def', pointCost: 1, affixes: [], equipped: true };
   const ok4 = roles.equipPlugins(b4, [dup]);
   assert.equal(ok4.ok, false, 'R-7d equipped 唯一性');
+});
+
+test('RO-14 门控注入缝（推荐方向，替代单例打补丁）：roles.withGating(mode) 与链式 withLogger 不丢设置', () => {
+  const mk = () => ({ stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 }, slots: [{ type: 'def', pluginUid: null }], equipped: [], pluginPoints: 3 });
+  const gatedPlugin = [{ uid: 'g9', id: 'rp_def_flat', kind: 'rolePlugin', slot: 'def', pointCost: 1, unlockTier: 'legendary', affixes: [] }];
+  // 默认实例 = 门控关闭（unlock.json gating.enabled=false）→ 段位不参与判定
+  assert.equal(roles.gatingEnabled, false, '缺省实例门控关闭');
+  assert.equal(roles.equipPlugins(mk(), gatedPlugin, { tier: 'rare' }).ok, true, '默认：超段位插件放行');
+  // 注入门控开启实例 → 复核 R-7c 的 tier_locked 分支（不依赖单例打补丁）
+  const gated = roles.withGating(true);
+  assert.equal(gated.gatingEnabled, true, 'withGating(true) 自省');
+  assert.equal(gated.equipPlugins(mk(), gatedPlugin, { tier: 'rare' }).error, 'tier_locked', '门控开启：tier_locked');
+  assert.equal(gated.equipPlugins(mk(), gatedPlugin, { tier: 'mythic' }).ok, true, '门控开启：段位足够放行');
+  // 链式：withGating(true).withLogger(log) 两者都要生效（不丢门控设置）
+  const logger = createLogger({ level: 'all', ringSize: 200 });
+  const chained = roles.withGating(true).withLogger(logger);
+  assert.equal(chained.gatingEnabled, true, '链式后门控设置保留');
+  assert.equal(chained.equipPlugins(mk(), gatedPlugin, { tier: 'rare' }).error, 'tier_locked');
+  chained.getFinalStats(roles.instantiateRole(BAL, 'rare', stubSeq([1, 1, 1, 1, 1, 0, 0, 0, 0])));
+  assert.ok(logger.records.some((x) => x.event === 'role.panel'), '链式后 logger 仍生效');
+  assert.equal(roles.withGating(false).gatingEnabled, false, 'withGating(false) 可显式关闭');
+  // 实例级工厂可再次切换（链式不丢 logger/门控设置）
+  const reGated = chained.withGating(false);
+  assert.equal(reGated.gatingEnabled, false, '实例级 withGating 可再次切换');
+  assert.equal(reGated.equipPlugins(mk(), gatedPlugin, { tier: 'rare' }).ok, true, '切回关闭后放行');
+  // 角色物品形状 + 注入实例：同一聚合实现（角色物品无 equipped 也不抛）
+  assert.equal(chained.getFinalStats(mk(), []).stats.hp, 100, '角色物品形状可被聚合');
 });
 
 test('T-RO-3/R-8 最终面板：getFinalStats（maxHp=hp、下限 1、regen/special 汇总）', () => {

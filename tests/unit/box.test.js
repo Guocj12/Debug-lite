@@ -13,7 +13,7 @@ function contentOf(item) {
   return c;
 }
 
-test('B17-1 正常开箱：个数=times、物品形状、seed 回带', () => {
+test('B17-1 正常开箱：个数=times、物品形状、seed 回带（门控关闭 = 默认：品质不受段位限制）', () => {
   const r = box.openBoxes({ seed: 20260913, tier: 'rare', times: 10 });
   assert.equal(r.status, 200);
   assert.equal(r.data.items.length, 10);
@@ -23,16 +23,42 @@ test('B17-1 正常开箱：个数=times、物品形状、seed 回带', () => {
   for (const it of r.data.items) {
     assert.equal(typeof it.uid, 'string');
     assert.ok(['role', 'skill', 'rolePlugin', 'skillPlugin'].includes(it.kind), `kind=${it.kind}`);
-    assert.ok(['common', 'rare'].includes(it.quality), `rare 段位品质上限（D-122/RK-5b）: ${it.quality}`);
+    // 门控关闭（用户决策 2026-09-16）：tier 只作回带信息，品质取自全池 dropRates
+    assert.ok(['common', 'rare', 'epic', 'legendary', 'mythic'].includes(it.quality), `品质合法: ${it.quality}`);
   }
 });
 
-test('B17-2 品质上限（D-122/RK-5）：common 段位只能出 common；mythic 全池', () => {
-  const c = box.openBoxes({ seed: 7, tier: 'common', times: 50 });
-  for (const it of c.data.items) assert.equal(it.quality, 'common', 'common 段位只有绿（RK-5a）');
-  const m = box.openBoxes({ seed: 7, tier: 'mythic', times: 50 });
-  const seen = new Set(m.data.items.map((x) => x.quality));
-  assert.ok(seen.has('common') && seen.size <= 5, `mythic 全池（含非绿概率）: ${[...seen]}`);
+test('B17-2 品质上限（D-122/RK-5）：门控开启时 common 段位只能出 common、mythic 全池；门控关闭时任意 tier 都能出最高品质', () => {
+  // ① 门控开启（回退模式）：段位序号即品质上限，截断后按剩余池重归一
+  const gatedItems = require('../../server/core/items.js').withGating(true);
+  const cOn = box.openBoxes({ seed: 7, tier: 'common', times: 50, items: gatedItems });
+  for (const it of cOn.data.items) assert.equal(it.quality, 'common', 'common 段位只有绿（RK-5a）');
+  const mOn = box.openBoxes({ seed: 7, tier: 'mythic', times: 50, items: gatedItems });
+  const seenOn = new Set(mOn.data.items.map((x) => x.quality));
+  assert.ok(seenOn.has('common') && seenOn.size <= 5, `mythic 全池（含非绿概率）: ${[...seenOn]}`);
+  // ② 门控关闭（默认）：tier 不再影响品质池 —— 同 seed 下 common 与 mythic 的品质序列逐项相同
+  const { createRng } = require('../../server/core/rng.js');
+  const coreItems = require('../../server/core/items.js');
+  const cOff = box.openBoxes({ seed: 7, tier: 'common', times: 100 });
+  const mOff = box.openBoxes({ seed: 7, tier: 'mythic', times: 100 });
+  assert.deepEqual(cOff.data.items.map((x) => x.quality), mOff.data.items.map((x) => x.quality), 'common 与 mythic 同 seed 品质序列相同（tier 不参与）');
+  for (const it of cOff.data.items) {
+    assert.ok(['common', 'rare', 'epic', 'legendary', 'mythic'].includes(it.quality), `品质合法: ${it.quality}`);
+    // 掉落池同样不按段位过滤：common tier 也能出高段位模板（元数据 unlockTier 仅作展示）
+    const def = it.templateId
+      ? (require('../../server/data/role-templates.json').roleTemplates.concat(require('../../server/data/skill-templates.json').skillTemplates).find((t) => t.id === it.templateId) || {})
+      : (require('../../server/data/plugins.json').plugins.find((p) => p.id === it.id) || {});
+    if (def.unlockTier) assert.ok(typeof def.unlockTier === 'string', 'unlockTier 元数据保留');
+  }
+  // 任意 tier 都能出最高品质：core 直调大样本（绕开 box 的 times ≤ BOX_TIMES_MAX 请求上限）
+  const rng = createRng(11);
+  const seen = new Set();
+  for (let i = 0; i < 3000; i++) seen.add(coreItems.rollQuality(rng, 'common'));
+  assert.ok(seen.has('mythic'), `门控关闭：common tier 也能出 mythic（实际 ${[...seen].join('/')}）`);
+  assert.equal(seen.size, 5, `五档品质全部可达: ${[...seen].join('/')}`);
+  assert.equal(box.openBoxes({ seed: 20260913, tier: 'rare', times: 10 }).status, 200, 'tier 参数仍被接受（仅不再起门控作用）');
+  // 非法 tier 仍是参数错误（参数校验与门控是两件事）
+  assert.equal(box.openBoxes({ seed: 7, tier: 'diamond' }).code, 'bad_tier');
 });
 
 test('B17-3 种子确定性：同 seed 内容级一致；缺 seed 生成并回带', () => {
@@ -68,9 +94,10 @@ test('B17-5 409 tier_locked：门控后掉落池为空（RangeError 映射；防
 });
 
 // P1-1 回归（审查 docs/reviews/B17.md）：截断后按剩余池重归一 —— rare 档分布 = dropRates / Σ(前两档)
-// 采样走 core 直调（box.openBoxes 有 times≤100 请求上限，分布样本需 core 级 rng 序列）
-test('B17-6 P1-1 回归：rare 档 ≥10000 样本分布重归一（common 66.27% ±2、rare 33.73% ±2）', () => {
-  const items = require('../../server/core/items.js');
+// 采样走 core 直调（box.openBoxes 有 times≤100 请求上限，分布样本需 core 级 rng 序列）；
+// **门控开启**（withGating(true)）时才有"截断 + 重归一"，门控关闭（默认）见 B17-6b。
+test('B17-6 P1-1 回归（门控开启）：rare 档 ≥10000 样本分布重归一（common 66.27% ±2、rare 33.73% ±2）', () => {
+  const items = require('../../server/core/items.js').withGating(true);
   const { createRng } = require('../../server/core/rng.js');
   const N = 20000;
   const rng = createRng(424242);
@@ -85,6 +112,29 @@ test('B17-6 P1-1 回归：rare 档 ≥10000 样本分布重归一（common 66.27
   assert.ok(Math.abs(commonPct - 0.55 / 0.83) < 0.02, `common ${(commonPct * 100).toFixed(2)}% 应 ≈66.27%`);
   assert.ok(Math.abs(rarePct - 0.28 / 0.83) < 0.02, `rare ${(rarePct * 100).toFixed(2)}% 应 ≈33.73%`);
   assert.equal(counts.epic, undefined, 'rare 档无 epic+');
+});
+
+test('B17-6b 门控关闭（默认）：任意 tier 的品质分布 = 全池 dropRates（不截断、不重归一）', () => {
+  const items = require('../../server/core/items.js');
+  const { createRng } = require('../../server/core/rng.js');
+  const drop = require('../../server/data/items-config.json').dropRates;
+  const N = 20000;
+  const rng = createRng(424242);
+  const counts = {};
+  for (let i = 0; i < N; i++) {
+    const it = items.openBox(rng, { tier: 'rare' }); // rare 与 common 分布应完全相同（tier 不参与）
+    counts[it.quality] = (counts[it.quality] || 0) + 1;
+  }
+  for (const [id, p] of Object.entries(drop)) {
+    assert.ok(Math.abs(counts[id] / N - p) < 0.02, `${id} 频率 ${(counts[id] / N * 100).toFixed(2)}% 应 ≈ ${(p * 100).toFixed(2)}%（全池）`);
+  }
+  const rngCommon = createRng(424242);
+  const same = [];
+  for (let i = 0; i < 200; i++) same.push(items.openBox(rngCommon, { tier: 'common' }).quality);
+  const rngRare = createRng(424242);
+  const same2 = [];
+  for (let i = 0; i < 200; i++) same2.push(items.openBox(rngRare, { tier: 'rare' }).quality);
+  assert.deepEqual(same, same2, 'common 与 rare 同 seed 逐次品质相同（tier 不再影响品质池）');
 });
 
 // P1-1 回归补：rollQuality 非法 tier 保守全池（不兜顶）→ 全池分布（common ≈55%）

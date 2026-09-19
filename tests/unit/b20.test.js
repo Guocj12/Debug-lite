@@ -55,23 +55,25 @@ test('T-PB-6 词条聚合机器推导：消耗补偿 delta = costDeltaBase×tier
   assert.equal(p.panel.skills[0].params.multiplier, 1.38, '面板反映倍率聚合');
 });
 
-test('T-PB-7 门控：带 unlockTier 插件不进低段位掉落池、不可装配；数据含高段位插件（U-5d 真分支）', () => {
-  const gated = PLUGINS.filter((x) => x.unlockTier);
-  assert.ok(gated.length >= 2, `数据含 ≥2 个带 unlockTier 插件（实际 ${gated.length}）`);
-  assert.ok(gated.every((x) => x.unlockTier === 'legendary'));
+test('T-PB-7 门控（开启 = 回退模式）：带 unlockTier 插件不进低段位掉落池、不可装配；数据含高段位插件（U-5d 真分支）', () => {
+  const gatedPlugins = PLUGINS.filter((x) => x.unlockTier);
+  assert.ok(gatedPlugins.length >= 2, `数据含 ≥2 个带 unlockTier 插件（实际 ${gatedPlugins.length}）`);
+  assert.ok(gatedPlugins.every((x) => x.unlockTier === 'legendary'));
+  const gatedItems = items.withGating(true);
+  const gatedUnlock = unlock.withGating(true);
   // 掉落池：rare 段位 500 抽不得 sp_displacement/rp_sp_opt；mythic 500 抽可出
   const { createRng } = require('../../server/core/rng.js');
   const rLow = createRng(2026);
   let lowHit = false;
   for (let i = 0; i < 500; i++) {
-    const it = items.openBox(rLow, { tier: 'rare' });
+    const it = gatedItems.openBox(rLow, { tier: 'rare' });
     if (it.id === 'sp_displacement' || it.id === 'rp_sp_opt') lowHit = true;
   }
   assert.equal(lowHit, false, '低段位不进掉落池（T-PB-7）');
   const rHigh = createRng(2026);
   let highHit = false;
   for (let i = 0; i < 500; i++) {
-    const it = items.openBox(rHigh, { tier: 'mythic' });
+    const it = gatedItems.openBox(rHigh, { tier: 'mythic' });
     if (it.id === 'sp_displacement' || it.id === 'rp_sp_opt') highHit = true;
   }
   assert.equal(highHit, true, 'mythic 段位可出（数据门控真分支）');
@@ -79,14 +81,32 @@ test('T-PB-7 门控：带 unlockTier 插件不进低段位掉落池、不可装�
   const WH = JSON.parse(JSON.stringify(require('../fixtures/wh-ok.json')));
   WH.buckets.rolePlugin.push({ uid: 'g1', kind: 'rolePlugin', id: 'rp_sp_opt', slot: 'sp', quality: 'legendary', tier: 3, pointCost: 3, affixes: [], unlockTier: 'legendary', equipped: false });
   WH.buckets.role[0].slots.push({ type: 'sp', pluginUid: null });
-  const r = items.assemble(WH, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
+  const r = gatedItems.assemble(WH, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
   assert.equal(r.code, 'tier_locked', '装配门控（T-PB-7/§4.10）');
-  const ok = items.assemble(WH, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'mythic' });
+  const ok = gatedItems.assemble(WH, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'mythic' });
   assert.equal(ok.ok, true, 'mythic 放行');
   // U-5d 真分支（unlock.validateLoadout 插件臂）
-  const v = unlock.validateLoadout({ role: { templateId: 'role_bal' }, skills: [], plugins: [{ uid: 'p1', id: 'rp_sp_opt' }] }, 'rare');
+  const v = gatedUnlock.validateLoadout({ role: { templateId: 'role_bal' }, skills: [], plugins: [{ uid: 'p1', id: 'rp_sp_opt' }] }, 'rare');
   assert.equal(v.ok, false);
   assert.equal(v.errors[0].code, 'tier_locked');
+});
+
+test('T-PB-7b 门控关闭（默认）：低段位同样能开出高段位插件、也能装配（用户决策 2026-09-16）', () => {
+  const { createRng } = require('../../server/core/rng.js');
+  const r = createRng(2026);
+  let hit = false;
+  for (let i = 0; i < 500; i++) {
+    const it = items.openBox(r, { tier: 'rare' });
+    if (it.id === 'sp_displacement' || it.id === 'rp_sp_opt') hit = true;
+  }
+  assert.equal(hit, true, 'rare 段位池含 legendary 插件（段位不参与掉落池过滤）');
+  const WH = JSON.parse(JSON.stringify(require('../fixtures/wh-ok.json')));
+  WH.buckets.rolePlugin.push({ uid: 'g1', kind: 'rolePlugin', id: 'rp_sp_opt', slot: 'sp', quality: 'legendary', tier: 3, pointCost: 3, affixes: [], unlockTier: 'legendary', equipped: false });
+  WH.buckets.role[0].slots.push({ type: 'sp', pluginUid: null });
+  const a = items.assemble(WH, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
+  assert.equal(a.ok, true, '门控关闭：装配不再因段位拒绝');
+  const v = unlock.validateLoadout({ role: { templateId: 'role_bal' }, skills: [], plugins: [{ uid: 'p1', id: 'rp_sp_opt' }] }, 'rare');
+  assert.deepEqual(v, { ok: true, errors: [] }, 'validateLoadout 恒放行');
 });
 
 test('T-PB-8/9 汇总（B18/B19 已覆盖）：本批回归引用完整性与唯一性不变量在面板聚合后仍成立', () => {

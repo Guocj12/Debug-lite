@@ -157,7 +157,12 @@ health | data <table>
 | D-127 | §1 engine（dodgeChanceBonus）+ §4.11 rating 无关（battle-config） | | D-128 | §1 engine（defK 入表）+ §4.7 battle-config | | D-129 | §1 store/* + §4.8 PlayerArchive（服务端存档） |
 | D-130 | §1 store/*（混合权威：仓库仍客户端） + §4.8 flags.unverifiedLoadout | | D-131 | §2 auth/register + §4.8 configs.slots[≤3] | | D-132 | §2 ranked/run（双向记账） + §4.8 record.stats.defense |
 | D-133 | §2 quick/run + §4.11 rating-config.json | | D-134 | §1 store.append/applyRecord + §4.10 BattleRecord | | D-135 | §2 replay/:id（410）+ §4.9 Snapshot/§4.10 |
-| D-136 | §2 quick/run + §4.11 rating-config.json（opponentCooldownHours） | | | | | |
+| D-136 | §2 quick/run + §4.11 rating-config.json（opponentCooldownHours） | | D-137 | §1 core/unlock.js + unlock.json `gating.enabled`（默认关闭；六处判定不参与段位）+ §2 box/loadout + §1 ai/ast.js | | D-138 | §1 ai/ast.js/ai/runtime.js 删 `bullets` 节点与 `bullets[i].*` 路径 + §1 runner.js 快照不投影 bullets（设计） |
+| D-139 | §1 ai/runtime.js（`random` 双语义：语句位分支/表达式位布尔，消费每 tick `ai` 流） | | D-140 | §1 ai/runtime.js `traceLimit`（**每 tick** 上限 2000）+ server/battle.js trace 司机 | | D-141 | §1 core/engine.js 步骤 11（基地按自身 `maxHp`、角色按角色 `maxHp`）+ §4.7 battle-config.json |
+| D-142 | §1 core/items.js 生成路径 + core/roles.js（`typeModifiers` 接入开箱）+ role-templates.json | | D-143 | 各内容表 `drop`/`dropWeight`/`unlockTier`（掉落与解锁完全由 JSON 配置） | | D-144 | §1 server/data/schema.js（只校验结构与机制自洽，不锁条目数量；`_sample: true` 仅控示例期望表逐值比对） |
+| D-145 | §1 ai/ast.js 校验期四类拒绝（`get.path` 白名单 / 变量先声明 / 表达式位 / 必含 action）+ §1 ai/runtime.js 运行层兜底（缺失→0，不抛） | | D-146 | §1 ai/ast.js warnings + §2 `/ai/validate`、`/ai/compile`（响应带 `data.warnings`；非法动作名不拒绝，D-80） | | D-147 | §1 runner.js `projectSnapshot` 字段补齐（`tick`/`max*`/`cooldowns`/`effects[]`/`bases.*`）+ `baseHp` ＝ 基地当前血量（≠ 角色 `maxHp`） |
+| D-148 | §2 `/ai/battle`（`actionsEffective`/`ineffectiveActions`/`frames[].actions,events`） | | D-149 | §1 core/items.js `buildRolePanel` 单一聚合（roles/loadout 共用；regen 只叠一次） | | D-150 | §1 tests/regression/golden-battle.test.js + `docs/tasks.md §5.1` 第 5 条（阶段级代码级审查）+ `docs/plan-p7-playable.md` §0.7/§P7-7 |
+| D-151 | §2 CLI `replay`（伤害数字 + 暴击/背击标注）+ `npm run play`（`scripts/play.js` 离线文本闭环） | | D-152 | §2 ranked/run·quick/run（匹配池＝真实玩家档案；池不足回报 `shortfall`，**禁止 bot 充数**） | | D-153 | `docs/security-backlog.md`（只登记不修复；被顺手修掉的条目更新证据 + 状态） |
 
 ## §6 日志事件登记（§4.6 覆盖矩阵；实现批次标注，T-LG-4 断言于此）
 

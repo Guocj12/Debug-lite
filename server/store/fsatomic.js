@@ -138,7 +138,12 @@ function renameWithRetrySync(tmp, target, logger) {
 function writeFileAtomicSync(target, data, options) {
   const opts = options || {};
   const dir = path.dirname(target);
-  ensureDir(dir);
+  try {
+    ensureDir(dir);
+  } catch (err) {
+    // 路径不可用（父路径是文件、权限不足等）→ 统一为 store_write_failed（§6.6.4）
+    throw wrapWriteError(err, 'mkdir', dir);
+  }
   const tmp = tmpPathFor(target);
   let fd = null;
   try {

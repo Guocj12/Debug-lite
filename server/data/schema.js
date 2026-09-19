@@ -17,6 +17,27 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// ---------- P7 冲刺决策在数据层的落点登记（2026-09-16，D-137…D-153） ----------
+// 用途：gate 项 5 子 A（T-DC-8）要求 decisions.md 的每条 D 编号在 `docs/interfaces.md` **或数据表文本**中
+//   可检索。本块是**数据层侧的落点清单**（形如 D-xxx）；interfaces.md §6 的 D 落点表由接口冻结维护者同步补行。
+//   逐条口径（决策正文只在 docs/decisions.md §14，此处不重复、不新增语义）：
+//   D-137 段位门控总开关 gating.enabled（unlock.json；默认关闭、逻辑与字段保留）→ 本目录 unlock.json + core/unlock.js
+//   D-138 AI 语言删除 bullets 节点与 bullets[i].* 路径，快照不投影 bullets（设计）→ ai-nodes.json
+//   D-139 random 双语义（语句位分支 / 表达式位布尔，消费每 tick ai 流）→ ai-nodes.json + ai/runtime.js
+//   D-140 aiTrace 每 tick 上限 2000（非整场累计）→ ai-nodes.json 契约 + server/battle.js
+//   D-141 超时扣血：基地按自身 maxHp、角色按角色 maxHp → battle-config.json
+//   D-142 typeModifiers 接入开箱生成路径 → role-templates.json + core/items.js
+//   D-143 掉落/解锁完全由 JSON 配置（drop/dropWeight/unlockTier 每项自带）→ 本目录各内容表
+//   D-144 本文件只校验结构与机制自洽（不锁内容条目数量）；`_sample: true` 仅控示例期望表逐值比对
+//   D-145 校验期硬化四类（get.path 白名单/变量先声明/表达式位/必含 action）+ 运行层兜底→ ai-nodes.json
+//   D-146 非法动作名走 warnings（不拒绝，D-80）；/ai/validate|compile 响应带 data.warnings → ai-nodes.json actions
+//   D-147 快照字段补齐与 baseHp 语义（＝基地当前血量）→ 本目录 schema.js 冻结清单无涉，落 server/runner.js 投影
+//   D-148 /ai/battle 回报 actionsEffective / ineffectiveActions / frames[].actions|events → ai-nodes.json actions
+//   D-149 面板聚合单一实现（items.buildRolePanel；regen 只叠一次）→ qualities.json + 本目录
+//   D-150 只补黄金战斗回归（不补空 contract/property 目录）+ 阶段级代码审查 + 测试冗余/缺口审查 → tests/
+//   D-151 npm run play 离线闭环 + cli replay 伤害/暴击/背击标注 → scripts/play.js（数据侧无落点）
+//   D-152 真实玩家匹配，禁止占位 bot 充数（池不足回报 shortfall）→ 计划落 server/ranked.js（P7-3）
+//   D-153 安全登记册只登记不修复；被顺手修掉的条目更新证据与状态 → docs/security-backlog.md
 const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 const TIER_SEQ = Object.fromEntries(TIERS.map((t, i) => [t, i]));
 

@@ -9,6 +9,13 @@
  * 分支行动规则（D-101）：loop 体内所有 if/random（语句位概率分支）的每个分支（含隐式空 else）必须含至少一个 action
  *   或已定义函数 call；random 与 if 同规则（2026-09-17 随机语义修正配套）；
  *   call 视为行动产出点（静态保守）；break 必须位于同一函数作用域内的 loop 体内（跨函数 break 拒绝）；call 必须已定义（hoisting）。
+ * B26（用户决策 A：4 类"校验放过、运行期静默算错"的错误改为校验期拒绝）：
+ *   bad_path（get.path 不在快照白名单；运行层 getPath 仍有"非法/缺失/越界 → 0"兜底）、
+ *   undefined_var（getVar/set 的名字必须在程序某处被 var 声明过；**保守**——不做词法/顺序/分支可达性分析）、
+ *   not_expression（表达式位只能放 literal/get/getVar/arith/cmp/logic/random；语句节点在表达式位会被静默当 0 求值）、
+ *   no_action_program（整棵程序无任何 action，含空 body；只数"是否存在"，不做可达性分析）。
+ *   warnings 通道（**不拒绝**，D-80）：action.name 不在引擎词汇表 → {path,code:'unknown_action',name,message}；
+ *   validate/validateProgram 返回 {ok, errors, warnings}（warnings 恒为数组，调用方只读 ok/errors 向后兼容）。
  */
 
 const { nullLogger } = require('../../shared/log.js');
@@ -166,8 +173,12 @@ function exprChildren(node) {
   return fields;
 }
 
-function makeAst(logger) {
+// 段位门控可注入（用户决策 2026-09-16：默认关闭门控，但门控逻辑保留为可一键回退的开关）：
+//   unlockApi 缺省 = core/unlock 单例（按 unlock.json `gating.enabled` 取值）；
+//   测试/回退模式用 `ast.withGating(true)`（= makeAst(null, unlock.withGating(true))）复现旧门控口径。
+function makeAst(logger, unlockApi) {
   const L = logger || nullLogger;
+  const U = unlockApi || unlock;
 
   // 版本迁移（A-10d/e）：克隆后逐级迁移；返回 {program, error?, migrated?, from?, to?}；每级记 ai.migrate(info)
   function migrateProgram(program) {
@@ -444,7 +455,7 @@ function makeAst(logger) {
     return false;
   }
 
-  // 合法性：分支行动规则 + break 位置 + call 存在性（错误带 path）
+  // 合法性：分支行动规则 + break 位置 + call 存在性 + 变量声明（保守）+ 无 action 程序（错误带 path）
   function checkLegality(program) {
     const errors = [];
     if (!program || !program.body) return { ok: false, errors };
@@ -457,6 +468,13 @@ function makeAst(logger) {
       for (const c of (Array.isArray(ch.list) ? ch.list : [])) walk(c);
       for (const c of exprChildren(n)) walk(c);
     })(program.body);
+    // 变量声明集（B26 保守检查）：**程序任何位置**被 var 声明过即算（含函数体内声明 → 与 call hoisting 同口径）；
+    //   刻意不做词法作用域/语句顺序/分支可达性分析——"分支内声明、分支外使用""先读后声明"这类ordering 问题一律放过。
+    const declared = new Set();
+    walkNodes(program.body, (n) => {
+      if (n.type === 'var' && typeof n.name === 'string') declared.add(n.name);
+    });
+    let hasAction = false;
     const actionFns = collectActionFns(program);
     (function scan(node, path, ctx) {
       if (!node || typeof node !== 'object') return;
@@ -506,6 +524,11 @@ function makeAst(logger) {
           break;
         }
         default: {
+          // 保守变量检查（B26）：getVar/set 引用的名字必须在程序某处被 var 声明过，否则报 undefined_var
+          if ((node.type === 'getVar' || node.type === 'set') && typeof node.name === 'string' && !declared.has(node.name)) {
+            errors.push({ path, code: 'undefined_var', message: `未声明的变量 ${node.name}（须在程序中以 var 声明；保守检查不区分作用域与顺序）` });
+          }
+          if (node.type === 'action') hasAction = true; // 无 action 程序检测（只数"是否存在"，不做可达性分析）
           const ch = childList(node);
           if (ch.list && Array.isArray(ch.list)) {
             ch.list.forEach((c, i) => {
@@ -517,16 +540,21 @@ function makeAst(logger) {
         }
       }
     })(program.body, 'body', { loopDepth: 0, scope: 'root' }, fns, errors);
+    // 无 action 程序（B26）：整棵程序（含空 body）不含任何 action → 运行期只能恒 wait → 校验期拒绝（不做可达性分析）
+    if (!hasAction) {
+      errors.push({ path: '', code: 'no_action_program', message: '程序不含任何 action（含空 body）：AI 必须至少存在一个 action 节点' });
+    }
     return { ok: errors.length === 0, errors };
   }
 
-  // 全量校验（B13）：结构 + 合法性 + 段位门控 → {ok, errors:[{path,code,message}]}；拒绝记 ai.validate.reject(warn)
+  // 全量校验（B13）：结构 + 合法性 + 段位门控 → {ok, errors, warnings}；拒绝记 ai.validate.reject(warn)
+  //   warnings（B26，D-80）：非阻断提示通道（如动作名不在引擎词汇表）；调用方只读 ok/errors 仍向后兼容。
   function validate(program, tier) {
     const errors = [];
     // 版本迁移先行：后续结构/合法性/门控全用迁移后程序（A-10d/e）
     const mig = migrateProgram(program);
     if (mig.error) {
-      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program && program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }] };
+      return { ok: false, errors: [{ path: '', code: mig.error, message: mig.error === 'ai_version_unsupported' ? `版本 ${program && program.version} 超过当前支持 ${CURRENT_VERSION}` : '程序版本无法迁移' }], warnings: [] };
     }
     if (mig.migrated) program = mig.program;
     const struct = validateProgram(program);
@@ -536,7 +564,7 @@ function makeAst(logger) {
       legality = checkLegality(program);
       errors.push(...legality.errors);
     }
-    // 段位门控（unlock 原语：unknown → 保守拒绝）
+    // 段位门控（unlock 原语：unknown → 保守拒绝；门控默认关闭时 isUnlocked 恒 true → 本段无错误）
     const gateErrors = [];
     if (struct.ok) {
       const seen = new Set();
@@ -544,7 +572,7 @@ function makeAst(logger) {
         if (!n || typeof n !== 'object' || typeof n.type !== 'string') return;
         if (!seen.has(n)) {
           seen.add(n);
-          if (!unlock.isUnlocked(tier, n.type)) {
+          if (!U.isUnlocked(tier, n.type)) {
             gateErrors.push({ path: p, code: 'node_locked', node: n.type, message: `节点 ${n.type} 需 ${tierOfNode(n.type)} 段位` });
           }
         }
@@ -558,19 +586,20 @@ function makeAst(logger) {
     const ok = errors.length === 0;
     if (!ok) {
       for (const e of errors) {
-        if (e.code === 'node_locked' || e.code === 'branch_without_action' || e.code === 'break_outside_loop' || e.code === 'unknown_call') {
+        if (e.code === 'node_locked' || e.code === 'branch_without_action' || e.code === 'break_outside_loop' || e.code === 'unknown_call'
+          || e.code === 'bad_path' || e.code === 'not_expression' || e.code === 'undefined_var' || e.code === 'no_action_program') {
           L.warn('ai.ast', 'ai.validate.reject', `${e.code} @ ${e.path}`, { code: e.code, path: e.path, node: e.node });
         }
       }
     }
     L.debug('ai.ast', 'ai.validate', `validate(${tier}) ok=${ok}`, { ok, tier, version: program && program.version });
-    return { ok, errors };
+    return { ok, errors, warnings: struct.warnings };
   }
 
   // 节点所属解锁段位（错误消息用；unlock 原语反查）
   function tierOfNode(nodeType) {
     for (const t of ['common', 'rare', 'epic', 'legendary', 'mythic']) {
-      if (unlock.isUnlocked(t, nodeType)) return t;
+      if (U.isUnlocked(t, nodeType)) return t;
     }
     return 'unknown';
   }
@@ -610,7 +639,9 @@ function makeAst(logger) {
     return { nodes, depth, usedNodeTypes: [...usedNodeTypes] };
   }
 
-  return { validateProgram, collectUsedNodeTypes, checkLegality, validate, nodePathOf, NODE_TYPES, limits: LIMITS, canonicalize, programHash, statsOf, getNodeAtPath, migrateProgram };
+  // withLogger / withGating 为实例级工厂：链式调用不丢注入口（withGating(true).withLogger(log) 可用）
+  return { validateProgram, collectUsedNodeTypes, checkLegality, validate, nodePathOf, NODE_TYPES, limits: LIMITS, canonicalize, programHash, statsOf, getNodeAtPath, migrateProgram,
+    withLogger: (lg) => makeAst(lg, U), withGating: (g) => makeAst(L, unlock.withGating(g)) };
 }
 
 // A-10a/b/c 规范化：对象键排序 + 紧凑序列化（去空白）→ 同一程序不同书写/空白 → 相同 canonical 串
@@ -695,6 +726,8 @@ const FIELD_CHECKS = {
 
 module.exports = Object.assign(makeAst(), {
   withLogger: (logger) => makeAst(logger),
+  // 段位门控开关（缺省 = unlock.json `gating.enabled`；true = 回退到门控参与判定）
+  withGating: (enabled) => makeAst(null, unlock.withGating(enabled)),
   NODE_TYPES,
   limits: LIMITS,
   CURRENT_VERSION,

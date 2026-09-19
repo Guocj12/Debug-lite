@@ -47,7 +47,8 @@ test('T-AP-1 /api/v1/box 正常路径：信封 + 物品 + seed 回带 + api.* �
     assert.equal(r.body.data.items.length, 5);
     for (const it of r.body.data.items) {
       assert.equal(typeof it.uid, 'string');
-      assert.ok(['common', 'rare'].includes(it.quality), 'raree 上限');
+      // 门控关闭（默认，用户决策 2026-09-16）：tier 只作回带信息，品质取自全池 dropRates
+      assert.ok(['common', 'rare', 'epic', 'legendary', 'mythic'].includes(it.quality), `品质合法: ${it.quality}`);
     }
     assert.ok(logger.records.some((x) => x.event === 'api.req' && x.data.path === '/api/v1/box'));
     assert.ok(logger.records.some((x) => x.event === 'api.res' && x.data.path === '/api/v1/box'));

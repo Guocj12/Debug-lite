@@ -197,6 +197,35 @@
 
 ---
 
-## 14. 待补充的数值（B21 已统一校准，见 D-127/D-128）
+## 14. P7 冲刺：门控关闭、AI 语言收口与可玩性（来源：P7-0 / AI 收口 / DOC_SYNC，2026-09-16）
+
+> 本组决策是**用户 2026-09-16 连续拍板**的结果，落地编排见 `docs/plan-p7-playable.md`（阶段 P7-0…P7-7）。
+> 其中 D-137（关段位门控）的**执行**属 P7-0（在途）；D-138…D-145 的**代码已落地**（第二波，已实测）；D-146…D-153 为流程与产品口径。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-137** | ⚠️ **默认关闭段位门控：所有功能默认全解锁、段位不参与判定**——六处判定（内容解锁 / 物品级 / 开箱品质上限 / 出战配置 / AI 节点 / 装配）一律不做段位判定；**门控逻辑与数据字段保留为可回退开关**（`unlock.json` 的 `gating.enabled`，关/开两模式都保留测试）；**排位晋升与段位奖励暂留**（属进度而非门控）；**快速对战按 Elo 积分匹配**（不用段位） | `unlock.json`（`gating`）、`core/unlock.js`、`core/items.js`、`server/box.js`、`server/loadout.js`、`ai/ast.js`、`09-unlock`、`10-ranked`、`plan-p7-playable §P7-0` |
+| **D-138** | ⚠️ **取消"AI 观测弹幕"：从 AI 语言删除 `bullets` 节点与 `bullets[i].*` 路径，快照不再投影 `bullets`**；**"AI 无法观测弹幕"是设计**（弹幕当 tick 全解算完毕，D-20），**非缺陷**；节点数收敛为 **16 类 / `base` 9 / 段位累计 10/12/14/14/16** | `ai-nodes.json`、`ai/ast.js`、`ai/runtime.js`、`runner.js` 投影、`08-ai`、`tasks.md §3.7.2/§3.7.6`、`battle-walkthrough §3.2` |
+| **D-139** | **`random` 双语义定稿**：**语句位** = 概率分支（真正进入 `then`/`else` 并执行，跨 tick 可恢复）；**表达式位** = 返回布尔（`true` 概率 = `prob`）；两种用法都只在真正求值时消费一次**每 tick 的 `ai` 流** | `ai/runtime.js`、`08-ai §4.3/§4.4`、`tasks.md §3.7.4` |
+| **D-140** | ⚠️ **`aiTrace` 上限改口径：每 tick 上限 2000 条**（不再是"整场累计 2000"）；本 tick 的轨迹**全量**交给 trace 司机，每帧 `aiTrace` 只归属该 tick、不累积不重复 | `ai/runtime.js`（`traceLimit`）、`server/battle.js` trace 司机、`tasks.md §3.7.8`、`tests/api/api-battle.test.js` |
+| **D-141** | ⚠️ **超时扣血口径定稿：基地按"自身 `maxHp`"扣，角色仍按"角色 `maxHp`"扣**——消除"角色变强反而更快输"的"变强即变弱"副作用 | `server/core/engine.js` 步骤 11、`battle-config.overtimeRatio`、`07-engine §4.7` |
+| **D-142** | **`typeModifiers` 接入开箱生成路径**：角色模板的类型修饰（特化 ±15%、专家 `1.30`+`spread`）在**开箱实例化**时真正生效（此前只有面板层生效 → 11 角色数值同质） | `core/items.js`（生成路径）、`core/roles.js`、`role-templates.json`、`02-roles`、`01-items` |
+| **D-143** | **掉落与解锁完全由 JSON 配置**：每项模板/插件自带 `drop` / `dropWeight` / `unlockTier`；**门禁不再锁"数量"**（不再有"某段位只能出 N 项"的隐含约束） | `role-templates.json`/`skill-templates.json`/`plugins.json`、`core/items.js`、`README.md`（server/data） |
+| **D-144** | **`schema.js` 只校验结构与机制自洽**：不锁"11 角色 / 10 技能 / 29 插件"等内容条目数量；`_sample: true` 仅用作"示例期望表逐值比对"的开关（去掉标记即跳过逐值比对） | `server/data/schema.js`、`server/data/README.md`、gate 项 4/5 |
+| **D-145** | ⚠️ **校验期硬化（四类一律校验期拒绝）**：① `get.path` 白名单（**容器不可当值读**）；② 变量必须先声明；③ 表达式位只允许表达式节点；④ 程序必须含 `action`。**同时保留运行层兜底**（路径缺失/越界 → 安全默认 `0`/`false`，**不抛**）——校验层不替代运行层 | `ai/ast.js`、`ai/runtime.js`、`08-ai §4.2/§4.5/§5`、`tasks.md §3.7.5`、`tests/unit/ai-validate.test.js` |
+| **D-146** | **非法动作名走 `warnings`**（**不拒绝**，保持 D-80 的运行期归一化 `wait` + `action.invalid`）；`/api/v1/ai/validate` 与 `/api/v1/ai/compile` 的响应体带 `data.warnings` | `ai/ast.js`、`server/index.js`（ai 端点）、`interfaces §2`、`tasks.md §3.7.5` |
+| **D-147** | **AI 快照字段补齐**：新增 `tick`、`self\|enemy.maxHp\|maxMp\|maxSp`、`cooldowns`、`effects[]`、`bases.*`（`bases.self\|enemy.{hp,maxHp,def}`）；**`baseHp` ＝ 该方基地当前血量**（`bases.<owner>.hp`，**≠ 角色最大血量**——两者是完全不同的东西） | `server/runner.js` `projectSnapshot`、`ai/ast.js` 路径白名单、`08-ai §4.5`、`battle-walkthrough §3.2`、`security-backlog SEC-17` |
+| **D-148** | **`POST /api/v1/ai/battle` 明确回报未生效动作**：响应含 `actionsEffective` / `ineffectiveActions` 与 `frames[].actions\|events`（非法动作名→`wait` 的归一化不再静默） | `server/index.js`、`server/battle.js`（或 ai 驱动器）、`interfaces §2`、`tests/api/api-ai.test.js` |
+| **D-149** | **合并面板实现（消除双写与 shape 分歧）**：`roles.equipPlugins`/`getFinalStats` 与 `loadout.buildPanel` **只保留一套聚合**（单一实现 `items.buildRolePanel`）——**regen 只叠一次**，角色面板 shape 唯一 | `core/items.js`、`core/roles.js`、`server/loadout.js`、`03-skills`（回归用例）、`04 品质表` |
+| **D-150** | ⚠️ **测试与流程（三条硬性要求）**：① **只补"黄金战斗回归"**（`tests/regression/golden-battle.test.js`），**不补空的 `tests/contract`/`tests/property` 目录**（空目录会静默通过）；② **每个阶段/新功能完成后必须做一次独立"代码级审查"并修复**（检查**功能完整度 / 空实现 / 冲突重合**）；③ **测试体系需审查冗余与缺口**（冗余项合并、缺口补齐，不得只增不减堆用例） | `tests/regression/golden-battle.test.js`、`tasks.md §5.1 第 5 条`、`plan-p7-playable §0.7/§P7-7`、`progress.md` |
+| **D-151** | **可玩性工具**：新增 `npm run play`（`node scripts/play.js`，**离线文本闭环**：开箱→装配→预设 AI→面板→战斗→逐 tick 战报）；`cli replay` 增加**伤害数字与暴击/背击标注** | `scripts/play.js`、`cli/index.js`（replay）、`README.md` 命令表、`plan-p7-playable §交付定义` |
+| **D-152** | ⚠️ **真实玩家匹配，禁止占位 bot 敷衍**：匹配池**只能**由真实玩家档案（真实注册、真实出战配置、真实 AI 快照）构成；池内候选不足时**少打几场并回报 `shortfall`**，**不得**用 bot 补齐凑场次；既有 bot 补齐逻辑须移除或降级为"默认关闭的显式调试开关 + 日志标注" | `plan-p7-playable §P7-3/§P7-6`、`10-ranked §4.3`、`server/ranked.js`（P7-3 实施）、`11-account-store` |
+| **D-153** | **安全与防作弊登记册口径**：`security-backlog.md` **只登记不修复**（不派发任务、不改门禁）；但**被顺手修掉的条目必须更新"现状证据 + 状态"**（标为**已处置 / 已部分处置**并留证据与日期） | `docs/security-backlog.md`（SEC-03/SEC-17/SEC-19 等）、`progress.md` |
+
+> **流程补充（D-150 的落地细则）**：独立"代码级审查"的**逐条检查表**（功能完整度 / 空实现与占位 / 冲突与重合 / 副作用与回归 / 独立执行者 + 文件:行证据）见 `docs/plan-p7-playable.md` §0 第 7 条与 `docs/tasks.md` §5.1 第 5 条——**每个阶段/新功能完成后执行，问题当阶段修复**。
+
+---
+
+## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

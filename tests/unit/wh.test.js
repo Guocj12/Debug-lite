@@ -41,15 +41,26 @@ const mkAtk = (uid, pointCost) => ({
   pointCost, affixes: [], equipped: false,
 });
 
-test('I-10c 段位门控：legendary 插件 + rare 玩家 → tier_locked（目标也受控）', () => {
+test('I-10c 段位门控（门控开启 = 回退模式）：legendary 插件 + rare 玩家 → tier_locked（目标也受控）', () => {
+  const gatedItems = items.withGating(true);
   const src = wh();
   src.buckets.rolePlugin.push({ uid: 'p3', kind: 'rolePlugin', id: 'hp_up', slot: 'atk', quality: 'legendary', tier: 5, pointCost: 5, affixes: [], unlockTier: 'legendary', equipped: false });
   src.buckets.role[0].pluginPoints = 6; // 让点数不干扰门控判定
-  const r = items.assemble(src, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'rare' });
+  const r = gatedItems.assemble(src, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'rare' });
   assert.equal(r.ok, false);
   assert.equal(r.code, 'tier_locked');
-  const ok = items.assemble(src, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'mythic' });
+  const ok = gatedItems.assemble(src, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'mythic' });
   assert.equal(ok.ok, true, '同段位及以上放行');
+});
+
+test('I-10c2 段位门控关闭（默认）：同一装配请求不再因段位拒绝（用户决策 2026-09-16）', () => {
+  const src = wh();
+  src.buckets.rolePlugin.push({ uid: 'p3', kind: 'rolePlugin', id: 'hp_up', slot: 'atk', quality: 'legendary', tier: 5, pointCost: 5, affixes: [], unlockTier: 'legendary', equipped: false });
+  src.buckets.role[0].pluginPoints = 6;
+  const r = items.assemble(src, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'common' });
+  assert.equal(r.ok, true, '门控关闭：最低段位也能装配 legendary 插件');
+  assert.equal(r.warehouse.buckets.role[0].slots[0].pluginUid, 'p3');
+  assert.equal(r.warehouse.buckets.rolePlugin.find((x) => x.uid === 'p3').equipped, true);
 });
 
 test('T-PB-2/I-10d 点数预算：已装 1+2 再装 2（>4）→ points_exceeded 且状态不变', () => {
@@ -136,11 +147,14 @@ test('B18 补充分支：技能目标装配/类别错配/目标门控/点数缺�
   // 技能目标装角色插件 → slot_type_mismatch
   const wB = items.assemble(src, { targetUid: 's1', slotIndex: 0, pluginUid: 'p1', tier: 'common' });
   assert.equal(wB.code, 'slot_type_mismatch');
-  // 目标自身门控：目标 unlockTier > tier → tier_locked
+  // 目标自身门控（门控开启 = 回退模式）：目标 unlockTier > tier → tier_locked
   const src2 = wh();
   src2.buckets.role[0].unlockTier = 'legendary';
-  const wC = items.assemble(src2, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p1', tier: 'rare' });
+  const wC = items.withGating(true).assemble(src2, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p1', tier: 'rare' });
   assert.equal(wC.code, 'tier_locked', '目标物品也受段位门控');
+  // 同一请求在门控关闭（默认）下放行
+  const wC2 = items.assemble(src2, { targetUid: 'r1', slotIndex: 0, pluginUid: 'p1', tier: 'rare' });
+  assert.equal(wC2.ok, true, '门控关闭：目标段位不参与判定');
   // 点数兜底：已装插件缺 pointCost 字段 → 计 0 不崩
   const wD = items.assemble(wh(), { targetUid: 'r1', slotIndex: 0, pluginUid: 'p1', tier: 'common' }).warehouse;
   delete wD.buckets.rolePlugin[0].pointCost;

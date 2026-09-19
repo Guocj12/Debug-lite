@@ -221,5 +221,5 @@
 | T-SK-3 | 越界 `clampX` 与格区间丢弃 |
 | T-SK-4 | 资源不足 / 冷却中不释放、不扣资源、不产生效果 |
 
-> **机制接线回归用例**（`tests/unit/mechanics.test.js`，2026-09-16 补齐 11 用例，全绿）：D-72 三态（免疫伤害 / 不参与判定 / 免疫控制 / 免疫附加真实伤害）、`crit_chance`·`lifesteal` 进 `specials` 并在"实例直通引擎"链路上真触发、`cast_buff` 下一 tick 起效、`hp_regen` 逐 tick 回复且不复活。
-> ⚠️ **上述接线目前只在"技能实例直通引擎"的链路上成立**（`skills.applySkillPlugins` → `buildSkillAction` → 弹幕 payload）。经 `POST /api/v1/battle`（`server/battle.js buildPlayer` → `loadout.buildPanel` 白名单聚合）进入战斗时，`specials` / `castEffects` 未被投影到技能实例（聚合白名单只含 `multiplier/cost/cooldown/bulletLevel/bulletCount/range/area/distance/passThroughEnemy/dealDamage/fullDodgeDuring/falloff`）——**这属于实现待接线项**，详见本轮汇报（不在本文档定义新语义）。
+> **机制接线回归用例**（`tests/unit/mechanics.test.js`，2026-09-16 补齐，全绿）：D-72 三态（免疫伤害 / 不参与判定 / 免疫控制 / 免疫附加真实伤害）、`crit_chance`·`lifesteal` 进 `specials` 并真触发、`cast_buff` 下一 tick 起效、`hp_regen` 逐 tick 回复且不复活，以及 **`loadout.buildPanel` 投影必须保留 `specials` / `castEffects` / `affixes` 与插件 regen**（该用例直接断言 API 面板聚合不丢机制字段）。
+> ✅ **两条链路都已接线**：`skills.applySkillPlugins` → `buildSkillAction` → 弹幕 payload（实例直通），以及 `POST /api/v1/battle`（`server/battle.js buildPlayer` → `loadout.buildPanel`）——后者的技能参数白名单**包含** `specials` / `castEffects` / `affixes`，未列入白名单的自定义字段亦按 P2-② 透传。角色侧的五维/special/regen 聚合自 2026-09-16 起是**单一实现** `items.buildRolePanel`（`roles.getFinalStats` 与 `loadout.buildPanel` 共用），regen 只叠一次。

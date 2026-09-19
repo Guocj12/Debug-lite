@@ -5,6 +5,22 @@
  * 事件：items.roll.quality(debug) / items.generate(debug) / items.affix.apply(trace)（§4.6）。
  * 数值来源：server/data/*.json（L9）。
  * 注意：本模块只做"数值/生成"；仓库/装配/loadout 属 L3（B18，同文件双分层）。
+ *
+ * 2026-09-16 用户拍板 A 的三处集中改动（详见 systems/01-items.md 与 server/data/README.md）：
+ *   ① `applyTypeModifier` 成为**类型修饰的唯一实现**，`generateRoleItem` 开箱时即套修饰
+ *      （修正前只有 roles.instantiateRole 套 → 同品质 11 个角色数值完全相同）；
+ *   ② 掉落池 `dropPool` / 池内抽取 `pickFromPool`：是否掉落（`drop`）与同类权重（`dropWeight`）
+ *      全部由内容层 JSON 配置，`openBox` 不再只按类别；
+ *   ③ `buildRolePanel` 成为**角色面板聚合的唯一实现**（`roles.getFinalStats` 与 `loadout.buildPanel` 共用，
+ *      regen 只叠一次，消除双写）。
+ *
+ * **段位门控开关（用户决策 2026-09-16：默认所有功能全部解锁，段位不参与判定）**：
+ *   总开关 = server/data/unlock.json 的 `gating.enabled`（与 core/unlock.js 同一字段，单一数据源）；
+ *   缺省实例按该字段取值：false（当前默认）→ validateUnlock 恒 true、rollQuality 不做品质池截断（全池按
+ *   dropRates 抽）、dropPool 不再按 unlockTier 过滤、assemble 不再产生 tier_locked；
+ *   true → 旧行为完全不变（D-122/RK-5/I-9/§4.10 口径）。本文件无 IO/console/Math.random（L11）。
+ *   测试可注入：`items.withGating(true|false)`（返回新实例，链式 `withGating(x).withLogger(log)` 可用），
+ *   工厂签名 `makeItems(logger?, gating?)`——gating 缺省 = 开关值。
  */
 const { nullLogger } = require('../../shared/log.js');
 const { createRng } = require('./rng.js');
@@ -14,6 +30,8 @@ const ROLE_TEMPLATES = require('../data/role-templates.json').roleTemplates;
 const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 const ITEMS_CONFIG = require('../data/items-config.json');
+// 段位门控开关（unlock.json 的 gating.enabled 为单一数据源；字段缺失/非 false → 按启用处理，旧表行为不变）
+const GATING_DEFAULT = !require('../data/unlock.json').gating || require('../data/unlock.json').gating.enabled !== false;
 // 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
 const TYPE_MODIFIERS = require('../data/role-templates.json').typeModifiers;
 
@@ -67,8 +85,10 @@ const roleMap = Object.fromEntries(ROLE_TEMPLATES.map((r) => [r.id, r]));
 const skillMap = Object.fromEntries(SKILL_TEMPLATES.map((s) => [s.id, s]));
 const pluginList = PLUGINS.slice();
 
-function makeItems(logger) {
+function makeItems(logger, gating) {
   const L = logger || nullLogger;
+  // 实例门控：显式 true/false 覆盖开关；缺省（undefined/null）→ 读 unlock.json 的 gating.enabled
+  const gatingOn = gating === undefined || gating === null ? GATING_DEFAULT : gating === true;
   const rand = (rng, lo, hi) => (typeof rng.float === 'function' ? rng.float(lo, hi) : rng.float());
 
   function getQuality(qualityId) {
@@ -80,9 +100,11 @@ function makeItems(logger) {
   // 品质抽取（I-1）：dropRates 加权；tier 提供时按 D-122/RK-5 截断品质池（段位序号即品质上限，B17 掉落池门控）
   // P1-1 修复（审查 docs/reviews/B17.md）：截断后按剩余池 dropRates **重归一**（acc/total），残量不再落入兜底；
   //   无 tier 时 pool=全池 total=1.0，与 B3 行为逐字节一致。
+  // **门控关闭（当前默认，用户决策 2026-09-16）**：tier 不再起门控作用 → 恒全池（等价 tier 缺省路径）；
+  //   tier 参数保留（API/CLI 兼容），仅作回带信息。开启时行为不变。
   function rollQuality(rng, tier) {
     const rates = ITEMS_CONFIG.dropRates;
-    const capIdx = tier === undefined || !TIERS.includes(tier) ? TIERS.length - 1 : TIERS.indexOf(tier);
+    const capIdx = !gatingOn || tier === undefined || !TIERS.includes(tier) ? TIERS.length - 1 : TIERS.indexOf(tier);
     const pool = TIERS.slice(0, capIdx + 1);
     const total = pool.reduce((a, t) => a + rates[t], 0);
     const v = rand(rng, 0, 1);
@@ -246,6 +268,7 @@ function makeItems(logger) {
   //   `drop`      布尔：false → 不进入掉落池；缺省（未写字段）视为 true（旧表兼容）
   //   `dropWeight` 数值：同类池内相对权重；缺省 / 非正数 / 非数值 → 1
   //   `unlockTier` 段位门控：≤ tier 才进池（I-9 / D-112；缺省已解锁）
+  //   门控关闭（当前默认）→ validateUnlock 恒 true，本函数只按 drop 过滤（不再因段位剔条目）
   function dropPool(list, tier) {
     return (list || []).filter((x) => x && x.drop !== false && validateUnlock(x, tier));
   }
@@ -356,7 +379,10 @@ function makeItems(logger) {
   }
 
   // 段位门控（I-9；D-112 缺省已解锁）
+  // **门控关闭（当前默认，用户决策 2026-09-16）**：恒 true——物品级门控（掉落池/装配/loadout）随之全部失效；
+  //   开启时按 TIERS 序号比较（未知段位/未知 unlockTier 一律拒绝，保守）。
   function validateUnlock(item, tier) {
+    if (!gatingOn) return true;
     if (item.unlockTier === undefined || item.unlockTier === null) return true;
     const a = TIERS.indexOf(item.unlockTier);
     const b = TIERS.indexOf(tier);
@@ -418,7 +444,8 @@ function makeItems(logger) {
     const slot = slots && Number.isInteger(slotIndex) && slotIndex >= 0 ? slots[slotIndex] : null;
     if (!slot) return rejectOut('slot_type_mismatch', `槽位不可用: ${slotIndex}`);
     if (plugin.slot !== slot.type) return rejectOut('slot_type_mismatch', `插件槽 ${plugin.slot} ≠ 插槽 ${slot.type}`);
-    // ④ 段位门控（I-10c）：插件与目标均须 ≤ tier
+    // ④ 段位门控（I-10c）：插件与目标均须 ≤ tier——**由 validateUnlock 单点决定**：
+    //   门控关闭（当前默认）→ validateUnlock 恒 true → 本行永不产生 tier_locked（装配不再因段位拒绝）
     if (!validateUnlock(plugin, tier) || !validateUnlock(target, tier)) return rejectOut('tier_locked', '物品解锁段位高于玩家段位');
     // ⑤ 点数预算（I-10d，仅角色目标）
     if (target.kind === 'role') {
@@ -466,7 +493,15 @@ function makeItems(logger) {
     generateRoleItem, generateSkillItem, generatePlugin, openBox,
     applyAffixes, buildRolePanel, applyTypeModifier, dropPool, pickFromPool, validateUnlock,
     emptyWarehouse, assemble, disassemble,
+    // 实例自省：当前门控是否参与判定（测试/文档断言用；属性非函数）
+    gatingEnabled: gatingOn,
+    // 实例级工厂（保证链式调用 withGating(true).withLogger(log) 不丢设置）
+    withLogger: (lg) => makeItems(lg, gatingOn),
+    withGating: (g) => makeItems(L, g),
   };
 }
 
-module.exports = Object.assign(makeItems(), { withLogger: (logger) => makeItems(logger) });
+module.exports = Object.assign(makeItems(), {
+  // 段位门控开关缺省值（= unlock.json gating.enabled；门禁/文档可读）
+  GATING_DEFAULT,
+});

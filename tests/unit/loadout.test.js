@@ -45,22 +45,64 @@ test('T-PB-9/I-12d 引用完整性：悬挂引用与未装配插件 → loadout_
   assert.ok(v2.errors.some((e) => e.message.includes('未装配')), JSON.stringify(v2.errors));
 });
 
-test('I-12e 段位门控：物品解锁段位 > tier → 拒绝；AI 节点超段位 → 拒绝', () => {
+test('I-12e 段位门控（开启 = 回退模式；两模式对照见 I-12e2）：物品解锁段位 > tier → 拒绝；AI 节点超段位 → 拒绝', () => {
+  // loadout.withGating(true) = items/ast 同步切到门控开启的视图（无需打补丁单例）
+  const gated = loadout.withGating(true);
+  assert.equal(gated.gatingEnabled, true, '视图自省：门控开启');
+  assert.equal(loadout.gatingEnabled, false, '缺省 loadout 实例 = 门控关闭（unlock.json gating.enabled=false）');
   const f1 = fixture();
   f1.loadout.role.unlockTier = 'legendary';
   f1.warehouse.buckets.role[0].unlockTier = 'legendary';
-  const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'rare' });
+  const v1 = gated.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'rare' });
   assert.equal(v1.ok, false, '角色超段位');
   // s3 的 unlockTier=mythic → rare 拒绝（fixture 里 s3 本身 mythic）
-  const v2 = loadout.validateLoadout(fixture().loadout, { warehouse: fixture().warehouse, tier: 'rare' });
+  const v2 = gated.validateLoadout(fixture().loadout, { warehouse: fixture().warehouse, tier: 'rare' });
   assert.equal(v2.ok, false, '技能 s3 mythic 超 rare');
-  // AI 节点门控：加入 random（epic）→ common 拒绝
+  // AI 节点门控：加入 random（epic）→ common 拒绝（ast 门控段经注入的 unlock 实例）
   const f3 = fixture();
-  f3.loadout.ai.body.statements.push({ type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] }, else: null });
+  // random 的两个分支都给出 action（B26 分支行动规则：含隐式空 else 也须能产出行动）
+  f3.loadout.ai.body.statements.push({ type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] }, else: { type: 'action', name: 'wait' } });
   f3.warehouse.buckets.skill[2].unlockTier = 'common';
-  const v3 = loadout.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'common' });
+  const v3 = gated.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'common' });
   assert.equal(v3.ok, false, `AI random 超 common（s3 改为 common 以免干扰）`);
   assert.ok(v3.errors.some((e) => e.where.startsWith('ai:')), JSON.stringify(v3.errors));
+  assert.ok(v3.errors.some((e) => e.message.includes('node_locked')), `AI 门控错误经 ast 透传: ${JSON.stringify(v3.errors)}`);
+});
+
+test('I-12e2 段位门控关闭（默认，用户决策 2026-09-16）：同一组数据不再因段位拒绝', () => {
+  // 角色/技能/插件全部"超段位"，AI 使用 epic 节点 random @ common → 仍应放行
+  const f1 = fixture();
+  f1.loadout.role.unlockTier = 'legendary';
+  f1.warehouse.buckets.role[0].unlockTier = 'legendary';
+  const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'common' });
+  assert.equal(v1.ok, true, `角色超段位不再拒绝: ${JSON.stringify(v1.errors)}`);
+  const v2 = loadout.validateLoadout(fixture().loadout, { warehouse: fixture().warehouse, tier: 'common' });
+  assert.equal(v2.ok, true, '技能 s3 mythic 不再拒绝');
+  const f3 = fixture();
+  f3.loadout.ai.body.statements.push({ type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] }, else: { type: 'action', name: 'wait' } });
+  f3.warehouse.buckets.skill[2].unlockTier = 'common';
+  const v3 = loadout.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'common' });
+  assert.equal(v3.ok, true, `AI random @ common 不再拒绝: ${JSON.stringify(v3.errors)}`);
+  assert.ok(!v3.errors.some((e) => e.message.includes('node_locked')), '默认不再产生 node_locked');
+});
+
+test('I-12e3 门控注入缝（推荐方向）：opts.items 显式覆盖单例，两模式同一入口可复核', () => {
+  const itemsMod = require('../../server/core/items.js');
+  const f = fixture();
+  f.loadout.role.unlockTier = 'legendary';
+  f.warehouse.buckets.role[0].unlockTier = 'legendary';
+  // 显式注入门控开启实例 → 角色超段位被拒（旧行为；不依赖单例打补丁）
+  const vOn = loadout.validateLoadout(f.loadout, { warehouse: f.warehouse, tier: 'rare', items: itemsMod.withGating(true) });
+  assert.equal(vOn.ok, false, `门控开启：角色超段位应拒绝 ${JSON.stringify(vOn.errors)}`);
+  assert.ok(vOn.errors.some((e) => e.message.includes('段位')), JSON.stringify(vOn.errors));
+  // 显式注入门控关闭实例 → 放行（默认模式）
+  const vOff = loadout.validateLoadout(f.loadout, { warehouse: f.warehouse, tier: 'rare', items: itemsMod.withGating(false) });
+  assert.equal(vOff.ok, true, `门控关闭：放行 ${JSON.stringify(vOff.errors)}`);
+  // 面板入口同样透传 opts（buildPanel → validateLoadout）
+  const pOn = loadout.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'rare', items: itemsMod.withGating(true) });
+  assert.equal(pOn.ok, false, 'buildPanel 透传 opts.items');
+  const pOff = loadout.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'rare', items: itemsMod.withGating(false) });
+  assert.equal(pOff.ok, true, 'buildPanel 门控关闭放行');
 });
 
 test('I-12a AI 非法（分支无 action）→ loadout_invalid（带 ai: 路径）', () => {
@@ -187,12 +229,16 @@ test('P1-3 回归：装配引用缺 warehouse → missing_warehouse；空装配�
   f2.loadout.skills = f2.loadout.skills.map((s) => ({ ...s, slots: [{ type: 'basic', pluginUid: null }] }));
   const v2 = loadout.validateLoadout(f2.loadout, { tier: 'mythic' });
   assert.equal(v2.ok, true, '空装配无 warehouse → 放行（面板即最终值）');
-  // 插件门控复核（P2-2）：warehouse 中插件 unlockTier 超 tier → 拒绝
+  // 插件门控复核（P2-2）：warehouse 中插件 unlockTier 超 tier → 拒绝（**门控开启**；默认关闭时见下行）
   const f3 = fixture();
   f3.warehouse.buckets.rolePlugin[0].unlockTier = 'legendary';
-  const v3 = loadout.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'rare' });
-  assert.equal(v3.ok, false, '插件超段位 → 拒绝');
+  const v3 = loadout.withGating(true).validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'rare' });
+  assert.equal(v3.ok, false, '插件超段位 → 拒绝（门控开启）');
   assert.ok(v3.errors.some((e) => e.message.includes('需 legendary')), JSON.stringify(v3.errors));
+  const f4 = fixture();
+  f4.warehouse.buckets.rolePlugin[0].unlockTier = 'legendary';
+  const v4 = loadout.validateLoadout(f4.loadout, { warehouse: f4.warehouse, tier: 'rare' });
+  assert.equal(v4.ok, true, '门控关闭（默认）：插件超段位不再拒绝');
 });
 
 // P2-3 回归：AI 错误 >5 条 → 截断标记

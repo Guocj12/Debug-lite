@@ -190,3 +190,66 @@ test('P2-3 防御：serializeContext(null/undefined) → null 不抛', () => {
   assert.equal(runtime.serializeContext(undefined), null);
   assert.doesNotThrow(() => runtime.serializeContext({}));
 });
+
+// ---- B26：快照读路径泛化（前置能力；ast 白名单校验依赖它） ----
+// 旧实现只支持"基名 + 可选 [i] + 可选单层 .prop"，读不到 self.effects[0].remaining 这类新投影字段。
+test('B26 getPath 泛化：a / a.b / a.b[i].c / a[i][j] 全谱可读（含新投影字段）', () => {
+  const snap = {
+    tick: 7,
+    self: { hp: 100, facing: 1, cooldowns: { cd1: 3 }, effects: [{ uid: 'e1', kind: 'continuous', remaining: 2 }] },
+    bases: { self: { hp: 88, def: 4 }, enemy: { hp: 90 } },
+    field: { fieldPx: 1024, cellPx: 64 },
+    grid: [[1, 2], [3, 4]],
+  };
+  // 每条路径经一次真实 resume（set r = get path）取值，锚定"快照 → AI 可读"的端到端语义
+  const got = (path) => {
+    const p = { type: 'program', version: 2, body: { type: 'seq', statements: [
+      { type: 'set', name: 'r', value: { type: 'get', path } },
+      { type: 'action', name: 'wait' },
+    ] } };
+    const ctx = runtime.createContext(p);
+    runtime.resume(ctx, snap, mkRng([]));
+    return runtime.getVar(ctx, 'r');
+  };
+  assert.equal(got('tick'), 7);
+  assert.equal(got('self.hp'), 100);
+  assert.equal(got('self.cooldowns.cd1'), 3, 'self.cooldowns.<sid>');
+  assert.equal(got('self.effects[0].remaining'), 2, '三段路径：基 + [i] + 属性');
+  assert.equal(got('self.effects[0].kind'), 'continuous');
+  assert.equal(got('bases.self.hp'), 88, 'bases.self.<f>');
+  assert.equal(got('field.cellPx'), 64);
+  assert.equal(got('grid[1][0]'), 3, '多级索引');
+  assert.equal(got('grid[0]'), snap.grid[0], '索引到数组元素（容器）原样返回');
+  // 容器读取仍返回冻结的只读副本（不泄漏引擎可变引用）
+  const cooldowns = got('self.cooldowns');
+  assert.equal(cooldowns.cd1, 3);
+  assert.throws(() => { cooldowns.cd1 = 9; }, TypeError, '容器为冻结副本（只读快照不变）');
+  assert.equal(snap.self.cooldowns.cd1, 3, '引擎侧对象未被改写');
+});
+
+test('B26 getPath 兜底：非法路径/缺字段/非对象下钻/越界/索引落非数组/危险段 → 0（绝不抛）', () => {
+  const snap = {
+    tick: 7,
+    self: { hp: 100, cooldowns: { cd1: 3 }, effects: [{ uid: 'e1', remaining: 2 }] },
+    field: { fieldPx: 1024, cellPx: 64 },
+  };
+  const got = (path) => {
+    const p = { type: 'program', version: 2, body: { type: 'seq', statements: [
+      { type: 'set', name: 'r', value: { type: 'get', path } },
+      { type: 'action', name: 'wait' },
+    ] } };
+    const ctx = runtime.createContext(p);
+    runtime.resume(ctx, snap, mkRng([]));
+    return runtime.getVar(ctx, 'r');
+  };
+  const ZERO = ['', 'self.hpx', 'self.hp.deep.missing', 'self.cooldowns.nope', 'self.effects[9].remaining',
+    'self.effects[0].nope', 'self[0]', 'self.hp[0]', 'field.nope', '__proto__', 'self.__proto__',
+    'constructor', 'prototype', 'self.constructor', 'self.effects[0].constructor', 'a b', 'a..b', 'a[', 'a]',
+    '.a', 'a.', undefined, null, 5];
+  for (const path of ZERO) {
+    assert.equal(got(path), 0, `path=${String(path)} 应安全默认 0`);
+  }
+  // 危险段拒绝不得泄漏可变原型对象（旧实现 `get 'constructor'` 会返回 Object 构造函数）
+  assert.notEqual(got('constructor'), Object, '不返回宿主对象');
+  assert.equal(typeof got('__proto__'), 'number', '原型链读取被拒 → 0');
+});

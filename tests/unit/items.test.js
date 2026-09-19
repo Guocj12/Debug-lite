@@ -210,10 +210,13 @@ test('IT-8 openBox 三段流程：品质→类别→生成（I-7）', () => {
   const hasId = (box.kind === 'role' || box.kind === 'skill') ? !!box.templateId : !!box.id;
   assert.ok(hasId, '生成完备（角色/技能有 templateId，插件有 id）');
   assert.ok(QUALITY[box.quality] !== undefined, '品质合法');
-  // 段位门控：common 段位只产出 common 物品（I-9/池过滤）
+  // 段位门控（门控开启 = 回退模式）：common 段位只产出 common 物品（I-9/池过滤）
+  const gatedIt = it.withGating(true);
+  assert.equal(gatedIt.gatingEnabled, true);
   const rng = createRng(20260916);
   for (let i = 0; i < 200; i++) {
-    const b = it.openBox(rng, { tier: 'common' });
+    const b = gatedIt.openBox(rng, { tier: 'common' });
+    assert.equal(b.quality, 'common', 'common 段位品质池被截断');
     const required = b.templateId ? (ROLE[b.templateId] || SKILL[b.templateId] || {}).unlockTier : (PLUGIN[b.pluginId] || {}).unlockTier;
     if (required !== undefined) {
       assert.ok(['common'].includes(required), `common 段位产出被门控物品 ${b.templateId || b.pluginId}`);
@@ -221,10 +224,45 @@ test('IT-8 openBox 三段流程：品质→类别→生成（I-7）', () => {
   }
 });
 
-test('IT-9 validateUnlock 门控（I-9a/b/c）', () => {
-  assert.equal(it.validateUnlock({ unlockTier: 'common' }, 'common'), true, 'I-9a');
-  assert.equal(it.validateUnlock({ unlockTier: 'legendary' }, 'rare'), false, 'I-9b');
-  assert.equal(it.validateUnlock({}, 'common'), true, 'I-9c 未定义视为已解锁');
+test('IT-8b 门控关闭（默认）：tier 只作回带信息 —— 任意段位都能出最高品质与全量模板/插件', () => {
+  assert.equal(it.gatingEnabled, false, '缺省实例 = 门控关闭（unlock.json gating.enabled=false）');
+  const qualitySeen = new Set();
+  const templateSeen = new Set();
+  const rng = createRng(20260916);
+  for (let i = 0; i < 1500; i++) {
+    const b = it.openBox(rng, { tier: 'common' }); // 最低段位
+    qualitySeen.add(b.quality);
+    if (b.templateId) templateSeen.add(b.templateId);
+  }
+  assert.ok(qualitySeen.has('mythic'), `common 段位也能出 mythic（实际 ${[...qualitySeen].join('/')}）`);
+  assert.equal(qualitySeen.size, QUALITIES.length, '五档品质全部可达（全池 dropRates）');
+  // 高段位模板在最低段位也能被开出来（掉落池不再按 unlockTier 过滤）
+  const highTierIds = new Set(TEMPLATES.concat(SKILLS).filter((t) => t.unlockTier === 'legendary' || t.unlockTier === 'mythic').map((t) => t.id));
+  assert.ok([...templateSeen].some((id) => highTierIds.has(id)), `common 段位开出高段位模板: ${[...templateSeen].join('/')}`);
+  // 模板/插件池不再按 unlockTier 过滤：高级段位模板在 common 段位亦可见于掉落池
+  const highRole = TEMPLATES.filter((t) => t.unlockTier && t.unlockTier !== 'common');
+  const highSkill = SKILLS.filter((s) => s.unlockTier && s.unlockTier !== 'common');
+  assert.ok(highRole.length > 0 && highSkill.length > 0, '数据里存在高段位模板（元数据保留）');
+  assert.ok(it.dropPool(TEMPLATES, 'common').some((t) => t.unlockTier === 'legendary'), 'common 段位池含 legendary 角色');
+  assert.ok(it.dropPool(SKILLS, 'common').some((s) => s.unlockTier === 'mythic'), 'common 段位池含 mythic 技能');
+  assert.ok(it.dropPool(PLUGINS, 'common').some((p) => p.unlockTier === 'legendary'), 'common 段位池含 legendary 插件');
+});
+
+test('IT-9 validateUnlock 门控（I-9a/b/c；门控开启 = 回退模式）', () => {
+  const gatedIt = it.withGating(true);
+  assert.equal(gatedIt.validateUnlock({ unlockTier: 'common' }, 'common'), true, 'I-9a');
+  assert.equal(gatedIt.validateUnlock({ unlockTier: 'legendary' }, 'rare'), false, 'I-9b');
+  assert.equal(gatedIt.validateUnlock({}, 'common'), true, 'I-9c 未定义视为已解锁');
+  assert.equal(gatedIt.validateUnlock({ unlockTier: 'legendary' }, 'nope'), false, '未知段位保守拒绝');
+  assert.equal(gatedIt.validateUnlock({ unlockTier: 'nope' }, 'mythic'), false, '未知 unlockTier 保守拒绝');
+});
+
+test('IT-9b 门控关闭（默认）validateUnlock 恒 true：任意段位 × 任意 unlockTier', () => {
+  for (const tier of ['common', 'rare', 'epic', 'legendary', 'mythic', 'nope']) {
+    for (const item of [{ unlockTier: 'mythic' }, { unlockTier: 'common' }, {}, { unlockTier: null }]) {
+      assert.equal(it.validateUnlock(item, tier), true, `validateUnlock(${JSON.stringify(item)}, ${tier}) 段位不参与判定`);
+    }
+  }
 });
 
 test('IT-10 日志：items.roll.quality / items.generate / items.affix.apply（§4.6 事件）', () => {
@@ -322,7 +360,8 @@ test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / �
     { id: 'c', drop: true, dropWeight: 3, unlockTier: 'mythic' },
   ];
   assert.deepEqual(it.dropPool(pool, 'mythic').map((x) => x.id), ['a', 'unknown', 'c'], 'drop=false 被过滤；缺省字段视为可掉落');
-  assert.deepEqual(it.dropPool(pool, 'common').map((x) => x.id), ['a', 'unknown'], '段位门控仍生效（c 需 mythic）');
+  assert.deepEqual(it.dropPool(pool, 'common').map((x) => x.id), ['a', 'unknown', 'c'], '门控关闭（默认）：c 不再被段位剔除');
+  assert.deepEqual(it.withGating(true).dropPool(pool, 'common').map((x) => x.id), ['a', 'unknown'], '门控开启：段位门控仍生效（c 需 mythic）');
   assert.deepEqual(it.dropPool(null, 'mythic'), [], '空/缺表 → 空池（不抛）');
   // 段内权重直观可见（选项 3）：可以只凭 JSON 关掉某一项 / 调它的相对权重
   assert.ok(!it.dropPool(pool, 'mythic').some((x) => x.id === 'b'));
@@ -382,4 +421,24 @@ test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / �
   }
   for (const t of SKILLS) assert.equal(typeof t.drop, 'boolean', `${t.id} 缺 drop`);
   for (const t of PLUGINS) assert.equal(typeof t.drop, 'boolean', `${t.id} 缺 drop`);
+});
+
+// ---- 装配门控两模式（用户决策 2026-09-16；配合 tests/unit/wh.test.js 的 I-10c）----
+test('IT-17 装配门控（assemble）：门控开启 → tier_locked；门控关闭（默认）→ 放行', () => {
+  const wh = () => JSON.parse(JSON.stringify(require('../fixtures/wh-ok.json')));
+  const mkReq = (src) => {
+    src.buckets.rolePlugin.push({ uid: 'g1', kind: 'rolePlugin', id: 'rp_sp_opt', slot: 'sp', quality: 'legendary', tier: 3, pointCost: 3, affixes: [], unlockTier: 'legendary', equipped: false });
+    src.buckets.role[0].slots.push({ type: 'sp', pluginUid: null });
+    return { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' };
+  };
+  // 门控关闭（默认）：段位不参与判定 → 装配成功
+  const off = wh();
+  const rOff = it.assemble(off, mkReq(off));
+  assert.equal(rOff.ok, true, '门控关闭：legendary 插件 @ rare 也放行');
+  assert.equal(rOff.warehouse.buckets.role[0].slots[2].pluginUid, 'g1');
+  // 门控开启：同一请求被 tier_locked 拒绝
+  const on = wh();
+  const rOn = it.withGating(true).assemble(on, mkReq(on));
+  assert.equal(rOn.ok, false);
+  assert.equal(rOn.code, 'tier_locked', '门控开启：装配门控（I-10c/§4.10）仍生效');
 });

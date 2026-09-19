@@ -7,6 +7,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // 相对路径 → 层号（未命中 → null = 未知层，报违规强制登记）
+// 分层定义见 docs/tasks.md §2.1 与 docs/interfaces.md §1：
+//   L6 = server/index|ranked|runner|box|loadout|battle + server/store/*（D-129）+ server/auth|account|quickmatch|admin
+//   `server/store/*` 是 L6 的新层（存储层，唯一允许 node:fs 的目录）：只允许被 L6 依赖
+//   （L0~L5 require L6 会命中下方 `lt > ls` 的 layer 违规，无需额外规则）；
+//   其外部模块白名单/黑名单见 STORE_FORBIDDEN（禁 child_process；禁 Math.random —— D-92 的 L11 铁律在 L6 同样成立）。
 const LAYER_RULES = [
   [/^shared\/log\.js$/, -1], // 唯一跨层共享单文件（§4.10；其它 shared/* 一律 unknown-layer）
   [/^server\/data\//, -1], // 数据层：任何 server 模块可读
@@ -20,7 +25,8 @@ const LAYER_RULES = [
   [/^server\/core\/bullets\.js$/, 2],
   [/^server\/core\/engine\.js$/, 4],
   [/^server\/ai\//, 5],
-  [/^server\/(index|ranked|runner|box|loadout|battle)\.js$/, 6],
+  [/^server\/store\//, 6], // D-129 存储层（server/store/*：json/sqlite 适配器、journal、快照库、索引、锁、会话）
+  [/^server\/(index|ranked|runner|box|loadout|battle|auth|account|quickmatch|admin)\.js$/, 6],
   [/^cli\//, 6],
 ];
 
@@ -28,6 +34,17 @@ const LAYER_RULES = [
 const AI_ALLOWED_LAYERS = new Set([0, 1, -1]);
 
 const CORE_FORBIDDEN = new Set(['fs', 'http', 'https', 'express', 'net', 'child_process', 'os', 'path']);
+
+// L6 存储层（server/store/*，D-129）专属约束：
+//   - 允许的外部模块：node:fs / node:path / node:crypto（唯一允许 fs 的目录，§3.1 硬约束）
+//   - 禁止：child_process（沙箱与设计双重禁止：本层不得 spawn）、worker/cluster（单进程为唯一支持形态 §1.3-6）
+//   - 禁止：Math.random/eval/new Function（D-92 铁律；存储层的随机只用 node:crypto）
+const STORE_FORBIDDEN = new Set(['child_process', 'worker_threads', 'cluster', 'vm', 'http', 'https', 'net', 'express']);
+const STORE_STATIC_PATTERNS = [
+  [/Math\s*\.\s*random\s*\(/g, 'Math.random'],
+  [/\beval\s*\(/g, 'eval('],
+  [/\bnew\s+Function\s*\(/g, 'new Function('],
+];
 
 const SCAN_ROOTS = ['server', 'cli', 'shared'];
 
@@ -58,6 +75,23 @@ function stripComments(src) {
     if (c === "'" || c === '"' || c === '`') { inStr = c; out += c; continue; }
     if (c === '/' && n === '/') { out += '  '; i++; inLine = true; continue; }
     if (c === '/' && n === '*') { out += '  '; i++; inBlock = true; continue; }
+    out += c;
+  }
+  return out;
+}
+
+// 字符串/模板挖空（保换行）—— 用于存储层静态铁律的文本匹配（同 gate.js 口径）
+function stripStrings(src) {
+  let out = '';
+  let inStr = null;
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i];
+    if (inStr !== null) {
+      out += c === '\n' ? c : ' ';
+      if (c === inStr && src[i - 1] !== '\\') inStr = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { inStr = c; out += ' '; continue; }
     out += c;
   }
   return out;
@@ -118,6 +152,16 @@ function analyze(options) {
     layers.set(rel, lv);
     graph.set(rel, []);
     const src = stripComments(fs.readFileSync(file, 'utf8'));
+    // 存储层静态铁律（D-92 在 L6 同样成立）：只允许 node:crypto 提供随机，不得 Math.random/eval/new Function
+    if (rel.startsWith('server/store/')) {
+      const code = stripStrings(src);
+      for (const [re, label] of STORE_STATIC_PATTERNS) {
+        if (re.test(code)) {
+          violations.push({ file: rel, rule: 'store-forbidden', detail: `存储层禁止 ${label}（随机只能经 node:crypto，D-92）` });
+        }
+        re.lastIndex = 0;
+      }
+    }
     const reqRe = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
     let m;
     while ((m = reqRe.exec(src)) !== null) {
@@ -140,6 +184,13 @@ function analyze(options) {
           file: rel, rule: 'forbidden',
           detail: `core/ai(层${lv}) 禁止 require 外部模块 '${target}'` +
             (CORE_FORBIDDEN.has(bare) ? '（IO/三方黑名单）' : '（只允许相对路径/shared/log.js/data）'),
+        });
+        continue;
+      }
+      if (lv === 6 && rel.startsWith('server/store/') && STORE_FORBIDDEN.has(bare)) {
+        violations.push({
+          file: rel, rule: 'store-forbidden',
+          detail: `存储层禁止 require '${target}'（只允许 node:fs/node:path/node:crypto；禁 child_process/worker/cluster，§1.3-6 单进程）`,
         });
         continue;
       }

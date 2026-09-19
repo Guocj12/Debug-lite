@@ -73,13 +73,22 @@ test('T-PB-10 + T-PB-5/6 消耗补偿与聚合：往返后消耗补偿与非声�
   assert.equal(down.cost.mp, 8, '10×0.8 ceil = 8');
 });
 
-test('T-PB-10 + T-PB-7 门控：往返后 gated 插件装配拒绝；数据含 unlockTier（U-5d 真分支）', () => {
-  const wh = rtWH();
-  wh.buckets.rolePlugin.push({ uid: 'g1', kind: 'rolePlugin', id: 'rp_sp_opt', slot: 'sp', quality: 'legendary', tier: 3, pointCost: 3, affixes: [], unlockTier: 'legendary', equipped: false });
-  const r = items.assemble(wh, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
+test('T-PB-10 + T-PB-7 门控：往返后 gated 插件装配拒绝（门控开启 = 回退模式）；数据含 unlockTier（U-5d 真分支）', () => {
+  const mkWh = () => {
+    const w = rtWH();
+    w.buckets.rolePlugin.push({ uid: 'g1', kind: 'rolePlugin', id: 'rp_sp_opt', slot: 'sp', quality: 'legendary', tier: 3, pointCost: 3, affixes: [], unlockTier: 'legendary', equipped: false });
+    return w;
+  };
+  // 门控开启：rare 段位装配 legendary 插件 → tier_locked；mythic 放行
+  const wh = mkWh();
+  const r = items.withGating(true).assemble(wh, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
   assert.equal(r.code, 'tier_locked');
-  const ok = items.assemble(wh, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'mythic' });
+  const ok = items.withGating(true).assemble(wh, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'mythic' });
   assert.equal(ok.ok, true);
+  // 门控关闭（默认，用户决策 2026-09-16）：同一请求放行
+  const whOff = mkWh();
+  const off = items.assemble(whOff, { targetUid: 'r1', slotIndex: 2, pluginUid: 'g1', tier: 'rare' });
+  assert.equal(off.ok, true, '段位不参与判定');
 });
 
 test('T-PB-10 + T-PB-8/9 唯一性与引用完整性：往返后双引用/悬挂引用拒绝', () => {

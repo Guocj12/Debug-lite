@@ -196,6 +196,9 @@ test('B26 projectSnapshot：baseHp=基地当前血量（≠ maxHp）；max*/cool
   }
   assert.equal(typeof snap.bases.self.hp, 'number', 'bases.self.hp（基地血量可读路径）');
   assert.equal(typeof snap.bases.enemy.hp, 'number', 'bases.enemy.hp');
+  // D-138 防回归：快照**不投影** `bullets`（AI 无法观测弹幕＝设计，弹幕当 tick 全解算）
+  assert.ok(!('bullets' in snap), 'snapshot 不得包含 bullets 字段（D-138）');
+  assert.deepEqual(Object.keys(snap).sort(), ['bases', 'enemy', 'field', 'self', 'tick'], 'snapshot 顶层字段固定（无 bullets）');
   // 语义：baseHp = 基地当前血量；maxHp = 角色上限（两者概念不同）
   assert.equal(snap.self.baseHp, b.state.bases.p1.hp, 'self.baseHp 取基地当前血量');
   assert.equal(snap.enemy.baseHp, b.state.bases.p2.hp, 'enemy.baseHp 取对方基地当前血量');

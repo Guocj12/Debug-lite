@@ -726,7 +726,7 @@ showSettle = summary !== null
 | | `action` | 语句 | `name`(string，§12.4) |
 | 变量 | `var` / `set` / `getVar` | 语句/表达式 | `name`(string), `value`(表达式，var/set) |
 | 值 | `literal` | 表达式 | `value`(数字/布尔) |
-| | `get` | 表达式 | `path`(string，白名单前缀 `self|enemy|field`，可带 `[i]` 与 `.字段`) |
+| | `get` | 表达式 | `path`(string，白名单根 `tick|self|enemy|bases|field`，形如 `根.字段` / `根.cooldowns.<sid>` / `根.effects[i].<字段>`；详见下方清单) |
 | 运算 | `arith` | 表达式 | `op ∈ + - * /`, `left`, `right` |
 | | `cmp` | 表达式 | `op ∈ < > <= >= == !=`, `left`, `right` |
 | | `logic` | 表达式 | `op ∈ and, or`（**与 `runtime.js` 逐值核对**；`&&`/`||`/`not` **均未实现**——非 `and`/`or` 的取值一律求值为 `false`，`ast.js` 暂无枚举校验，见 `systems/08-ai.md` §3）, `left`, `right` |

@@ -438,7 +438,7 @@ move.resolve┘                                            │
 
 #### 3.7.2 节点与稳定路径 id
 
-- 节点：`literal/get/bullets/var/set/getVar/arith/cmp/logic/random/if/loop/break/function/call/action` + `seq`。
+- 节点：`literal/get/var/set/getVar/arith/cmp/logic/random/if/loop/break/function/call/action` + `seq`（**共 16 类**，单一数据源 `server/data/ai-nodes.json`；**`bullets` 节点已于 2026-09-16 按用户决策删除**——AI 无法观测弹幕，弹幕当 tick 全解算，见 D-138 与 §3.7.6）。
 - 路径 id 在执行期由位置生成（`body.s[3].then.s[0]`），**与编辑器无关**；API 校验错误返回 `path` 供未来 UI 高亮。
 
 #### 3.7.3 隐式主循环（D-100）
@@ -467,7 +467,10 @@ AiContext = { programHash, entry, frames[{kind,path,childIndex,remaining,condVal
 
 #### 3.7.6 只读快照与安全默认值
 
-白名单投影 `self{hp,atk,def,sp,mp,x,baseHp,facing}` / `enemy{同}` / `bullets[{owner,level,dir,x,type}]`；深冻结；AI 只能写 `vars`；越界读取 → 安全默认（0/false）并记 trace。
+白名单投影（**字段总清单以 `server/runner.js` 的 `projectSnapshot` 投影注释为权威**，D-147）：
+`tick` / `self{hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}` / `enemy{同}` / `self|enemy.cooldowns.<sid>` / `self|enemy.effects[i].{uid,kind,stat,delta,displacement,remaining}` / `bases.self|enemy.{hp,maxHp,def}` / `field{fieldPx,cellPx}`。
+深冻结；AI 只能写 `vars`；越界读取 → 安全默认（0/false）并记 trace。**容器（`self`/`self.cooldowns`/`self.effects[i]`/`bases.self` …）不可当值读**；**不投影 `bullets`**（AI 无法观测弹幕＝设计，D-138）。
+⚠️ **`baseHp` ＝ 该方基地当前血量（`bases.<owner>.hp`），`maxHp` ＝ 该方角色血量上限——两者是完全不同的东西**（B26 修正；旧实现曾误填角色 `maxHp`，D-147）。
 
 #### 3.7.7 限步、兜底与错误策略
 
@@ -607,6 +610,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
      - **安装方式**：`npm run hooks:install`（= `git config core.hooksPath .githooks`）。**现状（2026-09-16 实测）**：本仓库已安装并生效（`git config core.hooksPath` 返回 `.githooks`；本轮提交由 pre-commit 实际执行 `check-docs` 校验）；新克隆仓库需先执行一次该命令。
    - **`scripts/check-docs.js`**（文档↔实现一致性，`npm run check:docs`）：D1 npm 脚本双向一致 / D2–D3 文档引用的脚本与数据表存在（标注「计划/未实现/⏳」的行豁免）/ **D4 批次计数一致（tasks.md 头部 ↔ progress.md）** / **D5 批次勾选数 = 批次数且无"已完成未勾选"** / **D6 每个已勾选批次有 `docs/reviews/<批次>.md`**。该检查由 `tests/integration/check-docs.test.js` 纳入 `npm test`（因此在 gate 项 7 内），CI 另单列一步（`.github/workflows/gate.yml`）。
 4. **禁止放宽覆盖率阈值来通过门禁**（行 ≥90 / 分支 ≥85 / 函数 ≥90）：阈值调整属 §10 的接口级变更，必须单独 commit 并说明理由（§3.4）。
+5. **每个阶段/新功能完成后必须做一次「代码级审查」并修复**（用户 2026-09-16 要求）：逐条检查**功能完整度**（是否只有单测/核心层可用而经 HTTP·CLI 失效）、**空实现与占位**（stub/`TODO`/恒真恒假分支/注册了却无消费方的字段/有定义无调用的导出）、**冲突与重合**（同一件事两套实现、镜像清单不同步、同一字段两处不同解释、新旧路径结果不一致），并检查是否破坏既有契约（帧契约/错误码/退出码/日志事件/覆盖率）。问题必须当阶段修复；确实无法修复的要在 `docs/progress.md` 登记为显式待办并写明原因。审查由**未参与该阶段实现**的执行者独立完成，并留下 `文件:行` 与实测证据。详见 `docs/plan-p7-playable.md` §0 第 7 条。
 
 ---
 

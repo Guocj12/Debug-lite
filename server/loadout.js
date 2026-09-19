@@ -3,6 +3,13 @@
  * L6 组合：结构（I-12a/b：角色 1 + 技能恰 3 + AI 合法）+ 引用完整性（T-PB-9/I-12d）+ 段位门控
  * （I-12e：物品级 items.validateUnlock + AI 节点 ast.validate(tier)）+ 面板聚合（五维/regen/special/技能参数）。
  * D-123：不持久化——POST 校验后回带；GET 返回规范骨架。事件：api.*（api 行）；unlock.reject/ai.validate（既有行）。
+ *
+ * **段位门控开关（用户决策 2026-09-16：默认所有功能全部解锁，段位不参与判定）**：
+ *   本文件的段位判定**全部经由依赖模块**（items.validateUnlock / ast.validate，二者缺省按 server/data/unlock.json
+ *   的 `gating.enabled` 取值 → 当前 false 即门控关闭），本文件**没有**硬编码段位比较（已逐行确认）。
+ *   为让"开关打开（回退）"在 loadout 层可注入可测，提供同风格工厂：
+ *     `loadout.withGating(enabled)` → 内部 items/ast 使用**同一**门控取值的视图（见文件尾 withGating）；
+ *   亦可用 opts.items / opts.ast 单独注入（缺省 = 模块单例）。
  */
 const items = require('./core/items.js'); // 含 buildRolePanel：角色面板聚合的单一实现（与 roles.getFinalStats 同源）
 const skills = require('./core/skills.js'); // B20：技能插件词条聚合（消耗补偿/减耗/倍率冷却，L2 → L6 合法）
@@ -31,9 +38,14 @@ function findItem(wh, uid) {
 }
 
 // 校验（I-12a/b/d/e + T-PB-9）：{ok, errors:[{where, code, message}]}
+// opts.items：items.js 实例注入缝（缺省 = 模块单例）——段位门控开关由该实例承载
+//   （unlock.json `gating.enabled`，用户决策 2026-09-16 默认关闭；测试可传 items.withGating(true) 复核旧行为）。
+// opts.ast：ast.js 实例注入缝（缺省 = 模块单例）——AI 节点门控由该实例承载；配套用 ast.withGating(true)。
 function validateLoadout(loadout, opts) {
   const tier = (opts && opts.tier) || 'mythic';
   const wh = (opts && opts.warehouse) || null;
+  const itemsApi = (opts && opts.items) || items;
+  const astApi = (opts && opts.ast) || ast;
   const ld = loadout || {};
   const errors = [];
   if (!ld.role || typeof ld.role !== 'object') errors.push({ where: 'role', code: 'loadout_invalid', message: '缺少角色物品' });
@@ -83,18 +95,18 @@ function validateLoadout(loadout, opts) {
       else if (p.equipped !== true) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件未装配: ${ref.uid}` });
       else if (p.kind !== (ref.kind === 'role' ? 'rolePlugin' : 'skillPlugin')) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件类别与槽位不匹配: ${ref.uid}` });
       else if (ref.kind === 'skill' && (!Number.isInteger(p.tier) || p.tier < 1)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `技能插件缺档位（tier 必须 ≥1）: ${ref.uid}` });
-      else if (!items.validateUnlock(p, tier)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件 ${ref.uid} 需 ${p.unlockTier} 段位（P2-2 复核）` });
+      else if (!itemsApi.validateUnlock(p, tier)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件 ${ref.uid} 需 ${p.unlockTier} 段位（P2-2 复核）` });
     }
   }
   // 段位门控（I-12e）：物品级（unlockTier ≤ tier）+ AI 节点（ast.validate 含门控）
   if (errors.length === 0) {
     const members = [ld.role].concat(skills).filter(Boolean);
     for (const m of members) {
-      if (!items.validateUnlock(m, tier)) {
+      if (!itemsApi.validateUnlock(m, tier)) {
         errors.push({ where: m.kind === 'role' ? 'role' : 'skills', code: 'loadout_invalid', message: `物品 ${m.templateId} 需 ${m.unlockTier} 段位` });
       }
     }
-    const aiV = ast.validate(ld.ai, tier);
+    const aiV = astApi.validate(ld.ai, tier);
     if (!aiV.ok) {
       for (const e of aiV.errors.slice(0, 5)) errors.push({ where: `ai:${e.path}`, code: 'loadout_invalid', message: `${e.code}: ${e.message}` });
       if (aiV.errors.length > 5) errors.push({ where: 'ai', code: 'loadout_invalid', message: `其余 ${aiV.errors.length - 5} 条 AI 错误已截断（P2-3 标记）` });
@@ -158,4 +170,29 @@ function buildPanel(loadout, opts) {
   };
 }
 
-module.exports = { EMPTY_LOADOUT, validateLoadout, buildPanel, findItem };
+// 段位门控注入视图（用户决策 2026-09-16：默认关闭；本函数 = loadout 层的"一键回退"入口）：
+//   items 与 ast 使用**同一**门控取值（ast 的节点门控经 unlock 实例，由 ast.withGating 转交）；
+//   显式 opts.items / opts.ast 优先于本视图（单点覆盖仍可用）。gatingEnabled 为该视图的实际取值（自省用）。
+function withGating(enabled) {
+  const itemsApi = items.withGating(enabled);
+  const astApi = ast.withGating(enabled);
+  const bind = (opts) => Object.assign({}, opts || {}, {
+    items: (opts && opts.items) || itemsApi,
+    ast: (opts && opts.ast) || astApi,
+  });
+  return {
+    EMPTY_LOADOUT,
+    gatingEnabled: itemsApi.gatingEnabled,
+    validateLoadout: (ld, opts) => validateLoadout(ld, bind(opts)),
+    buildPanel: (ld, opts) => buildPanel(ld, bind(opts)),
+    findItem,
+    withGating,
+  };
+}
+
+module.exports = {
+  EMPTY_LOADOUT, validateLoadout, buildPanel, findItem,
+  // 缺省门控取值（= unlock.json gating.enabled，经 items 单例透传；门禁/文档可读）
+  gatingEnabled: items.gatingEnabled,
+  withGating,
+};

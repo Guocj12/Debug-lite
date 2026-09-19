@@ -72,11 +72,18 @@ test('T-AP-3 装配业务拒绝 → 409 各错误码；拆卸 → 404 slot_empty
     w2.buckets.role[0].pluginPoints = 1;
     const pts = await request(port, 'POST', '/api/v1/warehouse/assemble', { warehouse: w2, targetUid: 'r1', slotIndex: 1, pluginUid: 'p2', tier: 'common' });
     assert.equal(pts.body.error.code, 'points_exceeded');
-    // 段位锁
+    // 段位锁：**门控默认关闭**（用户决策 2026-09-16）→ 同一请求放行（不再 409 tier_locked）；
+    //   409 tier_locked 的装配路径由 tests/unit/wh.test.js（withGating(true)）与 b20/b21 覆盖。
     const w3 = JSON.parse(JSON.stringify(WH));
     w3.buckets.rolePlugin.push({ uid: 'p3', kind: 'rolePlugin', id: 'hp_up', slot: 'atk', quality: 'legendary', tier: 5, pointCost: 5, affixes: [], unlockTier: 'legendary', equipped: false });
+    w3.buckets.role[0].pluginPoints = 6;
     const tl = await request(port, 'POST', '/api/v1/warehouse/assemble', { warehouse: w3, targetUid: 'r1', slotIndex: 0, pluginUid: 'p3', tier: 'rare' });
-    assert.equal(tl.body.error.code, 'tier_locked');
+    assert.equal(tl.status, 200, `门控关闭：legendary 插件 @ rare 段位放行（${tl.raw}）`);
+    assert.equal(tl.body.data.warehouse.buckets.role[0].slots[0].pluginUid, 'p3');
+    // 其余 409/404 错误码不受门控开关影响（同请求换成槽型不匹配 → 仍 409）
+    const stillBad = await request(port, 'POST', '/api/v1/warehouse/assemble', { warehouse: WH, targetUid: 'r1', slotIndex: 0, pluginUid: 'q1', tier: 'rare' });
+    assert.equal(stillBad.status, 409);
+    assert.equal(stillBad.body.error.code, 'slot_type_mismatch', '非段位类业务拒绝保持原状');
     // 拆卸：空槽 → 404 slot_empty
     const se = await request(port, 'POST', '/api/v1/warehouse/disassemble', { warehouse: WH, targetUid: 'r1', slotIndex: 0 });
     assert.equal(se.status, 404);

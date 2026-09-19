@@ -123,7 +123,7 @@
 |---|---|---|---|
 | 1 | `seed`、`tick`、`cooldowns` | 引擎临时状态 | 本 tick 各用途随机流、冷却递减后的 CD |
 | 2 | 玩家 `effects` | 玩家五维/资源 | `stat += delta`，到期移除 |
-| 3 | **只读快照**（players/bullets/field） | **AI 运行时** → `{action, trace}` | 快照字段白名单；`vars` 跨 tick 持久 |
+| 3 | **只读快照**（`tick`/`self`/`enemy`/`bases.*`/`field`；**不含弹幕**） | **AI 运行时** → `{action, trace}` | 快照字段白名单（**不投影 `bullets`**——AI 无法观测弹幕＝设计，弹幕生成当 tick 全解算）；`vars` 跨 tick 持久 |
 | 4 | AI 的 `action` | 引擎 action | 非法 → `wait` |
 | 5 | 玩家 `effects`（control） | 覆写后的 action | 眩晕>位移，位移取首个；**复写不扣资源** |
 | 6 | action + 技能面板 + 资源/CD | 意图 + **弹幕** + 资源/CD 写回 | `skill.cast`（扣资源、写 CD、生成弹幕并记录生成序号） |
@@ -184,7 +184,12 @@
 ### 3.2 单 tick 数据流详解：t1（黄金战斗的 t1）
 
 ```
-① 步骤 3  引擎 → AI：只读快照 {players:{p1:{x:224, hp:100, mp:40, sp:60}, p2:{x:800}}, bullets:[], bases, field}
+① 步骤 3  引擎 → AI：只读快照 {tick:1,
+            self:{hp:100, maxHp:100, mp:40, maxMp:40, sp:60, maxSp:60, atk:12, def:8, x:224, facing:+1,
+                  baseHp:100, cooldowns:{}, effects:[]},
+            enemy:{同结构，x:800},
+            bases:{self:{hp:100, maxHp:100, def:64}, enemy:{同}},
+            field:{fieldPx:1024, cellPx:64}}      ← 白名单投影 + 深冻结；**不含 bullets**（D-138）
           AI → 引擎：p1 action = 'dodge_right'；p2 action = 'move_left'
 ② 步骤 4  归一化（D-80）：'dodge_right' → {type:'dodge', dir:+1}；'move_left' → {type:'move', dir:−1}
 ③ 步骤 6  意图提交：dodge 取 cfg.dodgePx（128px）→ p1 意图 352；move 取 cfg.movePx（64px）→ p2 意图 736；
@@ -192,9 +197,12 @@
 ④ 步骤 7  统一落位：意图不重叠、未越界 → p1 224→352、p2 800→736；无碰撞、无基地命中
 ⑤ 步骤 8  场上弹幕 0 枚 → 无命中、无抵消
 ⑥ 步骤 10/11/12  P1 sp 60→60（已封顶）、P2 sp 60→60；tick < overtimeStart 48；无 verdict
-⑦ 步骤 13 引擎 → frame：diff.players 记两段 1px 位移，diff.bullets 为空；
+⑦ 步骤 13 引擎 → frame：diff.players 记两段 1px 位移，diff.bullets 为空（**回放帧仍带 `bullets` 供展示/诊断，
+          与 AI 快照无关**）；
           events 两条 move.resolve（debug 级）
 ```
+
+> **快照实际字段（权威清单见 `server/runner.js` 的 `projectSnapshot` 与 `docs/systems/08-ai.md` §4.5，D-147）**：`tick`；`self|enemy.{hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}`；`self|enemy.cooldowns.<sid>`；`self|enemy.effects[i].{uid,kind,stat,delta,displacement,remaining}`；`bases.self|enemy.{hp,maxHp,def}`；`field.{fieldPx,cellPx}`。**不含 `bullets`（设计）**；**`baseHp` ＝ 该方基地当前血量（≠ 角色 `maxHp`）**。
 
 > **设计期示例（已按真实引擎复算，与黄金战斗的 t1 无关）**：原 §3.2 讲的是"位移伤害并入弹幕系统"——位移不再是特殊技能，它生成的路径弹幕与敌方 AOE 走**完全相同**的抵消流程，无需任何特判。这个**机制结论仍然成立**，数值改为以下实测值（`node .audit/walkthrough.js` 第 [5b] 段）：
 >

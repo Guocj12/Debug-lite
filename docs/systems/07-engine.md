@@ -18,7 +18,7 @@
 ## 3. 数据结构
 
 - 战场状态：`tick` / `seed` / `players{p1,p2}` / `bases` / `events[]` / `rngStreams`。
-- 玩家运行时：`x`（px）/ `facing` / `hp,mp,sp` / `maxHp,maxMp,maxSp` / `atk,def` / `regen{hp,mp,sp}`（模板 `regen` + 角色插件 `hp_regen/sp_regen/mp_regen` 词条叠加；面板投影见 `server/loadout.js` 的 `buildPanel`）/ `special` / `cooldowns{}` / `effects[]` / `skills{}` / `aiContext` / **每 tick 瞬时标记** `defending`（本 tick 防御）、`dodging`（本 tick 用过 dodge）、`fullDodgeDuring`（本 tick 位移全程免疫，步骤 6 置位、步骤 1 复位）。
+- 玩家运行时：`x`（px）/ `facing` / `hp,mp,sp` / `maxHp,maxMp,maxSp` / `atk,def` / `regen{hp,mp,sp}`（模板 `regen` + 角色插件 `hp_regen/sp_regen/mp_regen` 词条叠加；面板聚合的**单一实现**是 `server/core/items.js` 的 `buildRolePanel`——`roles.getFinalStats` 与 `server/loadout.js` 的 `buildPanel` 都调用它，`regen` 只叠一次，D-149）/ `special` / `cooldowns{}` / `effects[]` / `skills{}` / `aiContext` / **每 tick 瞬时标记** `defending`（本 tick 防御）、`dodging`（本 tick 用过 dodge）、`fullDodgeDuring`（本 tick 位移全程免疫，步骤 6 置位、步骤 1 复位）。
 
 ## 4. 核心流程（代码逻辑）
 
@@ -36,7 +36,7 @@
 | 1 | `tick.begin` | `tick += 1`；派生本 tick 各用途随机流；**引擎冷却递减** `max(0, cd−1)`（D-82）；重置 `defending`/`dodging`/`fullDodgeDuring` 等**每 tick 瞬时**标记（`fullDodgeDuring` 由步骤 6 置位、本步骤复位，D-72） |
 | 2 | 持续效果 | `stat += delta`；clamp；`remaining -= 1` 归零移除 |
 | 3 | AI 续执行 | 按 **p1 → p2** 各调用一次 `resume`，产出 action + trace |
-| 4 | 行动归一化 | 白名单校验；非法 → `wait`（D-80）。行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`（+ `skill:<sid>`） |
+| 4 | 行动归一化 | 白名单校验；非法 → `wait`（D-80）。行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`（+ `skill:<sid>`）。`<sid>` 即 `players[o].skills` 的**键**：`server/battle.js` 按出战槽位命名为 `skill1`/`skill2`/`skill3`（故 `/api/v1/battle` 的 AI 只能写 `skill:skill1..3`）；键不存在 → 空行动 + `action.invalid`(warn, `reason:"unknown_skill"`)。注意 `skill.sid`（冷却键，= 技能模板 id）与技能槽键是**两件事**：同模板的两个槽共享同一条冷却记录 |
 | 5 | 控制效果 | 复写行动（眩晕 > 位移；位移取首个）；控制位移**不可穿敌**（D-71） |
 | 6 | 意图提交 | 只算意图、**不写回位置**：`turn` 意图登记 / `defending` 标记（本 tick `def×1.6`，D-43）/ 移动或位移目标位置 / 位移技 `fullDodgeDuring` 置位（D-72）/ 技能 `canCast`→扣资源+写 CD+**生成弹幕（记录生成序号）**+释放类词条 `castEffects` 入效果队列（下一 tick 起效，D-70） |
 | 7 | 转向写回与落位 | **先做转向写回**（`turn` → `facing × −1`；`move`/`dodge`/位移**不改变朝向**）→ 统一落位 → 穿敌判定 → **角色碰撞解算与碰撞伤害**（D-10）→ `clampX` |

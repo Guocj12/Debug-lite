@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('node:test');
 const { analyze } = require('./check-arch.js');
+// 项 7 明细用：测试基线指纹（P7-7 §⑤ 盲区 1"红不可区分"的 P0 第①条）
+const { createEventAccumulator, buildFingerprint, formatDetail } = require('./baseline.js');
 
 const REPO = path.join(__dirname, '..');
 const STATIC_SCOPE = ['server/core', 'server/ai']; // 项 1 范围（T-DC-3）
@@ -363,18 +365,22 @@ function checkDocData(options) {
 // （测试能跑、但 for-await 收不到结束事件），与是否带 coverage 无关。
 // → 每进程最多一次真实 run()：gate 主流程恰好一次（项 7）；测试注入 runner 覆盖其它分支。
 
-// 真实执行一套测试（coverage 可选）；返回 {pass, fail, coverageSummary|null}
+// 真实执行一套测试（coverage 可选）；返回 {pass, fail, coverageSummary, baseline|null}
+// 注意：pass/fail 仍按事件原口径累加（判定与阈值一字未改）；`baseline` 是新增的**指纹**附件
+// （叶用例口径，套件事件不计入用例数）——只用于项 7 的明细描述。
 async function runSuite(files, withCoverage) {
   const r = run({ files: files.map((f) => path.resolve(f)), isolation: 'none', coverage: withCoverage });
   let pass = 0;
   let fail = 0;
   let coverageSummary = null;
+  const acc = createEventAccumulator(REPO); // 真实全量套件恒在仓库根运行，相对路径才稳定可读
   for await (const e of r) {
     if (e.type === 'test:pass') pass++;
     else if (e.type === 'test:fail') fail++;
     else if (e.type === 'test:coverage') coverageSummary = e.data && e.data.summary;
+    acc.add(e);
   }
-  return { pass, fail, coverageSummary };
+  return { pass, fail, coverageSummary, baseline: acc.fingerprint() };
 }
 
 // 纯判定：仅 THRESHOLD_DIRS 四目录、每文件阈值；返回 {ok, under[]}
@@ -407,6 +413,7 @@ function judgeCoverage(coverageSummary, projectRoot) {
 //   runner(files, withCoverage) 可注入（测试用假 runner 避免第二次嵌套 run）
 //   withCoverage 默认 true（gate 主流程）；测试传 false —— 嵌套 coverage 会话会破坏外层覆盖率
 //   报告（已实测：外层 cov 下 shared/log.js 覆盖率被截断），且进程内第二次嵌套 run() 流永不结束。
+//   假 runner 未提供 baseline 指纹时，退化为"由 pass/fail 计数现造一个（失败名未知）"——仅为打印。
 async function checkTests(options) {
   const opts = options || {};
   const root = opts.projectRoot || REPO;
@@ -417,18 +424,24 @@ async function checkTests(options) {
   }
   const doRun = opts.runner || runSuite;
   const res = await doRun(testFiles, withCoverage);
-  if (res.fail > 0) return resultOf('fail', `${res.fail} 个用例失败（总 ${res.pass + res.fail}）`);
-  if (res.pass === 0) return resultOf('fail', '0 个用例通过');
+  // 指纹明细（P7-7 §⑤ 盲区 1）：无论 PASS/FAIL 都打印 总用例数 / 失败数 / 失败用例名 / digest。
+  // 只影响描述文本，不参与任何判定（阈值与语义见上方注释与 scripts/README.md）。
+  const fp = res.baseline || buildFingerprint({
+    total: res.pass + res.fail, passed: res.pass, failed: res.fail, failedNames: [],
+  });
+  const fpText = formatDetail(fp);
+  if (res.fail > 0) return resultOf('fail', `${res.fail} 个用例失败（总 ${res.pass + res.fail}）；${fpText}`);
+  if (res.pass === 0) return resultOf('fail', `0 个用例通过；${fpText}`);
   if (!withCoverage) {
     // 非 coverage 模式（仅测试/诊断）：不断言覆盖率
-    return resultOf('pass', `${res.pass} 用例通过（未采集覆盖率）`);
+    return resultOf('pass', `${res.pass} 用例通过（未采集覆盖率）；${fpText}`);
   }
-  if (!res.coverageSummary) return resultOf('fail', '未产生覆盖率报告（可疑）');
+  if (!res.coverageSummary) return resultOf('fail', `未产生覆盖率报告（可疑）；${fpText}`);
   const judged = judgeCoverage(res.coverageSummary, root);
   if (!judged.ok) {
-    return resultOf('fail', `覆盖率低于阈值（行${LINE_PCT}/分支${BRANCH_PCT}/函数${FUNC_PCT}）：${judged.under.join('；')}`);
+    return resultOf('fail', `覆盖率低于阈值（行${LINE_PCT}/分支${BRANCH_PCT}/函数${FUNC_PCT}）：${judged.under.join('；')}；${fpText}`);
   }
-  return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}`);
+  return resultOf('pass', `${res.pass} 用例通过；四目录覆盖率行≥${LINE_PCT}/分支≥${BRANCH_PCT}/函数≥${FUNC_PCT}；${fpText}`);
 }
 
 // ---------- 项 8：日志冒烟（B11 激活） ----------

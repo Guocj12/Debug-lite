@@ -152,8 +152,10 @@ test('P2-1：promotedAt 顶段不判定晋升（与 /ranked/run 口径同源分�
   assert.equal(ranked.promote('mythic', 7).status, 409, 'promote 顶段仍 409 already_max');
 });
 
-test('P2-3：tierReward 与开箱品质上限交叉一致（B17 同源 D-122；逐档 5000 样本 max 品质）', () => {
-  const items = require('../../server/core/items.js');
+test('P2-3：tierReward 与开箱品质上限交叉一致（门控开启 = 回退模式；B17 同源 D-122；逐档 5000 样本 max 品质）', () => {
+  // 门控关闭（默认）后"品质上限"不再是开箱约束（用户决策 2026-09-16）→ 本交叉绑定只在门控开启时成立，
+  //   用 withGating(true) 实例断言旧口径；tierReward 本身（段位→奖励品质映射）仍按段位，不受开关影响。
+  const items = require('../../server/core/items.js').withGating(true);
   const { createRng } = require('../../server/core/rng.js');
   for (const t of ranked.TIERS) {
     const rng = createRng(20260913 + ranked.TIERS.indexOf(t));
@@ -164,4 +166,15 @@ test('P2-3：tierReward 与开箱品质上限交叉一致（B17 同源 D-122；�
     }
     assert.equal(maxQ, ranked.tierReward(t), `${t} 段位开箱上限 == tierReward（交叉绑定）`);
   }
+});
+
+test('P2-3b：门控关闭（默认）时开箱品质不受段位限制，tierReward 仍按段位返回奖励品质', () => {
+  const items = require('../../server/core/items.js');
+  const { createRng } = require('../../server/core/rng.js');
+  const rng = createRng(20260913);
+  const seen = new Set();
+  for (let i = 0; i < 5000; i++) seen.add(items.rollQuality(rng, 'common'));
+  assert.ok(seen.has('mythic'), `common 段位也能开出 mythic（实际 ${[...seen].join('/')}）`);
+  assert.equal(ranked.tierReward('common'), 'common', '奖励映射与门控无关：common → common');
+  assert.equal(ranked.tierReward('mythic'), 'mythic');
 });

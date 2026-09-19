@@ -18,8 +18,12 @@ const FLAT_STATS = require('../data/affix-registry.json').stats; // 五维口径
 const QUALITIES = require('../data/qualities.json').qualities;
 const qMap = Object.fromEntries(QUALITIES.map((q) => [q.id, q]));
 
-function makeRoles(logger) {
+// itemsApi：items.js 实例（缺省 = 模块单例）。段位门控开关（unlock.json `gating.enabled`，用户决策
+//   2026-09-16：默认关闭、段位不参与判定）由 items 实例承载——本工厂保留注入缝，
+//   便于用 `roles.withGating(true)` 复核"门控开启 = 旧行为"（与 core/items.js、core/unlock.js 同一模式）。
+function makeRoles(logger, itemsApi) {
   const L = logger || nullLogger;
+  const I = itemsApi || items;
 
   // 类型修饰（R-2/R-3）：单一实现移至 items.applyTypeModifier（开箱与实例化共用；顺序冻结）。
   const applyTypeModifier = items.applyTypeModifier;
@@ -34,7 +38,7 @@ function makeRoles(logger) {
       const v = Math.round(modified[k] * rng.float(q.statRange[0], q.statRange[1]));
       stats[k] = v < 1 ? 1 : v;
     }
-    const slotCount = items.rollSlotCount('role', qualityId, rng);
+    const slotCount = I.rollSlotCount('role', qualityId, rng);
     const slots = [];
     const totalWeight = Object.values(template.slotWeights).reduce((a, b) => a + b, 0);
     while (slots.length < slotCount) {
@@ -79,7 +83,7 @@ function makeRoles(logger) {
       const uid = p.uid || p.id;
       const cost = Number.isFinite(p.pointCost) ? p.pointCost : 0;
       if (consumed.has(uid) || p.equipped === true) return { ok: false, error: 'already_equipped' }; // R-7d
-      if (!items.validateUnlock(p, tier)) return { ok: false, error: 'tier_locked' }; // R-7c（items.validateUnlock 同 unlock 口径）
+      if (!I.validateUnlock(p, tier)) return { ok: false, error: 'tier_locked' }; // R-7c（items.validateUnlock 同 unlock 口径；门控关闭时恒放行）
       const slotIdx = slots.findIndex((s, i) => s.type === p.slot && s.pluginUid === null && !usedSlots.has(i));
       if (slotIdx === -1) return { ok: false, error: 'slot_type_mismatch' }; // R-7a（含无空槽）
       if (spent + cost > budget) return { ok: false, error: 'points_exceeded' }; // R-7b
@@ -134,7 +138,17 @@ function makeRoles(logger) {
     return panel;
   }
 
-  return { instantiateRole, applyTypeModifier, equipPlugins, getFinalStats };
+  return {
+    instantiateRole, applyTypeModifier, equipPlugins, getFinalStats,
+    // 实例自省：当前门控是否参与判定（与 items 实例同源；测试/文档断言用）
+    gatingEnabled: I.gatingEnabled,
+    // 实例级工厂（链式 withGating(true).withLogger(log) 不丢设置，与 core/items.js 同模式）
+    withLogger: (lg) => makeRoles(lg, I),
+    withGating: (g) => makeRoles(L, items.withGating(g)),
+  };
 }
 
-module.exports = Object.assign(makeRoles(), { withLogger: (logger) => makeRoles(logger) });
+module.exports = Object.assign(makeRoles(), {
+  withLogger: (logger) => makeRoles(logger),
+  withGating: (g) => makeRoles(undefined, items.withGating(g)),
+});

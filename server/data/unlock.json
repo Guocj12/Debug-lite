@@ -4,6 +4,11 @@
   "_contract": "docs/systems/09-unlock.md；server/data/ai-nodes.json（真实节点单一数据源）",
   "version": 1,
 
+  "gating": {
+    "enabled": false,
+    "note": "段位门控总开关（用户决策 2026-09-16：默认所有功能全部解锁，段位不参与判定）。enabled=false = 关闭门控：core/unlock.js 的 availableNodes/isUnlocked/filterByTier/validateLoadout 与 core/items.js 的 validateUnlock/rollQuality(品质池截断)/dropPool/assemble 一律不做段位判定；enabled=true = 恢复全部门控（旧行为不变）。段位树（unlocks/nodePermissions）与各表 unlockTier 字段**保留**为进度/评分元数据，排位晋升与段位奖励（server/ranked.js）不受本开关影响。两模式均有测试：tests/unit/unlock.test.js、items.test.js、wh.test.js、box.test.js 等的 withGating(true)/withGating(false) 用例；文档见 docs/systems/09-unlock.md §8。"
+  },
+
   "unlocks": [
     { "tier": "common", "aiNodes": ["if"],
       "roleTemplates": ["role_bal"],

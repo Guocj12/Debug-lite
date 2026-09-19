@@ -217,8 +217,12 @@ test('函数行动产出定点分析：只调用"能产出 action"的函数才�
   const fn = (name, body) => ({ type: 'function', name, body });
   const loop = (body) => ({ type: 'loop', kind: 'count', times: { type: 'literal', value: 1 }, body });
   const setN = { type: 'set', name: 'n', value: { type: 'literal', value: 1 } };
+  // B26 校验收紧适配（2026-09-19）：`set`/`getVar` 的名字必须在程序某处被 var 声明过（undefined_var），
+  //   且整棵程序必须至少含一个 action（no_action_program）。此处补上声明与 action——
+  //   本用例的检查点（"纯检测函数不能充当行动产出"的定点分析）不受影响。
+  const varN = { type: 'var', name: 'n', value: { type: 'literal', value: 0 } };
   // ① 循环体只调"纯检测"函数（无 action、无产出链）→ 拒绝（正是"空死循环"防护）
-  const pure = P_({ type: 'seq', statements: [fn('probe', { type: 'seq', statements: [setN] }), loop({ type: 'seq', statements: [call('probe')] })] });
+  const pure = P_({ type: 'seq', statements: [fn('probe', { type: 'seq', statements: [varN, setN] }), loop({ type: 'seq', statements: [call('probe')] })] });
   const r1 = ast.checkLegality(pure);
   assert.equal(r1.ok, false, '循环体只调纯检测函数 → 拒绝');
   assert.ok(r1.errors.some((e) => e.code === 'branch_without_action'));
@@ -229,7 +233,7 @@ test('函数行动产出定点分析：只调用"能产出 action"的函数才�
   const transitive = P_({ type: 'seq', statements: [fn('g', { type: 'seq', statements: [act('wait')] }), fn('f', { type: 'seq', statements: [call('g')] }), loop({ type: 'seq', statements: [call('f')] })] });
   assert.equal(ast.checkLegality(transitive).ok, true, '传递产出 action → 允许');
   // ④ 纯检测函数在顶层单独调用 → 允许（纯计算函数合法，只是不能充当行动）
-  const topLevel = P_({ type: 'seq', statements: [fn('probe', { type: 'seq', statements: [setN] }), call('probe')] });
+  const topLevel = P_({ type: 'seq', statements: [fn('probe', { type: 'seq', statements: [varN, setN] }), call('probe'), act('wait')] });
   assert.equal(ast.checkLegality(topLevel).ok, true, '顶层调用纯检测函数合法');
 });
 
@@ -316,6 +320,8 @@ test('ast 枚举：arith.op 只接受 + - * /（% 未实现，必须拒绝而不
   const arith = (op) => P({
     type: 'seq',
     statements: [
+      // B26 校验收紧适配：set 目标必须先 var 声明（undefined_var），否则校验期拒绝——与本用例的枚举检查点无关
+      { type: 'var', name: 'v', value: { type: 'literal', value: 0 } },
       { type: 'set', name: 'v', value: { type: 'arith', op, left: { type: 'literal', value: 5 }, right: { type: 'literal', value: 2 } } },
       { type: 'action', name: 'wait' },
     ],

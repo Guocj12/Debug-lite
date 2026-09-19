@@ -183,11 +183,19 @@ function runAiBattle(opts) {
   rt.destroyContext(aiCtx);
 
   // ---- 每帧动作生效性：p1 = 玩家 AI（对手为内置纯状态机器人，不参与统计）----
+  // 计数口径**单源**（2026-09-19 审查修复）：帧级 `actions` 与顶层 `actionsEffective/ineffectiveActions`
+  //   都取自 countActions 的 (owner,tick) 去重结果——此前帧级用"事件条数"、顶层用"去重动作数"，
+  //   同一动作产生两条 warn 时两个数字会互相打架（同一件事两套计数）。
+  //   帧内事件必为该 tick 的事件（引擎按 `r.tick === tick` 切帧），故按 tick 取用与顶层口径逐帧一致。
   const agg = countActions(result.diffs, battleEvents);
+  const ineffByTick = new Map(); // tick → p1 未生效**动作**数（已按 (owner,tick) 去重）
+  for (const a of agg.ineffectiveActions.actions) {
+    if (a.owner !== 'p1') continue;
+    ineffByTick.set(a.tick, (ineffByTick.get(a.tick) || 0) + 1);
+  }
   const frames = result.diffs.map((d) => {
     const events = (d.events || []).filter(isObservableActionEvent);
-    // 无 owner 的动作事件（如 action.invalid 的非法原始值）默认归玩家 p1（对手为内置机器人，不产生这类事件）
-    const p1Events = events.filter((e) => !e.data || e.data.owner === undefined || e.data.owner === 'p1');
+    const ineff = ineffByTick.get(d.tick) || 0;
     return {
       tick: d.tick,
       players: d.players,
@@ -195,7 +203,7 @@ function runAiBattle(opts) {
       bulletHits: d.bulletHits,
       verdict: d.verdict || null,
       aiTrace: d.aiTrace, // 冻结字段名（interfaces §4.3 diff.aiTrace[]，P2-6 对齐）
-      actions: { effective: Math.max(0, 1 - p1Events.length), ineffective: p1Events.length },
+      actions: { effective: Math.max(0, 1 - ineff), ineffective: ineff },
       events,
     };
   });
