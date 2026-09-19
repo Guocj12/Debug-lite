@@ -28,7 +28,9 @@ A（hp 132）被挂上 `{stat:"hp", delta:-3, remaining:3}`：
 | E-2a | `{stat:"hp", delta:+5, remaining:2}`，hp 已满 132 | 132 → **132** | hp 封顶到 `maxHp` |
 | E-2b | `{stat:"mp", delta:+3, remaining:2}`，mp 39/41 | 39 → **41** → 满 | mp 封顶 |
 | E-2c | `{stat:"atk", delta:-4, remaining:2}`，atk 12 | 12 → **8** | atk 可减，**下限 0** |
-| E-2d | `{stat:"def", delta:+6}` 与 `{stat:"def", delta:-2}` 同时存在 | 两者**各自独立结算**：`def +6−2 = +4`，各自计时 | 同 stat 多效果独立（`T-EF-1`） |
+| E-2d | `{stat:"def", delta:+6, remaining:3}` 与 `{stat:"def", delta:-2, remaining:2}` 同时存在（基准 def = 8） | 两者**各自独立结算、独立回滚**：t1 `8+6−2=12`；t2 第二个到期 → 结算 `12+6−2=16` 后**回滚其累计 −4** → **20**；t3 第一个到期 → 结算 `20+6=26` 后**回滚 +18** → **8**（严格回到施放前，净 0） | 同 stat 多效果独立（`T-EF-1`）+ 面板类到期回滚（`05-effects` §4.3） |
+
+> **E-2d 数值口径（2026-09-19 修正）**：修前**无回滚**，t2 的可观测值是 **16**（且增益永久留在面板上）；引入"到期回滚累计实际增量"后 t2 = **20**、t3 = **8**。复算依据 `tests/unit/effects.test.js` 的 EF-3（`effects.test.js:66-83`，逐 tick 断言 8 → 12 → 20 → 8）。**E-1 / E-2a / E-2b / E-2c / E-2e / E-3 不受影响**（资源类不回滚；`atk` 下限 0 与 clamp 语义不变）。
 | E-2e | `{stat:"hp", delta:-200, remaining:1}`，hp 30 | 30 → **0**（clamp） | 不出现负血（但**死亡判定**仍在步骤 12） |
 
 ### E-3 `untilEnd`（± 固定数值直到结束）

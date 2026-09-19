@@ -457,27 +457,60 @@ function createHandler(logger, extraRoutes, runtime) {
         if (r.status !== 200) return { status: r.status, payload: errEnvelope(r.code, 'AI 程序不可编译', r.details) };
         return { status: 200, payload: okEnvelope(r.data, logger) };
       },
-      '/api/v1/ai/battle': async (ctx) => {
+      '/api/v1/ai/battle': {
         // B16：给定 AI 跑一场（服务端重新执行，T-AP-4；seed 显式化回带，T-AP-5）
-        const runner = require('./runner.js');
-        const body = jsonBody(ctx);
-        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
-        const program = body.program || body.ai;
-        if (!program || typeof program !== 'object') {
-          return { status: 400, payload: errEnvelope('bad_ai', '缺少 program（AI 程序对象）') };
-        }
-        const seed = body.seed;
-        const r = runner.runAiBattle({
-          program,
-          seed,
-          tier: body.tier === undefined ? 'mythic' : String(body.tier),
-          opponent: body.opponent === undefined ? 'kiter' : String(body.opponent),
-          logger,
-        });
-        if (r.status !== 200) {
-          return { status: r.status, payload: errEnvelope(r.code, r.code === 'unknown_opponent' ? '未知对手' : 'AI 战斗无法执行', r.details) };
-        }
-        return { status: 200, payload: okEnvelope(r.data, logger) };
+        // P1-3：对象路由 = 让管线解析 Bearer 身份（tolerant：无/坏 token 按匿名）→ 可选用调用方**真实档案**
+        //        的出战配置作为 p1 技能槽来源（`store:false` 保证无档案存储时该端点照旧可用）。
+        store: false,
+        tolerant: true,
+        handler: async (ctx) => {
+          const runner = require('./runner.js');
+          const body = jsonBody(ctx);
+          if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+          const program = body.program || body.ai;
+          if (!program || typeof program !== 'object') {
+            return { status: 400, payload: errEnvelope('bad_ai', '缺少 program（AI 程序对象）') };
+          }
+          const seed = body.seed;
+          // P1-3：技能槽来源优先级 = 显式 `skills`/`loadout` → 调用方档案出战配置（带有效 token + 已装配存储）
+          //   → baseline（缺省，黄金语义不变）。档案配置不可实例化时**回落 baseline 并记 warn**（不静默改语义）。
+          let skills = body.skills;
+          let loadout = body.loadout;
+          let warehouse = body.warehouse;
+          let loadoutSource = null;
+          if (skills === undefined && loadout === undefined && ctx.player && rt.store) {
+            const own = await ownLoadoutOf(ctx.player.playerId);
+            if (own) {
+              loadout = own.loadout;
+              warehouse = own.warehouse;
+              loadoutSource = 'archive';
+            } else {
+              logger.warn('api', 'api.reject', 'ai/battle: 档案出战配置不可用 → 回落 baseline 技能槽', {
+                path: '/api/v1/ai/battle', publicId: ctx.player.publicId, reason: 'archive_loadout_missing',
+              });
+            }
+          }
+          const callRunner = (extra) => runner.runAiBattle({
+            program,
+            seed,
+            tier: body.tier === undefined ? 'mythic' : String(body.tier),
+            opponent: body.opponent === undefined ? 'kiter' : String(body.opponent),
+            skills: extra.skills, loadout: extra.loadout, warehouse: extra.warehouse, loadoutSource: extra.loadoutSource,
+            logger,
+          });
+          let r = callRunner({ skills, loadout, warehouse, loadoutSource });
+          if (r.status === 409 && loadoutSource === 'archive') {
+            // 档案配置读到了但不可实例化（缺镜像/门控）→ 如实记 warn 后回落 baseline（端点不因档案而 409）
+            logger.warn('api', 'api.reject', 'ai/battle: 档案出战配置不可实例化 → 回落 baseline 技能槽', {
+              path: '/api/v1/ai/battle', publicId: ctx.player.publicId, reason: 'archive_loadout_unusable',
+            });
+            r = callRunner({});
+          }
+          if (r.status !== 200) {
+            return { status: r.status, payload: errEnvelope(r.code, r.code === 'unknown_opponent' ? '未知对手' : 'AI 战斗无法执行', r.details) };
+          }
+          return { status: 200, payload: okEnvelope(r.data, logger) };
+        },
       },
       '/api/v1/box': async (ctx) => {
         // B17：开箱（seed/tier/次数；D-122 段位品质上限 + I-9 掉落池门控；seed 回带 T-AP-5）
@@ -713,6 +746,27 @@ function createHandler(logger, extraRoutes, runtime) {
     const lo = Number.isInteger(from) && from >= 1 ? from : 1;
     const hi = Number.isInteger(to) && to >= lo ? Math.min(to, frames.length) : frames.length;
     return { ...data, frames: frames.slice(lo - 1, hi) };
+  }
+
+  // P1-3：调用方**真实档案**的出战配置（activeSlot 快照正文 + 该配置自带的装配引用子集）。
+  // 任一环节缺失/读取失败 → null（调用方回落 baseline，不阻断端点）。
+  async function ownLoadoutOf(playerId) {
+    if (!rt.store || typeof playerId !== 'string' || playerId === '') return null;
+    try {
+      const archive = await rt.store.loadArchive(playerId);
+      const active = archive ? archiveFx.activeSlot(archive) : null;
+      const hash = active && active.snapshot ? active.snapshot.hash : null;
+      if (!hash) return null;
+      const snap = await rt.store.snapshot.get(hash);
+      if (!snap || snap.hash !== hash || !snap.loadout) return null;
+      const warehouse = snap.warehouse || (await rt.loadWarehouse(playerId)) || null;
+      return { loadout: snap.loadout, warehouse };
+    } catch (err) {
+      logger.warn('store', 'store.snapshot.missing', `读取调用方出战配置失败：${err && err.message ? err.message : err}`, {
+        playerId, reason: 'own_loadout_read_failed',
+      });
+      return null;
+    }
   }
 
   /* ----- 回放 aiTrace 裁剪（P1-1 / §9.4；P1-2 扩展到遗留 `r<seq>`） -----
