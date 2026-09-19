@@ -114,6 +114,27 @@ async function playerIdByPublicId(store, publicId) {
   return null;
 }
 
+// 注册真实玩家并登记 token（`state.facts.tokens`：publicId → token，供后续按 publicId 反查）
+async function registerPlayer(port, username, nickname) {
+  const r = await request(port, 'POST', '/api/v1/auth/register', { username, password: PASSWORD, nickname });
+  if (r.status === 200 || r.status === 201) state.facts.tokens[r.body.data.publicId] = r.body.data.token;
+  return r;
+}
+
+// 防守战绩视图：夹具持有 token 时走 HTTP（覆盖端点），否则退回档案层同一视图（脚本内不应发生）
+async function defenseViewOf(port, store, publicId) {
+  const pid = await playerIdByPublicId(store, publicId);
+  const token = state.facts.tokens[publicId];
+  if (token) {
+    const r = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(token));
+    expect(r.status === 200, `GET /me/defense 应 200，实得 ${r.status}`, r.raw);
+    const me = await request(port, 'GET', '/api/v1/me', undefined, authed(token));
+    return { via: 'http', data: r.body.data, tier: me.body.data.progress.tier, points: me.body.data.rating.points };
+  }
+  const arch = await store.loadArchive(pid);
+  return { via: 'store', data: await store.defenseSummary(pid, { limit: 20 }), tier: arch.progress.tier, points: arch.rating.points };
+}
+
 async function realPlayerProof(store, publicId) {
   const playerId = await playerIdByPublicId(store, publicId);
   if (!playerId) return null;
@@ -281,19 +302,21 @@ async function main() {
 
     /* ---- [1/22] 注册两个真实玩家 ---- */
     await step(1, 'POST /auth/register → 200/201 + token；重名 → 409 user_exists', async () => {
-      const a = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_alpha_1', password: PASSWORD, nickname: '阿尔法' });
+      const a = await registerPlayer(port, 'e2e_alpha_1', '阿尔法');
       expect(a.status === 200 || a.status === 201, `注册状态码应为 200/201，实得 ${a.status}`, a.raw);
       expect(a.body.ok === true && typeof a.body.data.token === 'string' && a.body.data.token.length >= 40, '注册应下发 token', a.raw);
       expect(typeof a.body.data.publicId === 'string' && a.body.data.publicId.startsWith('u_'), '注册应下发 publicId', a.raw);
       expect(!a.raw.includes('pl_'), '注册响应不得回带 playerId（§4.5）', a.raw);
       state.facts.A = { token: a.body.data.token, publicId: a.body.data.publicId, username: 'e2e_alpha_1' };
+      state.facts.tokens[state.facts.A.publicId] = state.facts.A.token;
       state.facts.A.playerId = await playerIdByPublicId(s.store, state.facts.A.publicId);
       expect(typeof state.facts.A.playerId === 'string' && state.facts.A.playerId.startsWith('pl_'),
         'A 的 publicId 必须能反查到真实 playerId（档案库）', j(a.body));
 
-      const b = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_beta_2', password: PASSWORD, nickname: '贝塔' });
+      const b = await registerPlayer(port, 'e2e_beta_2', '贝塔');
       expect(b.status === 200 || b.status === 201, `B 注册失败 ${b.status}`, b.raw);
       state.facts.B = { token: b.body.data.token, publicId: b.body.data.publicId, username: 'e2e_beta_2' };
+      state.facts.tokens[state.facts.B.publicId] = state.facts.B.token;
       state.facts.B.playerId = await playerIdByPublicId(s.store, state.facts.B.publicId);
 
       const dup = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_alpha_1', password: PASSWORD });
@@ -301,9 +324,10 @@ async function main() {
       expect(dup.body.error && dup.body.error.code === 'username_taken', `重名错误码应为 username_taken，实得 ${j(dup.body.error)}`, dup.raw);
 
       // 第 4 个真实玩家：CLI 闭环用（同时作为回放"非参与者"分支的主体，必须确定不参与任何对局）
-      const cliP = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_cli_5', password: PASSWORD, nickname: '命令行' });
+      const cliP = await registerPlayer(port, 'e2e_cli_5', '命令行');
       expect(cliP.status === 200 || cliP.status === 201, `CLI 玩家注册失败 ${cliP.status}`, cliP.raw);
       state.facts.cliPlayer = { token: cliP.body.data.token, publicId: cliP.body.data.publicId, username: 'e2e_cli_5' };
+      state.facts.tokens[state.facts.cliPlayer.publicId] = state.facts.cliPlayer.token;
       state.facts.cliPlayer.playerId = await playerIdByPublicId(s.store, state.facts.cliPlayer.publicId);
       expect(typeof state.facts.cliPlayer.playerId === 'string', 'CLI 玩家档案应可回查', cliP.raw);
 
@@ -321,9 +345,10 @@ async function main() {
       expect(wrong.status === 401, `错密码应 401，实得 ${wrong.status}`, wrong.raw);
       expect(wrong.body.error.code === 'invalid_credentials', `错密码错误码应为 invalid_credentials，实得 ${j(wrong.body.error)}`, wrong.raw);
 
-      const victim = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_lock_3', password: PASSWORD });
+      const victim = await registerPlayer(port, 'e2e_lock_3');
       expect(victim.status === 200 || victim.status === 201, `锁定用例注册失败 ${victim.status}`, victim.raw);
       state.facts.victim = { token: victim.body.data.token, publicId: victim.body.data.publicId };
+      state.facts.tokens[state.facts.victim.publicId] = state.facts.victim.token;
       const statuses = [];
       for (let i = 0; i < 5; i++) {
         const r = await request(port, 'POST', '/api/v1/auth/login', { username: 'e2e_lock_3', password: 'bad-password' });
@@ -501,11 +526,12 @@ async function main() {
 
     /* ---- [10/22] 池空 → 不注入 bot ---- */
     await step(10, 'POST /quick/run（池空）→ 不得注入 bot：409 no_opponent，且不产生任何对局记录', async () => {
-      const solo = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_solo_4', password: PASSWORD });
+      const solo = await registerPlayer(port, 'e2e_solo_4');
       expect(solo.status === 200 || solo.status === 201, `独狼注册失败 ${solo.status}`, solo.raw);
       const soloToken = solo.body.data.token;
       const soloId = await playerIdByPublicId(s.store, solo.body.data.publicId);
       state.facts.solo = { token: soloToken, publicId: solo.body.data.publicId, playerId: soloId };
+      state.facts.tokens[state.facts.solo.publicId] = soloToken;
       expect(state.facts.solo.playerId === null || typeof state.facts.solo.playerId === 'string', '独狼档案应可回查', solo.raw);
 
       const r = await request(port, 'POST', '/api/v1/quick/run', {}, authed(soloToken));
@@ -639,28 +665,11 @@ async function main() {
       const foeIds = d.results.map((m) => m.opponentPublicId);
       const defenses = [];
       for (const publicId of foeIds) {
-        const token = publicId === state.facts.B.publicId ? state.facts.B.token
-          : publicId === state.facts.solo.publicId ? state.facts.solo.token
-            : publicId === state.facts.victim.publicId ? state.facts.victim.token : null;
-        let defData;
-        let tierOfFoe;
-        let pointsOfFoe;
-        if (token) {
-          const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(token));
-          expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
-          defData = def.body.data;
-          const meB = await request(port, 'GET', '/api/v1/me', undefined, authed(token));
-          tierOfFoe = meB.body.data.progress.tier;
-          pointsOfFoe = meB.body.data.rating.points;
-        } else {
-          // 其余对手由 CLI 注册（未持有 token）→ 直接读档案层同一视图
-          const pid = await playerIdByPublicId(s.store, publicId);
-          const ds = await s.store.defenseSummary(pid, { limit: 20 });
-          const arch = await s.store.loadArchive(pid);
-          defData = ds;
-          tierOfFoe = arch.progress.tier;
-          pointsOfFoe = arch.rating.points;
-        }
+        // 防守战绩视图：夹具持有 token 时走 HTTP（端点），否则退回档案层同一视图
+        const view = await defenseViewOf(port, s.store, publicId);
+        const defData = view.data;
+        const tierOfFoe = view.tier;
+        let pointsOfFoe = view.points;
         expect(defData.drawnCount >= 1, `被抽场次应 ≥1，实得 ${defData.drawnCount}`, j(defData));
         const s3 = defData.stats;
         expect(s3.wins + s3.losses + s3.draws === defData.drawnCount, '防守胜负平应闭合到 drawnCount', j(defData));
@@ -710,22 +719,25 @@ async function main() {
 
     /* ---- [17/22] /me/defense 汇总 ---- */
     await step(17, 'GET /me/defense 汇总被抽场次 / 胜负 / 未读 / 最近列表', async () => {
+      // 主体 = 本批次**实际被抽中的对手** ∪ {发起者 A, B, CLI 玩家}
       const subjects = [
-        { tag: 'A（本批次发起者，未被抽）', token: state.facts.A.token, publicId: state.facts.A.publicId },
-        { tag: 'B', token: state.facts.B.token, publicId: state.facts.B.publicId },
-        { tag: 'CLI 玩家', token: state.facts.cliPlayer.token, publicId: state.facts.cliPlayer.publicId },
+        { tag: 'A（本批次发起者，未被抽）', publicId: state.facts.A.publicId },
+        { tag: 'B', publicId: state.facts.B.publicId },
+        { tag: 'CLI 玩家', publicId: state.facts.cliPlayer.publicId },
       ];
+      for (const publicId of state.facts.ranked1.results.map((m) => m.opponentPublicId)) {
+        if (!subjects.some((x) => x.publicId === publicId)) subjects.push({ tag: `排位对手`, publicId });
+      }
       const views = [];
       for (const subj of subjects) {
-        const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(subj.token));
-        expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
-        const x = def.body.data;
-        expect(x.stats && typeof x.stats.wins === 'number' && typeof x.stats.losses === 'number' && typeof x.stats.draws === 'number', '应含胜负平统计', def.raw);
-        expect(x.stats.wins + x.stats.losses + x.stats.draws === x.drawnCount, `胜负平应闭合到被抽场次（${subj.tag}）`, def.raw);
-        expect(Array.isArray(x.recent), '应含最近列表', def.raw);
-        expect(typeof x.unread === 'number', '应含未读计数', def.raw);
-        expect(!def.raw.includes('pl_'), '防守战绩不得回带 playerId', def.raw);
-        views.push({ ...subj, data: x });
+        const view = await defenseViewOf(port, s.store, subj.publicId);
+        const x = view.data;
+        expect(x.stats && typeof x.stats.wins === 'number' && typeof x.stats.losses === 'number' && typeof x.stats.draws === 'number', `应含胜负平统计（${subj.tag}）`, j(x));
+        expect(x.stats.wins + x.stats.losses + x.stats.draws === x.drawnCount, `胜负平应闭合到被抽场次（${subj.tag}）`, j(x));
+        expect(Array.isArray(x.recent), `应含最近列表（${subj.tag}）`, j(x));
+        expect(typeof x.unread === 'number', `应含未读计数（${subj.tag}）`, j(x));
+        expect(!j(x).includes('pl_'), `防守战绩不得回带 playerId（${subj.tag}）`, j(x));
+        views.push({ ...subj, data: x, via: view.via });
       }
       // 本批次真实被抽中的防守方：字段完整性 + 最近一条可回查对手
       const drawn = views.filter((v) => v.data.drawnCount >= 1);
@@ -775,7 +787,7 @@ async function main() {
       // "非参与者"主体：注册 2 名全新玩家并**机器核对**其从未出现在任何 battle.recorded 记录里
       const fresh = [];
       for (let i = 0; i < 2; i++) {
-        const p = await request(port, 'POST', '/api/v1/auth/register', { username: `e2e_fresh_${7 + i}`, password: PASSWORD, nickname: `旁观${i}` });
+        const p = await registerPlayer(port, `e2e_fresh_${7 + i}`, `旁观${i}`);
         expect(p.status === 200 || p.status === 201, `旁观玩家注册失败 ${p.status}`, p.raw);
         fresh.push({ token: p.body.data.token, publicId: p.body.data.publicId, playerId: await playerIdByPublicId(s.store, p.body.data.publicId) });
       }
@@ -873,7 +885,7 @@ async function main() {
     await step(22, 'POST /quick/run（真实玩家对手）Elo 可复算；CLI auth/me/quick/leaderboard + 退出码 3 = 未鉴权', async () => {
       // 本步发起者 = 第 11 步已压到 1hp 的脆皮 A（确定性必败 → 双向 Δ 均非零）；
       // 注册一名全新真实玩家并清掉 A 的对手冷却，保证池内确有可用候选（等价 24h 已过）
-      const init = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_elo_6', password: PASSWORD, nickname: '埃洛' });
+      const init = await registerPlayer(port, 'e2e_elo_6', '埃洛');
       expect(init.status === 200 || init.status === 201, `Elo 用例注册失败 ${init.status}`, init.raw);
       const initPlayer = { token: init.body.data.token, publicId: init.body.data.publicId, playerId: await playerIdByPublicId(s.store, init.body.data.publicId) };
       expect(typeof initPlayer.playerId === 'string', '新玩家档案应可回查', init.raw);

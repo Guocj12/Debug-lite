@@ -18,6 +18,7 @@
     "e2e": "node scripts/e2e.js",
     "demo:log": "node scripts/demo.js --log-level trace",
     "cli": "node cli/index.js",
-    "hooks:install": "git config core.hooksPath .githooks"
+    "hooks:install": "git config core.hooksPath .githooks",
+    "load-test": "node scripts/load-test.js"
   }
 }

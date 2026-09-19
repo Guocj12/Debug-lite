@@ -259,12 +259,15 @@ function checkC5(reg, opts) {
   return pass('C5', `${reg.dataFields.length} 个字段引用全部命中 ${usedSamples.size} 个真实响应样本`);
 }
 
-function checkC6(reg, text) {
+// repoRoot：注入缝（P7-7 §P0 第⑦条）—— C6/C8 需要 require 后端模块（unlock/ast/engine/runner/
+//   数据表/shared/log），投毒用例只改文档与 publicDir，故默认仍指向真实仓库；显式传入可指向 fixture。
+function checkC6(reg, text, repoRoot) {
   const problems = [];
   const notes = [];
+  const root = repoRoot || REPO;
   const controls = reg.controls || {};
   // ① 段位：后端 TIERS 顺序 === 注册表 controls.tiers === 文中段位控件行
-  const unlock = require(path.join(REPO, 'server', 'core', 'unlock.js'));
+  const unlock = require(path.join(root, 'server', 'core', 'unlock.js'));
   const tiers = unlock.TIERS || ['common', 'rare', 'epic', 'legendary', 'mythic'];
   if (JSON.stringify(controls.tiers) !== JSON.stringify(tiers)) {
     problems.push(`注册表 controls.tiers 与后端不一致：${JSON.stringify(controls.tiers)} vs ${JSON.stringify(tiers)}`);
@@ -282,7 +285,7 @@ function checkC6(reg, text) {
   notes.push(`段位 ${tiers.length} 档一致`);
 
   // ② AI 节点白名单：ast.NODE_TYPES === 注册表 controls.aiNodes === 文中 §12.3 节点表
-  const ast = require(path.join(REPO, 'server', 'ai', 'ast.js'));
+  const ast = require(path.join(root, 'server', 'ai', 'ast.js'));
   const sourceNodes = [...ast.NODE_TYPES];
   const regNodes = controls.aiNodes || [];
   const missingInReg = sourceNodes.filter((n) => !regNodes.includes(n));
@@ -301,7 +304,7 @@ function checkC6(reg, text) {
   notes.push(`AI 节点 ${sourceNodes.length} 类一致`);
 
   // ③ 动作名：engine.ACTIONS + skill:skillN，注册表与文中 §12.4 三处一致
-  const engineSrc = read(path.join(REPO, 'server', 'core', 'engine.js'));
+  const engineSrc = read(path.join(root, 'server', 'core', 'engine.js'));
   const m = /const ACTIONS = new Set\(\[([^\]]+)\]\)/.exec(engineSrc);
   const engineActions = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
   if (engineActions.length === 0) problems.push('无法从 engine.js 解析 ACTIONS 白名单');
@@ -327,7 +330,7 @@ function checkC6(reg, text) {
   notes.push(`动作名 ${engineActions.length} 项 + 技能 ${specSkills.length} 位一致`);
 
   // ④ 对手：runner.OPPONENTS === 注册表 controls.opponents === 文中登记
-  const runner = require(path.join(REPO, 'server', 'runner.js'));
+  const runner = require(path.join(root, 'server', 'runner.js'));
   const opps = Object.keys(runner.OPPONENTS);
   if (JSON.stringify(controls.opponents) !== JSON.stringify(opps)) {
     problems.push(`注册表 controls.opponents 与后端 OPPONENTS 不一致：${JSON.stringify(controls.opponents)} vs ${JSON.stringify(opps)}`);
@@ -338,7 +341,7 @@ function checkC6(reg, text) {
   notes.push(`对手 ${opps.join('/')} 已登记`);
 
   // ⑤ 品质 id 与颜色：qualities.json ↔ 注册表 ↔ tokens.css 片段
-  const qualities = require(path.join(REPO, 'server', 'data', 'qualities.json')).qualities;
+  const qualities = require(path.join(root, 'server', 'data', 'qualities.json')).qualities;
   if (JSON.stringify(controls.qualities) !== JSON.stringify(qualities.map((q) => q.id))) {
     problems.push(`注册表 controls.qualities 与 qualities.json 不一致`);
   }
@@ -354,7 +357,7 @@ function checkC6(reg, text) {
   notes.push(`品质 ${qualities.length} 档颜色/令牌一致`);
 
   // ⑥ 战场几何/提示门槛：battle-config.json 关键值必须在附录出现
-  const cfg = require(path.join(REPO, 'server', 'data', 'battle-config.json'));
+  const cfg = require(path.join(root, 'server', 'data', 'battle-config.json'));
   const specTail = text.slice(text.indexOf('## 附录 A'));
   for (const k of ['fieldPx', 'cellPx', 'actorHalfPx', 'baseDef', 'hardCapTick']) {
     if (!specTail.includes(`${k}`) || !specTail.includes(String(cfg[k]))) {
@@ -367,14 +370,14 @@ function checkC6(reg, text) {
   notes.push('战场几何常量已引用');
 
   // ⑦ 开箱次数上限与 box.js 一致
-  const box = require(path.join(REPO, 'server', 'box.js'));
+  const box = require(path.join(root, 'server', 'box.js'));
   if (!new RegExp(`1[..]{1,2}${box.BOX_TIMES_MAX}|BOX_TIMES_MAX=${box.BOX_TIMES_MAX}|上限.*${box.BOX_TIMES_MAX}`).test(text)) {
     problems.push(`文中未登记开箱次数上限 BOX_TIMES_MAX=${box.BOX_TIMES_MAX}`);
   }
   notes.push(`开箱上限 ${box.BOX_TIMES_MAX} 一致`);
 
   // ⑧ 日志通道：注册表 controls.channels ⊆ shared/log.js 注册表
-  const { CHANNELS } = require(path.join(REPO, 'shared', 'log.js'));
+  const { CHANNELS } = require(path.join(root, 'shared', 'log.js'));
   const badChannels = (controls.channels || []).filter((c) => !CHANNELS.includes(c));
   if (badChannels.length) problems.push(`注册表 controls.channels 含未注册通道: ${badChannels.join('、')}`);
   notes.push(`日志通道 ${(controls.channels || []).length} 个已注册`);
@@ -383,7 +386,7 @@ function checkC6(reg, text) {
   return pass('C6', notes.join('；'));
 }
 
-function checkC7(text) {
+function checkC7(text, publicDir) {
   const problems = [];
   const listed = new Set();
   // 清单行形如 `  js/api/client.js   说明文字`（两空格缩进 + 相对路径 + 说明）
@@ -405,7 +408,7 @@ function checkC7(text) {
     if (!listed.has(f)) problems.push(`清单条目提取不一致: ${f}`);
   }
   // 磁盘上已有实现时，文件也必须在清单内
-  const pubDir = path.join(REPO, 'public', 'js');
+  const pubDir = publicDir || path.join(REPO, 'public', 'js');
   if (fs.existsSync(pubDir)) {
     const walk = (dir) => {
       const out = [];
@@ -425,8 +428,8 @@ function checkC7(text) {
   return pass('C7', `文件清单与文中引用一致（${listed.size} 个条目）`);
 }
 
-function checkC8(text) {
-  const { CHANNELS } = require(path.join(REPO, 'shared', 'log.js'));
+function checkC8(text, repoRoot) {
+  const { CHANNELS } = require(path.join(repoRoot || REPO, 'shared', 'log.js'));
   const channelSet = new Set(CHANNELS);
   const problems = [];
   let count = 0;
@@ -446,10 +449,13 @@ function checkC8(text) {
   return pass('C8', `${count} 个日志事件名合规且通道已注册`);
 }
 
-function checkC9(reg) {
-  const pubDir = path.join(REPO, 'public', 'js');
+function checkC9(reg, publicDir) {
+  const pubDir = publicDir || path.join(REPO, 'public', 'js');
   if (!fs.existsSync(pubDir)) {
-    return pass('C9', 'public/js 尚未实现（P6 未开工）；实现后本项自动生效');
+    // P7-7 §P0 第⑦条：这一支**不是实现侧覆盖证据**（`public/js` 缺失时无从比对）。
+    //   此前只返回 status:'pass' → FE-SPEC-1 的"C1–C9 全绿"会被读成"实现侧已核对"= 虚假保证。
+    //   现显式标记 applicable=false，调用方/门禁可据此区分"通过"与"未生效"。
+    return { id: 'C9', status: 'pass', applicable: false, detail: `${path.relative(REPO, pubDir)} 尚未实现（P6 未开工）→ 本项**未生效**，不构成实现侧证据；实现后自动生效` };
   }
   const knownActions = new Set(reg.actions.map((a) => a.type));
   const ids = new Set();
@@ -487,12 +493,18 @@ function checkC9(reg) {
 
 // ---------- 结果与主流程 ----------
 
-function pass(id, detail) { return { id, status: 'pass', detail }; }
-function fail(id, detail) { return { id, status: 'fail', detail }; }
+// applicable：本项是否**真的跑过判定**（C9 在 public/js 缺失时 = false：通过 ≠ 实现侧已核对）
+function pass(id, detail) { return { id, status: 'pass', applicable: true, detail }; }
+function fail(id, detail) { return { id, status: 'fail', applicable: true, detail }; }
 
+// options: {specFile, samplesFile, repoRoot, publicDir}
+//   specFile/samplesFile：文档与样本注入缝（既有）
+//   repoRoot/publicDir：C6/C8 的后端模块与 C7/C9 的实现目录注入缝（P7-7 §P0 第⑦条新增）
 function checkSpec(options) {
   const opts = options || {};
   const specFile = opts.specFile || SPEC;
+  const repoRoot = opts.repoRoot || REPO;
+  const publicDir = opts.publicDir || path.join(repoRoot, 'public', 'js');
   if (!fs.existsSync(specFile)) return { ok: false, items: [fail('C0', `文档不存在: ${specFile}`)] };
   const text = read(specFile);
   const loaded = loadRegistry(specFile);
@@ -506,10 +518,10 @@ function checkSpec(options) {
     () => checkC3(reg),
     () => checkC4(reg),
     () => checkC5(reg, opts),
-    () => checkC6(reg, text),
-    () => checkC7(text),
-    () => checkC8(text),
-    () => checkC9(reg),
+    () => checkC6(reg, text, repoRoot),
+    () => checkC7(text, publicDir),
+    () => checkC8(text, repoRoot),
+    () => checkC9(reg, publicDir),
   ]) {
     try {
       items.push(fn());

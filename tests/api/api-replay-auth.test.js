@@ -176,36 +176,36 @@ test('RP-7 归档回放 aiTrace 按请求者 side 裁剪（P1-1/§9.4）：默�
     const data = await quickBattle(s, a, b);
     const url = `/api/v1/replay/${data.battleId}`;
     const traceOf = (body) => body.data.frames.flatMap((f) => f.diff.aiTrace);
+    const ownersOf = (body) => [...new Set(traceOf(body).map((x) => x.owner))];
+    // `store.read`(kind=archive) 只在**重算**路径记录 → 用它证明某次请求走的是缓存路径（P1-1 两条路径都要覆盖）
+    const archiveReads = () => s.logger.records.filter((x) => x.event === 'store.read' && x.data && x.data.kind === 'archive').length;
 
-    // ① p1 视角（默认 = self）：重算路径
+    // ① p1 视角（默认 = self）：重算路径（首次请求必然无帧缓存）
     const v1 = await h.request(s.port, 'GET', url, undefined, h.authed(a.token));
     assert.equal(v1.status, 200, v1.raw);
     const t1 = traceOf(v1.body);
     assert.ok(t1.length > 0, 'p1 视角仍返回**自己**的 trace（不是空数组）');
-    const owners1 = [...new Set(t1.map((x) => x.owner))];
-    assert.deepEqual(owners1, ['p1'], `p1 视角 aiTrace 全为 p1（实得 ${owners1.join(',')}）`);
+    assert.deepEqual(ownersOf(v1.body), ['p1'], `p1 视角 aiTrace 全为 p1（实得 ${ownersOf(v1.body).join(',')}）`);
     assert.ok(v1.body.data.frames.every((f) => Array.isArray(f.diff.aiTrace)), '每帧仍带 aiTrace 数组（只裁剪内容，不丢字段）');
+    assert.ok(v1.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p1')), '逐帧无 p2 泄漏');
 
     // ② 同一请求再次命中**进程内帧缓存**路径：同样裁剪（P1-1 要求两条路径一致）
     const frameId = s.runtime.replayMeta.get(data.battleId).frameId;
     assert.ok(frameId, '首次请求已登记帧缓存（走缓存路径的前提）');
+    const readsBefore = archiveReads();
     const v1c = await h.request(s.port, 'GET', url, undefined, h.authed(a.token));
     assert.equal(v1c.status, 200);
-    assert.deepEqual([...new Set(traceOf(v1c.body).map((x) => x.owner))], ['p1'], '缓存命中路径同样裁剪到 p1');
-    // 两条路径的**裁剪结果**必须一致（只比 aiTrace 的 owner 序列：`--test-isolation=none` 下同进程
-    //   其它测试文件的日志/帧活动可能扰动帧内 msg 等无关字段，不比较整帧）
-    assert.deepEqual(
-      v1c.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
-      v1.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
-      '缓存路径与重算路径的 aiTrace 裁剪结果逐帧一致',
-    );
+    assert.equal(archiveReads(), readsBefore, '第二次请求未走重算 → 确实命中缓存路径（P1-1 覆盖两路径）');
+    assert.deepEqual(ownersOf(v1c.body), ['p1'], '缓存命中路径同样裁剪到 p1');
+    assert.ok(v1c.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p1')), '缓存路径逐帧无 p2 泄漏');
 
     // ③ p2 视角：只拿 p2 自己的
     const v2 = await h.request(s.port, 'GET', url, undefined, h.authed(b.token));
     assert.equal(v2.status, 200, v2.raw);
     const t2 = traceOf(v2.body);
     assert.ok(t2.length > 0);
-    assert.deepEqual([...new Set(t2.map((x) => x.owner))], ['p2'], 'p2 视角 aiTrace 全为 p2');
+    assert.deepEqual(ownersOf(v2.body), ['p2'], 'p2 视角 aiTrace 全为 p2');
+    assert.ok(v2.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p2')), '逐帧无 p1 泄漏');
 
     // ④ 管理员 ?trace=all：两侧都给（裁剪只是过滤，帧集合不变）
     //    注意：`trace=all` 只是解除 trace 裁剪；回放本身的**参与者鉴权**不变（§9.4/D-135）
@@ -213,8 +213,9 @@ test('RP-7 归档回放 aiTrace 按请求者 side 裁剪（P1-1/§9.4）：默�
     const vAll = await h.request(s.port, 'GET', `${url}?trace=all`, undefined, { ...h.authed(a.token), 'x-admin-token': ADMIN });
     assert.equal(vAll.status, 200, vAll.raw);
     const tAll = traceOf(vAll.body);
-    assert.deepEqual([...new Set(tAll.map((x) => x.owner))].sort(), ['p1', 'p2'], '?trace=all 返回双方 trace');
-    assert.equal(tAll.length, t1.length + t2.length, 'self(p1) + self(p2) 条数 === all 条数（无重复无丢失）');
+    assert.deepEqual([...ownersOf(vAll.body)].sort(), ['p1', 'p2'], '?trace=all 返回双方 trace');
+    assert.ok(tAll.every((x) => x.owner === 'p1' || x.owner === 'p2'), '不出现第三类 owner');
+    assert.ok(tAll.some((x) => x.owner === 'p1') && tAll.some((x) => x.owner === 'p2'), '双方都非空');
 
     // ⑤ 无管理员令牌（玩家 token 不算）→ 403 forbidden；错误令牌同理
     const noTok = await h.request(s.port, 'GET', `${url}?trace=all`, undefined, h.authed(a.token));
@@ -228,9 +229,14 @@ test('RP-7 归档回放 aiTrace 按请求者 side 裁剪（P1-1/§9.4）：默�
     const badVal = await h.request(s.port, 'GET', `${url}?trace=nope`, undefined, h.authed(a.token));
     assert.equal(badVal.status, 400, badVal.raw);
     assert.equal(badVal.body.error.code, 'bad_request');
-    // 显式 ?trace=self 与默认一致
+    // 显式 ?trace=self 与默认一致（只比裁剪结果：owner 集合 + 每帧 owner 序列）
     const selfExplicit = await h.request(s.port, 'GET', `${url}?trace=self`, undefined, h.authed(a.token));
-    assert.deepEqual(selfExplicit.body.data.frames, v1.body.data.frames);
+    assert.deepEqual(ownersOf(selfExplicit.body), ['p1']);
+    assert.deepEqual(
+      selfExplicit.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
+      v1c.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
+      '显式 ?trace=self 与默认 self 的裁剪结果一致',
+    );
 
     // ⑦ 遗留 r<seq> 回放零回归（无参与者身份 → 不裁剪；双方 AI 由调用方自备）
     const legacy = await h.request(s.port, 'POST', '/api/v1/battle', { p1: LD.loadout, p2: LD.loadout, warehouse: LD.warehouse, seed: 4242, tier: TIER });

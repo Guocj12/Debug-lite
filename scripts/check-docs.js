@@ -23,8 +23,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const REPO = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8');
-const exists = (p) => fs.existsSync(path.join(REPO, p));
 
 // 文档集合：入口 + 状态/契约类（内容层设计文档不在此检查）
 const DOC_FILES = [
@@ -32,7 +30,13 @@ const DOC_FILES = [
   'docs/interfaces.md', 'docs/ai-handoff-prompt.md', 'scripts/README.md', 'server/data/README.md',
 ];
 
-function checkDocs() {
+// 注入缝（P7-7 §P0 第⑥条，盲区 2）：`checkDocs({ projectRoot })` 可在临时目录上跑，
+//   从而能对 D1–D6 造错并断言 FAIL；无参调用仍走真实仓库（向后兼容：npm run check:docs 与旧测试不变）。
+function checkDocs(options) {
+  const opts = options || {};
+  const root = opts.projectRoot ? path.resolve(opts.projectRoot) : REPO;
+  const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+  const exists = (p) => fs.existsSync(path.join(root, p));
   const problems = [];
   const notes = [];
   const texts = {};
@@ -40,7 +44,15 @@ function checkDocs() {
     if (exists(f)) texts[f] = read(f);
     else problems.push(`${f} 不存在（check-docs 的文档清单与实际不符）`);
   }
-  const pkg = JSON.parse(read('package.json'));
+  const pkg = exists('package.json') ? JSON.parse(read('package.json')) : null;
+  if (pkg === null) {
+    return {
+      ok: false,
+      detail: 'package.json 不存在（check-docs 需要读取 npm 脚本清单做 D1 双向比对）',
+      problems: ['package.json 不存在（check-docs 需要读取 npm 脚本清单做 D1 双向比对）'],
+      notes,
+    };
+  }
   const scriptNames = Object.keys(pkg.scripts || {});
 
   // D1：npm 脚本双向一致

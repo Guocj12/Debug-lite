@@ -145,3 +145,116 @@ test('PLAY-6 导出面存在且为函数（防止重构把测试缝拆掉）', (
   }
   assert.equal(path.basename(require.resolve('../../scripts/play.js')), 'play.js');
 });
+
+// ============ P7-7 §P0 第⑧条补强：整条链路的**确定性 / 每步合法性 / --out 可校验** ============
+// 手法：`runPlay(argv, {sink})`（本次新增的可测入口）在同一进程内跑完整链路并返回逐行输出与中间态 ——
+//   不用 child_process（禁），也不靠人眼；`main()` 只是它的 stdout 入口。
+
+const fs = require('node:fs');
+const os = require('node:os');
+const loadoutApi = require('../../server/loadout.js');
+const unlock = require('../../server/core/unlock.js');
+
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-play-'));
+const qIdx = (q) => TIERS.indexOf(q);
+
+test('PLAY-7 确定性：同 seed 同参数两次运行输出**逐字节一致**（含 artifact）；换 seed 必不同', () => {
+  const argv = ['--seed', '7', '--boxes', '20', '--preset', 'kite', '--tier', 'epic'];
+  const a = play.runPlay(argv);
+  const b = play.runPlay(argv);
+  assert.equal(a.rc, 0, a.output);
+  assert.equal(b.rc, 0, b.output);
+  assert.equal(a.output, b.output, '同 seed 两次必须逐字节一致（任何 uid/顺序漂移都会在这里暴露）');
+  assert.equal(a.lines.length, b.lines.length);
+  assert.deepEqual(a.artifact, null, '未传 --out 时不得产出文件');
+  assert.deepEqual(a.picks.role.templateId, b.picks.role.templateId);
+  assert.deepEqual(a.picks.skills.map((s) => s.templateId), b.picks.skills.map((s) => s.templateId));
+  assert.equal(JSON.stringify(a.loadout.ai), JSON.stringify(b.loadout.ai), '预设 AI 构造确定性');
+  // 反向对照：不同 seed 必须给出不同输出（防止"恒等输出"式的假确定性）
+  const c = play.runPlay(['--seed', '8', '--boxes', '20', '--preset', 'kite', '--tier', 'epic']);
+  assert.notEqual(c.output, a.output, '换 seed 应产出不同战报（否则确定性断言无意义）');
+});
+
+test('PLAY-8 每步合法性：开箱品质合法（门控上限语义见 PLAY-11）、装配后五维 ≥1、winner ∈ {p1,p2,draw}', () => {
+  const r = play.runPlay(['--seed', '11', '--boxes', '25', '--preset', 'aggressive', '--tier', 'legendary']);
+  assert.equal(r.rc, 0, r.output);
+
+  // [1] 开箱：品质必在品质表内、kind 合法、uid 唯一
+  assert.ok(Array.isArray(r.opened) && r.opened.length >= 4, '应记录开箱产物');
+  const KINDS = new Set(['role', 'skill', 'rolePlugin', 'skillPlugin']);
+  for (const it of r.opened) {
+    assert.ok(qIdx(it.quality) >= 0, `品质必须合法：${it.quality}`);
+    assert.ok(KINDS.has(it.kind), `类别必须合法：${it.kind}`);
+  }
+  assert.equal(new Set(r.opened.map((x) => x.uid)).size, r.opened.length, 'uid 必须唯一');
+  // 门控开启时：品质序号 ≤ 段位序号（上限语义）；默认门控关闭（用户决策 2026-09-16）→ tier 不截断
+  if (unlock.GATING_DEFAULT) {
+    for (const it of r.opened) assert.ok(qIdx(it.quality) <= qIdx('legendary'), `${it.quality} 超出 legendary 上限`);
+  }
+
+  // [4]/[5] 装配后面板：五维 ≥ 1（I-8f 数值下限）、技能恰 3 且参数齐
+  assert.equal(r.picks.skills.length, 3, '出战技能恰 3 个');
+  const stats = r.panel.panel.role.stats;
+  for (const k of ['hp', 'atk', 'def', 'sp', 'mp']) {
+    assert.ok(Number.isInteger(stats[k]) && stats[k] >= 1, `${k} 必须 ≥1，实际 ${stats[k]}`);
+  }
+  assert.equal(r.panel.ok, true, JSON.stringify(r.panel.errors));
+  assert.equal(r.panel.panel.skills.length, 3);
+  for (const sk of r.panel.panel.skills) assert.equal(typeof sk.params.multiplier, 'number');
+
+  // [6] 战斗：winner 三态、ticks 与帧数一致、帧结构完整
+  assert.ok(['p1', 'p2', 'draw'].includes(r.battle.winner), `winner 必须 ∈ {p1,p2,draw}：${r.battle.winner}`);
+  assert.ok(r.battle.ticks >= 1);
+  assert.equal(r.battle.frames.length, r.battle.ticks, '帧数 = tick 数');
+  for (const f of r.battle.frames) {
+    assert.equal(typeof f.tick, 'number');
+    assert.ok(f.diff && f.diff.players && f.diff.players.p1, '每帧必须有 players.p1 快照');
+  }
+});
+
+test('PLAY-9 --out 产物能被 loadout.validateLoadout 通过（写盘 → 读回 → 校验）', () => {
+  const file = path.join(TMP, 'play-loadout.json');
+  const r = play.runPlay(['--seed', '7', '--boxes', '20', '--tier', 'mythic', '--preset', 'steady', '--out', file]);
+  assert.equal(r.rc, 0, r.output);
+  assert.ok(fs.existsSync(file), '--out 必须真的写盘');
+  assert.equal(r.artifact.path, path.resolve(file));
+  assert.ok(r.output.includes('已写出战配置'), '应打印写出路径');
+  const back = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(back).sort(), ['loadout', 'warehouse']);
+  const v = loadoutApi.validateLoadout(back.loadout, { warehouse: back.warehouse, tier: 'mythic' });
+  assert.equal(v.ok, true, `产物必须通过校验：${JSON.stringify(v.errors)}`);
+  // 产物 = 进程内中间态（写盘内容与 runPlay 返回的 artifact 逐值一致）
+  assert.deepEqual(back, JSON.parse(JSON.stringify(r.artifact.data)));
+});
+
+test('PLAY-10 退出码契约：--help/合法参数 → 0；未知参数/非法取值 → 2（无 child_process）', () => {
+  assert.equal(play.runPlay(['--help']).rc, 0);
+  assert.equal(play.runPlay([]).rc, 0);
+  const bad = play.runPlay(['--seed', '0']);
+  assert.equal(bad.rc, 2, bad.output);
+  assert.ok(bad.output.includes('--seed 必须是正整数'));
+  assert.equal(play.runPlay(['--nope']).rc, 2);
+  assert.equal(play.runPlay(['--boxes', '1', '--preset', 'kite']).rc, 0, 'boxes=1 时按同一 seed 流补齐');
+});
+
+test('PLAY-11 门控上限语义平行复核：withGating(true) 下开箱品质 ≤ --tier；默认关闭时不截断（记录实测）', () => {
+  const openWith = (api, tier, n) => {
+    const rng = createRng(20260912);
+    const outq = [];
+    for (let i = 0; i < n; i++) outq.push(api.openBox(rng.deriveStream(i, 'box'), { tier }).quality);
+    return outq;
+  };
+  // 开启门控：严格 ≤ tier 上限（play.js 的 --tier 参数在该模式下就是这个含义）
+  const capped = openWith(items.withGating(true), 'rare', 40);
+  for (const q of capped) assert.ok(qIdx(q) <= qIdx('rare'), `门控开启时 ${q} 不应超过 rare`);
+  assert.ok(new Set(capped).size > 1, '应出现多个品质（否则断言无意义）');
+  // 关闭门控（当前默认）：tier 仅作回带信息，不参与判定 → 允许出现高于 rare 的品质
+  const openNow = openWith(items, 'rare', 40);
+  assert.equal(items.gatingEnabled, false, '当前默认 = 门控关闭（unlock.json gating.enabled=false）');
+  assert.ok(openNow.some((q) => qIdx(q) > qIdx('rare')), '门控关闭时不得截断品质池（记录当前实测语义）');
+});
+
+test('PLAY-12 清理临时目录（PLAY-9 产物）不在仓库内', () => {
+  assert.ok(path.resolve(TMP).startsWith(path.resolve(os.tmpdir())), '临时产物必须在 os.tmpdir() 内');
+  fs.rmSync(TMP, { recursive: true, force: true });
+});

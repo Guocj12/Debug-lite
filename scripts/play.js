@@ -217,12 +217,26 @@ function fmtSkillParam(sid, sk) {
   return `${sid}  ${pr.multiplier === undefined ? '?' : Number(pr.multiplier).toFixed(2)} 倍率  消耗 ${cost}  冷却 ${pr.cooldown}${range}`;
 }
 
-function main() {
-  const out = (s) => process.stdout.write(`${s}\n`);
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help) { out(USAGE); return 0; }
+// 可测主流程（P7-7 §P0 第⑧条）：把整条链路做成**可注入 stdout + 可返回中间态**的纯调用，
+//   使 `npm test` 无需 child_process 就能断言"同 seed 两次输出逐字节一致 / 每步合法性 / --out 产物可校验"。
+//   `main()` 只是它的进程入口（sink = process.stdout），逐行输出行为与重构前逐字节一致。
+// argv：与 process.argv.slice(2) 同形；options.sink(line)：可选的行回调（缺省只收集不打印）
+// 返回：{ rc, lines, output, opened, warehouse, loadout, picks, panel, battle, artifact }
+function runPlay(argv, options) {
+  const opts = options || {};
+  const sink = typeof opts.sink === 'function' ? opts.sink : null;
+  const lines = [];
+  const out = (s) => { const line = String(s); lines.push(line); if (sink) sink(line); };
+  const state = {
+    rc: 0, lines, output: '', opened: null, warehouse: null, loadout: null,
+    picks: null, panel: null, battle: null, artifact: null,
+  };
+  const finish = (rc) => { state.rc = rc; state.output = lines.join('\n'); return state; };
+
+  const args = parseArgs(argv);
+  if (args.help) { out(USAGE); return finish(0); }
   const bad = args.bad !== null ? `未知参数 ${args.bad}` : validateArgs(args);
-  if (bad !== null) { out(`${bad}\n\n${USAGE}`); return 2; }
+  if (bad !== null) { out(`${bad}\n\n${USAGE}`); return finish(2); }
 
   const { seed, tier, preset } = args;
   const floorIdx = args.quality === null ? null : qIdxOf(args.quality);
@@ -248,8 +262,9 @@ function main() {
     }
   } catch (e) {
     out(`[1/6] 开箱失败：${e.message}（段位 ${tier} 的掉落池为空？）`);
-    return 1;
+    return finish(1);
   }
+  state.opened = opened;
   const shown = opened.slice(0, 4);
   for (const it of shown) out(`        · ${it.kind}  ${labelOf(it)}`);
   if (opened.length > shown.length) out(`        · …其余 ${opened.length - shown.length} 件见下方仓库统计`);
@@ -259,12 +274,13 @@ function main() {
   out(`[2/6] 仓库合并（内存，不依赖尚不存在的服务端仓库）：${kinds.map((k) => `${k} ${wh.buckets[k].length}`).join('  ')}`);
   if (bucketCount(wh, 'role') < 1 || bucketCount(wh, 'skill') < 3) {
     out(`        出战材料仍不足（角色 ${bucketCount(wh, 'role')} / 技能 ${bucketCount(wh, 'skill')}）→ 无法组队`);
-    return 1;
+    return finish(1);
   }
 
   // [3] 自动装配
   const asm = autoAssemble(wh, tier);
   const wh2 = asm.warehouse;
+  state.warehouse = wh2;
   out(`[3/6] 自动装配（槽位类型 + 段位门控 + 点数预算 + 插件唯一性；失败即跳过并说明）：成功 ${asm.placed.length} 件，跳过 ${asm.skipped.length} 处`);
   for (const p of asm.placed.slice(0, 6)) {
     out(`        ✔ ${labelOf(p.plugin)}${p.cost === undefined ? '' : `（${p.cost} 点）`} → ${p.where}`);
@@ -293,12 +309,15 @@ function main() {
 
   const program = buildPreset(preset, skills.map((s, i) => ({ action: `skill:skill${i + 1}`, type: SKILL_TYPES[s.templateId] || s.type })));
   const loadout = { role, skills, ai: program };
+  state.picks = { role, skills };
+  state.loadout = loadout;
   const panel = loadoutApi.buildPanel(loadout, { warehouse: wh2, tier });
   if (!panel.ok) {
     out(`[4/6] 出战配置校验失败（loadout_invalid）：`);
     for (const e of panel.errors) out(`        ✘ ${e.where}: ${e.code} ${e.message}`);
-    return 1;
+    return finish(1);
   }
+  state.panel = panel;
 
   // [5] 面板
   out('[5/6] 角色面板（最终数值 = 物品五维 + 已装角色插件词条；技能参数 = 模板 + 技能插件聚合）');
@@ -317,9 +336,10 @@ function main() {
   if (r.status !== 200) {
     out(`        对战被拒绝：${r.status} ${r.code} ${r.message || ''}`);
     if (r.details) for (const e of r.details) out(`        ✘ ${e.where}: ${e.code} ${e.message}`);
-    return 1;
+    return finish(1);
   }
   const { frames, winner, ticks, phase } = r.data;
+  state.battle = { winner, ticks, phase, frames };
   out('        战报格式：tick N: p1 x/hp/mp/sp | p2 x/hp/mp/sp | 碰撞@x | 命中[uid->目标@坐标->攻方->受方 伤害 (暴击×1.5 背击×1.5)] | 伤害[无弹幕归属的伤害：碰撞/附加真伤]');
   let dmgEvents = 0;
   let bulletHits = 0;
@@ -347,16 +367,24 @@ function main() {
     const file = path.resolve(args.out);
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ loadout, warehouse: wh2 }, null, 2), 'utf8');
+      const artifact = { loadout, warehouse: wh2 };
+      fs.writeFileSync(file, JSON.stringify(artifact, null, 2), 'utf8');
+      state.artifact = { path: file, data: artifact };
       out(`        已写出战配置：${file}`);
       out(`        （可直接喂给 CLI：先 npm start，再 npm run cli -- battle --p1 ${args.out} --p2 ${args.out} --seed ${seed} --tier ${tier}）`);
     } catch (e) {
       out(`        写出战配置失败：${e.message}`);
-      return 1;
+      return finish(1);
     }
   }
   out('=== 试玩结束：开箱 → 装配 → 面板 → 战斗逐 tick → 胜负，全流程离线完成 ===');
-  return 0;
+  return finish(0);
+}
+
+// 进程入口：逐行写 stdout（与重构前的 `process.stdout.write(s + '\n')` 逐字节一致）
+function main() {
+  const r = runPlay(process.argv.slice(2), { sink: (l) => process.stdout.write(`${l}\n`) });
+  return r.rc;
 }
 
 // 技能排序：类型偏好（远→近）→ 品质（高→低）→ uid（稳定）
@@ -380,4 +408,4 @@ if (require.main === module) {
   process.exitCode = main();
 }
 
-module.exports = { parseArgs, validateArgs, buildPreset, autoAssemble, cmpSkill, skillTypeScore, labelOf };
+module.exports = { parseArgs, validateArgs, buildPreset, autoAssemble, cmpSkill, skillTypeScore, labelOf, runPlay, main };
