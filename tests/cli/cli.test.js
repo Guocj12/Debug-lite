@@ -72,9 +72,10 @@ test('CLI-8 log 子命令闭环：--level trace 生效（真实服务端）', as
     const getLevel = () => new Promise((resolve, reject) => {
       const http = require('node:http');
       http.get(`${base}/api/v1/log-level`, (res) => {
-        let d = '';
-        res.on('data', (ch) => { d += ch; });
-        res.on('end', () => resolve(JSON.parse(d)));
+        // 跨 chunk 多字节字符必须整段解码（逐 chunk toString → U+FFFD；与 tests/helpers/http.js 同源修复）
+        const chunks = [];
+        res.on('data', (ch) => { chunks.push(Buffer.isBuffer(ch) ? ch : Buffer.from(String(ch))); });
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
       }).on('error', reject);
     });
     const before = await getLevel();

@@ -35,9 +35,11 @@ function request(port, method, urlPath, body, headers) {
     const h = { ...(headers || {}) };
     if (body !== undefined && h['content-type'] === undefined) h['content-type'] = 'application/json';
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, headers: h }, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
+      // 跨 chunk 多字节字符必须整段解码（`data += chunk` 会对每个 chunk 各自 toString → U+FFFD 假红）
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(data); } catch (e) { /* 非 JSON 响应 */ }
         resolve({ status: res.statusCode, body: json, raw: data, headers: res.headers });
@@ -54,9 +56,11 @@ function requestChunks(port, urlPath, chunks, headers) {
   return new Promise((resolve, reject) => {
     const h = { 'content-type': 'application/json', 'transfer-encoding': 'chunked', ...(headers || {}) };
     const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: urlPath, headers: h }, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
+      // 跨 chunk 多字节字符必须整段解码（`data += chunk` 会对每个 chunk 各自 toString → U+FFFD 假红）
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(data); } catch (e) { /* 非 JSON */ }
         resolve({ status: res.statusCode, body: json, raw: data });

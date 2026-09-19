@@ -130,19 +130,27 @@ class BodyTooLargeError extends Error {
   }
 }
 
+// 请求体读取（≤1MB **字节**；UTF-8 整段解码）。
+//   ⚠️ 必须按 Buffer 累积再一次性解码：此前 `data += chunk` 会对**每个 TCP chunk 各自** toString('utf8')，
+//   一个多字节字符恰好跨 chunk 边界时会被解成 U+FFFD（实测：以 3 字节字符为例，66 个切点中 10 个会损坏），
+//   即"响应/请求体里的中文被静默损坏"。测试夹具同类缺陷曾造成 RP-3/RP-8 帧逐值比较的假红（见报告）。
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    const chunks = [];
+    let bytes = 0;
     let tooBig = false;
     req.on('data', (c) => {
       if (tooBig) return;
-      data += c;
-      if (data.length > BODY_LIMIT_BYTES) {
+      const buf = Buffer.isBuffer(c) ? c : Buffer.from(String(c), 'utf8');
+      bytes += buf.length;
+      if (bytes > BODY_LIMIT_BYTES) {
         tooBig = true;
         reject(new BodyTooLargeError(BODY_LIMIT_BYTES));
+        return;
       }
+      chunks.push(buf);
     });
-    req.on('end', () => { if (!tooBig) resolve(data); });
+    req.on('end', () => { if (!tooBig) resolve(Buffer.concat(chunks).toString('utf8')); });
     req.on('error', reject);
   });
 }

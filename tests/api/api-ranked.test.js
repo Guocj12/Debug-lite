@@ -10,9 +10,10 @@ const LD = require('../fixtures/loadout-ok.json');
 function request(port, method, urlPath, body) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, headers: body ? { 'content-type': 'application/json' } : {} }, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))); });
       res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = JSON.parse(data); } catch (e) { /* 非 JSON 响应 */ }
         resolve({ status: res.statusCode, body: json, raw: data });
