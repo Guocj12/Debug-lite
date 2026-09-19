@@ -175,7 +175,7 @@ function makeSkills(logger, tables) {
     }
     const c = skill.cost;
     if (caster.hp < c.hp || caster.mp < c.mp || caster.sp < c.sp) {
-      L.warn('skills', 'skill.reject', `skill ${sid} resource`, { reason: 'resource', sid });
+      L.warn('skills', 'skill.reject', `skill ${sid} resource`, { reason: 'resource', sid, slot: cdKey });
       return { ok: false, reason: 'resource' };
     }
     const next = {
@@ -183,9 +183,9 @@ function makeSkills(logger, tables) {
       hp: caster.hp - c.hp,
       mp: caster.mp - c.mp,
       sp: caster.sp - c.sp,
-      cooldowns: { ...(caster.cooldowns || {}), [sid]: skill.cooldown },
+      cooldowns: { ...(caster.cooldowns || {}), [cdKey]: skill.cooldown },
     };
-    L.info('skills', 'skill.cast', `skill ${sid} cast`, { sid, cost: c });
+    L.info('skills', 'skill.cast', `skill ${sid} cast`, { sid, slot: cdKey, cost: c });
     return { ok: true, caster: next };
   }
 

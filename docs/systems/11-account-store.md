@@ -847,7 +847,7 @@ GET /api/v1/replay/:battleId
 | `session_expired` | 401 | 会话过期 |
 | `invalid_credentials` | 401 | 用户名或密码错误（不区分） |
 | `too_many_attempts` | 429 | 登录失败锁定 / 限速 |
-| `rate_limited` | 429 | 全局限速 |
+| `rate_limited` | 429 | **全局限速（实现于 P7-4 HTTP 中间件：600 次/分/principal，进程内滑动窗口；未登录按 IP）** |
 | `forbidden` | 403 | 越权访问他人资源 / 非管理员调用 admin |
 | `banned` | 403 | `flags.banned` |
 | `weak_password` | 400 | 密码长度/字符不满足 |

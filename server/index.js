@@ -557,25 +557,43 @@ function createHandler(logger, extraRoutes, runtime) {
         }
         return { status: 200, payload: okEnvelope({ panel: p.panel }, logger) };
       },
-      '/api/v1/battle': async (ctx) => {
-        // B22：双方 loadout + AI + seed → 完整回放帧（服务端重执行；回放注册表进程内，D-123 不落盘）
-        const body = jsonBody(ctx);
-        if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
-        const tier = body.tier === undefined ? 'mythic' : String(body.tier);
-        const unlockApi = require('./core/unlock.js');
-        if (unlockApi.tierIndex(tier) === null) {
-          return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
-        }
-        const r = battleApi.runBattle({ p1: body.p1, p2: body.p2, warehouse: body.warehouse, seed: body.seed, tier });
-        if (r.status !== 200) {
-          if (r.code === 'loadout_invalid') {
-            return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
+      '/api/v1/battle': {
+        // `store:false`：无档案存储时仍必须可走遗留路径（既有 tests/api/api-battle.test.js 依赖）；
+        // `tolerant:true`：无 token / 无效 token 一律按匿名处理（旧语义未读 Authorization）。
+        // P1-2：改为对象路由只为让管线解析 Bearer 身份 → 登记"调用方所在 side"供 `GET /replay/r*` 裁剪
+        //        （无 token 时 participants=[] → 读取端退化为"不含 aiTrace 的帧"，绝不返回双方轨迹）。
+        store: false,
+        tolerant: true,
+        handler: async (ctx) => {
+          // B22：双方 loadout + AI + seed → 完整回放帧（服务端重执行；回放注册表进程内，D-123 不落盘）
+          const body = jsonBody(ctx);
+          if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
+          const tier = body.tier === undefined ? 'mythic' : String(body.tier);
+          const unlockApi = require('./core/unlock.js');
+          if (unlockApi.tierIndex(tier) === null) {
+            return { status: 400, payload: errEnvelope('bad_tier', `非法段位 ${tier}（可选: common/rare/epic/legendary/mythic）`) };
           }
-          return { status: r.status, payload: errEnvelope(r.code, r.message) };
-        }
-        // P7-4：登记进有上限 LRU（无参与者 → 与旧无状态语义一致，任何持有 id 者可见）
-        registerReplay({ id: r.data.id, frameId: r.data.id, participants: null, kind: 'legacy' });
-        return { status: 200, payload: okEnvelope(r.data, logger) };
+          // P1-2：调用方声明自己占哪一侧（缺省 p1 = 自己的配置）；未知值 → 400（不静默按 p1）
+          const side = body.side === undefined || body.side === null ? 'p1' : String(body.side);
+          if (side !== 'p1' && side !== 'p2') {
+            return { status: 400, payload: errEnvelope('bad_request', `非法 side=${side}（可选: p1/p2）`) };
+          }
+          const r = battleApi.runBattle({ p1: body.p1, p2: body.p2, warehouse: body.warehouse, seed: body.seed, tier });
+          if (r.status !== 200) {
+            if (r.code === 'loadout_invalid') {
+              return { status: 409, payload: errEnvelope(r.code, r.message, r.details) };
+            }
+            return { status: r.status, payload: errEnvelope(r.code, r.message) };
+          }
+          // P7-4 + P1-2：登记进有上限 LRU，并登记参与者（持 token = 调用方 playerId；匿名 = 无参与者）
+          const playerId = ctx.player ? ctx.player.playerId : null;
+          registerReplay({
+            id: r.data.id, frameId: r.data.id, kind: 'legacy',
+            participants: playerId ? [playerId] : [],
+            sides: playerId ? { [side]: playerId, [side === 'p1' ? 'p2' : 'p1']: null } : null,
+          });
+          return { status: 200, payload: okEnvelope(r.data, logger) };
+        },
       },
       // 双轨端点（P7-4）：有 Bearer token → 档案驱动；无 token → 遗留无状态口径（DL_LEGACY_STATELESS=1）
       // `store:false`：无档案存储时仍必须可走遗留路径（既有 tests/api/api-ranked.test.js 依赖）
@@ -697,12 +715,13 @@ function createHandler(logger, extraRoutes, runtime) {
     return { ...data, frames: frames.slice(lo - 1, hi) };
   }
 
-  /* ----- 回放 aiTrace 裁剪（P1-1 / §9.4） -----
+  /* ----- 回放 aiTrace 裁剪（P1-1 / §9.4；P1-2 扩展到遗留 `r<seq>`） -----
    * §9.4：`aiTrace` **默认只返回请求方自己一侧**的（避免把对手 AI 的逐步决策喂给玩家）；
    *       `?trace=all` 仅管理员令牌通过时放行；未知 trace 值 → 400 bad_request。
    * 两条归档路径（进程内帧缓存命中 / 按 journal + 快照重算）都必须裁剪；`?trace=self` 是默认值。
-   * 侧别未知的情形（遗留 `r<seq>`：双方 loadout 与 AI 程序都由调用方在 `POST /battle` 自备 → 不存在
-   *       "对手私有信息"）不裁剪，保持旧语义零回归。
+   * **P1-2（2026-09-19）**：遗留 `r<seq>` 回放同样登记"调用方所在 side"（`POST /battle` 的 Bearer 身份
+   *   + 可选 `body.side`，缺省 `p1`），因此 `GET /replay/r*` 也按 side 裁剪；**调用方无法判定时**（匿名
+   *   遗留调用）退化为"返回帧但**剥掉全部 aiTrace**"，并记 `api.replay.trace_denied`(warn)——绝不返回双方轨迹。
    */
   function parseTraceMode(query) {
     const raw = query && query.trace !== undefined && query.trace !== null ? String(query.trace) : 'self';
@@ -731,11 +750,13 @@ function createHandler(logger, extraRoutes, runtime) {
   }
 
   function applyTrace(data, side, mode) {
-    if (mode === 'all' || side === null) return data;
+    if (mode === 'all') return data;
+    // side === null（调用方 side 不可判定）→ **剥离全部 aiTrace**（P1-2：不得返回双方轨迹）
     const frames = (Array.isArray(data.frames) ? data.frames : []).map((f) => {
       const diff = f && f.diff;
       if (!diff || !Array.isArray(diff.aiTrace)) return f;
-      return { ...f, diff: { ...diff, aiTrace: diff.aiTrace.filter((t) => t && t.owner === side) } };
+      const kept = side === null ? [] : diff.aiTrace.filter((t) => t && t.owner === side);
+      return { ...f, diff: { ...diff, aiTrace: kept } };
     });
     return { ...data, frames };
   }
@@ -754,7 +775,28 @@ function createHandler(logger, extraRoutes, runtime) {
     if (/^r\d+$/.test(id)) {
       if (!rt.legacyStateless) return deprecated(`GET /api/v1/replay/${id}`);
       const r = battleApi.getReplay(id, from, to);
-      if (r.status === 200) return { status: 200, payload: okEnvelope(applyTrace(r.data, null, traceMode), logger) };
+      if (r.status === 200) {
+        // P1-2：遗留回放同样做参与者鉴权 + 按 side 裁剪（见 legacyReplayEntry 的登记口径）
+        const meta = rt.replayMeta.get(id);
+        const participants = meta && Array.isArray(meta.participants) ? meta.participants : [];
+        let side = null;
+        if (ctx.player && participants.includes(ctx.player.playerId)) {
+          side = sideOfPlayer(meta && meta.sides ? [meta.sides.p1, meta.sides.p2] : null, ctx.player.playerId);
+        } else if (ctx.player && participants.length > 0) {
+          logger.warn('api', 'api.reject', 'replay_forbidden: 非参与者请求遗留回放', {
+            path: `/api/v1/replay/${id}`, publicId: ctx.player.publicId, code: 'replay_forbidden',
+          });
+          return failStatus(403, 'replay_forbidden', '只能查看自己参与的对局回放');
+        } else if (participants.length > 0 || traceMode === 'self') {
+          // 匿名/无效 token：无法判定调用方 side → 只返回**不含 aiTrace** 的帧（明确 warn，不静默）
+          logger.warn('api', 'api.replay.trace_denied',
+            `遗留回放 ${id} aiTrace 已剥离（请求方 side 不可判定：匿名或非参与者身份）`, {
+              path: `/api/v1/replay/${id}`, replayId: id, kind: 'legacy',
+              reason: ctx.player ? 'not_participant' : 'anonymous', participants: participants.length,
+            });
+        }
+        return { status: 200, payload: okEnvelope(applyTrace(r.data, side, traceMode), logger) };
+      }
       if (rt.evicted.has(id)) {
         logger.warn('store', 'store.snapshot.missing', `回放 ${id} 已从帧缓存淘汰（LRU ${rt.replayLimit}）`, { replayId: id, reason: 'evicted', limit: rt.replayLimit });
         return failStatus(410, 'replay_expired', `回放 ${id} 已过期（帧缓存淘汰，上限 ${rt.replayLimit} 场）`);

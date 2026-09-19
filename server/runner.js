@@ -8,10 +8,16 @@
 const engine = require('./core/engine.js');
 const ast = require('./ai/ast.js');
 const runtime = require('./ai/runtime.js');
+const skillsMod = require('./core/skills.js');
+const loadoutApi = require('./loadout.js'); // P1-3：面板聚合单一实现（loadout 不 require 本模块 → 无环）
 const { createLogger, nullLogger } = require('../shared/log.js');
 const crypto = require('node:crypto');
 
 const BATTLE_CFG = require('./data/battle-config.json');
+
+// 技能实例化基准 rng（与 server/battle.js / server/loadout.js 同一口径：确定性、不消费随机流）
+const STUB_RNG = { float: () => 1, int: () => 0, pick: () => 0 };
+const SKILL_TEMPLATE_IDS = new Set(require('./data/skill-templates.json').skillTemplates.map((s) => s.id));
 
 // 内置对手行为（opponent 名 → (state, self) → 行动字符串；纯函数、确定性）
 const OPPONENTS = {
@@ -49,7 +55,9 @@ function baselinePlayer(P) {
 // 快照字段总清单（与 docs/systems/08-ai §4.5 / interfaces 同步；get.path 白名单以本清单为准）：
 //   tick                              number
 //   self.{hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}  number
-//   self.cooldowns.<sid>              number（只读副本；未装配技能不在其中）
+//   self.cooldowns.<slotKey>          number（只读副本；未装配技能不在其中）
+//     键语义（P1-4 裁定，2026-09-19）：**槽位键 `skill1..3`**（= AI 动作名 `skill:<槽位>` 的槽位，
+//     也是引擎冷却键）；不再是模板 id——`sys/08-ai` §4.5 的字段说明需同步。旧快照缺该键 → 读到 null。
 //   self.effects[i].{kind,stat,delta,remaining,displacement,uid}  （只读摘要；缺省 null）
 //   enemy.*                           同 self.*（对称）
 //   bases.self.{hp,maxHp,def} / bases.enemy.{hp,maxHp,def}        number（基地血量可读路径）
@@ -121,6 +129,115 @@ function compileAi(program, logger) {
 }
 
 // 跑一场（/ai/battle）：服务端重新执行（T-AP-4）；seed 显式化（T-AP-5：缺省生成并回带）
+
+/* ---------- P1-3：p1 技能槽装配（可选入参；缺省 = baseline，黄金快照零回归） ----------
+ * 背景：`baselinePlayer` 无 `skills` → 任何 `skill:*` 恒 `unknown_skill`，技能类 AI 在 /ai/battle
+ *       **没有任何通过路径**（实测 62/62 ineffective）。修法：新增可选 `skills`（或 `loadout`）入参。
+ * 口径：
+ *   · `skills` —— 数组（下标 i → 槽位键 `skill${i+1}`，与 `server/battle.js` 的 `p.skills` 键、
+ *     AI 动作名 `skill:<槽位>`、P1-4 的**槽位冷却键**三者同源）或对象（键即槽位键）。
+ *     元素 = 模板 id 字符串，或 `{templateId, quality?, params?}`（loadout 形态的技能项）。
+ *   · `loadout` —— 出战配置全文（role + skills + ai）：走 `loadout.buildPanel` **面板聚合单一实现**
+ *     （与 /panel、/battle 同源，含插件词条；含 `slots[].pluginUid` 时需 `warehouse`）。
+ *   · `skills` 与 `loadout` **互斥**（都给了 → 400 bad_request，避免"参数取舍"隐式规则）。
+ *   · 两者皆不给 → 逐字节沿用 `baselinePlayer('p1')`（既有 62/62 unknown_skill 语义不变）。
+ * 说明：本端点用于**验证 AI 程序**，不落盘、不记账；技能实例的参数由调用方给定（`params`）或由
+ *   `loadout` 面板聚合得出，模板参数随机一律走 STUB_RNG（确定性，不消费随机流）。
+ */
+function normalizeSkillSlots(input) {
+  if (Array.isArray(input)) {
+    if (input.length === 0) return { slots: [] };
+    if (input.length > 3) {
+      return { error: { path: 'skills', code: 'bad_skills', message: `技能槽最多 3 个（loadout 口径），实得 ${input.length}` } };
+    }
+    return { slots: input.map((item, i) => ({ key: `skill${i + 1}`, item, path: `skills[${i}]` })) };
+  }
+  if (input && typeof input === 'object') {
+    const keys = Object.keys(input);
+    if (keys.length > 3) {
+      return { error: { path: 'skills', code: 'bad_skills', message: `技能槽最多 3 个（loadout 口径），实得 ${keys.length}` } };
+    }
+    return { slots: keys.map((k) => ({ key: k, item: input[k], path: `skills.${k}` })) };
+  }
+  return { error: { path: 'skills', code: 'bad_skills', message: 'skills 必须是数组（下标 → skill1..3）或对象（键即槽位键）' } };
+}
+
+// 单个槽条目 → {templateId, quality, params} | {error}
+function slotSpecOf(slot) {
+  const raw = slot.item;
+  if (typeof raw === 'string') return { templateId: raw, quality: 'common', params: null };
+  if (raw && typeof raw === 'object') {
+    const templateId = raw.templateId === undefined ? null : raw.templateId;
+    if (typeof templateId !== 'string' || templateId === '') {
+      return { error: { path: `${slot.path}.templateId`, code: 'bad_skills', message: '技能槽缺少 templateId' } };
+    }
+    if (raw.params !== undefined && raw.params !== null && typeof raw.params !== 'object') {
+      return { error: { path: `${slot.path}.params`, code: 'bad_skills', message: 'params 必须是对象' } };
+    }
+    return { templateId, quality: typeof raw.quality === 'string' && raw.quality !== '' ? raw.quality : 'common', params: raw.params || null };
+  }
+  return { error: { path: slot.path, code: 'bad_skills', message: '技能槽元素必须是模板 id 字符串或 {templateId, quality?, params?} 对象' } };
+}
+
+// p1 玩家：{ok, player, source:'baseline'|'explicit'|'archive', slots:[…]} | {ok:false, status, code, details}
+function playerOneOf(opts) {
+  const hasSkills = opts.skills !== undefined && opts.skills !== null;
+  const hasLoadout = opts.loadout !== undefined && opts.loadout !== null;
+  if (hasSkills && hasLoadout) {
+    return {
+      ok: false, status: 400, code: 'bad_request',
+      details: [{ path: 'skills', code: 'conflict', message: 'skills 与 loadout 互斥：只能给其一（loadout 已含技能槽）' }],
+    };
+  }
+  if (!hasSkills && !hasLoadout) {
+    return { ok: true, player: baselinePlayer('p1'), source: 'baseline', slots: [] };
+  }
+  const base = baselinePlayer('p1');
+  const p = { ...base };
+  let specs = [];
+  if (hasLoadout) {
+    if (typeof opts.loadout !== 'object') {
+      return { ok: false, status: 400, code: 'loadout_invalid', details: [{ path: 'loadout', code: 'loadout_invalid', message: 'loadout 必须是对象' }] };
+    }
+    const panel = loadoutApi.buildPanel(opts.loadout, { warehouse: opts.warehouse || null, tier: opts.tier || 'mythic' });
+    if (!panel.ok) return { ok: false, status: 409, code: 'loadout_invalid', details: panel.errors };
+    const role = panel.panel.role;
+    p.hp = role.stats.hp; p.maxHp = role.stats.hp;
+    p.mp = role.stats.mp; p.maxMp = role.stats.mp;
+    p.sp = role.stats.sp; p.maxSp = role.stats.sp;
+    p.atk = role.stats.atk; p.def = role.stats.def;
+    if (role.regen) p.regen = role.regen;
+    if (role.special) p.special = role.special;
+    specs = (opts.loadout.skills || []).map((item, i) => ({
+      key: `skill${i + 1}`, templateId: item && item.templateId, quality: (item && item.quality) || 'common',
+      params: panel.panel.skills[i] ? panel.panel.skills[i].params : null, path: `loadout.skills[${i}]`,
+    }));
+  } else {
+    const norm = normalizeSkillSlots(opts.skills);
+    if (norm.error) return { ok: false, status: 400, code: 'bad_skills', details: [norm.error] };
+    const details = [];
+    specs = norm.slots.map((slot) => {
+      const spec = slotSpecOf(slot);
+      if (spec.error) { details.push(spec.error); return null; }
+      return { key: slot.key, ...spec, path: slot.path };
+    }).filter(Boolean);
+    if (details.length > 0) return { ok: false, status: 400, code: 'bad_skills', details };
+  }
+  const bad = [];
+  const skills = {};
+  for (const spec of specs) {
+    if (typeof spec.templateId !== 'string' || !SKILL_TEMPLATE_IDS.has(spec.templateId)) {
+      bad.push({ path: `${spec.path}.templateId`, code: 'unknown_skill', message: `未知技能模板 ${spec.templateId}（skill-templates.json 未登记）` });
+      continue;
+    }
+    const inst = skillsMod.instantiateSkill(spec.templateId, spec.quality, STUB_RNG);
+    skills[spec.key] = spec.params ? Object.assign(inst, spec.params) : inst;
+  }
+  if (bad.length > 0) return { ok: false, status: 400, code: 'bad_skills', details: bad };
+  p.skills = skills;
+  return { ok: true, player: p, source: opts.loadoutSource === 'archive' ? 'archive' : 'explicit', slots: specs.map((s) => s.key) };
+}
+
 function runAiBattle(opts) {
   const logger = opts.logger;
   const astApi = ast.withLogger(logger);
@@ -147,7 +264,12 @@ function runAiBattle(opts) {
   if (mig.error) return { status: 400, code: 'ai_invalid', details: [{ path: '', code: mig.error, message: '程序版本无法迁移' }] };
   const program = mig.migrated ? mig.program : opts.program;
   const programHash = astApi.programHash(program); // P2-8：destroyContext 前捕获，回读不依赖实现细节
-  const p1 = baselinePlayer('p1');
+  // P1-3：p1 = baseline（缺省）或调用方给定的技能槽/出战配置（见 playerOneOf 的口径说明）
+  const p1res = playerOneOf(opts);
+  if (!p1res.ok) {
+    return { status: p1res.status || 400, code: p1res.code, details: p1res.details, message: p1res.code === 'loadout_invalid' ? 'loadout 不合法（与 /panel、/battle 同源校验）' : '技能槽入参不合法' };
+  }
+  const p1 = p1res.player;
   const p2 = baselinePlayer('p2');
   // B26：动作生效性观测（唯一真源 = 引擎/技能系统自己的 warn 记录：action.invalid / skill.reject）
   //   内部 logger 全量记录进 battleEvents（帧 events[] 契约：与 /api/v1/battle 同源，带 cid/tick），
@@ -219,6 +341,9 @@ function runAiBattle(opts) {
       warnings: Array.isArray(v.warnings) ? v.warnings : [], // B26：非阻断提示（ast.validate 通道）
       actionsEffective: agg.actionsEffective,
       ineffectiveActions: agg.ineffectiveActions,
+      // P1-3（附加字段，向后兼容）：p1 技能槽来源与槽位键，便于调用方自证"技能类 AI 真的被装配了"
+      skillSource: p1res.source,
+      skillSlots: p1res.slots,
     },
   };
 }
@@ -290,4 +415,4 @@ function countActions(diffs, events) {
   };
 }
 
-module.exports = { compileAi, runAiBattle, projectSnapshot, OPPONENTS, baselinePlayer, takeTrace, countActions, isObservableActionEvent };
+module.exports = { compileAi, runAiBattle, playerOneOf, projectSnapshot, OPPONENTS, baselinePlayer, takeTrace, countActions, isObservableActionEvent };

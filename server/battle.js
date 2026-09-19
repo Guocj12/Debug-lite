@@ -39,6 +39,8 @@ function buildPlayer(owner, ld, wh, tier) {
   ld.skills.forEach((sk, i) => {
     const inst = skills.instantiateSkill(sk.templateId, sk.quality || 'common', STUB_RNG);
     const agg = panel.panel.skills[i].params; // B20 聚合（含插件词条/消耗补偿）
+    // 槽位键 = 引擎的寻址键（`skill:skillN`）**且**是冷却键（P1-4 裁定：按槽位冷却）
+    //   → 同一模板装两槽时两槽 CD 独立；`inst.sid` 仍是模板 id（身份/日志用，两者不再混同）
     p.skills[`skill${i + 1}`] = Object.assign(inst, agg);
   });
   return { ok: true, player: p, ctx };

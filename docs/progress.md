@@ -22,12 +22,12 @@
 ## 1. 文档体系（权威链）
 
 ```
-docs/decisions.md      决策记录（**D-01…D-153**；D-129…D-136 与 **D-137…D-153** 中凡标「计划中（P7）」的条目代码未实现）  ← 最高权威
+docs/decisions.md      决策记录（**D-01…D-153**；D-129…D-136 与 D-137…D-153 均已落地，见 §0）  ← 最高权威
 docs/systems/01~10.md  各系统实现细则（`11-account-store.md` 为**已实现（P7/B27–B33，2026-09-19）**的账号与存档权威设计）
 docs/v3-design.md      主设计文档（架构/数据模型/数值）
 docs/items-data.md     物品数值、名称、贴图占位
 docs/interfaces.md     接口冻结（ICD v1：模块/API/CLI/数据结构/D 落点）
-docs/server.md         服务器文档（部署、端点速查、信封与错误码、**当前为进程内无状态回放注册表**）
+docs/server.md         服务器文档（部署、端点速查、信封与错误码、**单进程 + 服务端档案**：runtime 数据根 / journal / 快照库 / 回放 LRU）
 docs/frontend-spec.md  前端设计文档（**v3 重设计**：可玩优先；按钮↔动作↔数据字段三重契约 + `scripts/fe-spec-check.js` 自检）
 docs/tasks.md          开发计划（铁律/接口/测试矩阵/批次/门禁）
 docs/examples/         分支示例集（10 系统 + 索引），计算细节的唯一出处
@@ -235,3 +235,5 @@ docs/progress.md       本文件
 - 终局修复 II 与文档同步（2026-09-19T06:20:41.637Z）。
 
 - 终局修复 II 与文档同步（2026-09-19T06:23:31.257Z）。
+
+- 终局收口（2026-09-19T06:29:36.757Z）。

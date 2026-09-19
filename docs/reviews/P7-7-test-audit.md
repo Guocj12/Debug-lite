@@ -184,30 +184,32 @@ node scripts/check-arch.js   →   exit 1
 
 #### P7-5 应覆盖的检查点清单（22 条，逐条断言，含错误分支）
 
-| 步 | 检查点 | 现状 |
+> **✅ 状态回填（2026-09-19，P7-5 交付后复核）**：本节表格是**审计时（P7 交付前）**的快照，其"未实现"均为当时事实。P7-5 交付后全部 22 条**已实现**：`scripts/e2e.js` 实测 **22/22 检查点、退出码 0**，`tests/integration/e2e-play.test.js` 纳入 `npm test`（连跑 5 次全绿）。**注意两处口径更正**：① 第 10 行的"池空 → `shortfall`"实际落在 **`/ranked/run`**（`shortfall` 字段）；**`/quick/run` 池空是 `409 no_opponent`**（`server/quickmatch.js`；e2e 第 10 步就是按 `no_opponent` 断言的），两者都**不注入 bot**；② 第 14 行的"双方 `playerId` 都是真实注册玩家"由 e2e 第 11/14 步回查档案库断言。下表"现状"列已按交付实况回填。
+
+| 步 | 检查点 | 现状（2026-09-19 回填） |
 |---|---|---|
-| 1 | `POST /auth/register` → 200/201 + 返回 token；重名 → `409 user_exists` | 未实现 |
-| 2 | `POST /auth/login` → token；错密码 → **401**；连错 N 次 → **429**/锁定；`logout` 后旧 token → **401** | 未实现 |
-| 3 | `GET /me` 无 token → **401**；坏 token → 401；过期 → 401；正常 → `{playerId,tier,rating,configs,unread}` | 未实现 |
-| 4 | `GET /me` 幂等：连续两次逐值一致（无副作用） | 未实现 |
-| 5 | 开箱 → 仓库镜像 `PUT /me/warehouse` → `GET /me/warehouse` **往返一致**（round-trip） | 未实现 |
-| 6 | 配置槽：建 ≤3，第 4 个 → `409 slot_limit`；删出战槽 → `409 slot_locked`；激活槽唯一；**注册即默认配置** | 未实现 |
-| 7 | 装配后 `POST /panel` 与单测 `buildPanel` **逐值一致** → 端到端认面板 | 部分（仅单测同源，见 §B7） |
-| 8 | `/ai/validate` 非法 → 400 + `details[].path`；合法 → `warnings:[]`；废弃动作 → warnings 非空 | 已覆盖（`api-ai`） |
-| 9 | `/ai/compile` → `programHash` 稳定；同程序两次 hash 相同 | 已覆盖 |
-| 10 | 首次 `POST /quick/run` → 池空 → **必须 `shortfall`，不得注入 bot**（用户明令） | 未实现 |
-| 11 | `POST /quick/run` 有对手 → **双方 `playerId` 都是真实注册玩家**（断言对手 ID 在注册表内） | 未实现 |
-| 12 | Elo：`R' = R + K(S − E)`，**双方变动绝对值可复算**；cap 3000 不越界 | 未实现 |
-| 13 | **积分守恒**：`Σrating(前) + ΣΔ = Σrating(后)`（对局粒度 + 全局粒度） | 未实现 |
-| 14 | 发起者同步结算、防守方离线只记战绩**不掉段不掉分** | 未实现 |
-| 15 | `ranked/run` 抽池排除自己；24h 去重；候选不足 → `shortfall` 而非 bot | **现状相反**（bot 补齐） |
-| 16 | `GET /me/records?since=seq` 增量游标；`unread` 计数；`markSeen` 后 unread=0 | 未实现 |
-| 17 | `GET /me/defense` 汇总被抽场次 / 胜负 / 积分 | 未实现 |
-| 18 | `GET /leaderboard` 与档案一致（索引重建后仍一致） | 未实现 |
-| 19 | 回放：非参与者 → **403**；LRU 淘汰后 → **410 replay_expired** | 未实现 |
-| 20 | CLI：`auth` / `me` / `quick` / `leaderboard` 子命令 + **退出码 3 = 未鉴权** | 未实现 |
-| 21 | `DL_LEGACY_STATELESS=1` 时旧端点零回归（gate 项 9 + `tests/api` 全绿） | 已有旧端点矩阵 |
-| 22 | e2e 一条命令退出码 0，且**每一步打印真实响应关键字段** | 未实现 |
+| 1 | `POST /auth/register` → 200/201 + 返回 token；重名 → `409 user_exists` | ✅ 已实现（重名码为 `username_taken`，非 `user_exists`） |
+| 2 | `POST /auth/login` → token；错密码 → **401**；连错 N 次 → **429**/锁定；`logout` 后旧 token → **401** | ✅ 已实现 |
+| 3 | `GET /me` 无 token → **401**；坏 token → 401；过期 → 401；正常 → `{playerId,tier,rating,configs,unread}` | ✅ 已实现（`playerId` 不外泄，响应只含 `publicId`） |
+| 4 | `GET /me` 幂等：连续两次逐值一致（无副作用） | ✅ 已实现 |
+| 5 | 开箱 → 仓库镜像 `PUT /me/warehouse` → `GET /me/warehouse` **往返一致**（round-trip） | ✅ 已实现（另有 `snapshotWarehouseRefreshed`） |
+| 6 | 配置槽：建 ≤3，第 4 个 → `409 slot_limit`；删出战槽 → `409 slot_locked`；激活槽唯一；**注册即默认配置** | ✅ 已实现 |
+| 7 | 装配后 `POST /panel` 与单测 `buildPanel` **逐值一致** → 端到端认面板 | ✅ 已实现（e2e 用真实装配引用复算面板） |
+| 8 | `/ai/validate` 非法 → 400 + `details[].path`；合法 → `warnings:[]`；废弃动作 → warnings 非空 | ✅ 已覆盖（`api-ai`） |
+| 9 | `/ai/compile` → `programHash` 稳定；同程序两次 hash 相同 | ✅ 已覆盖 |
+| 10 | 首次 `POST /quick/run` → 池空 → **必须 `shortfall`，不得注入 bot**（用户明令） | ✅ 已实现（**口径更正**：`/quick/run` 池空 → `409 no_opponent`，`shortfall` 是 `/ranked/run` 的字段；两者都不注入 bot） |
+| 11 | `POST /quick/run` 有对手 → **双方 `playerId` 都是真实注册玩家**（断言对手 ID 在注册表内） | ✅ 已实现 |
+| 12 | Elo：`R' = R + K(S − E)`，**双方变动绝对值可复算**；cap 3000 不越界 | ✅ 已实现 |
+| 13 | **积分守恒**：`Σrating(前) + ΣΔ = Σrating(后)`（对局粒度 + 全局粒度） | ✅ 已实现（`npm run load-test` 的完整性断言之一） |
+| 14 | 发起者同步结算、防守方离线只记战绩**不掉段不掉分** | ✅ 已实现 |
+| 15 | `ranked/run` 抽池排除自己；24h 去重；候选不足 → `shortfall` 而非 bot | ✅ 已实现（**不再有 bot 补齐**，`BOT_LD` 已删除） |
+| 16 | `GET /me/records?since=seq` 增量游标；`unread` 计数；`markSeen` 后 unread=0 | ✅ 已实现（`latestSeq`；游标只由 `records/seen` 推进） |
+| 17 | `GET /me/defense` 汇总被抽场次 / 胜负 / 积分 | ✅ 已实现 |
+| 18 | `GET /leaderboard` 与档案一致（索引重建后仍一致） | ✅ 已实现 |
+| 19 | 回放：非参与者 → **403**；LRU 淘汰后 → **410 replay_expired** | ✅ 已实现 |
+| 20 | CLI：`auth` / `me` / `quick` / `leaderboard` 子命令 + **退出码 3 = 未鉴权** | ✅ 已实现 |
+| 21 | `DL_LEGACY_STATELESS=1` 时旧端点零回归（gate 项 9 + `tests/api` 全绿） | ✅ 已实现（旧端点矩阵保持绿） |
+| 22 | e2e 一条命令退出码 0，且**每一步打印真实响应关键字段** | ✅ 已实现（`npm run e2e` = 22/22，exit 0） |
 
 ### B2. 真实玩家匹配 —— **存在依赖 bot 的测试，且它们把缺陷"锁死"了**
 

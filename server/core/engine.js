@@ -331,7 +331,9 @@ function createBattle(cfgIn, options) {
           plans[owner] = plan;
           continue;
         }
-        const can = skills.canCast(sk, p);
+        // P1-4：冷却键 = 槽位键（intent.sid 就是 AI 动作名里的槽位，也是 p.skills 的查找键）
+        //   → 同一模板装两个槽时两槽 CD 独立（默认出战配置会重复同一模板）
+        const can = skills.canCast(sk, p, intent.sid);
         if (!can.ok) { plans[owner] = plan; continue; } // 无效技能行动 → 空行动（07 §5 / skill.reject 已记）
         Object.assign(p, can.caster); // 扣资源 + 写 CD
         const act = skills.buildSkillAction(sk, { x: p.x, facing: p.facing });
