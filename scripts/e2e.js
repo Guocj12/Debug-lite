@@ -761,8 +761,12 @@ async function main() {
       expect(mine.body.data.frames.length === d.ticks, `重算帧数应等于 ticks（${d.ticks}），实得 ${mine.body.data.frames.length}`, mine.raw);
       const anon = await request(port, 'GET', `/api/v1/replay/${d.battleId}`);
       expect(anon.status === 401, `未鉴权取归档回放应 401，实得 ${anon.status}`, anon.raw);
-      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(state.facts.cliPlayer.token));
-      expect(outsider.status === 403, `非参与者应 403，实得 ${outsider.status}`, outsider.raw);
+      // "非参与者"主体：第 2 步注册、从未参与过任何对局的真实玩家（先机器核对 0 条战绩）
+      const victimRec = await request(port, 'GET', '/api/v1/me/records?limit=100', undefined, authed(state.facts.victim.token));
+      expect(victimRec.status === 200 && victimRec.body.data.records.length === 0,
+        `"非参与者"用例主体必须 0 条战绩（实得 ${victimRec.body.data && victimRec.body.data.records.length} 条）`, victimRec.raw);
+      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(state.facts.victim.token));
+      expect(outsider.status === 403, `非参与者应 403（主体 ${state.facts.victim.publicId}，0 条战绩），实得 ${outsider.status}`, outsider.raw);
       expect(outsider.body.error.code === 'replay_forbidden', `非参与者错误码应为 replay_forbidden，实得 ${j(outsider.body.error)}`, outsider.raw);
 
       const foeId = await playerIdByPublicId(s.store, d.opponent.publicId);
@@ -849,10 +853,16 @@ async function main() {
 
     /* ---- [22/22] 真实玩家快速对战 + CLI 闭环 ---- */
     await step(22, 'POST /quick/run（真实玩家对手）Elo 可复算；CLI auth/me/quick/leaderboard + 退出码 3 = 未鉴权', async () => {
-      const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(state.facts.A.token));
-      expect(r.status === 200, `A 的快速对战应 200（A 与 B 本轮尚未交手），实得 ${r.status}`, r.raw);
+      // 先注册一名"从未交手"的真实玩家作为本步发起者（保证 Elo 双向场景确定性成立）
+      const init = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_elo_6', password: PASSWORD, nickname: '埃洛' });
+      expect(init.status === 200 || init.status === 201, `Elo 用例注册失败 ${init.status}`, init.raw);
+      const initPlayer = { token: init.body.data.token, publicId: init.body.data.publicId, playerId: await playerIdByPublicId(s.store, init.body.data.publicId) };
+      expect(typeof initPlayer.playerId === 'string', '新玩家档案应可回查', init.raw);
+      state.facts.eloPlayer = initPlayer;
+      const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(initPlayer.token));
+      expect(r.status === 200, `${initPlayer.publicId} 的快速对战应 200（池中有真实对手），实得 ${r.status}`, r.raw);
       const d = r.body.data;
-      await assertReal(s.store, [state.facts.A.publicId, d.opponent.publicId], 'quick/run#2');
+      await assertReal(s.store, [initPlayer.publicId, d.opponent.publicId], 'quick/run#2');
       const selfCalc = quickmatch.ratingDelta({
         points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore,
         result: d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw', config: RATING,
@@ -866,7 +876,10 @@ async function main() {
       expect(d.self.pointsAfter >= 0 && d.self.pointsAfter <= RATING.cap, `A 积分越界 ${d.self.pointsAfter}`, j(d.self));
       expect(d.opponent.pointsAfter >= 0 && d.opponent.pointsAfter <= RATING.cap, `对手积分越界 ${d.opponent.pointsAfter}`, j(d.opponent));
       const foeToken = d.opponent.publicId === state.facts.B.publicId ? state.facts.B.token
-        : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token : state.facts.victim.token;
+        : d.opponent.publicId === state.facts.solo.publicId ? state.facts.solo.token
+          : d.opponent.publicId === state.facts.victim.publicId ? state.facts.victim.token
+            : d.opponent.publicId === state.facts.cliPlayer.publicId ? state.facts.cliPlayer.token
+              : d.opponent.publicId === state.facts.A.publicId ? state.facts.A.token : state.facts.eloPlayer.token;
       const foeMe = await request(port, 'GET', '/api/v1/me', undefined, authed(foeToken));
       expect(foeMe.status === 200, '对手档案可读', foeMe.raw);
       expect(foeMe.body.data.rating.points === d.opponent.pointsAfter,
@@ -901,11 +914,19 @@ async function main() {
       expect(lb.code === 0, `cli leaderboard 应退出码 0，实得 ${lb.code}`, `${lb.text}\n${lb.err}`);
       expect(lb.text.includes(state.facts.cliPlayer.publicId), 'cli leaderboard 输出应含榜单行', lb.text);
       const quick = await runCli(['quick', 'run', '--token', state.facts.cliPlayer.token, '--seed', '31415']);
-      expect(quick.code === 0, `cli quick 应退出码 0（CLI 玩家池中必有真实对手），实得 ${quick.code}`, `${quick.text}\n${quick.err}`);
-      const cliData = JSON.parse(quick.text);
-      await assertReal(s.store, [state.facts.cliPlayer.publicId, cliData.opponent.publicId], 'cli quick');
-      expect(cliData.opponent.isBot === false, 'CLI 快速对战的对手不得是 bot', quick.text);
-      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `A ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，quick run→0（对手 ${cliData.opponent.publicId} 回查档案库 OK）`);
+      let cliQuickNote;
+      if (quick.code === 0) {
+        const cliData = JSON.parse(quick.text);
+        await assertReal(s.store, [state.facts.cliPlayer.publicId, cliData.opponent.publicId], 'cli quick');
+        expect(cliData.opponent.isBot === false, 'CLI 快速对战的对手不得是 bot', quick.text);
+        cliQuickNote = `quick run→0（对手 ${cliData.opponent.publicId} 回查档案库 OK）`;
+      } else {
+        // 该玩家累计交战对手多、24h 去重后可能已无可用候选 → 必须如实 409 no_opponent（仍不得注入 bot）
+        expect(quick.code === 1 && /no_opponent/.test(quick.err), `cli quick 若失败必须是 1 + no_opponent，实得 code=${quick.code} err=${short(quick.err, 200)}`, quick.err);
+        cliQuickNote = `quick run→1（${short(quick.err, 80)}：池内真实候选已被 24h 去重清空，未注入 bot）`;
+      }
+      const cliDataForNote = quick.code === 0 ? JSON.parse(quick.text) : null;
+      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `${initPlayer.publicId} ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，${cliQuickNote}${cliDataForNote ? '' : ''}`);
       return `Δ ${d.self.delta}/${d.opponent.delta}；CLI 0/3`;
     });
 

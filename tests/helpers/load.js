@@ -42,7 +42,7 @@ const DEFAULTS = Object.freeze({
   concurrency: 24,
   rankRuns: 1,
   quickRuns: 1,
-  boxes: 16,
+  boxes: 20,
   tier: 'common',
   seed: 20260918,
   slotsMax: 2,
@@ -469,18 +469,35 @@ async function setupPlayer(ctx, p) {
   if (me.status !== 200) return { ok: false, code: 'me_failed', status: me.status, detail };
   detail.tier = (envelopeData(me) || {}).progress ? envelopeData(me).progress.tier : null;
 
-  // 2) 开箱（一次请求开 N 箱；seed 由种子流派生 → 各人掉落各异）
-  const boxRes = await call(ctx.metrics, 'box', ctx.port, 'POST', '/api/v1/box',
-    { seed: randSeed(ctx.rng), tier: ctx.tier, times: ctx.boxes }, auth);
-  if (boxRes.status !== 200) return { ok: false, code: 'box_failed', status: boxRes.status, detail, errorCode: boxRes.errorCode };
-  const boxed = (envelopeData(boxRes) || {}).items || [];
-  let warehouse = itemsApi.emptyWarehouse();
-  for (const item of boxed) {
-    if (!item || typeof item.kind !== 'string') continue;
+  // 2) 开箱：分步请求 `times = 4,8,12,…`，**取每次响应里的新增物品**（uid 进程内单调 ⇒ 天然去重；
+  //    每次都是服务端真实掉落），直到凑齐出战材料（角色 ≥1、技能 ≥3）。步长最多 14 次请求，
+  //    最坏 60 箱；命中极低，正常一轮（times=20）即够。
+  const accumulated = new Map();
+  let boxRequests = 0;
+  let totalItems = 0;
+  let lastSeed = 0;
+  for (let step = 1; step <= 14; step += 1) {
+    const times = 4 * step;
+    lastSeed = randSeed(ctx.rng);
+    const boxRes = await call(ctx.metrics, 'box', ctx.port, 'POST', '/api/v1/box',
+      { seed: lastSeed, tier: ctx.tier, times }, auth);
+    if (boxRes.status !== 200) return { ok: false, code: 'box_failed', status: boxRes.status, detail, errorCode: boxRes.errorCode };
+    boxRequests += 1;
+    const boxed = (envelopeData(boxRes) || {}).items || [];
+    for (const item of boxed) if (item && typeof item.uid === 'string') accumulated.set(item.uid, item);
+    totalItems = accumulated.size;
+    const byKind = { role: 0, skill: 0 };
+    for (const item of accumulated.values()) if (byKind[item.kind] !== undefined) byKind[item.kind] += 1;
+    if (byKind.role >= 1 && byKind.skill >= 3) break;
+  }
+  const warehouse = itemsApi.emptyWarehouse();
+  for (const item of accumulated.values()) {
     if (!Array.isArray(warehouse.buckets[item.kind])) warehouse.buckets[item.kind] = [];
     warehouse.buckets[item.kind].push(item);
   }
-  detail.items = boxed.length;
+  detail.boxRequests = boxRequests;
+  detail.items = totalItems;
+  detail.boxSeed = lastSeed;
 
   // 3) 装配：本地规划（纯函数）→ 逐条 POST /warehouse/assemble（服务端为权威）。
   //    每次请求提交**装配前的仓库**（接口是纯函数：返回新仓库，入参不变）；装配结果只在本地视图叠加，
