@@ -12,7 +12,7 @@
 | 项 | 值 |
 |---|---|
 | 文档性质 | 安全与防作弊问题登记册（record-only） |
-| 更新日期 | **2026-09-19**（P7/B27–B33 收口后的处置回填：SEC-01/SEC-03/SEC-22；SEC-19 维持"已部分处置"） |
+| 更新日期 | **2026-09-19**（P7/B27–B33 收口后的处置回填，共 11 条：SEC-01/SEC-02/SEC-03/SEC-06/SEC-11/SEC-13/SEC-22/SEC-25/SEC-26/SEC-27/SEC-30；SEC-17/SEC-19 维持 2026-09-16 状态） |
 | 版本基线 | Debug-Lite v3.0.0，后端 P0–P5（34 批）+ **P7/B27–B33（7 批）均已收口**（2026-09-19；P6 前端未开始） |
 | 适用范围 | `server/**`（HTTP 层 `server/index.js`、编排层 `battle.js`/`box.js`/`loadout.js`/`ranked.js`/`runner.js`、**身份与档案层 `auth.js`/`account.js`/`quickmatch.js`/`admin.js`**、**存储层 `server/store/*`**、AI 运行时 `server/ai/**`）、`shared/log.js`、仓库工程配置（`package.json`、`node_modules`、CI） |
 | 不在范围 | 产品级数值平衡；前端 UI 缺陷（另见 `docs/frontend-spec.md`） |
@@ -20,7 +20,8 @@
 | 状态取值 | `待处理` / `已部分处置` / `已处置`（**D-153 口径**：被顺手修掉的条目必须回填"现状证据 + 状态"） |
 | 优先级 | 高 = 可直接造成不可用/数据不可信/信息泄漏；中 = 明显放大面或违反已冻结契约；低 = 卫生问题、可复现性问题 |
 
-> **⚠ 复核提示（2026-09-19）**：本册多数条目的"现状证据"是在 **P7 代码 0 行**时登记的。P7 交付后，凡证据依赖"账号/鉴权/存储/回放改造不存在"的条目，其前提都已改变——本轮只回填了 **SEC-01/SEC-03/SEC-22**（以及既有的 SEC-17/SEC-19），**SEC-02、SEC-06、SEC-11、SEC-13、SEC-25、SEC-26、SEC-27、SEC-30 需要下一批逐条复核**（例如 SEC-26 的 `DL_ADMIN_TOKEN` 早已接线、SEC-27 的归档回放已参与者鉴权；它们的残余面与 SEC-01 的残余面相同：遗留无状态端点默认开放）。
+> **✅ 复核提示（2026-09-19）**：本册多数条目的"现状证据"是在 **P7 代码 0 行**时登记的。P7 交付后，凡证据依赖"账号/鉴权/存储/回放改造不存在"的条目，其前提都已改变。**本轮已逐条回填 13 条**：SEC-01（部分）、SEC-02（部分）、SEC-03（已处置）、SEC-06（已处置）、SEC-11（部分）、SEC-13（部分）、SEC-17（已处置，2026-09-16）、SEC-19（部分，2026-09-16）、SEC-22（已处置）、SEC-25（部分）、SEC-26（已处置）、SEC-27（部分）、SEC-30（部分）。
+> **仍需下一批复核（16 条）**：SEC-04、SEC-05、SEC-07、SEC-09、SEC-10、SEC-12、SEC-14、SEC-15、SEC-16、SEC-18、SEC-20、SEC-21、SEC-23、SEC-24、SEC-28、SEC-29——它们的证据也可能受 P7 影响，例如 **SEC-07/SEC-09** 中"客户端 `pool` 可传空数组/弱对手池"的路径在**档案路径已被 `400 pool_forbidden` 堵死**（但**遗留无状态路径仍接受 `pool`**，`DL_LEGACY_STATELESS=1` 默认开放）、**SEC-28** 的"纯 Bearer + JSON"前提**已有一半成立**（鉴权端点已强制 Bearer；`Content-Type` 强制仍未做，属 SEC-12）。
 
 ## 处理前置条件（开工前必须先定，否则改一处破一处）
 
@@ -319,7 +320,7 @@
 - **建议处置方向**：实现前先补齐三处规格：**(a) `seq` 分配器**（明确"持久化的 `nextSeq` 记在 index 或 checkpoint 中，且分段删除时必须保留最大值；或改用 `node:sqlite` 自增主键"）；**(b) 崩溃点矩阵测试**（T-ST-3 `:951` 已有设想，需扩到"journal 分段删除后重启""index+journal 双损"）；**(c) Windows 下的原子写与 fsync 实测**（`fsatomic.js` 的 tmp→fsync→rename→目录 fsync 在 Windows 上的语义）。**强烈建议评估直接用 `node:sqlite`**（`docs/server.md:30` 已预留 `DL_STORE=sqlite`，`:898` 已给出表结构 `players/journal/snapshots/sessions`）：单文件、事务、`WAL` 直接把"崩溃一致性 + seq 单调 + 并发写"交给数据库，可消掉本条目大部分风险，且 **Node 24 内置、仍是零依赖**（`package.json` `engines.node >= 24.18.0`）。
 - **优先级**：**中**（当前 0 行代码；若直接按原设计实现而不加规格 → 升为**高**）
 - **状态**：**已部分处置（2026-09-19，P7/B27）**——① **`seq` 分配来源已明确并实现**：`server/store/journal.js` 启动加载时扫**全部分段 + 全部检查点**计算 `maxSeq`（注释即写明"seq 的**唯一权威来源**"，`:123`），检查点记录自带 `seq: seg.maxSeq`（`:375`）并计入 `maxSeq` → **压缩删段后不会复用旧 seq**；写入侧为**全局单写者 append**（`journal.append()` 内部串行 + group commit）。
-  ② **崩溃一致性已按设计实现并有测试**：先 append journal 再 `applyRecord`，`appliedSeq` 单调、`battleId` 幂等去重、`server/store/recovery.js` 五步恢复（index 缺失/损坏 → 由 `players/*` 重建 → 否则全量重放；`appliedSeq` 超前 journal → fatal 拒绝启动；结束 `index.setSeq(journalSeq)`）；用例 `tests/integration/store-recovery.test.js`、`tests/unit/store-*.test.js`。
+  ② **崩溃一致性已按设计实现并有测试**：先 append journal 再 `applyRecord`，`appliedSeq` 单调、`battleId` 幂等去重、`server/store/recovery.js` 五步恢复（index 缺失/损坏 → 由 `players/*` 重建 → 否则全量重放；`appliedSeq` 超前 journal → fatal 拒绝启动；结束 `index.setSeq(journalSeq)`）；用例 `tests/unit/store-recovery.test.js`、`tests/contract/store-contract.test.js`、`tests/unit/store-*.test.js`。
   ③ **并发写**：每玩家写队列 + 单进程锁 `runtime/lock`。
   **残余（仍未处置）**：④ Windows 上**目录 fsync 无效**（`fsatomic.js` 只记 debug），rename 原子性依赖 NTFS 语义；⑤ 崩溃点矩阵未覆盖"分段删除后重启""index+journal 双损"的全部组合（双损仍只有"拒绝启动并从备份恢复"兜底）；⑥ 未加"持久化 nextSeq 计数器"（现以"重启扫 segments∪checkpoints 取 max"实现同效语义）。
 

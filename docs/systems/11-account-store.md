@@ -120,7 +120,7 @@ Debug-lite/
     ├── api/api-auth.test.js          [新]
     ├── api/api-account.test.js       [新]
     ├── api/api-quickmatch.test.js    [新]
-    ├── integration/store-recovery.test.js [新]
+    ├── unit/store-recovery.test.js   [新]  # 崩溃恢复五步（实际落点：unit/，非 integration/）
     └── contract/store-contract.test.js    [新]  # 适配器契约（json/sqlite 同一套断言）
 ```
 
@@ -1160,7 +1160,7 @@ admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 
 **新增测试**
 
-`tests/unit/store-fsatomic.test.js`、`store-journal.test.js`、`store-index.test.js`、`store-snapshot.test.js`、`auth.test.js`、`account.test.js`、`rating.test.js`、`quickmatch.test.js`、`tests/api/api-auth.test.js`、`api-account.test.js`、`api-quickmatch.test.js`、`tests/integration/store-recovery.test.js`、`tests/contract/store-contract.test.js`、`tests/helpers/store.js`（临时 `DL_DATA_DIR` 助手）。
+`tests/unit/store-fsatomic.test.js`、`store-journal.test.js`、`store-index.test.js`、`store-snapshot.test.js`、`store-recovery.test.js`、`store-concurrency.test.js`、`auth.test.js`、`account.test.js`、`rating.test.js`、`quickmatch.test.js`、`tests/api/api-auth.test.js`、`api-account.test.js`、`api-quickmatch.test.js`、`tests/contract/store-contract.test.js`、`tests/helpers/store.js`（临时 `DL_DATA_DIR` 助手）。
 
 **新增脚本**
 
