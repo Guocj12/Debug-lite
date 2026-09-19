@@ -92,8 +92,24 @@ function parseQuery(url) {
   return out;
 }
 
+// P2-3（details 键统一）：对外**必须**含 `path`（文档承诺的字段名），同时保留 `where`（向后兼容）。
+//   生产侧历史上两套键混用（account/store 用 `path`；loadout/quickmatch/unlock 用 `where`，共 22 处），
+//   故在 HTTP 边界**单点归一**（不逐个改生产侧、不破坏既有断言）：缺 `path` 时由 `where` 补齐，反之亦然。
+//   纯函数、无副作用：非对象条目原样透传，空数组保持 `[]`。
+function normalizeDetails(details) {
+  if (!Array.isArray(details)) return details;
+  return details.map((d) => {
+    if (!d || typeof d !== 'object') return d;
+    const path = typeof d.path === 'string' && d.path !== '' ? d.path
+      : (typeof d.where === 'string' && d.where !== '' ? d.where : undefined);
+    if (path === undefined) return d;
+    if (d.path === path && (typeof d.where === 'string' || d.where === undefined)) return d;
+    return { ...d, path, where: typeof d.where === 'string' && d.where !== '' ? d.where : path };
+  });
+}
+
 function errEnvelope(code, message, details) {
-  return { ok: false, error: { code, message, details: details || [] } };
+  return { ok: false, error: { code, message, details: normalizeDetails(details) || [] } };
 }
 
 function send(res, status, payload) {
@@ -1467,6 +1483,8 @@ module.exports = {
   bearerOf,
   globalRateLimitOf,
   resolvePort,
+  envOf,
+  storeWanted,
   VERSION,
 };
 

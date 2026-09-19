@@ -96,7 +96,7 @@ test('CD-S4 槽位键与 AI 快照同源：battle.buildPlayer 的 p.skills 键�
   const r = skillsMod.canCast(sk, built.player, 'skill1');
   assert.equal(r.ok, true);
   built.player.cooldowns = r.caster.cooldowns;
-  const snap = runner.projectSnapshot({ ...engine.createBattle(undefined, { seed: 1, players: { p1: built.player, p2: built.player } }).state }, 'p1');
+  const snap = runner.projectSnapshot({ tick: 1, players: { p1: built.player, p2: built.player }, bases: { p1: {}, p2: {} } }, 'p1');
   // 快照逐键拷贝引擎 cooldowns → 键语义与引擎一致（= 槽位键）
   assert.equal(typeof snap.self.cooldowns.skill1, 'number', 'AI 快照 cooldowns 键 = 槽位键');
   assert.equal(snap.self.cooldowns[sk.templateId], undefined, '不再以模板 id 为键');

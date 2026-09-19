@@ -47,7 +47,7 @@ scripts/fe-spec-check.js    前端文档自检器（C1–C9；`npm test` 内断�
 | 命令 | 用途 | 落地批次 | 复核状态（2026-09-16） |
 |---|---|---|---|
 | `npm start` | 启动 HTTP 服务（`/api/v1`；`main()` 显式启用档案存储，数据根默认 `<repo>/runtime`） | P0-8 / P7 | ✅ 已接线（启动冒烟见 gate 项 9 的同进程等价路径） |
-| `npm test` | 单进程全量测试 | P0-3 固化 | ✅ **最后实测 915 通过 / 0 失败**（2026-09-19；用例数随并行改动会变，**以当次输出为准**）。状态源见 `docs/progress.md` |
+| `npm test` | 单进程全量测试 | P0-3 固化 | ✅ **最后实测 942 通过 / 0 失败**（2026-09-19；用例数随并行改动会变，**以当次输出为准**）。状态源见 `docs/progress.md` |
 | `npm run cov` | 全量测试 + 覆盖率阈值（行 ≥90 / 分支 ≥85 / 函数 ≥90） | P0-3 固化 | ✅ 实跑通过（阈值同时由 `gate` 项 7 逐文件判定） |
 | `npm run gate` | 全量门禁（9 项，任一失败即非零退出） | P0-5 | ✅ **最后实测 9 PASS / 0 FAIL / 0 PEND**（含项 5 文档↔数据一致性 + D 编号落点 D-137…D-157） |
 | `npm run check:docs` | 文档 ↔ 实现一致性检查（D1–D6；接入 CI 与 pre-commit） | 2026-09-16 | ✅ 实跑 PASS |
@@ -102,7 +102,7 @@ runtime/           【P7】运行时数据根（`DL_DATA_DIR` 默认此处；已
 
 ## 阶段（2026-09-19 复核）
 
-**当前状态**：后端 **P0–P5（34 批）+ P7 在线服务（B27–B33，7 批）= 41 批全部收口**。最后实测：`npm test` = **915 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = PASS、`node scripts/fe-spec-check.js` = 9 PASS、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**——**用例数与数字随并行改动会变，以当次输出为准**（`docs/progress.md` 是唯一状态源）。**P6 前端未开始**（main 上 0 行前端代码）。
+**当前状态**：后端 **P0–P5（34 批）+ P7 在线服务（B27–B33，7 批）= 41 批全部收口**。最后实测：`npm test` = **942 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = PASS、`node scripts/fe-spec-check.js` = 9 PASS、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**——**用例数与数字随并行改动会变，以当次输出为准**（`docs/progress.md` 是唯一状态源）。**P6 前端未开始**（main 上 0 行前端代码）。
 
 | 阶段 | 内容 | 批次真值 | 状态 |
 |---|---|---|---|
@@ -119,6 +119,6 @@ runtime/           【P7】运行时数据根（`DL_DATA_DIR` 默认此处；已
 
 > 权威链现状：`docs/progress.md` 是唯一状态源；`docs/tasks.md` §6 的批次勾选与计数（**共 41 批**）与本表一致，由 `node scripts/check-docs.js`（D1–D6）机器核对。
 > **验收/可玩入口**：`npm run play`（离线文本闭环，无需 `npm start`）、`npm run e2e`（联网全链路 22 检查点，随机端口 + 临时数据根）、`npm run load-test -- --players 50 --deep`（批量真实玩家 + 7 条完整性断言）、`npm run demo`。
-> **P7 期间的已知残项**：`DL_STORE=sqlite` 适配器（预留，`open()` 抛 `store_adapter_unavailable`）、CLI `configs`/`records`/`defense`/`admin *` 子命令、`scripts/bench-store.js`（**未实现**，T-ST-8 容量哨兵无承载）、回放响应不含 `programHash`、`POST /quick/run` 的"抽池 vs 实例化可用性判定不一致"（已派修）——逐条见 `docs/progress.md` 与 `docs/security-backlog.md`。
+> **P7 期间的已知残项**：`DL_STORE=sqlite` 适配器（预留，`open()` 抛 `store_adapter_unavailable`）、CLI `configs`/`records`/`defense`/`admin *` 子命令、`scripts/bench-store.js`（**未实现**，T-ST-8 容量哨兵无承载）、回放响应不含 `programHash`——逐条见 `docs/progress.md` 与 `docs/security-backlog.md`。（`POST /quick/run` 的"抽池 vs 实例化可用性判定不一致"已按 D-157 修复：`ranked.sideInstantiable` 统一判据。）
 
 `legacy/` 是 v2 归档：只读参考，不修改、不复用其资源。

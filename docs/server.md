@@ -1,6 +1,6 @@
 # Debug-Lite v3 服务器文档
 
-> 版本：v1　创建：2026-09-12　更新基线：**2026-09-19 复核（后端 P0–P5 共 34 批 + P7/B27–B33 共 7 批已收口；`npm test` = 915 通过 / 0 失败；`npm run gate` = 9 PASS / 0 FAIL / 0 PEND；`npm run check:docs` PASS）**
+> 版本：v1　创建：2026-09-12　更新基线：**2026-09-19 复核（后端 P0–P5 共 34 批 + P7/B27–B33 共 7 批已收口；`npm test` = 942 通过 / 0 失败；`npm run gate` = 9 PASS / 0 FAIL / 0 PEND；`npm run check:docs` PASS）**
 > 定位：**部署、配置、端点速查与使用说明**。接口契约的唯一权威是 `docs/interfaces.md`（ICD v1 §2/§3）；本文与之一致，冲突时以 interfaces.md 为准。
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > `docs/interfaces.md` > `docs/tasks.md`。
 > **阅读约定（2026-09-19 起）**：正文中凡标 **✅ 现状** 的，是已实测可用能力；凡标 **⏳ 计划中** 的，是设计已定但**代码 0 行**，不得按可用能力使用。**P7（B27–B33：服务端档案 / 鉴权 / 排位改造 / 快速对战 / 回放鉴权）已于 2026-09-19 收口，本文中凡旧标注「计划中（P7/B27–B33）」的段落均已按实测改为「现状」**；唯一保留的 ⏳ 是**遗留无状态端点在生产关闭**（`DL_LEGACY_STATELESS=0`）与 SQLite 适配器（§11.4）。
@@ -338,7 +338,7 @@ runtime/
 ## 10. 测试与门禁
 
 ```bash
-npm test        # node --test --test-isolation=none tests/**/*.test.js（沙箱下必须单进程）→ 2026-09-19 实测 915 通过 / 0 失败
+npm test        # node --test --test-isolation=none tests/**/*.test.js（沙箱下必须单进程）→ 2026-09-19 实测 942 通过 / 0 失败
 npm run cov     # 同左 + 覆盖率阈值（core/ai/shared/cli：行≥90% 分支≥85% 函数≥90%）
 npm run gate    # 单进程内联 9 项：静态/架构/schema/一致性/D 落点/日志规范/全量测试/日志冒烟/接口冒烟 → 2026-09-19 实测 9 PASS/0 FAIL/0 PEND
 npm run check:docs       # 文档↔实现一致性 D1–D6（批次计数/勾选/审查记录）→ PASS

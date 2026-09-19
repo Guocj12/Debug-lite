@@ -65,12 +65,20 @@ function pluginFixture() {
 
 const emptyWarehouse = () => itemsApi.emptyWarehouse();
 
+// 剥掉装配引用（保持结构合法 = 一份"无引用"的真实配置）
+function bareOf(loadout) {
+  const copy = JSON.parse(JSON.stringify(loadout));
+  for (const s of copy.role.slots || []) s.pluginUid = null;
+  for (const sk of copy.skills || []) for (const s of sk.slots || []) s.pluginUid = null;
+  return copy;
+}
+
 test('AV-1 纯函数：warehouseCovers / warehouseMissingRefs（无引用恒覆盖；缺引用逐项列出）', () => {
   const { warehouse, loadout, refs } = pluginFixture();
   assert.ok(refs > 0, `夹具必须带装配引用（实得 ${refs}）`);
   assert.equal(rankedMod.warehouseCovers(loadout, warehouse), true, '全量镜像覆盖');
   assert.equal(rankedMod.warehouseCovers(loadout, null), false, '有引用 + 无镜像 = 不覆盖');
-  assert.equal(rankedMod.warehouseCovers({ role: { slots: [] }, skills: [] }, null), true, '无引用 → 恒覆盖（含 null）');
+  assert.equal(rankedMod.warehouseCovers(bareOf(loadout), null), true, '无引用 → 恒覆盖（含 null）');
   const missing = rankedMod.warehouseMissingRefs(loadout, emptyWarehouse());
   assert.equal(missing.length, refs, '空镜像 → 全部引用缺失');
   assert.equal(rankedMod.warehouseMissingRefs(loadout, warehouse).length, 0);
@@ -83,8 +91,8 @@ test('AV-2 纯函数：sideInstantiable 与实例化同源（覆盖镜像可实�
   const bad = rankedMod.sideInstantiable(loadout, emptyWarehouse(), 'common');
   assert.equal(bad.ok, false, '空镜像不得判为可实例化');
   assert.ok(bad.errors.length > 0 && bad.errors.every((e) => typeof e.code === 'string'), '回带逐条 buildPanel 错误');
-  const noRefs = rankedMod.sideInstantiable({ role: { slots: [] }, skills: [] }, null, 'common');
-  assert.equal(noRefs.ok, true, '无引用配置无需镜像');
+  const noRefs = rankedMod.sideInstantiable(bareOf(loadout), null, 'common');
+  assert.equal(noRefs.ok, true, `无引用配置无需镜像：${JSON.stringify(noRefs.errors).slice(0, 200)}`);
 });
 
 test('AV-3 抽池与实例化口径一致：不可实例化的候选在抽池阶段即被排除（`skipped.notInstantiable`）', async (t) => {
@@ -93,38 +101,40 @@ test('AV-3 抽池与实例化口径一致：不可实例化的候选在抽池阶
   const { warehouse, loadout } = pluginFixture();
   const me = h.makePlayerId(201);
   const foe = h.makePlayerId(202);
-  const created = await fx.account.createPlayerArchive({ playerId: me, nickname: '装配发起者', loadout, warehouse, tier: 'common', at: fx.clock() });
-  assert.equal(created.ok, true, JSON.stringify(created).slice(0, 200));
-  await fx.registerPlayer({ playerId: foe }); // 对手：默认配置（无引用）
+  await fx.registerPlayer({ playerId: me }); // 发起者：默认配置（无引用）→ 不受镜像影响
+  // 对手：带引用且**已校验**（快照自带镜像齐备）
+  const foeCreated = await fx.account.createPlayerArchive({ playerId: foe, nickname: '装配置对手', loadout, warehouse, tier: 'common', at: fx.clock() });
+  assert.equal(foeCreated.ok, true, JSON.stringify(foeCreated).slice(0, 200));
 
-  // ① 抽池：默认配置对手可实例化 → 入池；带引用且镜像覆盖的对手也应入池
-  const quick = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async (pid) => (pid === me ? warehouse : null) });
-  const pool = await quick.candidatePool(me);
-  assert.equal(pool.pool.length, 1, '默认配置对手入池');
-  assert.equal(pool.skipped.notInstantiable, 0);
+  // ① 覆盖镜像 → 入池（对照）
+  const healthy = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => warehouse });
+  const poolOk = await healthy.candidatePool(me);
+  assert.equal(poolOk.pool.length, 1, '覆盖镜像的候选应入池');
+  assert.equal(poolOk.skipped.notInstantiable, 0);
+  assert.equal(poolOk.skipped.noWarehouse, 0);
 
-  // ② 让**对手**的镜像"存在但不覆盖"（模拟陈旧/残缺镜像）→ 抽池阶段必须排除，而不是拖到对局时 409
-  const foeArchive = await fx.store.loadArchive(foe);
-  const foeLoadoutWithRefs = JSON.parse(JSON.stringify(loadout));
-  await fx.store.updateArchive(foe, (a) => {
-    const slot = a.configs.slots.find((x) => x.slotId === a.configs.activeSlotId);
-    const snap = { hash: slot.snapshot.hash, configHash: slot.snapshot.configHash, loadout: foeLoadoutWithRefs, engineVersion: slot.snapshot.engineVersion, dataVersion: slot.snapshot.dataVersion, frozenAt: slot.snapshot.frozenAt };
-    fx.store.snapshot.put(snap); // 同一 hash 内容寻址：把对手快照换成"带引用"的正文（缺覆盖镜像）
-    a.flags.unverifiedLoadout = false;
-    return null;
-  });
-  const quick2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => emptyWarehouse() });
-  const pool2 = await quick2.candidatePool(me);
+  // ② 镜像"存在但不覆盖" → 抽池阶段必须排除（修前：非空即放行 → 对局时 409 no_opponent）
+  const broken = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => emptyWarehouse() });
+  const pool2 = await broken.candidatePool(me);
   assert.equal(pool2.skipped.notInstantiable, 1, `不可实例化候选必须在抽池阶段被排除（skipped=${JSON.stringify(pool2.skipped)}）`);
   assert.equal(pool2.pool.length, 0);
   assert.ok(fx.logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.code === 'not_instantiable'),
     '留可观测 warn（pool_availability）');
   // 候选池空 → 如实 no_opponent（不注入 bot、不放宽）
   fx.clock.advance(73 * 3600 * 1000);
-  const r = await quick2.run({ playerId: me, seed: 3 });
+  const r = await broken.run({ playerId: me, seed: 3 });
   assert.equal(r.status, 409);
   assert.equal(r.code, 'no_opponent');
-  assert.equal(foeArchive.publicId !== undefined, true);
+
+  // ③ 自身侧同轴：发起者带引用 + 镜像不覆盖 → **匹配前**即 409 loadout_invalid（可解释，不是含混的 no_opponent）
+  const self = h.makePlayerId(203);
+  const selfCreated = await fx.account.createPlayerArchive({ playerId: self, nickname: '装配发起者', loadout, warehouse, tier: 'common', at: fx.clock() });
+  assert.equal(selfCreated.ok, true);
+  fx.clock.advance(73 * 3600 * 1000);
+  const selfRun = await broken.run({ playerId: self, seed: 4 });
+  assert.equal(selfRun.status, 409, JSON.stringify(selfRun).slice(0, 220));
+  assert.equal(selfRun.code, 'loadout_invalid', '自身不可实例化 → 明确 loadout_invalid（含逐条明细）');
+  assert.ok((selfRun.details || []).length > 0, '带 buildPanel 逐条原因');
 });
 
 test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像不再遮蔽覆盖来源 → quick/run 200', async () => {
@@ -132,7 +142,10 @@ test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像�
   let rt = null;
   try {
     const logger = createLogger({ level: 'debug', ringSize: 20000 });
-    rt = await serverMod.createRuntime(logger, { dataDir: dir, authConfig: h.SERVICE && { auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 1000 } } });
+    rt = await serverMod.createRuntime(logger, {
+      dataDir: dir,
+      authConfig: { auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 1000 } },
+    });
     const reg = await rt.auth.register({ username: 'av4a', password: 'pw12345678' });
     assert.equal(reg.ok, true, JSON.stringify(reg).slice(0, 200));
     const playerId = reg.data.playerId;
@@ -190,15 +203,13 @@ test('AV-6 不放宽：未校验且无镜像的候选仍不参与抽取（skippe
   const { warehouse, loadout } = pluginFixture();
   const me = h.makePlayerId(301);
   const foe = h.makePlayerId(302);
-  await fx.registerPlayer({ playerId: foe });
-  // 对手换成带引用但**未校验**的配置（unverifiedLoadout=true）且无镜像
+  await fx.account.createPlayerArchive({ playerId: me, nickname: '发起者', loadout, warehouse, tier: 'common', at: fx.clock() });
+  const foeCreated = await fx.account.createPlayerArchive({ playerId: foe, nickname: '未校验对手', loadout, warehouse, tier: 'common', at: fx.clock() });
+  assert.equal(foeCreated.ok, true);
+  // 翻转成"未校验"（快照的 verifiedAgainstWarehouse 也清掉）
   await fx.store.updateArchive(foe, (a) => {
-    const slot = a.configs.slots.find((x) => x.slotId === a.configs.activeSlotId);
-    fx.store.snapshot.put({
-      hash: slot.snapshot.hash, configHash: slot.snapshot.configHash, loadout: JSON.parse(JSON.stringify(loadout)),
-      engineVersion: slot.snapshot.engineVersion, dataVersion: slot.snapshot.dataVersion, frozenAt: slot.snapshot.frozenAt,
-    });
     a.flags.unverifiedLoadout = true;
+    for (const slot of a.configs.slots) if (slot.snapshot) slot.snapshot.verifiedAgainstWarehouse = false;
     return null;
   });
   const quick = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => null });

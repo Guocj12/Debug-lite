@@ -14,7 +14,7 @@
 | 批次完成度 | ✅ **41 批**（P0–P5 的 34 批 + **P7/B27–B33 的 7 批**；`tasks.md` §6 头部、`progress.md` 与本表一致，由 `node scripts/check-docs.js` 机器核对） |
 | 审查记录 | ✅ **41 份**（`docs/reviews/P0-1.md … B33.md`，每批独立审查；P7 另有 `docs/reviews/P7-7-test-audit.md`、`P7-7-wave2-code-review-residual.md`） |
 | 门禁实测 | ✅ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**；`node scripts/check-docs.js` = PASS；`node scripts/fe-spec-check.js` = 9 PASS（2026-09-19 实跑） |
-| 测试规模 | ✅ **`npm test` = 915 通过 / 0 失败**（2026-09-19 实跑；gate 项 7 已含覆盖率阈值：core/ai/shared/cli 行≥90/分支≥85/函数≥90） |
+| 测试规模 | ✅ **`npm test` = 942 通过 / 0 失败**（2026-09-19 实跑；用例数随并行改动增长，**以当次输出为准**。gate 项 7 已含覆盖率阈值：core/ai/shared/cli 行≥90/分支≥85/函数≥90） |
 | 联网闭环 | ✅ **`npm run e2e` = 22/22 检查点**（真实玩家全链路，exit 0）；✅ **`npm run load-test -- --players 50 --deep` = 7/7 完整性断言**（含积分守恒、无 bot 参与、无 5xx） |
 | CLI/HTTP 冒烟 | ✅ 按 §4 执行；⚠ 原 `ranked run --seed 11`（缺 `--loadout`）与裸 `wh list` 两个命令参数不足会以退出码 2 失败，已修正；`npm run demo` / `npm run play` **现已可执行** |
 | 确定性抽查 | ✅ 同 seed 内容级一致；golden 战斗 trace↔silent 逐帧一致（gate 项 8） |
@@ -62,7 +62,7 @@ npm run gate
 ```bash
 npm run cov        # 末尾应显示行/分支/函数覆盖（四目录达标）
 ```
-- `npm test` 与 `npm run cov` 应同为 **915 通过 / 0 失败**（2026-09-19 复核实测 `npm test` = 915/0；`cov` 由 gate 项 7 同阈值判定）。
+- `npm test` 与 `npm run cov` 应同为 **942 通过 / 0 失败**（2026-09-19 复核实测 `npm test` = 942/0；`cov` 由 gate 项 7 同阈值判定）。
 - gateway 已含覆盖率判定，故 `npm run gate` 通过即可视为覆盖达标；`cov` 用于看明细。
 
 ## 4. 活体冒烟（起服务后逐条执行）
