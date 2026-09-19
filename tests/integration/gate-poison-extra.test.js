@@ -2,8 +2,8 @@
 /* tests/integration/gate-poison-extra.test.js —— gate 项 8 / 项 9 的 **FAIL 分支投毒**（P7-7 §P0 第⑦条）
  *
  * 背景（审查 §B6）：gate 九项里只有项 8（日志冒烟）与项 9（接口冒烟）**没有任何投毒用例**：
- *   · `checkLogSmoke` 的 4 个 FAIL 分支（关键事件缺失 / cid 链缺 cast / cid 链缺 spawn-hit-end /
- *     trace≠silent 帧不一致）从未触发；
+ *   · `checkLogSmoke` 的 FAIL 分支（关键事件缺失 / cid 链缺 cast / cid 链缺 spawn-hit-end /
+ *     trace≠silent 帧不一致）从未触发 —— 其中"cid 链**顺序**异常"一条经穷举证实为死代码，已删除（见 GX-P4）；
  *   · `checkApiSmoke` 的 FAIL 分支（health 信封异常 / data 异常 / CLI 退出码非 0）从未触发；
  *   · 既有 `GX-12/GX-13` 只测 pass 与 pending（前置产物缺失）。
  *
@@ -122,9 +122,11 @@ test('GX-P4 项 8 投毒：cid 链乱序（bullet.hit 先于 bullet.spawn）→ 
   const r = await runOn(LOG_SMOKE_FILES('hit-first'), gate.checkLogSmoke);
   assert.equal(r.status, 'fail', r.detail);
   assert.match(r.detail, /cid 链事件缺失（spawn\/hit\/end）/);
-  // 实测记录（P7-7 §B6 的一处新发现）：gate.js:497 的 `!(c1<c2 && c2<c3 && c3<c4)` 是**不可达分支** ——
-  //   c2/c3/c4 由 `findIndex(i > 前一个)` 求得，故顺序天然成立；乱序只能落到上面这条"缺失"分支。
-  //   本用例断言的是"乱序必然 FAIL"，不断言具体分支文字（避免把死分支当成有效保护）。
+  // 实测记录（P7-7 §B6）：`!(c1<c2 && c2<c3 && c3<c4)` 是**不可达分支** —— c2/c3/c4 由
+  //   `findIndex(i > 前一个)` 求得，故顺序天然成立（重言式）；乱序只能落到上面这条"缺失"分支。
+  //   穷举验证：7 元素事件序列（含重复 spawn/tick.end）的全部相异排列 → 133 例顺序成立、
+  //   1127 例落到"缺失"分支、**0 例**顺序异常。故 gate.js 已删除该分支（2026-09-19 死代码清理）。
+  //   本用例断言的是"乱序必然 FAIL"（不依赖那条死分支），删除后语义不变、仍必须通过。
 });
 
 test('GX-P5 项 8 投毒：日志影响确定性（trace 与 silent 帧不一致）→ FAIL', async () => {

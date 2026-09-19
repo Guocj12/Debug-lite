@@ -111,7 +111,7 @@ test('FE-P1 C3 投毒：注册表新增一个无任何按钮引用的动作 → 
   } finally { cleanup(dir); }
 });
 
-test('FE-P2 C4 投毒：注册表删掉一屏 → 必须 FAIL，并记录"C4 缺屏分支被 C1 遮蔽"（死分支）', () => {
+test('FE-P2 C4 投毒：注册表删掉一屏 → 必须 FAIL，且由 C1 判缺屏（C4 该分支已删除）', () => {
   const { file, dir } = withRegistry((reg) => {
     reg.screens = reg.screens.filter((s) => s.id !== 'replay');
   });
@@ -120,8 +120,10 @@ test('FE-P2 C4 投毒：注册表删掉一屏 → 必须 FAIL，并记录"C4 缺
     assert.equal(res.ok, false, '缺屏必须 FAIL');
     const c1 = itemOf(res, 'C1');
     assert.match(c1.detail, /注册表缺少屏幕 replay/);
-    // 关键实测：C4 自己的 `缺屏幕` 分支**永远到不了** —— C1 先拦且 checkSpec 在 C1 fail 时短路。
-    //   （C1 与 C4 都对 SCREEN_IDS 做齐全性判定，C4 那份是死代码；此处钉死该事实，避免误以为 C4 覆盖了缺屏。）
+    // 关键实测（2026-09-19）：C4 自己的 `缺屏幕` 分支**永远到不了** —— C1 先拦且 checkSpec 在 C1 fail 时短路。
+    //   穷举 SCREEN_IDS 的 127 个非空删除子集：127/127 由 C1 报"注册表缺少屏幕"，C4 一次也没执行。
+    //   故该分支已从 `scripts/fe-spec-check.js` 的 checkC4 中**删除**（避免读成"C4 也覆盖了缺屏"），
+    //   **缺屏的权威判定 = C1**；本用例即该语义的回归钉（不降级：仍断言缺屏必 FAIL + 消息指向 replay）。
     assert.equal(itemOf(res, 'C4'), undefined, 'C1 fail 时不应继续跑 C4（短路语义）');
   } finally { cleanup(dir); }
 });
