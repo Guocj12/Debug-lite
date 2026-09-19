@@ -1254,6 +1254,10 @@ module.exports = {
   runLoadTest,
   runIntegrityChecks,
   buildDistribution,
+  // 单玩家步骤（诊断/定向用例接缝：`setupPlayer(ctx, {token, index, publicId})`）
+  registerPlayer,
+  setupPlayer,
+  nextCandidate,
   closeReport,
   reportPath,
   writeReport,

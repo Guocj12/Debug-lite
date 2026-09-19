@@ -288,7 +288,15 @@ async function main() {
       const dup = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_alpha_1', password: PASSWORD });
       expect(dup.status === 409, `重名注册应 409，实得 ${dup.status}`, dup.raw);
       expect(dup.body.error && dup.body.error.code === 'username_taken', `重名错误码应为 username_taken，实得 ${j(dup.body.error)}`, dup.raw);
-      okLine(1, '注册 2 个真实玩家', `A=${state.facts.A.publicId}(${state.facts.A.playerId}) B=${state.facts.B.publicId}(${state.facts.B.playerId})，token 长度 ${state.facts.A.token.length}；重名 → 409 username_taken`);
+
+      // 第 4 个真实玩家：CLI 闭环用（同时作为回放"非参与者"分支的主体，必须确定不参与任何对局）
+      const cliP = await request(port, 'POST', '/api/v1/auth/register', { username: 'e2e_cli_5', password: PASSWORD, nickname: '命令行' });
+      expect(cliP.status === 200 || cliP.status === 201, `CLI 玩家注册失败 ${cliP.status}`, cliP.raw);
+      state.facts.cliPlayer = { token: cliP.body.data.token, publicId: cliP.body.data.publicId, username: 'e2e_cli_5' };
+      state.facts.cliPlayer.playerId = await playerIdByPublicId(s.store, state.facts.cliPlayer.publicId);
+      expect(typeof state.facts.cliPlayer.playerId === 'string', 'CLI 玩家档案应可回查', cliP.raw);
+
+      okLine(1, '注册真实玩家', `A=${state.facts.A.publicId}(${state.facts.A.playerId}) B=${state.facts.B.publicId}(${state.facts.B.playerId}) CLI=${state.facts.cliPlayer.publicId}；token 长度 ${state.facts.A.token.length}；重名 → 409 username_taken`);
       return `A=${state.facts.A.publicId} B=${state.facts.B.publicId}`;
     });
 
@@ -652,7 +660,7 @@ async function main() {
           `排位不改积分（D-133 双轨）：防守方 ${publicId} 排位前 ${state.facts.pointsBeforeRanked[publicId]} → 排位后 ${pointsOfFoe}`, j(defData));
         defenses.push({ publicId, drawnCount: defData.drawnCount, tier: tierOfFoe, points: pointsOfFoe, pointsBefore: state.facts.pointsBeforeRanked[publicId] });
       }
-      okLine(15, '发起者同步结算 / 防守方离线记账', `发起者 batchesPlayed=${meA.body.data.progress.batchesPlayed}、排位战绩 ${rankedRecA.length} 条、积分 ${meA.body.data.rating.points}（排位不改分）；防守方 ${defenses.map((x) => `${x.publicId}:drawn=${x.drawnCount},tier=${x.tier},points=${x.points}`).join(' ')} → 不掉段不掉分`);
+      okLine(15, '发起者同步结算 / 防守方离线记账', `发起者 batchesPlayed=${meA.body.data.progress.batchesPlayed}、排位战绩 ${rankedRecA.length} 条、积分 ${meA.body.data.rating.points}（排位不改分）；防守方 ${defenses.map((x) => `${x.publicId}:drawn=${x.drawnCount},tier=${x.tier},points=${x.pointsBefore}→${x.points}`).join(' ')} → 不掉段不掉分`);
       return `防守方 ${defenses.length} 人记账`;
     });
 
@@ -691,19 +699,36 @@ async function main() {
 
     /* ---- [17/22] /me/defense 汇总 ---- */
     await step(17, 'GET /me/defense 汇总被抽场次 / 胜负 / 未读 / 最近列表', async () => {
-      const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(state.facts.B.token));
-      expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
-      const d = def.body.data;
-      expect(d.drawnCount >= 1, `被抽场次应 ≥1，实得 ${d.drawnCount}`, def.raw);
-      expect(d.stats && typeof d.stats.wins === 'number' && typeof d.stats.losses === 'number' && typeof d.stats.draws === 'number', '应含胜负平统计', def.raw);
-      expect(d.stats.wins + d.stats.losses + d.stats.draws === d.drawnCount, '胜负平应闭合到被抽场次', def.raw);
-      expect(Array.isArray(d.recent) && d.recent.length >= 1, '应有最近列表', def.raw);
-      expect(typeof d.recent[0].battleId === 'string' && typeof d.recent[0].opponentPublicId === 'string', '最近列表应含 battleId/opponentPublicId', def.raw);
-      expect(typeof d.unread === 'number', '应含未读计数', def.raw);
-      expect(!def.raw.includes('pl_'), '防守战绩不得回带 playerId', def.raw);
-      await assertReal(s.store, [d.recent[0].opponentPublicId], 'me/defense');
-      okLine(17, 'GET /me/defense 汇总', `drawnCount=${d.drawnCount} wins=${d.stats.wins} losses=${d.stats.losses} draws=${d.stats.draws} unread=${d.unread}；recent[0]={battleId:${d.recent[0].battleId}, opponent:${d.recent[0].opponentPublicId}}（回查档案库 OK）`);
-      return `drawn=${d.drawnCount}`;
+      const subjects = [
+        { tag: 'A（本批次发起者，未被抽）', token: state.facts.A.token, publicId: state.facts.A.publicId },
+        { tag: 'B', token: state.facts.B.token, publicId: state.facts.B.publicId },
+        { tag: 'CLI 玩家', token: state.facts.cliPlayer.token, publicId: state.facts.cliPlayer.publicId },
+      ];
+      const views = [];
+      for (const subj of subjects) {
+        const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(subj.token));
+        expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
+        const x = def.body.data;
+        expect(x.stats && typeof x.stats.wins === 'number' && typeof x.stats.losses === 'number' && typeof x.stats.draws === 'number', '应含胜负平统计', def.raw);
+        expect(x.stats.wins + x.stats.losses + x.stats.draws === x.drawnCount, `胜负平应闭合到被抽场次（${subj.tag}）`, def.raw);
+        expect(Array.isArray(x.recent), '应含最近列表', def.raw);
+        expect(typeof x.unread === 'number', '应含未读计数', def.raw);
+        expect(!def.raw.includes('pl_'), '防守战绩不得回带 playerId', def.raw);
+        views.push({ ...subj, data: x });
+      }
+      // 本批次真实被抽中的防守方：字段完整性 + 最近一条可回查对手
+      const drawn = views.filter((v) => v.data.drawnCount >= 1);
+      expect(drawn.length >= 1, `本排位批次至少应产生 1 名防守方记录，实得 ${views.map((v) => `${v.tag}:${v.data.drawnCount}`).join(' ')}`, views.map((v) => j(v.data)).join(' | '));
+      const target = drawn[0];
+      expect(target.data.recent.length >= 1, '被抽方应有 recent 列表', j(target.data));
+      expect(typeof target.data.recent[0].battleId === 'string' && typeof target.data.recent[0].opponentPublicId === 'string', 'recent 应含 battleId/opponentPublicId', j(target.data));
+      await assertReal(s.store, [target.data.recent[0].opponentPublicId], 'me/defense');
+      // 未被抽中者的反向对照：drawnCount 必须为 0（不做无中生有的记录）
+      for (const v of views.filter((x) => x.data.drawnCount === 0)) {
+        expect(v.data.recent.length === 0 && v.data.unread === 0, `未被抽中者不得有防守记录（${v.tag}）`, j(v.data));
+      }
+      okLine(17, 'GET /me/defense 汇总', views.map((v) => `${v.tag} drawn=${v.data.drawnCount} w/l/d=${v.data.stats.wins}/${v.data.stats.losses}/${v.data.stats.draws} unread=${v.data.unread}`).join('；') + (target.data.recent[0] ? `；被抽方 recent[0]={battleId:${target.data.recent[0].battleId}, opponent:${target.data.recent[0].opponentPublicId}}（回查档案库 OK）` : ''));
+      return `被抽方 ${drawn.map((v) => v.publicId).join(',')}`;
     });
 
     /* ---- [18/22] /leaderboard ---- */
@@ -736,7 +761,7 @@ async function main() {
       expect(mine.body.data.frames.length === d.ticks, `重算帧数应等于 ticks（${d.ticks}），实得 ${mine.body.data.frames.length}`, mine.raw);
       const anon = await request(port, 'GET', `/api/v1/replay/${d.battleId}`);
       expect(anon.status === 401, `未鉴权取归档回放应 401，实得 ${anon.status}`, anon.raw);
-      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(state.facts.solo.token));
+      const outsider = await request(port, 'GET', `/api/v1/replay/${d.battleId}`, undefined, authed(state.facts.cliPlayer.token));
       expect(outsider.status === 403, `非参与者应 403，实得 ${outsider.status}`, outsider.raw);
       expect(outsider.body.error.code === 'replay_forbidden', `非参与者错误码应为 replay_forbidden，实得 ${j(outsider.body.error)}`, outsider.raw);
 
@@ -847,8 +872,7 @@ async function main() {
       expect(foeMe.body.data.rating.points === d.opponent.pointsAfter,
         `对手积分应已落盘（双向结算）：档案 ${foeMe.body.data.rating.points} ≠ 响应 ${d.opponent.pointsAfter}`, foeMe.raw);
 
-      // CLI：清空 A 的对手冷却（等价 24h 已过）以让 quick 这条子命令确定性成功
-      await clearOpponentHistory(s.store, state.facts.A.playerId);
+      // CLI：CLI 玩家（e2e_cli_5）自注册起未参与任何对局 → 其冷却窗口为空，quick 子命令确定性可打
       const runCli = async (argv) => {
         const logs = [];
         const errs = [];
@@ -868,22 +892,20 @@ async function main() {
       expect(health.code === 0, `cli health 应退出码 0，实得 ${health.code}`, `${health.text}\n${health.err}`);
       const unauth = await runCli(['me']);
       expect(unauth.code === 3, `cli me 未鉴权应退出码 3（§10.4），实得 ${unauth.code}`, `${unauth.text}\n${unauth.err}`);
-      const reg = await runCli(['auth', 'register', '--user', 'e2e_cli_5', '--pass', PASSWORD]);
-      expect(reg.code === 0, `cli auth register 应退出码 0，实得 ${reg.code}`, `${reg.text}\n${reg.err}`);
-      const login = await runCli(['auth', 'login', '--user', state.facts.A.username, '--pass', PASSWORD]);
+      const login = await runCli(['auth', 'login', '--user', state.facts.cliPlayer.username, '--pass', PASSWORD]);
       expect(login.code === 0, `cli auth login 应退出码 0，实得 ${login.code}`, `${login.text}\n${login.err}`);
-      const me = await runCli(['me', '--token', state.facts.A.token]);
+      const me = await runCli(['me', '--token', state.facts.cliPlayer.token]);
       expect(me.code === 0, `cli me 应退出码 0，实得 ${me.code}`, `${me.text}\n${me.err}`);
-      expect(me.text.includes(state.facts.A.publicId), 'cli me 输出应含自己的 publicId', me.text);
+      expect(me.text.includes(state.facts.cliPlayer.publicId), 'cli me 输出应含自己的 publicId', me.text);
       const lb = await runCli(['leaderboard', '--limit', '5']);
       expect(lb.code === 0, `cli leaderboard 应退出码 0，实得 ${lb.code}`, `${lb.text}\n${lb.err}`);
-      expect(lb.text.includes(state.facts.A.publicId), 'cli leaderboard 输出应含榜单行', lb.text);
-      const quick = await runCli(['quick', 'run', '--token', state.facts.A.token, '--seed', '31415']);
-      expect(quick.code === 0, `cli quick 应退出码 0（已清冷却，池中有真实对手），实得 ${quick.code}`, `${quick.text}\n${quick.err}`);
+      expect(lb.text.includes(state.facts.cliPlayer.publicId), 'cli leaderboard 输出应含榜单行', lb.text);
+      const quick = await runCli(['quick', 'run', '--token', state.facts.cliPlayer.token, '--seed', '31415']);
+      expect(quick.code === 0, `cli quick 应退出码 0（CLI 玩家池中必有真实对手），实得 ${quick.code}`, `${quick.text}\n${quick.err}`);
       const cliData = JSON.parse(quick.text);
-      await assertReal(s.store, [state.facts.A.publicId, cliData.opponent.publicId], 'cli quick');
+      await assertReal(s.store, [state.facts.cliPlayer.publicId, cliData.opponent.publicId], 'cli quick');
       expect(cliData.opponent.isBot === false, 'CLI 快速对战的对手不得是 bot', quick.text);
-      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `A ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth register→0，auth login→0，me→0，leaderboard→0，quick run→0（对手 ${cliData.opponent.publicId} 回查档案库 OK）`);
+      okLine(22, 'quick/run（真实对手）+ CLI 闭环', `A ${d.self.pointsBefore}→${d.self.pointsAfter}（Δ${d.self.delta}）vs ${d.opponent.publicId} ${d.opponent.pointsBefore}→${d.opponent.pointsAfter}（Δ${d.opponent.delta}）双方 Δ ≡ 公式、cap 未越界、对手档案已落盘；CLI：health→0，me 无 token→**3**，auth login→0，me→0，leaderboard→0，quick run→0（对手 ${cliData.opponent.publicId} 回查档案库 OK）`);
       return `Δ ${d.self.delta}/${d.opponent.delta}；CLI 0/3`;
     });
 
