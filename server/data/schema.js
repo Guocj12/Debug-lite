@@ -106,12 +106,7 @@ const RATING_CONFIG_FROZEN = Object.freeze({
   batchSize: 10,
 });
 
-// 元数据键统一以 `_` 开头（_note/_sample/...），不参与值比对与键集校验（与内容层惯例一致）
-function metaKeysOf(obj) {
-  return Object.keys(obj).filter((k) => k.startsWith('_'));
-}
-
-// 深比较：返回首个差异的路径描述（无差异 → null）
+// 深比较：返回首个差异的路径描述（无差异 → null）；元数据键（`_note`/`_sample`/…）由调用方过滤，不参与比对
 function firstDiff(actual, expected, prefix) {
   const path0 = prefix || '';
   if (expected !== null && typeof expected === 'object') {
