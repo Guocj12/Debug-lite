@@ -195,3 +195,5 @@ docs/progress.md       本文件
 - **P7-5 e2e 落地**（2026-09-19T02:49:51.781Z）：新增 scripts/e2e.js 与 tests/helpers/e2e.js（全链路 22 检查点）。实测 npm test 803/0、gate 9 PASS/0 FAIL/0 PEND、check-docs PASS、fe-spec-check 9 PASS。
 
 - P7-5/P7-6 阶段进展（2026-09-19T02:54:05.521Z）：e2e/load 脚本与夹具持续落地。实测 npm test 803/0 或更高、gate 9 PASS/0 FAIL/0 PEND。
+
+- **存储层后续项 A+B 完成**（2026-09-19T02:55:34.958Z）：新增 server/data/service-config.json 与 rating-config.json（表为数值单一来源，代码默认值兜底；schema 冻结值+跨字段不变量校验+缺表必 FAIL）；新增 player.removed 墓碑记录类型（全量重放不复活已删玩家，幂等）。store 测试 128/128。

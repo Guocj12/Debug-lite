@@ -315,13 +315,13 @@ function buildAiProgram(seed, types) {
  * 本地预演只决定"提交哪些装配请求"，服务端返回的每一次拒绝都进报告（不做第二套裁决）。
  */
 
-function makeWarehouseView(warehouse) {
+function makeWarehouseView(warehouse, assignments) {
   const clone = JSON.parse(JSON.stringify(warehouse || { buckets: {} }));
   if (!clone.buckets || typeof clone.buckets !== 'object') clone.buckets = {};
   for (const key of Object.keys(clone.buckets)) {
     if (!Array.isArray(clone.buckets[key])) clone.buckets[key] = [];
   }
-  return {
+  const view = {
     raw: clone,
     buckets: clone.buckets,
     findItem(uid) {
@@ -332,6 +332,19 @@ function makeWarehouseView(warehouse) {
       return null;
     },
   };
+  // 叠加本地已生效的装配（与服务端每次成功响应一一对应）→ 视图 = 服务端当前状态
+  if (assignments && assignments.size > 0) {
+    for (const [key, pluginUid] of assignments) {
+      const [targetUid, slotIndexRaw] = key.split('#');
+      const target = view.findItem(targetUid);
+      const plugin = view.findItem(pluginUid);
+      if (target && Array.isArray(target.slots) && target.slots[Number(slotIndexRaw)]) {
+        target.slots[Number(slotIndexRaw)].pluginUid = pluginUid;
+      }
+      if (plugin) plugin.equipped = true;
+    }
+  }
+  return view;
 }
 
 function usedRolePoints(wh, role) {
@@ -362,13 +375,13 @@ function pickPlugin(wh, bucket, slotType) {
 function planLoadout(warehouse, options) {
   const o = options || {};
   const slotsMax = Number.isInteger(o.slotsMax) && o.slotsMax >= 0 ? o.slotsMax : DEFAULTS.slotsMax;
-  const wh = makeWarehouseView(warehouse);
-  const role = (wh.buckets.role || [])[0] || null;
-  const skills = (wh.buckets.skill || []).slice(0, 3);
+  const wh = makeWarehouseView(warehouse, o.assignments);
+  const role = (wh.buckets.role || [])[0] && wh.findItem((wh.buckets.role || [])[0].uid);
+  const skills = (wh.buckets.skill || []).slice(0, 3).map((s) => wh.findItem(s.uid));
   const plan = [];
   const skipped = [];
   const stats = { roleTargets: 0, skillTargets: 0, placed: 0, noCandidate: 0, noSlot: 0, pointsExceeded: 0 };
-  if (!role || skills.length !== 3) {
+  if (!role || skills.length !== 3 || skills.some((s) => !s)) {
     return {
       loadout: null, plan, skipped, stats,
       error: `出战材料不足（角色 ${role ? 1 : 0} / 技能 ${skills.length}，需 1 + 3）`,
@@ -382,7 +395,8 @@ function planLoadout(warehouse, options) {
     if (target.kind === 'role') stats.roleTargets += 1; else stats.skillTargets += 1;
     for (let i = 0; i < Math.min(slots.length, slotsMax); i += 1) {
       const slot = slots[i];
-      if (!slot || slot.pluginUid) continue;
+      if (!slot) continue;
+      if (slot.pluginUid) { stats.placed += 1; continue; } // 已生效（assignments 叠加）
       const used = target.kind === 'role' ? usedRolePoints(wh, target.item) : 0;
       const cand = pickPlugin(wh, target.bucket, slot.type);
       if (!cand) { stats.noCandidate += 1; continue; }
@@ -468,24 +482,42 @@ async function setupPlayer(ctx, p) {
   }
   detail.items = boxed.length;
 
-  // 3) 装配（本地预演 → 逐条 POST /warehouse/assemble，服务端裁决；拒绝则回滚本地视图）
-  const planned = planLoadout(warehouse, { slotsMax: ctx.slotsMax });
+  // 3) 装配：本地规划（纯函数）→ 逐条 POST /warehouse/assemble（服务端为权威）。
+  //    每次请求提交**装配前的仓库**（接口是纯函数：返回新仓库，入参不变）；装配结果只在本地视图叠加，
+  //    点数/槽位占用/唯一性全部由服务端裁决（拒绝进报告，不做第二套判定）。
+  const assembleBase = warehouse;
+  const assignments = new Map();
+  const usedPluginUids = new Set();
+  const planned = planLoadout(assembleBase, { slotsMax: ctx.slotsMax });
   if (!planned.loadout) return { ok: false, code: 'loadout_materials_missing', detail };
-  for (const op of planned.plan) {
+  for (;;) {
+    const view = makeWarehouseView(assembleBase, assignments);
+    const candidate = nextCandidate(view, planned.loadout, ctx.slotsMax, usedPluginUids);
+    if (!candidate) break;
     const res = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/warehouse/assemble',
-      { warehouse, targetUid: op.targetUid, pluginUid: op.pluginUid, slotIndex: op.slotIndex, tier: ctx.tier }, auth);
+      {
+        warehouse: view.raw,
+        targetUid: candidate.targetUid,
+        pluginUid: candidate.pluginUid,
+        slotIndex: candidate.slotIndex,
+        tier: ctx.tier,
+      }, auth);
     const data = envelopeData(res);
     if (res.status === 200 && data && data.warehouse) {
-      warehouse = data.warehouse;
+      assignments.set(`${candidate.targetUid}#${candidate.slotIndex}`, candidate.pluginUid);
+      usedPluginUids.add(candidate.pluginUid);
       detail.equipped += 1;
       continue;
     }
+    // 服务端拒绝（points_exceeded / slot_type_mismatch / …）：标记该插件已试，换下一个候选
     const code = res.errorCode || `status_${res.status}`;
     detail.rejects[code] = (detail.rejects[code] || 0) + 1;
-    const target = planned.loadout.role.uid === op.targetUid
-      ? planned.loadout.role
-      : planned.loadout.skills.find((s) => s.uid === op.targetUid);
-    if (target && target.slots && target.slots[op.slotIndex]) target.slots[op.slotIndex].pluginUid = null;
+    usedPluginUids.add(candidate.pluginUid);
+  }
+  if (assignments.size > 0) {
+    const finalPlan = planLoadout(assembleBase, { slotsMax: ctx.slotsMax, assignments });
+    planned.loadout.role = finalPlan.loadout.role;
+    planned.loadout.skills = finalPlan.loadout.skills;
   }
 
   // 4) 为每人生成**行为各不相同**的 AI → /ai/validate + /ai/compile
@@ -509,7 +541,7 @@ async function setupPlayer(ctx, p) {
   detail.compiledHash = (envelopeData(v2) || {}).programHash || null;
 
   // 5) 仓库镜像（引用校验用）+ PUT /me/configs/:slot（默认槽，≤3 且唯一出战）
-  const mirror = mirrorOfLoadout(planned.loadout, warehouse, ctx.warehouseBucketMax);
+  const mirror = mirrorOfLoadout(planned.loadout, assembleBase, ctx.warehouseBucketMax);
   const whRes = await call(ctx.metrics, null, ctx.port, 'PUT', '/api/v1/me/warehouse', { warehouse: mirror }, auth);
   if (whRes.status !== 200) return { ok: false, code: 'warehouse_mirror_failed', status: whRes.status, detail, errorCode: whRes.errorCode };
 
@@ -518,10 +550,33 @@ async function setupPlayer(ctx, p) {
   const cfgData = envelopeData(cfgs) || {};
   detail.slots = (cfgData.slots || []).length;
   detail.activeSlotId = cfgData.activeSlotId;
-  const save = await call(ctx.metrics, 'config', ctx.port, `PUT /api/v1/me/configs/${cfgData.activeSlotId}`.split(' ')[1],
+  const save = await call(ctx.metrics, 'config', ctx.port, 'PUT', `/api/v1/me/configs/${cfgData.activeSlotId}`,
     { loadout: planned.loadout, warehouse: mirror, activate: true }, auth);
   if (save.status !== 200) return { ok: false, code: 'config_save_failed', status: save.status, detail, errorCode: save.errorCode };
   return { ok: true, detail, mirror };
+}
+
+// 下一个可提交的装配候选（在"装配前仓库 + 本地已生效赋值"视图上规划；跳过已试过的插件）
+function nextCandidate(wh, loadout, slotsMax, usedPluginUids) {
+  const targets = [{ item: loadout.role, bucket: 'rolePlugin', kind: 'role' }]
+    .concat((loadout.skills || []).map((s) => ({ item: s, bucket: 'skillPlugin', kind: 'skill' })));
+  for (const target of targets) {
+    const slots = Array.isArray(target.item.slots) ? target.item.slots : [];
+    if (slots.length === 0) continue;
+    if (target.kind === 'role' && usedRolePoints(wh, target.item) >= (target.item.pluginPoints || 0)) continue;
+    for (let i = 0; i < Math.min(slots.length, slotsMax); i += 1) {
+      const slot = slots[i];
+      if (!slot || slot.pluginUid) continue;
+      for (const p of wh.buckets[target.bucket] || []) {
+        if (!p || p.equipped === true) continue;
+        if (p.slot !== slot.type) continue;
+        if (usedPluginUids.has(p.uid)) continue;
+        return { targetUid: target.item.uid, slotIndex: i, pluginUid: p.uid, kind: target.kind, slotType: slot.type };
+      }
+      return null; // 该槽无可用候选 → 结束（不跳过槽位：装配只在目标物品的前 N 个槽上做）
+    }
+  }
+  return null;
 }
 
 /* ---------- 报告辅助 ---------- */

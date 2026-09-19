@@ -669,8 +669,9 @@ function createHandler(logger, extraRoutes, runtime) {
     }
     const snap1 = record.p1 && record.p1.snapshotHash ? await rt.store.snapshot.get(record.p1.snapshotHash) : null;
     const snap2 = record.p2 && record.p2.snapshotHash ? await rt.store.snapshot.get(record.p2.snapshotHash) : null;
-    if (!snap1 || !snap2) {
-      logger.warn('store', 'store.snapshot.missing', `回放 ${id} 依赖的快照缺失（GC/人为删除）`, { replayId: id, reason: 'snapshot_gc' });
+    // 内容寻址复核（同 ranked.loadSnapshotOf 口径）：正文 hash 与引用不符 → 视为缺失，绝不拿别的正文顶替
+    if (!snap1 || snap1.hash !== record.p1.snapshotHash || !snap2 || snap2.hash !== record.p2.snapshotHash) {
+      logger.warn('store', 'store.snapshot.missing', `回放 ${id} 依赖的快照缺失/不一致（GC/人为篡改）`, { replayId: id, reason: 'snapshot_gc' });
       return failStatus(410, 'replay_expired', `回放过期：快照已不可用（snapshot_gc）`);
     }
     const tier = (record.p1 && record.p1.tierBefore) || 'common';

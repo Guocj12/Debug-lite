@@ -577,6 +577,13 @@ async function main() {
 
     /* ---- [14/22] ranked/run 抽池 + 去重 + shortfall ---- */
     await step(14, 'POST /ranked/run：抽池排除自己 + 24h 去重 + 候选不足 → shortfall（不注入 bot）', async () => {
+      // 排位前采集全体积分基线（第 15 步断言"防守方积分不因排位变化"）
+      const pointsBeforeRanked = {};
+      for (const id of s.store.index.playerIds()) {
+        const e = s.store.index.get(id);
+        if (e && e.publicId) pointsBeforeRanked[e.publicId] = e.points;
+      }
+      state.facts.pointsBeforeRanked = pointsBeforeRanked;
       const r = await request(port, 'POST', '/api/v1/ranked/run', { seed: 11 }, authed(state.facts.A.token));
       expect(r.status === 200, `排位应 200，实得 ${r.status}`, r.raw);
       const d = r.body.data;
@@ -607,23 +614,45 @@ async function main() {
       const meA = await request(port, 'GET', '/api/v1/me', undefined, authed(state.facts.A.token));
       expect(meA.body.data.progress.batchesPlayed >= 1, '发起者批次计数应同步落盘', meA.raw);
       expect(meA.body.data.rating.points === 0, `排位不改积分（D-133 双轨），实得 ${meA.body.data.rating.points}`, meA.raw);
-      const recA = await request(port, 'GET', '/api/v1/me/records', undefined, authed(state.facts.A.token));
-      expect(recA.body.data.records.length === d.matches, `发起者战绩应 ${d.matches} 条（同步结算），实得 ${recA.body.data.records.length}`, recA.raw);
+      const recA = await request(port, 'GET', '/api/v1/me/records?role=attack', undefined, authed(state.facts.A.token));
+      const rankedRecA = recA.body.data.records.filter((x) => x.mode === 'ranked');
+      expect(rankedRecA.length === d.matches, `发起者排位战绩应 ${d.matches} 条（同步结算），实得 ${rankedRecA.length}`, recA.raw);
       const foeIds = d.results.map((m) => m.opponentPublicId);
       const defenses = [];
       for (const publicId of foeIds) {
-        const token = publicId === state.facts.B.publicId ? state.facts.B.token : null;
-        expect(token !== null, '本用例对已注册玩家 B 断言防守视图（其余对手亦为真实档案）');
-        const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(token));
-        expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
-        expect(def.body.data.drawnCount >= 1, `被抽场次应 ≥1，实得 ${def.body.data.drawnCount}`, def.raw);
-        const s3 = def.body.data.stats;
-        expect(s3.wins + s3.losses + s3.draws === def.body.data.drawnCount, '防守胜负平应闭合到 drawnCount', def.raw);
-        const meB = await request(port, 'GET', '/api/v1/me', undefined, authed(token));
-        expect(meB.body.data.progress.tier === 'common', `防守方不掉段（应仍 common），实得 ${meB.body.data.progress.tier}`, meB.raw);
-        defenses.push({ publicId, drawnCount: def.body.data.drawnCount, tier: meB.body.data.progress.tier, points: meB.body.data.rating.points });
+        const token = publicId === state.facts.B.publicId ? state.facts.B.token
+          : publicId === state.facts.solo.publicId ? state.facts.solo.token
+            : publicId === state.facts.victim.publicId ? state.facts.victim.token : null;
+        let defData;
+        let tierOfFoe;
+        let pointsOfFoe;
+        if (token) {
+          const def = await request(port, 'GET', '/api/v1/me/defense', undefined, authed(token));
+          expect(def.status === 200, `防守战绩应 200，实得 ${def.status}`, def.raw);
+          defData = def.body.data;
+          const meB = await request(port, 'GET', '/api/v1/me', undefined, authed(token));
+          tierOfFoe = meB.body.data.progress.tier;
+          pointsOfFoe = meB.body.data.rating.points;
+        } else {
+          // 其余对手由 CLI 注册（未持有 token）→ 直接读档案层同一视图
+          const pid = await playerIdByPublicId(s.store, publicId);
+          const ds = await s.store.defenseSummary(pid, { limit: 20 });
+          const arch = await s.store.loadArchive(pid);
+          defData = ds;
+          tierOfFoe = arch.progress.tier;
+          pointsOfFoe = arch.rating.points;
+        }
+        expect(defData.drawnCount >= 1, `被抽场次应 ≥1，实得 ${defData.drawnCount}`, j(defData));
+        const s3 = defData.stats;
+        expect(s3.wins + s3.losses + s3.draws === defData.drawnCount, '防守胜负平应闭合到 drawnCount', j(defData));
+        expect(tierOfFoe === 'common', `防守方不掉段（应仍 common），实得 ${tierOfFoe}`, j(defData));
+        pointsOfFoe = pointsOfFoe === undefined ? 0 : pointsOfFoe;
+        // 排位不改积分：防守方当前积分必须与**排位批次前**采集的基线一致（第 14 步前采集）
+        expect(pointsOfFoe === state.facts.pointsBeforeRanked[publicId],
+          `排位不改积分（D-133 双轨）：防守方 ${publicId} 排位前 ${state.facts.pointsBeforeRanked[publicId]} → 排位后 ${pointsOfFoe}`, j(defData));
+        defenses.push({ publicId, drawnCount: defData.drawnCount, tier: tierOfFoe, points: pointsOfFoe, pointsBefore: state.facts.pointsBeforeRanked[publicId] });
       }
-      okLine(15, '发起者同步结算 / 防守方离线记账', `发起者 batchesPlayed=${meA.body.data.progress.batchesPlayed}、战绩 ${recA.body.data.records.length} 条、积分 ${meA.body.data.rating.points}（排位不改分）；防守方 ${defenses.map((x) => `${x.publicId}:drawn=${x.drawnCount},tier=${x.tier},points=${x.points}`).join(' ')} → 不掉段不掉分`);
+      okLine(15, '发起者同步结算 / 防守方离线记账', `发起者 batchesPlayed=${meA.body.data.progress.batchesPlayed}、排位战绩 ${rankedRecA.length} 条、积分 ${meA.body.data.rating.points}（排位不改分）；防守方 ${defenses.map((x) => `${x.publicId}:drawn=${x.drawnCount},tier=${x.tier},points=${x.points}`).join(' ')} → 不掉段不掉分`);
       return `防守方 ${defenses.length} 人记账`;
     });
 
@@ -758,6 +787,10 @@ async function main() {
 
     /* ---- [21/22] DL_LEGACY_STATELESS 兼容口径 ---- */
     await step(21, 'DL_LEGACY_STATELESS：=1（默认）旧无状态端点零回归；=0 → 410 deprecated', async () => {
+      // 先把 A 的出战配置恢复为正常 hp（第 11 步的剧本配置只服务于 Elo 场景）
+      const restore = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: scriptedLoadout(state.facts.asmA.warehouse, false), warehouse: state.facts.asmA.warehouse }, authed(state.facts.A.token));
+      expect(restore.status === 200, `恢复 A 配置应 200，实得 ${restore.status}`, restore.raw);
+      state.facts.ldA = scriptedLoadout(state.facts.asmA.warehouse, false);
       const box = await request(port, 'POST', '/api/v1/box', { seed: 1, tier: MODE, times: 1 });
       expect(box.status === 200, `legacy box 应 200，实得 ${box.status}`, box.raw);
       const wh = await request(port, 'GET', '/api/v1/warehouse');
