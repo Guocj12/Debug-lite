@@ -39,6 +39,11 @@ const TYPE_MODIFIERS = require('../data/role-templates.json').typeModifiers;
 const REGISTRY = require('../data/affix-registry.json');
 const MECHANICS = require('../data/skill-mechanics.json');
 const AFFIXES = REGISTRY.affixes;
+// 词条适用域（E-1，2026-09-19 闭环）：注册表用 `domain` 声明"该词条适用于角色插件 / 技能插件 / 两者"，
+//   并用 `_domainOfKind` 声明插件类别 → 域的映射。此前 `domain` **只声明不消费**（全仓零 JS 读取，
+//   而 docs/systems/01-items.md:18,56 称其声明 role/skill/both）→ 现于 generatePlugin 处消费：
+//   域与插件类别不符 = 该词条在本类别没有任何消费方（角色插件走面板聚合、技能插件走技能链）→ 记 warn 并跳过。
+const DOMAIN_OF_KIND = REGISTRY._domainOfKind || {};
 const FLAT_STATS = REGISTRY.stats;                  // 五维（面板聚合作用域）
 const TIERS = QUALITIES.qualities.map((q) => q.id); // 段位序 = 品质表顺序（单一来源，勿另立字面量）
 const STAT_PRECISION = MECHANICS.precision.stat;
@@ -247,12 +252,22 @@ function makeItems(logger, gating) {
     const coeff = rand(rng, q.statRange[0], q.statRange[1]);
     const tier = tierOfValue(coeff, q);
     // 词条入包：滚动方式取自词条注册表 roll（int = 即时取整 I-6b；stat = 保留 precision.stat 位 I-6a）
-    const affixes = def.affixes.map((a) => {
+    // 适用域校验（E-1）：域与插件类别不符 → 该词条在本类别无消费方 → warn 并跳过（与"未登记词条"同一处置）
+    const wantDomain = DOMAIN_OF_KIND[kind];
+    const affixes = [];
+    for (const a of def.affixes) {
       const reg = affixDef(a.id);
-      if (!reg) L.warn('items', 'items.affix.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
+      if (!reg) {
+        L.warn('items', 'items.affix.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
+      } else if (wantDomain && reg.domain && reg.domain !== 'both' && reg.domain !== wantDomain) {
+        L.warn('items', 'items.affix.domain',
+          `词条 ${a.id} 声明 domain=${reg.domain}，不适用于 ${kind}（应为 ${wantDomain} 或 both）→ 跳过`,
+          { affixId: a.id, domain: reg.domain, kind, wantDomain });
+        continue;
+      }
       const rounded = (reg && reg.roll === 'int') ? Math.round(a.params.v * coeff) : round2(a.params.v * coeff);
-      return { id: a.id, desc: a.desc, params: { ...a.params, v: rounded } };
-    });
+      affixes.push({ id: a.id, desc: a.desc, params: { ...a.params, v: rounded } });
+    }
     const plugin = {
       uid: `item_${uidSeq++}`, kind, id: def.id, name: def.name, desc: def.desc,
       slot: def.slot, category: def.category, quality: qualityId,

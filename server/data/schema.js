@@ -387,6 +387,16 @@ function validateStructure(dataDir, assetsDir) {
   //   2026-09-16：**删除 AI 节点累计数量/增量表核对**（不再硬编码 11/14/17/17/19 或 AI_BASE_NODES）；
   //   权限名合法性改由机制层 ai-nodes.json 判定（见下"④ AI 节点与段位权限"）。
   const byTier = Object.fromEntries(tables.unlock.unlocks.map((u) => [u.tier, u]));
+  // D-137 门控总开关的结构校验（S-3，2026-09-19）：`gating.enabled` 必须是**布尔**。
+  //   运行期判定是 `enabled !== false`（缺省/非 false → 按启用处理，旧表行为不变），
+  //   因此写成字符串 "false" 会被判成"启用"= 静默改变全部门控语义（unlock.js / items.js / ast.js / loadout.js 四处同源）。
+  if (tables.unlock.gating !== undefined && tables.unlock.gating !== null) {
+    if (typeof tables.unlock.gating !== 'object' || Array.isArray(tables.unlock.gating)) {
+      problems.push(`unlock.gating 必须是对象 {enabled: boolean}（当前 ${JSON.stringify(tables.unlock.gating)}）`);
+    } else if (typeof tables.unlock.gating.enabled !== 'boolean') {
+      problems.push(`unlock.gating.enabled 必须是布尔（当前 ${JSON.stringify(tables.unlock.gating.enabled)}；字符串 "false" 会被判为启用 = 旧行为）`);
+    }
+  }
   for (const u of tables.unlock.unlocks) {
     if (!(u.tier in TIER_SEQ)) problems.push(`unlock 段位非法: ${u.tier}`);
     if (!Array.isArray(u.aiNodes)) problems.push(`unlock ${u.tier}: aiNodes 必须是数组`);
@@ -482,6 +492,26 @@ function validateStructure(dataDir, assetsDir) {
       if (def.skillOp && !OPS.includes(def.skillOp.op)) problems.push(`affix-registry.${id}: skillOp.op ${def.skillOp.op} 未登记（_opVocabulary）`);
       if (def.hitEffect && !HIT_KINDS.includes(def.hitEffect.kind)) problems.push(`affix-registry.${id}: hitEffect.kind ${def.hitEffect.kind} 未登记`);
       if (def.castEffect && !CAST_KINDS.includes(def.castEffect.kind)) problems.push(`affix-registry.${id}: castEffect.kind ${def.castEffect.kind} 未登记`);
+    }
+    // ①b 词条适用域 domain（E-1，2026-09-19 闭环）：`domain` 此前**只声明不消费**（全仓零 JS 读取），
+    //   而 docs/systems/01-items.md:18,56 称其声明 role/skill/both —— 现由 core/items.generatePlugin 消费
+    //   （域与插件类别不符 → 记 items.affix.domain warn 并跳过该词条，与"未登记词条"同一处置）。
+    //   门禁侧把同一规则**前置**：域取值非法 / 内容层写错域 → 直接 FAIL（不必等到运行期 warn）。
+    const DOMAIN_VOCAB = [...Object.keys(reg._domains || {}), 'both'];
+    const domainOfKind = reg._domainOfKind || {};
+    for (const [id, def] of Object.entries(affixes)) {
+      if (!DOMAIN_VOCAB.includes(def.domain)) {
+        problems.push(`affix-registry.${id}: domain 非法 ${JSON.stringify(def.domain)}（应为 ${DOMAIN_VOCAB.join('/')}）`);
+      }
+    }
+    for (const p of tables.plugins || []) {
+      const want = domainOfKind[p.kind];
+      if (!want) continue; // 注册表未声明 kind→域 映射 → 不判（缺省兼容）
+      for (const a of (p && p.affixes) || []) {
+        const def = affixes[a.id];
+        if (!def || !def.domain || def.domain === 'both' || def.domain === want) continue;
+        problems.push(`plugins.${p.id}(${p.kind}): 词条 ${a.id} 的 domain=${def.domain} 不适用于该类别（应为 ${want}/both）`);
+      }
     }
     // ③ 类型机制表自身自洽（技能模板 type 的登记校验在内容层循环内完成：未登记即 type 非法）
     for (const [type, def] of Object.entries(mech.types || {})) {

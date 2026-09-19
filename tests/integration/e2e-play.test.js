@@ -393,11 +393,16 @@ test('E2E-4 对战与回放：POST /battle 帧完整；参与者 200；非参与
 test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结算/防守方记账；战绩游标；排行榜；quick Elo', async () => {
   const s = F.s;
 
-  // 排位前积分基线（用于"排位不改积分"与"防守方积分不变"）
-  const before = {};
+  // 本用例的全量基线（**全部断言都相对基线成立**，不依赖前面用例留下的绝对计数——
+  // 例如 E2E-4 的快速对战已经让某些玩家当过防守方，若硬断言 drawnCount===0 会随用例顺序变化而 flaky）。
+  const pointsBefore = {};      // publicId → 积分（排位不得改）
+  const drawnBefore = {};       // publicId → 被抽场次（防守方记账的相对基线）
   for (const id of s.store.index.playerIds()) {
     const e = s.store.index.get(id);
-    if (e && e.publicId) before[e.publicId] = e.points;
+    if (!e || !e.publicId) continue;
+    pointsBefore[e.publicId] = e.points;
+    const arch = await s.store.loadArchive(id);
+    drawnBefore[e.publicId] = arch && arch.pool ? arch.pool.drawnCount : 0;
   }
 
   const rk = await s.request('POST', '/api/v1/ranked/run', { seed: 11 }, h.authed(F.A.token));
@@ -411,32 +416,33 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
   const foes = rd.results.map((m) => m.opponentPublicId);
   assert.equal(new Set(foes).size, foes.length, '同批次对手不得重复');
   assert.ok(!foes.includes(F.A.publicId), '抽池必须排除自己');
+  assert.ok(rd.matches >= 1 && rd.matches <= rd.requested, `本批次应至少打到 1 场（实得 ${rd.matches}）`);
   for (const publicId of foes) {
     const pid = await h.playerIdByPublicId(s.store, publicId);
     assert.ok(typeof pid === 'string' && pid.startsWith('pl_'), `对手 ${publicId} 必须能从档案库反查 playerId（无 bot）`);
     const arch = await s.store.loadArchive(pid);
     assert.equal(arch.flags.isBot, false, `对手 ${publicId} 不得是 bot`);
     assert.ok(arch.configs.activeSnapshotHash, `对手 ${publicId} 必须有可用出战快照`);
-    assert.equal(before[publicId], arch.rating.points, `排位不得改防守方积分（${publicId}）`);
+    assert.equal(pointsBefore[publicId], arch.rating.points, `排位不得改防守方积分（${publicId}）`);
   }
 
-  // 24h 去重：紧接着再跑一轮 → 上一轮对手仍在冷却窗口 → 0 场 / shortfall 10
+  // 24h 去重：紧接着再跑一轮 → 上一轮对手全部仍在冷却窗口 → 抽不到任何人（无论池里有多少人）
   const rk2 = await s.request('POST', '/api/v1/ranked/run', { seed: 12 }, h.authed(F.A.token));
   assert.equal(rk2.status, 200, rk2.raw);
   assert.equal(rk2.body.data.matches, 0, '24h 去重后应无可用对手（D-136）');
-  assert.equal(rk2.body.data.shortfall, 10);
+  assert.equal(rk2.body.data.shortfall, rk2.body.data.requested, '缺口应等于整批目标（本轮一场未打）');
 
   // 发起者同步结算：战绩条数 = 本批次场次；排位不改积分
   const meA = await s.request('GET', '/api/v1/me', undefined, h.authed(F.A.token));
-  assert.ok(meA.body.data.progress.batchesPlayed >= 1, '批次计数应同步落盘');
+  assert.ok(meA.body.data.progress.batchesPlayed >= 2, '两轮批次计数应同步落盘');
   assert.equal(meA.body.data.rating.points, 0, '排位不改积分（D-133 双轨）');
-  const recA = await s.request('GET', '/api/v1/me/records?role=attack', undefined, h.authed(F.A.token));
+  const recA = await s.request('GET', '/api/v1/me/records?role=attack&limit=100', undefined, h.authed(F.A.token));
   const ranked = recA.body.data.records.filter((x) => x.mode === 'ranked');
   assert.equal(ranked.length, rd.matches, '排位战绩应逐场落盘（同步结算）');
 
-  // 防守方离线记账（D-132）：不掉段、积分不变；未抽中者恒 0
-  for (const publicId of [F.A.publicId, F.B.publicId].concat(foes)) {
-    const token = publicId === F.A.publicId ? F.A.token : publicId === F.B.publicId ? F.B.token : null;
+  // 防守方离线记账（D-132）：被抽者 +1 场、不掉段、积分不变；未被抽者场次不变
+  for (const publicId of [F.A.publicId, F.B.publicId, F.outsider.publicId].concat(foes)) {
+    const token = F.tokens[publicId];
     let view;
     if (token) {
       const r = await s.request('GET', '/api/v1/me/defense', undefined, h.authed(token));
@@ -447,26 +453,29 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
       view = await s.store.defenseSummary(pid, { limit: 20 });
     }
     assert.equal(view.stats.wins + view.stats.losses + view.stats.draws, view.drawnCount, '防守胜负平应闭合到被抽场次');
+    const delta = view.drawnCount - drawnBefore[publicId];
     if (foes.includes(publicId)) {
-      assert.ok(view.drawnCount >= 1, `被抽方 ${publicId} 的 drawnCount 应 ≥1`);
+      assert.equal(delta, 1, `被抽方 ${publicId} 的被抽场次应恰 +1（${drawnBefore[publicId]} → ${view.drawnCount}）`);
       assert.ok(Array.isArray(view.recent) && view.recent.length >= 1, `被抽方 ${publicId} 应有 recent 列表`);
       assert.equal(typeof view.recent[0].battleId, 'string');
       const pid = await h.playerIdByPublicId(s.store, publicId);
       const arch = await s.store.loadArchive(pid);
       assert.equal(arch.progress.tier, 'common', '防守方不掉段');
-      assert.equal(arch.rating.points, before[publicId], '防守方积分不变');
+      assert.equal(arch.rating.points, pointsBefore[publicId], '防守方积分不变');
     } else {
-      assert.equal(view.drawnCount, 0, `${publicId} 未被抽中 → 不得有防守记录`);
+      assert.equal(delta, 0, `${publicId} 未被本批次抽中 → 被抽场次不得增加（${drawnBefore[publicId]} → ${view.drawnCount}）`);
     }
   }
 
-  // 战绩增量游标 + 未读（检查点 16）
+  // 战绩增量游标 + 未读（检查点 16）：未读之和 ≡ 游标之后的战绩条数（相对基线，不做绝对计数假设）
   const unreadBefore = meA.body.data.record.unread.attack;
-  assert.ok(unreadBefore > 0, '应存在未读进攻战绩');
   const all = await s.request('GET', '/api/v1/me/records?limit=100', undefined, h.authed(F.A.token));
   const list = all.body.data.records;
   assert.ok(list.length > 0, '应有战绩');
   assert.equal(new Set(list.map((x) => x.battleId)).size, list.length, '战绩不得重复 battleId');
+  const attackAll = (await s.request('GET', '/api/v1/me/records?role=attack&limit=100', undefined, h.authed(F.A.token))).body.data.records;
+  assert.equal(attackAll.filter((x) => x.seen === false).length, unreadBefore,
+    `未读进攻战绩计数应等于"未见过的进攻战绩"条数（unread=${unreadBefore}）`);
   const seqs = list.map((x) => x.seq);
   const maxSeq = Math.max(...seqs);
   const inc0 = await s.request('GET', `/api/v1/me/records?since=${maxSeq}`, undefined, h.authed(F.A.token));
@@ -475,7 +484,7 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
   const second = sorted.length > 1 ? sorted[sorted.length - 2] : sorted[0];
   const inc1 = await s.request('GET', `/api/v1/me/records?since=${second}`, undefined, h.authed(F.A.token));
   assert.ok(inc1.body.data.records.every((x) => x.seq > second), '增量必须严格大于 since（不漏）');
-  assert.deepEqual(inc1.body.data.records.map((x) => x.seq), [maxSeq].filter((x) => x > second), '增量应恰为更新的记录（不重）');
+  assert.deepEqual(inc1.body.data.records.map((x) => x.seq), sorted.filter((x) => x > second), '增量应恰为更新的记录（不重）');
   const seen = await s.request('POST', '/api/v1/me/records/seen', { uptoSeq: all.body.data.maxSeq }, h.authed(F.A.token));
   assert.equal(seen.status, 200);
   assert.equal(seen.body.data.unread.attack, 0, 'markSeen 后 unread 应归零');

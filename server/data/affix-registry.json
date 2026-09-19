@@ -10,6 +10,10 @@
     "role": "角色插件词条：参与面板聚合（items.applyAffixes）与 regen 叠加（roles.equipPlugins）",
     "skill": "技能插件词条：参与技能实例改写（skills.applySkillPlugins）或命中/释放结算（engine）"
   },
+  "_domainOfKind": {
+    "rolePlugin": "role",
+    "skillPlugin": "skill"
+  },
   "_roll": {
     "int": "×品质档位系数后四舍五入取整（flat 类，I-6b）",
     "stat": "×品质档位系数后保留 precision.stat 位（百分比类，I-6a）"

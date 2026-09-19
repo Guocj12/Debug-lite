@@ -260,11 +260,6 @@ function createJsonAdapter(options) {
     return archive ? deepClone(archive) : null;
   }
 
-  function saveIndex() {
-    fsatomic.writeJsonAtomicSync(indexPath, index.toJSON(), { logger: log, pretty: true });
-    return indexPath;
-  }
-
   function listPlayerIds() {
     const out = [];
     for (const shard of fsatomic.listDirFiles(playersDir)) {
