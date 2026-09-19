@@ -57,6 +57,13 @@
 - 交付：`scripts/e2e.js`（或等价）+ `tests/integration/e2e-play.test.js`，**模拟真实玩家**按顺序跑通并打印每一步真实响应：
   注册 → `GET /me` → 开箱 → 提交仓库镜像 → 装配 → 配置槽保存/出战 → 写 AI（`/ai/validate` + `/ai/compile`）→ 对战（`/battle`）→ 回放（`/replay/:id`，含 `403`/`410` 分支）→ 排位（`/ranked/run` + `/ranked/promote`）→ 战绩/防守战绩/未读（`/me/records`、`/me/defense`）→ 排行榜（`/leaderboard`）→ 快速对战（`/quick/run`，验证 Elo 变化）。
 - 验收：一条命令跑通、退出码 0、输出含每步关键字段；纳入 `npm test`。
+- **注记（2026-09-19 小修）**：`scripts/e2e.js` 原末尾的「已知后端缺陷 D1：第 6 步出战配置剥离装配引用 →
+  `/ranked/run`、`/quick/run` 会以 `missing_warehouse` 失败」**已失效并删除**。缺陷 B（进程内仓库镜像 +
+  已校验快照退化口径，`server/ranked.js` / `server/quickmatch.js`）与缺口 1（冻结快照随正文持久化
+  `archive.warehouseExcerpt` 镜像片段）均已修复，故 e2e 第 6 步**回收**了"剥离 `pluginUid`"的适配：
+  出战配置原样保留真实装配引用，第 7 步用真镜像 `POST /panel ≡ buildPanel`（并以"去掉 warehouse 必
+  `missing_warehouse`"作反证），第 11/14/22 步以含装配插件的配置真的打完对局（`invalids=0`）。
+  仍然 `PASS 检查点=22/22`。
 
 ### P7-6　批量测试（用户要求：注册大量玩家、多段位并发在线、匹配、战斗）
 - 交付：`scripts/load-test.js`（`npm run load-test`），要求：

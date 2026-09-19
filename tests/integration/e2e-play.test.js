@@ -17,14 +17,18 @@
  * 错误分支覆盖（§B1 要求 ≥1 条）：400 bad_json / 401 unauthorized + session_expired / 403 replay_forbidden
  *   （+ 404 unknown_replay） / 409 slot_limit + slot_locked / 410 replay_expired（帧缓存淘汰） + 429 锁定。
  *
- * 已知后端缺陷 D1（只报告，未修，故本文件用"裸"出战配置）：装配引用一旦进入出战配置并激活，
- *   `POST /ranked/run` / `POST /quick/run` 会以 `missing_warehouse` 失败——快照库不保存仓库镜像，
- *   而 `server/ranked.js`/`server/quickmatch.js` 以 `warehouse=null` 调 `battle.buildPlayer`
- *   （`docs/systems/11-account-store.md` §7.4 已要求"仓库镜像与快照一同保存在快照库里"）。
+ * 装配链路（P7-5 检查点 5/7/11 的本意）：出战配置**携带真实装配引用**（槽内 `pluginUid` 指向开箱后
+ *   经 `POST /warehouse/assemble` 装上的插件），并端到端走通 `/battle`、`/quick/run`、`/ranked/run` 与
+ *   归档回放按需重算——即"装配后的配置可实战"。
+ *   （交付报告"后端缺陷 D1"记录了该能力曾经缺失：快照库不保存仓库镜像 + `buildPlayer(warehouse=null)`
+ *     → `missing_warehouse`；并行线已用"快照自带装配引用子集 + 逐侧仓库"修好，本文件据此断言其可用。）
  *
- * 测试设计说明：410 分支只覆盖"帧 LRU（64）淘汰"这一条；另一条（归档记录引用的快照不可用 →
- *   `replay_expired/snapshot_gc`）由 `scripts/e2e.js` 第 19 步覆盖——那里不占用本夹具的积分窗口，
- *   避免手工补写 journal 记录与 `pointsAfter` 语义耦合（见交付报告"风险"一节）。
+ * 测试设计说明（确定性）：
+ *   ① 帧 LRU 淘汰的"第几条被淘汰"只由**本实例**决定 —— 夹具通过 `config.config.replayCacheSize = 3`
+ *      注入实例级小上限（`server/store/config.js` 的合并顺序是「文件 > 内置 > opts」，故必须走 `config`
+ *      而不能只传 `replayLimit`），与同进程其它测试文件的模块级 `REPLAYS` 无关；
+ *   ② 断言一律**相对基线**（积分/被抽场次/未读），不依赖其它用例留下的绝对计数；
+ *   ③ 匹配池快照 = 本文件注册过的玩家集合（本夹具 store 独立数据根），对手必在其中。
  */
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -223,10 +227,16 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；开箱 + PUT /me/wareho
 test('E2E-3 配置槽/面板/AI：≤3 槽 + slot_limit/slot_locked；/panel ≡ buildPanel；ai validate/compile', async () => {
   const s = F.s;
 
-  // 出战配置来自真实开箱物品（剥离装配引用，原因见文件头 D1）
-  F.ldA = h.bareLoadout(h.loadoutOf(F.merged, h.programOf([h.action('move_right')])));
-  F.ldB = h.bareLoadout(h.loadoutOf(F.merged, h.programOf([h.action('move_left')])));
+  // 出战配置来自真实开箱物品，且**携带真实装配引用**（槽内 pluginUid = POST /warehouse/assemble 的结果）
+  F.ldA = h.loadoutOf(F.asmA.warehouse, h.programOf([h.action('move_right')]));
+  F.ldB = h.loadoutOf(F.asmB.warehouse, h.programOf([h.action('move_left')]));
   assert.ok(F.ldA && F.ldB, '两名玩家的出战配置都应能由真实仓库物品构成');
+  assert.equal(F.asmA.placed.length >= 1 && F.asmB.placed.length >= 1, true,
+    `双方都应至少装配成功 1 处插件（A=${F.asmA.placed.length} B=${F.asmB.placed.length}）`);
+  const refsOf = (ld) => (ld.role.slots || []).filter((x) => x.pluginUid).length
+    + ld.skills.reduce((n, sk) => n + (sk.slots || []).filter((x) => x.pluginUid).length, 0);
+  assert.ok(refsOf(F.ldA) >= 1 && refsOf(F.ldB) >= 1,
+    `出战配置必须真的带装配引用（A=${refsOf(F.ldA)} B=${refsOf(F.ldB)}）——否则"装配 → 实战"链路未被覆盖`);
 
   const save = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldA, warehouse: F.merged }, h.authed(F.A.token));
   assert.equal(save.status, 200, save.raw);
