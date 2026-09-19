@@ -24,10 +24,11 @@ function createSessionTable(options) {
   let table = new Map(); // tokenHash → record
 
   function load() {
-    const body = fsatomic.readJsonSync(file, null);
     table = new Map();
+    if (!fsatomic.pathExists(file)) return 0; // 首次启动：正常空表，不记错误
+    const body = fsatomic.readJsonSync(file, null);
     if (!body || !Array.isArray(body.sessions)) {
-      if (body !== null) log.error('store', 'store.error', `会话表 ${file} 损坏，按空表启动（等价全员登出）`, { file });
+      log.error('store', 'store.error', `会话表 ${file} 损坏，按空表启动（等价全员登出）`, { file });
       return 0;
     }
     for (const rec of body.sessions) {

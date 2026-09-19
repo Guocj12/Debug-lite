@@ -13,6 +13,12 @@ const { StoreError } = require('./errors.js');
 
 const REPLAY_CHUNK = 64;
 
+// 档案读取错误分类：版本不支持（§5.7）与锁冲突必须**拒绝启动**，不能当"损坏"隔离重建
+// （把高版本档案当损坏隔离会静默丢弃新版本数据，违反"防止新版本写过的数据被旧版本覆盖"）
+function isFatalArchiveError(err) {
+  return !!err && err.name === 'StoreError' && (err.code === 'store_version_unsupported' || err.code === 'store_locked');
+}
+
 // host 契约（由 adapter-json.js 提供）：
 //   journal / index / logger / config
 //   indexLoaded:boolean                 —— 索引文件是否成功装载
@@ -51,6 +57,7 @@ async function recoverStore(host) {
         const archive = await host.readArchiveRaw(playerId);
         if (archive) archives.push(archive);
       } catch (err) {
+        if (isFatalArchiveError(err)) throw err;
         report.quarantined.push(playerId);
         await host.quarantineArchive(playerId, err);
       }
@@ -77,6 +84,7 @@ async function recoverStore(host) {
     try {
       archive = await host.readArchiveRaw(playerId);
     } catch (err) {
+      if (isFatalArchiveError(err)) throw err;
       report.quarantined.push(playerId);
       await host.quarantineArchive(playerId, err);
       archive = null;
@@ -127,4 +135,4 @@ async function recoverStore(host) {
   return report;
 }
 
-module.exports = { REPLAY_CHUNK, recoverStore };
+module.exports = { REPLAY_CHUNK, isFatalArchiveError, recoverStore };

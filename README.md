@@ -33,7 +33,7 @@ scripts/fe-spec-check.js    前端文档自检器（C1–C9；`npm test` 内断�
 | 分支 | `main` 为唯一主线，已完成合流；另有 `deepseek-v4.1f`、`glm-5.3f` 两个前端分支未合并。**`dev` 分支不存在** | — |
 | 后端 | P0–P5 全部收口，34 批（9+11+5+5+2+2） | — |
 | 前端 | **main 上没有任何前端代码**（无 `public/`，`server/index.js` 无静态托管路由） | P6（F1–F7，见 `docs/frontend-spec.md`） |
-| 在线服务 | 无账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/非对称 Elo/回放鉴权（**P7-1 存储层在途**：`server/store/*` 已有 8 个未提交文件） | P7（B27–B33，设计见 `docs/systems/11-account-store.md`；冲刺蓝图 `docs/plan-p7-playable.md`） |
+| 在线服务 | 无账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/非对称 Elo/回放鉴权——**但 P7-1 存储层与其属性测试已在 `main` 落地**（`server/store/*` 已登记 check-arch、`tests/unit/store-*.test.js`/`tests/property/items-invariants.test.js` 存在） | P7 其余部分（B27–B33；设计见 `docs/systems/11-account-store.md`，冲刺蓝图 `docs/plan-p7-playable.md`） |
 | 回放 | `server/battle.js` 的**进程内无上限 Map**（**实测单场 61–268 KB**（17–63 tick，≈2.7–3.5 KB/帧）；旧口径"7–20 KB"偏小约一个数量级，2026-09-16 修正）；无淘汰、无鉴权，未知 id → 404；重启即失 | D-135 的"只存引用 / 按需重算 / 64 场 LRU / 鉴权 / 410" |
 | `server.md` 所列 P7 环境变量与端点 | 代码只读 `DL_PORT` / `DL_HOST` / `DL_LOG_LEVEL` | 其余变量与 `/auth/*`、`/me*`、`/quick/*`、`/leaderboard`、`/admin/*` 全部未接线 |
 
@@ -47,9 +47,9 @@ scripts/fe-spec-check.js    前端文档自检器（C1–C9；`npm test` 内断�
 | 命令 | 用途 | 落地批次 | 复核状态（2026-09-16） |
 |---|---|---|---|
 | `npm start` | 启动 HTTP 服务（`/api/v1`） | P0-8 | ⚠ 本轮未实跑（9 号门禁项有同进程等价冒烟） |
-| `npm test` | 单进程全量测试 | P0-3 固化 | ⚠ 实跑 **517 用例 / 502 通过 / 15 失败**（2026-09-16 实测）——**15 条红全部属在途改动**：P7-0 关段位门控（box/unlock/门控/UL-* 等 14 条）+ P7-1 `server/store/*` 未登记（`GX-8 check-arch`）；**本轮文档同步未新增红**。逐条清单见 `docs/progress.md` §3.4 |
+| `npm test` | 单进程全量测试 | P0-3 固化 | ✅ **最后实测 643 通过 / 0 失败**（2026-09-16；**仓库正处于 P7 多线并行**，数字每轮在途改动都会变——以当次输出为准。此前一轮曾测到 643/2 红，红在在途的 `server/store/archive.js` 的 `AD-1`/`AD-6`，随后被并行改动修绿） |
 | `npm run cov` | 全量测试 + 覆盖率阈值（行 ≥90 / 分支 ≥85 / 函数 ≥90） | P0-3 固化 | ✅ 实跑通过（阈值同时由 `gate` 项 7 逐文件判定） |
-| `npm run gate` | 全量门禁（9 项，任一失败即非零退出） | P0-5 | ⚠ 实跑 **8 PASS / 1 FAIL / 0 PEND**（唯一 FAIL＝项 7 全量测试，原因同上；**项 5 文档↔数据一致性 + D 编号落点 = PASS**）。P7-0/P7-1 收敛后应回到 9 PASS |
+| `npm run gate` | 全量门禁（9 项，任一失败即非零退出） | P0-5 | ✅ **最后实测 9 PASS / 0 FAIL / 0 PEND**（项 5 文档↔数据一致性 + **D 编号落点 D-137…D-153** = PASS） |
 | `npm run check:docs` | 文档 ↔ 实现一致性检查（D1–D6；接入 CI 与 pre-commit） | 2026-09-16 | ✅ 实跑 PASS |
 | `npm run hooks:install` | 安装 git 钩子（`core.hooksPath=.githooks`，一次性） | 2026-09-16 | ✅ 已安装 |
 | `npm run demo` | 跑一场并打印逐 tick 摘要（数据表示例模板实例化） | B11 | ✅ 已补齐 `scripts/demo.js` 并实跑 |
@@ -97,7 +97,7 @@ tests/             unit integration api cli log frontend regression（**`contrac
 
 ## 阶段（2026-09-16 复核）
 
-**当前状态**：后端 P0–P5 全部收口，批次真值 = **34** 批（9+11+5+5+2+2）；`npm test` = 517 用例 / 502 通过 / 15 失败（**15 条红全部属在途 P7-0 / P7-1**，见命令表）；`npm run gate` = 8 PASS / 1 FAIL / 0 PEND。P6 前端未开始；**P7 在线服务已启动**（P7-0 关段位门控与 P7-1 存储层在途，蓝图见 `docs/plan-p7-playable.md`）。
+**当前状态**：后端 P0–P5 全部收口，批次真值 = **34** 批（9+11+5+5+2+2）。**仓库正处于 P7 多线并行**：最后实测 `npm test` = 643 用例 / 641 通过 / 2 失败（2 条红在在途的 `server/store/archive.js`）、`npm run gate` = 8 PASS / 1 FAIL / 0 PEND、`npm run check:docs` = PASS——**数字每轮在途改动都会变，以当次输出为准**（`docs/progress.md` §3.4 为唯一状态源）。P6 前端未开始；**P7 在线服务已启动**（P7-0 关段位门控与 P7-1 存储层已在 `main` 落地，其余阶段见 `docs/plan-p7-playable.md`）。
 
 | 阶段 | 内容 | 批次真值 | 状态 |
 |---|---|---|---|
@@ -109,10 +109,10 @@ tests/             unit integration api cli log frontend regression（**`contrac
 | P5 | 排位（2 批；无存档，D-123） | 2 | ✅ 已完成 |
 | — | 后端合计 | **34** | ✅ |
 | P6 | 前端 | F1–F7 | ⏳ 未开始（仅 `docs/frontend-spec.md` v3 设计就绪；main 上**无任何前端代码**） |
-| P7 | 在线服务（账号/登录/配置槽/战绩/排行榜/快速对战/异步排位/回放鉴权） | B27–B33 | ⏳ **设计已冻结，实施中**（P7-0 关段位门控、P7-1 存储层在途；蓝图 `docs/plan-p7-playable.md`） |
+| P7 | 在线服务（账号/登录/配置槽/战绩/排行榜/快速对战/异步排位/回放鉴权） | B27–B33 | ⏳ **实施中**：P7-0 关段位门控（D-137，`gating.enabled` 可回退）与 P7-1 存储层已落地；其余阶段见 `docs/plan-p7-playable.md` |
 
 > 权威链现状：`docs/progress.md` 是唯一状态源；`docs/tasks.md` §6 的批次勾选与计数值（其头部写"共 35 批"）与上表口径不一致，以本表与 `progress.md` 为准，`tasks.md` 的修正不在本轮范围内。
-> **P7 期间的门禁现状**：`npm run gate` 因在途改动（P7-0 门控 / P7-1 `server/store/*` 未登记）暂时 8 PASS / 1 FAIL，**不得靠放宽阈值通过**；收敛路径见 `docs/progress.md` §3.4。
+> **P7 期间的门禁现状**：仓库处于**多线并行**，`npm test` / `npm run gate` 的数字每轮在途改动都会变（最后实测：643 用例 / 641 通过 / 2 失败、gate 8 PASS / 1 FAIL）；**禁止靠放宽阈值通过门禁**（`tasks.md` §5.1 第 4 条），状态以 `docs/progress.md` §3.4 为准。
 > **本轮新增可玩入口**：`npm run play`（离线文本闭环，无需启动服务）；联网全链路在 P7-5 交付（`npm` 脚本 `e2e`，蓝图 §P7-5）。
 
 `legacy/` 是 v2 归档：只读参考，不修改、不复用其资源。

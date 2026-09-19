@@ -145,12 +145,19 @@ function createJsonAdapter(options) {
     fsatomic.writeJsonAtomicSync(file, archive, { logger: log });
     const stat = fsatomic.statSafe(file);
     index.upsert(archive, stat ? stat.mtimeMs : null);
-    cacheSet(archive.playerId, archive);
+    // 缓存私有副本：调用方持有的对象后续被修改也不会污染缓存（读改写路径必须先 clone，见 readArchiveForUpdate）
+    cacheSet(archive.playerId, deepClone(archive));
     stats.writes += 1;
     log.debug('store', 'store.write', `档案落盘 ${archive.playerId}（seq=${archive.record.appliedSeq}）`, {
       playerId: archive.playerId, seq: archive.record.appliedSeq,
     });
     return archive;
+  }
+
+  // 读→改→写路径专用：返回**深拷贝**，保证"校验失败/写失败"时不污染缓存（§6.6 不变量在保存前后各断言一次）
+  function readArchiveForUpdate(playerId) {
+    const archive = readArchiveRaw(playerId);
+    return archive ? deepClone(archive) : null;
   }
 
   function saveIndex() {
@@ -202,6 +209,7 @@ function createJsonAdapter(options) {
         const archive = readArchiveRaw(playerId);
         if (archive) archives.push(archive);
       } catch (err) {
+        if (recoveryMod.isFatalArchiveError(err)) throw err;
         quarantineArchive(playerId, err);
       }
     }
@@ -225,7 +233,7 @@ function createJsonAdapter(options) {
 
   // 在给定玩家的写队列内应用一条记录（调用方负责队列；返回 applied|skipped|missing）
   async function applyForPlayer(record, playerId) {
-    let archive = readArchiveRaw(playerId);
+    let archive = readArchiveForUpdate(playerId); // 深拷贝：不变量校验失败时不污染缓存
     if (!archive) {
       archive = archiveFromRecord(record, playerId);
       if (!archive) {
@@ -577,7 +585,7 @@ function createJsonAdapter(options) {
   async function updateArchive(playerId, mutator, updateOpts) {
     const o = updateOpts || {};
     return queueFor(playerId, async () => {
-      let archive = readArchiveRaw(playerId);
+      let archive = readArchiveForUpdate(playerId); // 深拷贝：失败不污染缓存
       if (!archive) {
         if (typeof o.create === 'function') archive = o.create(playerId);
         else throw new StoreError('store_not_found', `档案 ${playerId} 不存在`);

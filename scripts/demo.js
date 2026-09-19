@@ -78,4 +78,8 @@ function main() {
   w(`结果：${result.winner ? `${result.winner} 胜` : '未分出胜负'}（${result.ticks} tick）\n`);
 }
 
-main();
+// 仅在被直接执行时运行（2026-09-16 修复 独立审查 R-9：原实现 require 即跑一场战斗并刷 stdout，
+//   使任何 require('./scripts/demo.js') 的静态扫描/测试都会被意外触发）。
+if (require.main === module) main();
+
+module.exports = { main, buildPlayer, parseArgs };

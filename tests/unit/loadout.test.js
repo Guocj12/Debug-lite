@@ -103,6 +103,22 @@ test('I-12e3 门控注入缝（推荐方向）：opts.items 显式覆盖单例�
   assert.equal(pOn.ok, false, 'buildPanel 透传 opts.items');
   const pOff = loadout.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'rare', items: itemsMod.withGating(false) });
   assert.equal(pOff.ok, true, 'buildPanel 门控关闭放行');
+  // withGating 视图：validateLoadout / buildPanel / findItem 三个入口在同一视图内都按该门控取值工作
+  const gatedView = loadout.withGating(true);
+  assert.equal(gatedView.validateLoadout(f.loadout, { warehouse: f.warehouse, tier: 'rare' }).ok, false, '视图 validateLoadout（开启）拒绝');
+  assert.equal(gatedView.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'rare' }).ok, false, '视图 buildPanel（开启）拒绝');
+  assert.equal(gatedView.findItem(f.warehouse, 'pa').uid, 'pa', '视图 findItem 透传');
+  const openView = loadout.withGating(false);
+  assert.equal(openView.validateLoadout(f.loadout, { warehouse: f.warehouse, tier: 'rare' }).ok, true, '视图 validateLoadout（关闭）放行');
+  assert.equal(openView.buildPanel(f.loadout, { warehouse: f.warehouse, tier: 'rare' }).ok, true, '视图 buildPanel（关闭）放行');
+  assert.equal(openView.withGating(true).gatingEnabled, true, '视图可再次切换门控');
+  assert.equal(openView.findItem(f.warehouse, 'ghost'), null, '视图 findItem 未命中 → null');
+  // 角色品质非法分支（loadout_invalid，与门控无关）
+  const fq = fixture();
+  fq.loadout.role.quality = 'platinum';
+  const vq = loadout.validateLoadout(fq.loadout, { warehouse: fq.warehouse, tier: 'mythic' });
+  assert.equal(vq.ok, false, '未知角色品质拒绝');
+  assert.ok(vq.errors.some((e) => e.where === 'role' && e.message.includes('未知品质')), JSON.stringify(vq.errors));
 });
 
 test('I-12a AI 非法（分支无 action）→ loadout_invalid（带 ai: 路径）', () => {

@@ -47,7 +47,10 @@ function fenced(text, lang, name) {
   const nl = text.indexOf('\n', afterLabel);
   if (nl === -1) return null;
   // 标签行与内容之间只允许空白/换行差异（防止匹配到 `foo public/` 这类前缀）
-  if (!/^[ \t]*$/.test(text.slice(afterLabel, nl))) return null;
+  // 2026-09-16 修复（独立审查 R-1）：必须容忍 CRLF —— 仓库 core.autocrlf=true 且无 .gitattributes，
+  //   新克隆/checkout 后 frontend-spec.md 会是 CRLF，原正则 `/^[ \t]*$/` 不容忍 `\r` 会导致
+  //   C1 FAIL（"缺少围栏"）并连带 8 条 FE-SPEC 测试红（实测 CRLF→0 PASS / LF→9 PASS）。
+  if (!/^[ \t\r]*$/.test(text.slice(afterLabel, nl))) return null;
   const end = text.indexOf('```', nl + 1);
   if (end === -1) return null;
   return text.slice(nl + 1, end);

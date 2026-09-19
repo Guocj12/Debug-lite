@@ -2,12 +2,18 @@
 
 > 依据：`decisions.md`（D-112、D-120）；实现细则见 `systems/09-unlock.md`。
 > 段位序号：`common=0 < rare=1 < epic=2 < legendary=3 < mythic=4`。
+>
+> ⚠️ **两模式阅读约定（2026-09-16 用户决策）**：正文 §1~§7 的期望值全部是**门控开启（回退模式）**下的口径，
+> 即"开关 `unlock.json` → `gating.enabled = true`"或测试里 `unlock.withGating(true)`；
+> **当前默认 `gating.enabled = false`**（所有功能全解锁、段位不参与判定）的期望值见 **§8**。
+> 段位树与各表 `unlockTier` 字段保留为进度/评分元数据，不因关掉门控而删除。
 
 ---
 
 ## 1. 各段位解锁表（`unlock.json` 驱动）
 
 > **节点计数口径（已修正）**：`availableNodes(tier)` **只返回真实节点类型**——单一数据源是 `server/data/ai-nodes.json`（`base` 9 个 + `nodes` 16 类白名单；`bullets` 已按用户决策移除——AI 无法观测弹幕，弹幕当 tick 全解算）。`unlock.json` 的 `aiNodes[]` 里写的是**权限名**，其中 `while` 是别名（折叠为真实节点 `loop`，不额外授予节点）、`arith_ext` 是**未实现的预留权限**（`implemented:false` → 不授予任何节点，故 `isUnlocked(tier,'arith_ext') === false`）。因此下表按**真实节点类型**计数。
+> **该表仅在门控开启时有意义**（默认关闭时任意段位都是 16，见 §8）。
 
 | 段位 | 新解锁（权限名） | 其中授予的真实节点 | 累计可用节点数（**真实节点类型**） |
 |---|---|---|---|
@@ -100,5 +106,32 @@
 ## 7. 测试要点映射
 
 U-1/U-2 → T-UL-1 / T-UL-2｜U-3 → T-UL-3｜U-4 → T-UL-4 / T-AI-3｜U-5 → T-AF-5｜U-6 → 编辑器端到端（P6）
+
+---
+
+## 8. 门控关闭（**当前默认**，2026-09-16 用户决策）
+
+> 用户决策原文："目前默认所有功能全部解锁，段位不参与判定。"
+> 开关：`server/data/unlock.json` → `gating.enabled = false`；两模式工厂 `withGating(true|false)`（见 `systems/09-unlock.md` §8）。
+> 下表即"开关关闭"下 §1~§6 各条的期望值——**每条都有测试**（同一文件内的 `*-b` 用例）。
+
+| # | 查询 | 关闭时结果 |
+|---|---|---|
+| G-1a | `availableNodes('common')`（任意段位） | ✅ **16 类全部真实节点**（= `ai-nodes.json` 的 `nodes`；含 `random`/`function`/`call`） |
+| G-1b | `availableNodes('nope')`（未知段位） | ✅ 同样 16 类（段位不参与判定；不抛错） |
+| G-1c | 各段位节点计数 | 全部 16（**不再是** 10/12/14/14/16） |
+| G-2a | `isUnlocked('common','random')` | ✅ `true`（任意段位 × 任意 key 恒 true，含未知 key） |
+| G-2b | `isUnlocked('rare','while')` / `isUnlocked('epic','arith_ext')` | ✅ `true`（关闭时不区分别名/预留权限） |
+| G-3a | `filterByTier(列表, 'common')` | ✅ **原样返回**入参列表（不剔除任何 `unlockTier` 项） |
+| G-4a | `ast.validate(含 loop 的程序, 'common')` | ✅ 通过，**不产生 `node_locked`** |
+| G-5a | `validateLoadout(含超段位角色/技能/插件, 任意段位)` | ✅ `{ok:true,errors:[]}`（不产生 `tier_locked`） |
+| G-5b | `loadout.validateLoadout`（出战配置，同上） | ✅ 放行（物品级与 AI 节点两臂都不再因段位拒绝） |
+| G-6a | `items.validateUnlock({unlockTier:'legendary'}, 'common')` | ✅ `true` |
+| G-6b | `rollQuality(rng, 'common')` | ✅ **全池 `dropRates`**（可出 `mythic`；不截断、不重归一） |
+| G-6c | `box.openBoxes({tier:'common'})` | ✅ 任意 tier 都能出最高品质；`tier` 仍回带但**不再起门控作用**；非法 tier 仍 `400 bad_tier` |
+| G-6d | `items.assemble`（legendary 插件 @ common） | ✅ 放行（不再 `tier_locked`；`slot_type_mismatch`/`points_exceeded`/`slot_occupied`/`plugin_equipped` 等非段位码不变） |
+| G-6e | `dropPool(表, 'common')` | ✅ 不再按 `unlockTier` 过滤（`drop:false` 仍被过滤——**与门控无关**） |
+| G-7a | `/api/v1/unlock?tier=common` | ✅ `nodes` = 16 类；`roleTemplates`/`skills`/`plugins` = 全量；缺省/非法 tier 仍 `400 bad_tier` |
+| G-8a | 排位晋升 / 段位奖励（`ranked.promote` / `ranked.tierReward`） | ✅ **不受本开关影响**（属"进度"，非门控） |
 
 > 本文件未引出新的待确认子项。

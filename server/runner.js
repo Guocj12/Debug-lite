@@ -246,6 +246,11 @@ function isObservableActionEvent(r) {
 //   故"无 owner 的动作事件"= 玩家 p1 的动作（engine 的 normalizeAction 记 action.invalid 时不带 owner）。
 // 计数口径：一个 tick 内一方至多一个行动 → 未生效**动作数**按 (owner,tick) 去重（同一动作可能同时落
 //   normalizeAction 与技能装配两处 warn，属"同一动作的两个原因"，不重复计数）；`causes` 保留逐条原因明细。
+// **字段口径（2026-09-19 审查澄清，避免同一字段两处解释）**：
+//   · `ineffectiveActions.count` / `byOwner` / `byReason` / `causes` 覆盖**全部 owner**（含对手）。
+//     当前对手是内置机器人，实际恒为 0；但**不要**假设"计数只含 p1"（P7-3 接入真实玩家后 p2 会贡献）。
+//   · `actionsEffective` 与 `frames[].actions` **只统计 p1**（玩家方；= 帧数 − p1 去重后未生效动作数）。
+//     因此 `actionsEffective + ineffectiveActions.count` 不必然等于帧数——两者口径不同，各自带定义。
 function countActions(diffs, events) {
   const causes = [];
   const byOwner = {};

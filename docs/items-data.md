@@ -192,11 +192,12 @@
 |---|---|---|---|
 | `drop` | `role-templates.json` / `skill-templates.json` / `plugins.json` 的**每一条** | `false` = 不进掉落池（开箱永不产出；条目本身仍可用于装配/文档） | `true`（缺省可掉落，兼容旧表） |
 | `dropWeight` | 同上 | **同类池内**相对权重（同类 = 角色 / 技能 / 角色插件 / 技能插件） | `1`（非正数/非数值也按 1） |
-| `unlockTier` | 同上（可选） | 从该段位起进掉落池、可装配（D-112） | 已解锁 |
+| `unlockTier` | 同上（可选） | 从该段位起进掉落池、可装配（D-112）——**默认不参与判定**（门控关闭，见下） | 已解锁 |
 | `kindWeights` / `dropRates` | `items-config.json` | **类别**权重与**品质**概率（全局，与 `dropWeight` 相乘生效） | — |
 | `unlocks[].roleTemplates` / `skills` / `aiNodes` | `unlock.json` | 按段位的模板/技能清单与该段位新增 AI 权限名（与各表 `unlockTier` 交叉校验，防双源漂移） | — |
 
-- 开箱流程：品质（`dropRates`，段位截断）→ 类别（`kindWeights`）→ **掉落池 = `drop !== false` 且 `unlockTier ≤ 玩家段位`** → 池内抽取（权重全 1 时均匀，存在权重时按 `dropWeight` 加权）。
+- 开箱流程：品质（`dropRates`，段位截断 —— **仅门控开启时**）→ 类别（`kindWeights`）→ **掉落池 = `drop !== false` 且 `unlockTier ≤ 玩家段位`**（`unlockTier` 条件**仅门控开启时**）→ 池内抽取（权重全 1 时均匀，存在权重时按 `dropWeight` 加权）。
+- **⚠️ D-122"段位序号即品质上限 + 截断后按剩余池重归一"默认关闭**（2026-09-16 用户决策："目前默认所有功能全部解锁，段位不参与判定"）：开关见 `server/data/unlock.json` 的 `gating.enabled`（当前 `false`）。**关闭时** `items.rollQuality(rng, tier)` 不做品质池截断（等价于全池按 `dropRates` 抽，任意 tier 都能出 `mythic`），掉落池也不再按 `unlockTier` 过滤；**开启时（`gating.enabled=true`）行为与本文 D-122 口径完全不变**。两模式都有测试：`tests/unit/box.test.js`（B17-2/B17-6 走 `withGating(true)`，B17-6b 走默认关闭）、`tests/unit/items.test.js`（IT-8/IT-9）、`tests/unit/ranked.test.js`（P2-3）。
 - **当前四张内容表都是示例数据（`_sample: true`），待用户设计**；示例内容里所有条目都是 `drop: true` / `dropWeight: 1`（等价于旧行为）。
 - 数量不锁定：增删条目由 `schema.js` 的结构校验兜底（至少 1 项），只有 "条目引用的类型/词条/AI 权限未在机制表登记" 才会 FAIL。
 

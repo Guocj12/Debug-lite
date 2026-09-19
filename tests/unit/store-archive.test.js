@@ -366,7 +366,9 @@ test('ARC-7 battle.recorded：攻守分桶/未读/被抽计数/对手窗口/幂�
   // recent 环形上限（默认 100）
   const many = newArchive('pl_5555555555555555');
   for (let i = 0; i < 105; i += 1) {
-    await arch.applyRecordToArchive(many, { ...rec, seq: 100 + i, battleId: `b_${i}` }, many.playerId, c);
+    await arch.applyRecordToArchive(many, {
+      ...rec, seq: 100 + i, battleId: `b_${i}`, p1: { ...rec.p1, playerId: many.playerId },
+    }, many.playerId, c);
   }
   assert.equal(many.record.recent.length, 100);
   assert.equal(many.rating.games, 105);
@@ -438,8 +440,8 @@ test('ARC-9 视图：recentView/unreadOf/markSeen/summaryOf/defenseSummaryOf', a
   assert.equal(all[0].seen, false);
   assert.equal(arch.recentView(a, { role: 'defense' }).length, 2);
   assert.equal(arch.recentView(a, { role: 'attack' }).length, 1);
-  assert.equal(arch.recentView(a, { since: 11 }).length, 2);
-  assert.equal(arch.recentView(a, { since: 12, limit: 1 })[0].seq, 12);
+  assert.equal(arch.recentView(a, { since: 10 }).length, 2, 'since 为开区间（严格大于）');
+  assert.equal(arch.recentView(a, { since: 11, limit: 1 })[0].seq, 12);
   const seen = arch.markSeen(a, 11);
   assert.equal(seen.changed, true);
   assert.deepEqual(arch.unreadOf(a), { attack: 0, defense: 1, fromSeq: 11 });

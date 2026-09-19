@@ -245,7 +245,10 @@ function formatDetail(fp, opts) {
   const names = (fp && fp.failedNames) || [];
   const shown = names.slice(0, limit).join('、');
   const rest = names.length > limit ? `…(+${names.length - limit})` : '';
-  const failText = names.length === 0 ? '无' : `${shown}${rest}`;
+  // 有失败却没有名字（如测试注入的假 runner 未提供 baseline）→ 明说缺名字，不要写成"无"（自相矛盾）
+  const failText = names.length === 0
+    ? (fp.failed > 0 ? '（未提供用例名）' : '无')
+    : `${shown}${rest}`;
   const suiteText = fp.suites ? ` / 套件 ${fp.suites}` : '';
   return `基线 总 ${fp.total} / 通过 ${fp.passed} / 失败 ${fp.failed}${suiteText}；失败用例: ${failText}；digest=${fp.digest}`;
 }

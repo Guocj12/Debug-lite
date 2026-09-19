@@ -143,7 +143,7 @@ tests/frontend/              前端测试（§17）
 | 没有角色物品 | battle 屏「开始对战」禁用 + 文案「缺少角色物品」+「去仓库」按钮 |
 | 技能不足 3 件 | battle 禁用 + 文案「技能 0/3」+「去仓库」 |
 | 没有 AI 程序 | battle 禁用 + 文案「未设置 AI 程序」+「去编辑器」；编辑器首屏预填「预设：稳健」 |
-| 段位不足（开箱 `tier_locked`/装配 `tier_locked`） | toast 原文 + 顶栏段位下拉高亮提示 |
+| 段位不足（开箱 `tier_locked`/装配 `tier_locked`） | toast 原文 + 顶栏段位下拉高亮提示。**注：门控默认关闭**（2026-09-16 用户决策，`server/data/unlock.json` → `gating.enabled`；开启后此错误码才会出现），故该分支默认不触发，前端仍需保留映射 |
 | 后端未启动 | 每屏顶部红条「无法连接服务器」+「重试」按钮 |
 | 装配点数超限 | 候选按钮禁用 + 行内原因「需 3 点，剩 1 点」，不依赖 toast |
 
@@ -214,7 +214,7 @@ tests/frontend/              前端测试（§17）
     unlock: null,                            // /unlock?tier= 的 data（nodes/roleTemplates/skills/plugins）
     tables: {},                              // /data/:table 缓存（qualities/skill-templates/…）
   },
-  tier: 'common',                    // 玩家段位（持久化；决定开箱品质上限、物品门控）
+  tier: 'common',                    // 玩家段位（持久化；**门控默认关闭**（2026-09-16 用户决策）→ 仅作展示/进度，不再决定开箱品质上限/物品门控；开关见 server/data/unlock.json gating.enabled）
   seed: '',                          // 空串 = 让服务端生成并回带；否则整数
   warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } },
   loadout: { role: null, skills: [null, null, null], ai: null },   // 形状 = 后端 loadout（引用物品对象本体）
@@ -390,7 +390,7 @@ change → 同上；再按控件类型补值：
 - `POST /warehouse/assemble` body `{warehouse, targetUid, pluginUid, slotIndex, tier?}` → `{ok,data:{warehouse}}`；失败 `{ok:false,error:{code,message,details:[]}}`，code ∈ `slot_type_mismatch|points_exceeded|slot_occupied|tier_locked|plugin_equipped|item_missing`。
 - `POST /warehouse/disassemble` body `{warehouse, targetUid, slotIndex}` → 同上；失败 code ∈ `slot_empty|plugin_missing`（HTTP 404）。
 - **成功响应整体替换 `state.warehouse`**（响应是克隆后的新仓库，直接采用，不做本地补丁）。
-- 后端校验顺序（前端候选预过滤要对齐，避免"点得动但必失败"）：目标存在 → 类别匹配 → 插槽存在且类型匹配 → 段位门控 → 点数预算（仅角色目标） → 插槽为空 → 插件未被别处装配。
+- 后端校验顺序（前端候选预过滤要对齐，避免"点得动但必失败"）：目标存在 → 类别匹配 → 插槽存在且类型匹配 → 段位门控（**门控默认关闭**，2026-09-16 用户决策：此步默认放行，开启后按 §7 段位表判定） → 点数预算（仅角色目标） → 插槽为空 → 插件未被别处装配。
 
 ### 6.4 `/api/v1/loadout` 与 `/api/v1/panel`
 - `GET /loadout` → `{ok,data:{loadout:{role:null,skills:[null,null,null],ai:null}}}`（规范骨架）。
@@ -448,7 +448,7 @@ change → 同上；再按控件类型补值：
 |---|---|---|---|
 | Logo + 标题 | — | — | 点它 = `goto menu`（`data-action=goto`） |
 | 后端状态点 | `top_server` | `meta.serverOk` | 离线红点 + tooltip「无法连接服务器」 |
-| 段位下拉 | `top_tier` | `state.tier` | change → `tier/set`（切段位会重取 unlock；锁定物品即时变色）；取值 `common` / `rare` / `epic` / `legendary` / `mythic` |
+| 段位下拉 | `top_tier` | `state.tier` | change → `tier/set`（切段位会重取 unlock；**门控默认关闭**（用户决策 2026-09-16）→ 段位仅作展示/进度，不再导致物品锁定或品质上限）；取值 `common` / `rare` / `epic` / `legendary` / `mythic` |
 | 种子输入 | `top_seed` | `state.seed` | change → `seed/set`（空 = 服务端生成并回带） |
 | 随机种子 | `top_seed_rand` | — | `seed/random` |
 | 快速对战 | `top_quick` | loadout 合法性 | 合法 → 进 battle；非法 → toast 缺失项 + 进 warehouse |
@@ -587,9 +587,9 @@ candidate(p, target, slot):
   1) p.kind === (target.kind==='role' ? 'rolePlugin' : 'skillPlugin')
   2) p.slot === target.slots[slotIndex].type
   3) p.equipped !== true
-  4) tierIndex(p.unlockTier) <= tierIndex(state.tier)
+  4) tierIndex(p.unlockTier) <= tierIndex(state.tier)　【**门控默认关闭**（2026-09-16 用户决策）→ 该条默认恒真、不再拦；开启后按原口径】
   5) 角色目标：usedPoints + (p.pointCost||0) <= (target.pluginPoints||0)
-  全部通过 → 可点；否则按钮禁用 + 行内原因（「槽位不符」「点数不足：需 3，剩 1」「段位不足：需 rare」）
+  全部通过 → 可点；否则按钮禁用 + 行内原因（「槽位不符」「点数不足：需 3，剩 1」「段位不足：需 rare」——末条仅在门控开启时出现）
 ```
 点数条：`已用 = Σ(已装插件 pointCost)`，`上限 = target.pluginPoints`，同时显示 `已装件数/槽位数`。
 
@@ -732,7 +732,7 @@ showSettle = summary !== null
 | | `logic` | 表达式 | `op ∈ and, or`（**与 `runtime.js` 逐值核对**；`&&`/`||`/`not` **均未实现**——非 `and`/`or` 的取值一律求值为 `false`，`ast.js` 暂无枚举校验，见 `systems/08-ai.md` §3）, `left`, `right` |
 | | `random` | 表达式 | `prob`(表达式), `then`(表达式), `else`(表达式) |
 
-- **门控**：节点是否出现在"可添加"菜单，取决于 `/unlock` 的 `nodes`。该数组**只含真实节点类型**（`server/data/ai-nodes.json` 的 `nodes`，共 16 类）：权限别名 `while` 折叠为 `loop`、未实现的预留权限 `arith_ext` 不授予任何节点（故 `isUnlocked(tier,'arith_ext')===false`）——编辑器**无需再自行过滤别名**。`function/call` 归 `function/call` 权限。段位不足时节点显示为不可添加并给出「需 <tier> 段位」。
+- **门控**：节点是否出现在"可添加"菜单，取决于 `/unlock` 的 `nodes`。该数组**只含真实节点类型**（`server/data/ai-nodes.json` 的 `nodes`，共 16 类）：权限别名 `while` 折叠为 `loop`、未实现的预留权限 `arith_ext` 不授予任何节点（故 `isUnlocked(tier,'arith_ext')===false`）——编辑器**无需再自行过滤别名**。`function/call` 归 `function/call` 权限。段位不足时节点显示为不可添加并给出「需 <tier> 段位」。**⚠️ 段位门控默认关闭**（2026-09-16 用户决策；开关 `server/data/unlock.json` → `gating.enabled`）：默认下 `/unlock?tier=` 对任意段位都返回全部 16 类节点，编辑器菜单默认全开、段位仅作展示/进度；开启后恢复"按段位累计 10/12/14/14/16 + 不足置灰"。
 - **合法性**（服务端会拒，前端在编辑时就提示）：循环体内所有 `if` 的**每个分支**（含隐式空 `else`）必须含 `action`，**或调用一个"能（传递）产出 action"的函数**（调用链定点分析：函数体直接含 action，或调用其它行动产出函数）；`break` 只能在循环体内；`call` 的目标函数必须存在。纯检测函数（无 action）可以定义，但不能用来满足"分支须含 action"——这样 `while(true){ call 纯检测() }` 这类**空死循环**会在校验期被拒。
 - 表达式可用的 `get` 路径（与 `ai/ast.js` 的 `get.path` 白名单一致）：`tick`、`self|enemy.<字段>`（`hp|maxHp|mp|maxMp|sp|maxSp|atk|def|x|facing|baseHp`）、`self|enemy.cooldowns.<sid>`、`self|enemy.effects[i].<字段>`（`uid|kind|stat|delta|displacement|remaining`）、`bases.self|enemy.<字段>`（`hp|maxHp|def`）、`field.fieldPx`、`field.cellPx`。**容器不可当值读**（`self` / `self.cooldowns` / `self.effects[i]` / `bases.self` 等本身不是合法路径）；非法/越界路径在**校验层**报 `bad_path`，运行层兜底为安全默认 `0`（不抛）。
 - **AI 无法观测弹幕**：`get` 读不到弹幕，也**不存在** `bullets` 节点——**弹幕在生成当 tick 全解算完毕**，这是设计而非缺陷。编辑器不应提供任何"读弹幕"节点或路径；回放帧 `diff.bullets[]` 与日志通道 `bullets` 是**展示/诊断**用途，与 AI 快照无关。
@@ -819,7 +819,7 @@ __DL__.exportLog()              // = DLLog.dump() 下载
 | C3 | 每个动作都被至少一个按钮使用（无僵尸动作） | 本文 | 冗余动作 |
 | C4 | 每个 `screen` 至少 1 个 `data-action=goto` 入口，且七屏都在注册表 | 本文 | 进不去的屏 |
 | C5 | 本文引用的每个数据字段名都存在于 `.audit/fe-samples.json` 对应的真实样本中（`players.p1.toX`、`bulletHits[].atX`、`data.items[].uid`、`panel.role.stats`、`ranked.data.wins` 等） | 探针样本 | R5/R6 字段错读 |
-| C6 | 注册表里的段位、对手、品质、动作名取值与后端实现一致（`unlock.js` TIERS、`runner.js` OPPONENTS、`qualities.json`、`ast.js` 节点白名单） | 源码/数据表 | 门控与取值写错 |
+| C6 | 注册表里的段位、对手、品质、动作名取值与后端实现一致（`unlock.js` TIERS、`runner.js` OPPONENTS、`qualities.json`、`ast.js` 节点白名单） | 源码/数据表 | 门控与取值写错。**段位门控默认关闭（2026-09-16 用户决策）后本项仍必须 PASS**：段位取值是注册表/展示元数据，与"是否参与判定"无关 |
 | C7 | 本文提到的每个 `public/js/**` 文件都在 §1.2 清单里（反之亦然） | 本文 | 文件漏项 |
 | C8 | 日志事件名符合 `<channel>.<name>` 且通道已注册 | `shared/log.js` | 日志规范 |
 | C9 | 若 `public/js` 已存在实现：每个 `data-action="X"` 都能在动作表找到 `X`，且每个 `data-id` 在注册表中 | 实现代码 | 实现漂移（F 轮问题） |
@@ -1181,7 +1181,7 @@ __DL__.exportLog()              // = DLLog.dump() 下载
 | 视图层直接 `fetch` / 直接写 DOM | 破坏单一出口/单一写入点，无法无头测 |
 | Blockly 或任何需要 DOM 布局的第三方编辑器 | R8：不可测、两轮失败 |
 | 用 `JSON.parse(dataset.payload)` 传复合参数 | 转义/引号问题高发；改扁平 `data-*` |
-| 硬编码品质色/段位列表/战斗数值 | 与数据表漂移；一律读 `/data/*` 或 `unlock` |
+| 硬编码品质色/段位列表/战斗数值 | 与数据表漂移；一律读 `/data/*` 或 `unlock`。**注：段位列表（`common`/`rare`/`epic`/`legendary`/`mythic`）在门控默认关闭后仍必须保留**——段位继续作为展示/进度与注册表取值出现（C6 会与后端 `unlock.js` 的 TIERS 核对），只是不再参与判定 |
 | 中文文档用 PowerShell 5.1 读写 | 铁律 L17：双重编码损坏 |
 
 ---
