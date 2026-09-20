@@ -53,6 +53,21 @@ const DEFAULT_REPLAY_LRU = 64;                  // §11.3/D-135 帧 LRU 上限
 const EVICTED_REMEMBERED = 256;                 // 已淘汰 id 记忆（用于区分 410 与 404）
 const WAREHOUSE_CACHE_MAX = 200;                // 缺陷 B：进程内仓库镜像缓存上限（与 account.js 的 MIRROR_CACHE_MAX 同口径）
 
+/* ---------- P6/F1：前端静态托管（契约 docs/frontend/01-auth.md §9；决定 FR-4） ----------
+ * 只读托管 `public/`：仅 GET、扩展名白名单、路径穿越防护，**不新增 /api/v1 端点**、不新增日志事件
+ * （复用既有 api.req/api.res）。静态分支只在路由表未命中时尝试，因此 /api/v1 与全部动态路由语义不变。
+ * `public/` 不存在 → 分支整体不生效（行为与改动前逐字一致）。
+ */
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const STATIC_EXT_TYPES = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+});
+
 /* ---------- 通用工具（P0-8 基线，行为不变） ---------- */
 
 function tableNames() {
@@ -117,6 +132,17 @@ function send(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body);
   return Buffer.byteLength(body);
+}
+
+// 静态资源响应（P6/F1；body 为 Buffer，不经 JSON 序列化）——开发期禁用缓存，避免旧资源干扰走查
+function sendStatic(res, status, asset) {
+  res.writeHead(status, {
+    'content-type': asset.contentType,
+    'content-length': asset.body.length,
+    'cache-control': 'no-store',
+  });
+  res.end(asset.body);
+  return asset.body.length;
 }
 
 // 请求体超限（P7-7 §⑩ P0：500 internal_error → 413 payload_too_large）
@@ -294,6 +320,8 @@ async function createRuntime(logger, options) {
     env,
     legacyStateless: legacyStatelessOf(opts, env),
     corsOrigin: typeof env.DL_CORS_ORIGIN === 'string' ? env.DL_CORS_ORIGIN : '',
+    // P6/F1（FR-4）：静态根。缺省 <repo>/public；start({publicDir}) 可覆盖（测试缝）
+    publicDir: typeof opts.publicDir === 'string' && opts.publicDir !== '' ? path.resolve(opts.publicDir) : PUBLIC_DIR,
     store: null,
     auth: null,
     account: null,
@@ -1080,6 +1108,45 @@ function createHandler(logger, extraRoutes, runtime) {
     return failStatus(404, 'unknown_endpoint', `未知管理端点 POST /api/v1/admin/${op}`);
   }
 
+  /* ----- 静态托管（P6/F1；契约 docs/frontend/01-auth.md §9） -----
+   * 返回 {status:200, static:{contentType, body}}；任何"不归我管"的情形一律返回 null，
+   * 由既有路由表/404 语义处理（未知非 API 路径仍是 404 unknown_endpoint）。
+   * 防护：解码后拒绝空段 / `.` / `..` / `\0` / `\`；path.resolve 后必须仍在 publicDir 前缀内。
+   */
+  function serveStatic(urlPath) {
+    const dir = rt.publicDir;
+    if (typeof dir !== 'string' || dir === '') return null;
+    let decoded = null;
+    try {
+      decoded = decodeURIComponent(urlPath === '' || urlPath === '/' ? '/index.html' : urlPath);
+    } catch (e) {
+      return null; // 畸形 URI 编码 → 既有 404 语义
+    }
+    if (decoded.includes('\0') || decoded.includes('\\')) return null;
+    const relPath = decoded.replace(/^\/+/, '');
+    const segs = relPath.split('/');
+    if (relPath === '' || segs.some((s) => s === '' || s === '.' || s === '..')) return null;
+    const contentType = STATIC_EXT_TYPES[path.extname(relPath).toLowerCase()];
+    if (contentType === undefined) return null; // 非白名单扩展名 → 不归静态分支
+    const target = path.resolve(dir, relPath);
+    const rootWithSep = dir.endsWith(path.sep) ? dir : dir + path.sep;
+    if (!target.startsWith(rootWithSep)) return null; // 穿越防护
+    let stat = null;
+    try {
+      stat = fs.statSync(target);
+    } catch (e) {
+      return null; // 不存在 → 404
+    }
+    if (!stat.isFile()) return null;
+    let body = null;
+    try {
+      body = fs.readFileSync(target);
+    } catch (e) {
+      return null;
+    }
+    return { status: 200, static: { contentType, body } };
+  }
+
   /* ----- 路由分派 ----- */
 
   const P74_GET = {
@@ -1381,7 +1448,14 @@ function createHandler(logger, extraRoutes, runtime) {
     // 静态路由（P7-4 优先于遗留：同名端点以 P7-4 语义为准）
     const p74 = { GET: P74_GET, POST: P74_POST, PUT: P74_PUT, DELETE: {} }[req.method];
     const entry = (p74 && p74[urlPath]) || (routes[req.method] || {})[urlPath];
-    if (!entry) return { status: 404, payload: errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`) };
+    if (!entry) {
+      // P6/F1：路由表未命中时才尝试 public/ 静态资源（仅 GET；/api/* 一律不进入静态分支）
+      if (req.method === 'GET' && !urlPath.startsWith('/api/')) {
+        const st = serveStatic(urlPath);
+        if (st) return st;
+      }
+      return { status: 404, payload: errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`) };
+    }
     return runEntry(entry, ctx);
   }
 
@@ -1399,10 +1473,12 @@ function createHandler(logger, extraRoutes, runtime) {
     let status = 404;
     let payload = errEnvelope('unknown_endpoint', `未知端点 ${req.method} ${urlPath}`);
     let publicId = null;
+    let staticAsset = null; // P6/F1：静态资源（dispatch 返回 r.static 时走原始字节响应）
     try {
       const r = await dispatch(req);
       status = r.status;
-      payload = r.payload;
+      if (r.payload !== undefined) payload = r.payload;
+      if (r.static !== undefined) staticAsset = r.static;
       publicId = r.publicId === undefined ? null : r.publicId;
     } catch (e) {
       if (e && e.code === 'payload_too_large') {
@@ -1420,7 +1496,7 @@ function createHandler(logger, extraRoutes, runtime) {
     logger.info('api', 'api.req', `${req.method} ${req.url}`, {
       method: req.method, path: urlPath, query: req.url.includes('?') ? req.url.split('?')[1] : null, publicId,
     });
-    const bytes = send(res, status, payload);
+    const bytes = staticAsset === null ? send(res, status, payload) : sendStatic(res, status, staticAsset);
     logger.info('api', 'api.res', `${req.method} ${urlPath} -> ${status}`, { method: req.method, path: urlPath, status, durationMs: Date.now() - started, bytes, publicId });
   };
 }
@@ -1493,6 +1569,8 @@ module.exports = {
   resolvePort,
   envOf,
   storeWanted,
+  PUBLIC_DIR,
+  STATIC_EXT_TYPES,
   VERSION,
 };
 

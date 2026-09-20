@@ -8,7 +8,7 @@
 
 ## 0. 全局约束（每个阶段都必须满足）
 
-1. **机器门禁全绿**：`npm test`（全量用例）、`npm run gate`（9 项，禁止放宽覆盖率阈值）、`npm run check:docs`、`node scripts/fe-spec-check.js` 四项必须 PASS 后才允许提交。
+1. **机器门禁全绿**：`npm test`（全量用例）、`npm run gate`（9 项，禁止放宽覆盖率阈值）、`npm run check:docs` 三项必须 PASS 后才允许提交。
 2. **提交前必须更新任务清单**：`.githooks/pre-commit` 会拦截"改了代码但没改 `docs/tasks.md`/`docs/progress.md`"的提交；提交信息必须写批次号 + 实跑结果。
 3. **同一文件同一时刻只允许一个执行者**（本会话多次因并行改同一文件出现"半写状态导致测试瞬时红"）。
 4. **零 npm 依赖**；禁 `child_process`（沙箱与项目铁律）、禁 `Math.random`（用种子化 RNG）；中文文档禁止用 PowerShell 写（会双重编码损坏）。
@@ -110,9 +110,9 @@
 | ④ | **新增** 快速对战不变量 | `tests/integration/quickmatch-invariants.test.js`（新建） | 断言：**积分守恒**（`Σrating(前) + ΣΔ = Σrating(后)`，对局粒度 + 全局粒度闭合）、**Elo 可复算**（`R' = R + K(S−E)` 双方 Δ 机器复算相等）、**cap 3000 不越界**、**每场对手 ID ∈ 注册表（= 无 bot 参与）**。 |
 | ⑤ | **修改** 删除 bot 占位断言 | `tests/unit/ranked.test.js:20-49`、`:78-85` | 删掉「无池（bot 补齐）→ 恒 10 场」「池 3 → 补 7 bot」「`BOT_LD.skills.length===3`」等断言；改为 `pool: []` → **断言 `shortfall` 且 `matches < 10`**、`results.every(r => 对手是真实注册玩家)`。**用户明令：不许用占位 bot 敷衍**（`systems/10-ranked.md` §4.3「池不足不注入 bot」）。 |
 | ⑥ | **修改 + 新增** check-docs 投毒 | `scripts/check-docs.js` 增 `checkDocs({ projectRoot })` 注入缝；`tests/integration/check-docs-poison.test.js`（新建） | D1–D6 **各至少 1 条**「故意造错 → 必须 FAIL」（临时目录 fixture）；**重点回归 D5 的历史绕过**：`\| B1 [ ] \|` 形式（ID 后紧跟竖线但未勾选）必须被抓（修复见 `check-docs.js:91-92`，当前零回归用例）。 |
-| ⑦ | **新增** gate 项 8/9 + fe-spec 投毒 | `tests/integration/gate-poison-extra.test.js`、`tests/frontend/fe-spec-poison.test.js`（新建）；必要时给 `scripts/fe-spec-check.js` 增 `repoRoot`/`publicDir` 注入缝 | gate **项 8** 3 条（关键事件缺失 / cid 链乱序 / trace≠silent）+ **项 9** 2 条（health 信封异常 / CLI 退出码非 0）必 FAIL；fe-spec **C3**（僵尸动作）、**C4**（缺屏 / 不可达 / goto 目标不存在）、**C7**（清单漏条目 / 实现文件未登记）、**C9**（`data-action` 未命中）必 FAIL。注明：**C9 在 `public/js` 缺失时恒 pass（`fe-spec-check.js:448-450`）= 虚假保证**，`FE-SPEC-1` 的"C1–C9 全绿"不构成覆盖证据。 |
+| ⑦ | ~~**新增** gate 项 8/9 + fe-spec 投毒~~ | `tests/integration/gate-poison-extra.test.js`（保留）；`tests/frontend/fe-spec-poison.test.js` 与 `scripts/fe-spec-check.js`（**已于 2026-09-20 随前端设计删除**） | gate **项 8** 3 条（关键事件缺失 / cid 链乱序 / trace≠silent）+ **项 9** 2 条（health 信封异常 / CLI 退出码非 0）必 FAIL（**仍有效**）。 |
 | ⑧ | **新增** 试玩入口回归 | `tests/unit/play.test.js`（新建） | `scripts/play.js`（322 行）当前 **0% 覆盖**（从未被任何测试加载）：断言同 seed 两次输出**逐字节一致** + 每步合法性（开箱品质 ≤ 段位上限、装配后 panel 五维 ≥ 1、`winner ∈ {p1,p2,draw}`）。 |
-| ⑨ | **修改** 覆盖率阈值口径 | `scripts/gate.js:14` `THRESHOLD_DIRS`；或在 `scripts/README.md` 显式登记豁免 | 把 `server/*.js`（`battle.js` 分支 84.00% / 函数 83.33%、`runner.js` 分支 75.76%）、`server/data/schema.js`（分支 67.22%）、`scripts/check-docs.js`（分支 52.27%）、`scripts/fe-spec-check.js`（分支 64.73%）纳入阈值**或**逐条写明豁免理由；并解决「gate 项 7 绿 / `npm run cov` 红」的语义冲突（两套阈值互不覆盖）。 |
+| ⑨ | ~~**修改** 覆盖率阈值口径~~ | 该行提到的 `scripts/fe-spec-check.js`（分支 64.73%）**已于 2026-09-20 删除**，其豁免随之失效；其余（`battle.js`/`runner.js`/`schema.js`/`check-docs.js`）仍按 `scripts/README.md` 的豁免表执行。 |
 | ⑩ | **修改** 超大 body 错误码 | `server/index.js:64-79` `readBody`；同步 `tests/api/api.test.js:161-173` | 超过 1 MB 上限返回 **413 `payload_too_large`**（现为 500 `internal_error`）；测试同步断言 413 + 错误码，并补 1 条分块写入超限用例。 |
 
 **P0 完成清单（供后续打勾）**
@@ -122,7 +122,7 @@
 - [x] ④ `tests/integration/quickmatch-invariants.test.js`：积分守恒 + Elo 可复算 + cap 3000 + 无 bot
 - [x] ⑤ 改 `tests/unit/ranked.test.js`：删 bot 补齐断言，改断言 `shortfall` + 真实玩家对手
 - [x] ⑥ `scripts/check-docs.js` 加 `checkDocs({projectRoot})` + D1–D6 各一条投毒（重点 D5 历史绕过）
-- [x] ⑦ 补 gate 项 8 / 项 9 + fe-spec C3/C4/C7/C9 投毒（注明 C9 恒 pass = 虚假保证）
+- [x] ⑦ 补 gate 项 8 / 项 9 + fe-spec C3/C4/C7/C9 投毒（**fe-spec 部分已于 2026-09-20 删除**，gate 项 8/9 投毒保留）
 - [x] ⑧ `tests/unit/play.test.js`：`npm run play` 确定性 + 合法性（原 0% 覆盖）
 - [x] ⑨ 覆盖率：`server/*.js`、`server/data/schema.js`、`scripts/*.js` 纳入阈值或显式登记豁免；解决 gate 项 7 与 `npm run cov` 的冲突
 - [x] ⑩ `readBody` 超限改 413 `payload_too_large` 并同步 `api.test.js`
@@ -140,5 +140,5 @@
 1. **并行冲突**：每次只允许一条线改同一文件；本会话已两次因并行半写导致瞬时红。
 2. **崩溃测试**：沙箱禁 `child_process`，`T-ST-1`（子进程 kill）用"构造畸形/截断 journal 再加载"等价替代。
 3. **回放体积**：实测 61–268 KB/场（旧文档 7–20 KB 偏小一个数量级），LRU 64 时上限约 4–17 MB（可接受，但需在报告中记录）。
-4. **`.audit/fe-samples.json` 必须重采**：快照字段扩充（`tick`/`cooldowns`/`effects`/`max*`/`bases.*`/`baseHp` 语义修正）后需重采，且必须在数据表改动收敛之后做。
-5. **文档同步债务**：每阶段完成后同步 `interfaces.md`/`server.md`/`tasks.md`/`progress.md`/`frontend-spec.md`/`systems/09-unlock.md` 等，并登记用户决策到 `decisions.md`。
+4. ~~**`.audit/fe-samples.json` 必须重采**~~：**已于 2026-09-20 连同前端设计一并删除**（该条仅存历史意义；新前端设计若需要真实响应样本，需重新设计采样方案）。
+5. **文档同步债务**：每阶段完成后同步 `interfaces.md`/`server.md`/`tasks.md`/`progress.md`/`systems/09-unlock.md` 等（`frontend-spec.md` 已于 2026-09-20 删除），并登记用户决策到 `decisions.md`。

@@ -90,7 +90,7 @@ const AI_LANG = require('../data/ai-nodes.json');
 const NODE_TYPES = new Set(AI_LANG.nodes);
 
 // 引擎动作词汇表（ai-nodes.json actions）——**仅登记**，不在校验期强制：
-//   依据 D-80 与 frontend-spec §6.9，action.name 是自由标签，未知名由引擎 normalizeAction 归一化为 wait
+//   依据 D-80，action.name 是自由标签，未知名由引擎 normalizeAction 归一化为 wait
 //   并记 action.invalid(warn)；前端下拉只允许给词汇表内的值（自检器 C6 负责）。
 const ACTION_SPEC = AI_LANG.actions || { fixed: [], parametric: [] };
 // 动作词汇表（D-80：仅用于 warnings 通道，**不在校验期拒绝**）——fixed 固定名 + 前缀式（如 'skill:'）

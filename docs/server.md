@@ -67,6 +67,8 @@
 | GET | `/api/v1/replay/:id` | 回放帧分片 `?from=&to=`（**已实现**；动态路由）。**P7-4 起**：参与者鉴权 + 帧 LRU 64（淘汰/版本不匹配/快照失效 → 410）；`b_` 型归档回放按需重算 | 400 `bad_replay`；403 `replay_forbidden`；404 `unknown_replay`；410 `replay_expired` | B22（P4）/ P7-4 |
 | POST | `/api/v1/ranked/run` | **双轨**：有 token → 档案驱动（服务端抽池 + 双向记账 + 晋升落盘；传 `pool` → 400 `pool_forbidden`）；无 token 且 `DL_LEGACY_STATELESS=1`（默认）→ 遗留无状态口径；`=0` → 401 | 400 `bad_seed`/`bad_pool`/`pool_forbidden`；401；409 `loadout_invalid`/`no_loadout`/`no_active_config`/`store_not_found`；503 `store_unavailable` | B24（P5）/ B31（P7） |
 | POST | `/api/v1/ranked/promote` | 晋升判定 x=6 + 段位奖励。有 token → **段位以档案为准**（不一致 → 403）、**只判定不落盘**；无 token → 遗留口径 | 400 `bad_wins` / `bad_tier`；401；403 `forbidden`；409 `already_max` | B25（P5）/ B31（P7） |
+| GET | `/` | **P6/F1 静态托管**：返回 `public/index.html`（前端入口；**非 `/api/v1` 契约**） | 404 `unknown_endpoint`（`public/` 缺失或未命中） | F1 |
+| GET | `/<public 资源>` | **P6/F1 静态托管**：`public/` 下白名单资源（`.html/.js/.css/.json/.svg/.ico`），`cache-control: no-store` | 404 `unknown_endpoint`（含路径穿越/非白名单/文件不存在） | F1 |
 
 > **2026-09-16 更正**：本表最后 4 行（`/battle`、`/replay/:id`、`/ranked/run`、`/ranked/promote`）在本文旧版中被误列为"契约已冻结、尚未启用（⏳）"，实际**均已实现**（`server/index.js` 已注册、`tests/api` 覆盖、gate 项 9 冒烟通过）。旧 §3.2 已随之删除。
 
@@ -351,7 +353,7 @@ npm run demo | npm run play                # 离线可执行（demo=逐 tick 摘
 
 ## 11. 与前端 / 排位 / 快速对战 / 回放的关系
 
-- **前端（P6，未开始）**：main 上**无任何前端代码**（无 `public/`，`server/index.js` 无静态托管路由）。前端唯一数据来源 = 本文 §3 的端点与 `interfaces.md` §2（**P7 端点已实现**：账号、配置槽、段位、积分、战绩、回放引用改为服务端拉取 `GET /me` + `Authorization: Bearer` 鉴权）；仓库/开箱仍由前端持有（localStorage）。前端设计见 `docs/frontend-spec.md`（**待同步**：登录屏、我的战绩、防守战绩、排行榜、token 存储）。
+- **前端（P6，进行中：`F1` 已落地）**：`public/` 下为**零依赖双模模块**的文本界面（无框架，D-124），由 `server/index.js` 的**同源静态托管**提供（§3.1 末两行；仅 `GET`、扩展名白名单、穿越防护；`start({publicDir})` 为测试缝）。前端唯一数据来源 = 本文 §3 的端点与 `interfaces.md` §2（账号/配置槽/段位/积分/战绩/回放引用走 `GET /me` + `Authorization: Bearer` 鉴权）；仓库/开箱仍由前端持有（localStorage，D-130）。`F1` 覆盖 `/auth/register|login|logout|password` 与 `GET /me`，会话 token 存 `localStorage['dl.token']`；设计依据 `docs/frontend/01-auth.md`（规则总纲 `docs/frontend/00-rules.md`），审查与走查记录 `docs/reviews/F1.md`。**旧前端设计已于 2026-09-20 全量作废并删除**（含 `frontend-spec.md`/`screens.md`/自检器/样本），其余屏幕需按新规则重新设计。
 - **排位（✅ 服务端权威，P5 → P7/B31 已改造）**：`POST /ranked/run` 有 token → 服务端抽池 + 双向记账（D-132）、晋升在批次内落盘；无 token → 遗留无状态口径（`DL_LEGACY_STATELESS=1` 默认）；`=0` → 401。`POST /ranked/promote` 读档案、只判定不落盘。池不足如实回报 `shortfall`（**禁止 bot 充数**，D-152）。
 - **快速对战（✅ 已实现，P7/B32）**：`POST /quick/run` 按积分窗口递进匹配 + 非对称 Elo 双向结算（D-133），响应含双方 `pointsBefore/After/delta`；无候选 → `409 no_opponent`。
 - **回放（✅ P4 已实现 + P7/B33 增强）**：`POST /battle` 生成的帧由 HTTP 层按 `replayCacheSize`（默认 64）LRU 管理，归档回放（`b_` 型）按需重算（D-135）；参与者鉴权（403 `replay_forbidden`）、版本/快照/LRU 失效（410 `replay_expired`）、`?trace=self` 裁剪 `aiTrace`；前端渲染层只消费帧，不重算。

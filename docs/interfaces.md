@@ -103,6 +103,7 @@
 - **鉴权（✅ 已实现，P7-4）**：`Authorization: Bearer <token>`；需鉴权端点缺失/失效 → `401`（含 `session_expired`），越权 → `403`（D-129§4）。HTTP 状态语义为 `400/401/403/404/409/410/413/429/500/503`（**实测可达**）。`server/index.js` 的 `authenticate()` 用 `store.sessions.peek()` 区分"不存在"与"刚过期"；`playerId` **不回带**（admin 运维通道除外）。
 - **兼容与双轨（✅ 已实现，P7-4）**：既有无状态端点（`box`/`warehouse*`/`loadout`/`panel`/`ai/*`/`battle`）保留不变，由 **`DL_LEGACY_STATELESS`（默认 `1`）** 控制；置 `0` → 这些遗留端点返回 `410 deprecated`（`ranked/run|promote` 两行在无 token 时改为 `401 unauthorized`，不走 410）。`b_` 型归档回放**不受该开关影响**。
 - **路径别名（两条都注册，✅ 已实现）**：`/api/v1/auth/change-password` ≡ `/api/v1/auth/password`；`/api/v1/me/seen` ≡ `/api/v1/me/records/seen`。
+- **静态托管（P6/F1，✅ 已实现；非 `/api/v1` 契约的一部分）**：`GET /` → `public/index.html`；`GET /<public 资源>` → `public/` 只读文件（扩展名白名单 `.html/.js/.css/.json/.svg/.ico`）。仅 `GET`；路径穿越、非白名单扩展名、文件不存在一律落到既有 `404 unknown_endpoint`；**不新增 `/api/v1` 端点、不改任何既有端点语义**（契约细则见 `docs/frontend/01-auth.md` §9）。
 
 ### §2.1 P7 新增错误码（✅ 已实现并实测）
 

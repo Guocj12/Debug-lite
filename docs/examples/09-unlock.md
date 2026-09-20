@@ -101,7 +101,7 @@
 | U-6e | `while` 的呈现方式 | 不作为独立节点列出——`while` 是 `loop` 节点的 `kind` 取值（`loop.kind='while'`），编辑器在 `loop` 内选项里体现 |
 | U-6f | 越界/未知段位 | `availableNodes('nope')` → 空数组（`tierIndex` 为 null，保守） |
 
-> ⏳ **计划（未实现）**：P6 编辑器尚未落地；现行前端设计为**纯 DOM 表单式 AST 编辑器**（`docs/frontend-spec.md` v3 §12），非 Blockly 工具盒。
+> ⏳ **计划（未实现）**：P6 编辑器尚未落地；**旧前端设计已于 2026-09-20 全量作废待重做**（方向曾为纯 DOM 表单式 AST 编辑器，非 Blockly 工具盒）。
 
 ## 7. 测试要点映射
 

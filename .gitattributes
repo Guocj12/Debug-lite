@@ -1,10 +1,10 @@
 # Debug-Lite v3 · 换行符规范化（P7-7 报告 R-1/文档检查假红根因）
 #
 # 背景：本仓库 `core.autocrlf=true`，此前**没有** .gitattributes，于是同一份文本文件在不同机器/
-#   不同 checkout 下会是 CRLF 或 LF。历史故障：CRLF 的 docs/frontend-spec.md 让 fe-spec-check 的
-#   围栏标签行正则（`/^[ \t]*$/` 不容忍 `\r`）报"缺少围栏"→ C1 FAIL 并连带 8 条 FE-SPEC 测试红
+#   不同 checkout 下会是 CRLF 或 LF。历史故障：某文本文件为 CRLF 时，读取它的正则（不容忍 `\r`）误报，
+#   导致文档自检假红（实测 CRLF→0 PASS / LF→9 PASS）。该自检器已随前端设计一并删除（2026-09-20），
 #   （实测 CRLF→0 PASS / LF→9 PASS）；docs 一致性检查同样出现过 CRLF 假红。
-#   检查器侧已改为**容忍** CRLF（`scripts/fe-spec-check.js` 的 fenced/tableRows），但那只治标：
+#   但当时的修法只治标：
 #   根因是仓库没有声明换行符策略。本文件即为该策略。
 #
 # 策略：

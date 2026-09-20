@@ -8,7 +8,6 @@
 | `check-arch.js` | 架构依赖方向检查（反向/循环/core 越界） | P0-5 |
 | `demo.js` | 跑一场战斗打印逐 tick 摘要；支持 `--log-level trace` | B11 |
 | `play.js` | **离线可玩闭环**（`npm run play`）：开箱 → 合并仓库 → 自动装配 → 选 3 技能 → 内置预设 AI → 角色面板 → 打一场 → 逐 tick 战报（伤害/暴击/背击） | 可玩性（P6 前端之前） |
-| `fe-spec-check.js` | 前端文档自检（`docs/frontend-spec.md` §14 的 C1–C9）：按钮↔动作表闭合、文档字段↔真实响应样本、取值↔后端实现、清单/通道规范 | P6 前端重设计 |
 | `baseline.js` | 测试基线指纹（全量用例数 + 失败用例名 + `digest`）：`node scripts/baseline.js [--write\|--compare]`，锚点入库于 `.audit/test-baseline.json`，并纳入 `gate` 项 7 明细 | P7-7 盲区 1（P0 ①） |
 
 ## `baseline.js` 契约（测试基线指纹，P7-7 审查 §⑤ 盲区 1）
@@ -30,7 +29,7 @@
 - **锚点落点（2026-09-19 迁出 `runtime/`，P7-2 审查 P2）**：默认锚点 = `.audit/test-baseline.json`，**必须入库**。
   原落点 `runtime/test-baseline.json` 位于 `.gitignore:6` 的忽略目录内 → 锚点永不入库，新克隆 / CI 上 `--compare`
   必然退出 2（无基线可比），护栏只在"本机已 `--write` 过"时有效。`.audit/` 已入库，与既有审查快照
-  （`fe-samples.json` / `golden-battle.json` / `walkthrough.json`）同处；`--compare` 不写任何文件。
+  （`golden-battle.json` / `walkthrough.json`）同处；`--compare` 不写任何文件。
 - **`--write` 护栏（不可放宽）**：**有失败就拒绝覆写锚点**（退出 3），除非显式 `--force`。此前有并行任务在红状态下
   跑了 `--write`，把绿锚点（643/0）覆写成红快照（665/5），使 `--compare` 永远报"已修复"，护栏形同虚设。
   判定为纯函数 `writeGuard(fp, {force})`（`{ok, code, failed, forced, message}`），CLI 与测试共用同一判定。
@@ -40,14 +39,6 @@
 - **空匹配防护**：`tests/**` 下 0 个 `*.test.js` 时**拒绝生成指纹**（同 gate 项 7 的"用例数 ≥ 1"断言，防"0 用例基线"被静默写入）。
 - **禁**：`child_process`、`Math.random`（确定性全部来自用例集合本身）；产物只写 `.audit/`（受版本控制），不写 `runtime/`。
 
-
-## `fe-spec-check.js` 契约（P6 前端，独立脚本）
-
-- **定位**：让前端文档**无法写完即过期**。前两轮前端失败的根因是文档与实现/真实响应脱节（字段名不存在、按钮无动作、动作无实现），本脚本把这三类变成机器可判定的 FAIL。
-- **数据源**：`docs/frontend-spec.md` 的 ` ```json fe-spec-registry ` 注册表（唯一真相）+ `.audit/fe-samples.json`（活体响应样本，由 `node .audit/fe-samples.js` 生成）+ 后端源码（`core/unlock.js`、`ai/ast.js`、`core/engine.js`、`runner.js`、`box.js`、`shared/log.js`、数据表）。
-- **C1–C9**：注册表可解析 / 按钮动作命中动作表 / 无僵尸动作 / 七屏 goto 可达 / 文档字段命中真实样本 / 取值与后端一致 / 文件清单一致 / 日志事件与通道规范 / 实现侧 data-action·data-id 命中注册表（`public/js` 落地后自动生效）。
-- **与 gate 的关系**：**不进** `gate.js` 九项（gate 项 7 覆盖率目录为 `server/core|server/ai|shared|cli`，不含 `public/`）；由 `tests/frontend/fe-spec.test.js` 在 `npm test` 内断言（含 5 个投毒用例，防止检查空转）。
-- **维护**：改前端文档/改后端取值 → 跑 `node scripts/fe-spec-check.js`；样本过期 → 重跑 `.audit/fe-samples.js`。
 
 ## `play.js` 契约（离线试玩闭环，`npm run play`）
 

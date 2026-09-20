@@ -15,7 +15,7 @@
 | 更新日期 | **2026-09-19**（P7/B27–B33 收口后的处置回填，共 11 条：SEC-01/SEC-02/SEC-03/SEC-06/SEC-11/SEC-13/SEC-22/SEC-25/SEC-26/SEC-27/SEC-30；SEC-17/SEC-19 维持 2026-09-16 状态） |
 | 版本基线 | Debug-Lite v3.0.0，后端 P0–P5（34 批）+ **P7/B27–B33（7 批）均已收口**（2026-09-19；P6 前端未开始） |
 | 适用范围 | `server/**`（HTTP 层 `server/index.js`、编排层 `battle.js`/`box.js`/`loadout.js`/`ranked.js`/`runner.js`、**身份与档案层 `auth.js`/`account.js`/`quickmatch.js`/`admin.js`**、**存储层 `server/store/*`**、AI 运行时 `server/ai/**`）、`shared/log.js`、仓库工程配置（`package.json`、`node_modules`、CI） |
-| 不在范围 | 产品级数值平衡；前端 UI 缺陷（另见 `docs/frontend-spec.md`） |
+| 不在范围 | 产品级数值平衡；前端 UI 缺陷（旧 `docs/frontend-spec.md` 已于 2026-09-20 删除，P6 前端待重新设计） |
 | 关联设计文档 | `docs/interfaces.md` §2、`docs/server.md` §2/§4、`docs/systems/11-account-store.md`（D-129…D-136）、`docs/decisions.md`（D-122/D-123/D-135/D-152）、`docs/tasks.md`（B27–B33） |
 | 状态取值 | `待处理` / `已部分处置` / `已处置`（**D-153 口径**：被顺手修掉的条目必须回填"现状证据 + 状态"） |
 | 优先级 | 高 = 可直接造成不可用/数据不可信/信息泄漏；中 = 明显放大面或违反已冻结契约；低 = 卫生问题、可复现性问题 |

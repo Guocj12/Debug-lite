@@ -29,7 +29,7 @@
  * 产物只写 `.audit/test-baseline.json`（**受版本控制**；2026-09-19 从 `runtime/` 迁出），不写仓库根、不写 docs。
  *   ↳ 迁出原因（P7-2 审查 P2）：`runtime/` 在 `.gitignore:6` 被忽略 → 锚点永不入库，新克隆 / CI 上
  *     `--compare` 必然 `exit 2`（无基线可比），护栏只在"已经 --write 过的本地机器"上有效 —— 等于没有护栏。
- *     `.audit/` 与既有审查快照（`fe-samples.json` / `golden-battle.json` / `walkthrough.json`）同处且已入库。
+ *     `.audit/` 与既有审查快照（`golden-battle.json` / `walkthrough.json`）同处且已入库。
  */
 
 const fs = require('node:fs');

@@ -711,25 +711,27 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 > **门禁同步（每批必查）**：`check-arch.js` 登记 `server/store/*` 与 `auth/account/quickmatch/admin`；`gate.js` 的 `PREFIX_MAP.ranked` 加 `'quick'`；项 9 接口冒烟加 `auth → me → configs → quick → replay → records` 闭环；`server/data/schema.js` 加 `service-config`/`rating-config`。**不得**修改 `server/core/*`、`server/ai/*`（战斗语义不变）。
 
-### P6 前端（**设计已重写为 v3；批次见 `docs/frontend-spec.md` §18**）
+### P6 前端（**设计待重做：旧 v3 设计已于 2026-09-20 全量作废并删除**）
 
-无框架：纯 DOM 视图（`state → 节点描述`）+ 自研 store（D-124）。**v3 重设计的取向：可玩优先**——废弃绝对坐标盒模型与 Blockly，改成"浏览器正常布局 + 表单式 AST 编辑器"，并把按钮↔动作↔数据字段写成机器自检（`scripts/fe-spec-check.js`，`npm test` 内断言）。
+仍在生效的产品约束：**无框架**、纯 DOM 视图（`state → 节点描述`）+ 自研 store（D-124）。**批次划分、屏幕清单与技术选型全部待重新设计**——旧 v3 稿（`docs/frontend-spec.md`）、旧布局快照（`docs/screens.md`）、文档自检器（`scripts/fe-spec-check.js`）、前端测试（`tests/frontend/*`）与真实响应样本（`.audit/fe-samples.*`）已于 2026-09-20 删除，**不得作为实现依据**。
+
+**已落地分册（2026-09-20）**：`docs/frontend/00-rules.md`（总纲：协作协议 §2 / 绘制边界 §1 / 验收机制 §4；结论 FR-1…FR-8）+ `docs/frontend/01-auth.md`（**F1 登录与注册**：屏幕清单 / 按钮↔动作白名单 / 字段来源契约 / 全部失败路径 / 边界条件 / 静态托管契约 / 机器核对 / 人工走查剧本）。实现：`public/**`（零依赖双模模块）+ `server/index.js` 的同源静态托管；机器核对：`tests/frontend/*.test.js`（35 用例）；审查与走查记录：`docs/reviews/F1.md`。**F1 不新增批次号**（§6 仍为 41 批；P6 批次命名见 `00-rules.md` FR-6）。
 
 ---
 
-## 7. 前端架构规范（前端实现的唯一依据：`docs/frontend-spec.md` v3）
+## 7. 前端（P6）—— **设计待重做**
 
-> **完整前端设计见 `docs/frontend-spec.md`**（v3：失败根因表 / 玩法主线剧本 / 布局与组件 / 状态模型 / 按钮↔动作白名单 / 七屏逐屏按钮表 / 战场渲染 / AST 表单规格 / 文档自检 / 真实响应样本附录）——本节只保留要点索引。
+> ⚠️ **本章原为"前端实现的唯一依据"（`docs/frontend-spec.md` v3），该设计已于 2026-09-20 按用户决策全量作废并删除**（连旧布局快照 `docs/screens.md`、文档自检器 `scripts/fe-spec-check.js`、测试 `tests/frontend/*`、真实响应样本 `.audit/fe-samples.*` 一并清理，以防旧稿影响新设计）。
+>
+> **重新设计前，本章不含任何实现依据。** 下列几条是**仍然生效的产品/工程约束**（与旧稿无关，来自 `docs/decisions.md`）：
 
-- **屏幕**：`menu/gacha/warehouse/editor/battle/replay/settings`；切换只走 `store.dispatch({type:'goto'})`（顶栏与屏内按钮）。
-- **分层**：`api/`（唯一网络出口）→ `store/`（唯一状态源）→ `views/*`（纯函数产出节点描述）→ `mount/`（唯一 DOM 写入点）；`render/battle.js` 只消费帧，**禁止复制战斗算法**。
-- **布局纪律**：不用坐标模型（旧 `layout(state)→Box[]` + JS 注入 `left/top` 已废弃——注入缺失即"全屏堆在左上角"，是两轮失败的根因）；绝对定位只允许出现在战场内部。
-- **按钮纪律**：每个按钮的 `data-action` 必须在动作白名单内有 reducer 分支；存在性由 `scripts/fe-spec-check.js`（C2/C9）强制——**死按钮不可能通过验收**。
-- **数据纪律**：字段名一律取自 `.audit/fe-samples.json` 的真实响应（`frontend-spec.md` 附录 A 逐字引用）；自检器 C5/C6 核对字段与取值（段位/对手/品质/AI 节点/动作名/开箱上限）。
-- **AI 编辑器**：表单式 AST 编辑（17 类节点元数据驱动），**不引入 Blockly**；`action.name` 下拉只给合法值（非法动作在引擎层会被归一化成 `wait`，表现为"程序合法但一直不动"）。
-- **日志**：前端只用已注册通道 `store/view/api/render/editor`（`ui` 通道不存在，勿写）；事件名 `<channel>.<name>`。
-- **验收**：机器 = `npm test`（含前端文档自检 9 项 + 5 个投毒用例）；人工 = `frontend-spec.md` §2.1 的 14 步剧本 + §17 截图清单。
-- **服务器/API 使用**：见 `docs/server.md`（部署、端点速查、信封与错误码、**档案契约** §6）与 `docs/systems/11-account-store.md`（**D-129 起**：登录/配置槽/战绩/积分/回放鉴权的端点与字段）。
+- **无框架**（D-124）：纯 DOM 视图（`state → 节点描述`）+ 自研状态容器；不引入 Blockly 或任何需要 DOM 布局的第三方编辑器。
+- **单一网络出口 / 单一 DOM 写入点**：网络调用与 DOM 写入各自收敛到一处，视图层只产出描述，保证可无头测试。
+- **按钮永不无声**：每个可点元素必须命中一个已实现的动作分支，失败必须落到可见提示（旧轮"死按钮"是失败根因之一）。
+- **字段名不得来自散文**：字段名只能取自**真实 HTTP 响应**；新设计需自带"文档 ↔ 真实响应"的机器核对手段（旧稿的做法是探针采样 + 自检器，已删除，可重新设计）。
+- **禁止前端复制战斗公式**：伤害/命中/移动一律由服务端算，前端只消费帧。
+- **验收**：机器测试不能证明"能玩"。每批必须在真实浏览器按端到端剧本人工走查（旧两轮 F0–F8 / R0–R7 均在测试全绿时不可玩）。
+- **后端配合**：静态托管（`public/`、`/shared`、`/assets`）；服务端端点见 `docs/server.md` 与 `docs/systems/11-account-store.md`。
 
 ---
 

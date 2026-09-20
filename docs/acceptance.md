@@ -13,15 +13,17 @@
 |---|---|
 | 批次完成度 | ✅ **41 批**（P0–P5 的 34 批 + **P7/B27–B33 的 7 批**；`tasks.md` §6 头部、`progress.md` 与本表一致，由 `node scripts/check-docs.js` 机器核对） |
 | 审查记录 | ✅ **41 份**（`docs/reviews/P0-1.md … B33.md`，每批独立审查；P7 另有 `docs/reviews/P7-7-test-audit.md`、`P7-7-wave2-code-review-residual.md`） |
-| 门禁实测 | ✅ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**；`node scripts/check-docs.js` = PASS；`node scripts/fe-spec-check.js` = 9 PASS（2026-09-19 实跑） |
+| 门禁实测 | ✅ **`npm run gate` = 9 PASS / 0 FAIL / 0 PEND**；`node scripts/check-docs.js` = PASS（2026-09-19 实跑） |
 | 测试规模 | ✅ **`npm test` = 942 通过 / 0 失败**（2026-09-19 实跑；用例数随并行改动增长，**以当次输出为准**。gate 项 7 已含覆盖率阈值：core/ai/shared/cli 行≥90/分支≥85/函数≥90） |
 | 联网闭环 | ✅ **`npm run e2e` = 22/22 检查点**（真实玩家全链路，exit 0）；✅ **`npm run load-test -- --players 50 --deep` = 7/7 完整性断言**（含积分守恒、无 bot 参与、无 5xx） |
 | CLI/HTTP 冒烟 | ✅ 按 §4 执行；⚠ 原 `ranked run --seed 11`（缺 `--loadout`）与裸 `wh list` 两个命令参数不足会以退出码 2 失败，已修正；`npm run demo` / `npm run play` **现已可执行** |
 | 确定性抽查 | ✅ 同 seed 内容级一致；golden 战斗 trace↔silent 逐帧一致（gate 项 8） |
 | 遗留项 | ⚠ 见 `docs/security-backlog.md`（SEC-01 部分处置 / SEC-03 与 SEC-22 已处置等）与 §6 |
-| 前端 / 在线服务 | ✅ **在线服务（P7/B27–B33）已交付**；⏳ **前端（P6）未开始**（0 行代码） |
+| 前端 / 在线服务 | ✅ **在线服务（P7/B27–B33）已交付**；🔄 **前端（P6）已重启：`F1` 登录与注册已落地（2026-09-20）** —— `public/**` + `server/index.js` 静态托管 + `tests/frontend/*` 35 用例；设计分册 `docs/frontend/00-rules.md` + `01-auth.md`；审查与走查记录 `docs/reviews/F1.md`（**浏览器人工走查待执行**） |
 
 **结论：可以接受。** 后端"完成"属实且覆盖面扩至 **P7 在线服务**（服务端档案 / 鉴权 / 异步排位 / 快速对战 / 回放鉴权）；**P6 前端**属计划中，不在本次验收范围。§8 的"前端 F0–F7 全部落地"结论已于 2026-09-16 判定**不成立**，保留为历史记录。
+
+> **2026-09-20 追加（F1）**：P6 已按新规则重启并落地第一批 **`F1`（登录与注册）**——设计先冻结到 `docs/frontend/00-rules.md` + `docs/frontend/01-auth.md`，再实现 `public/**` 与 `server/index.js` 的同源静态托管，机器核对为 `tests/frontend/*`（35 用例）。**本追加不改变上表的历史判定**：`F1` 的浏览器人工走查（分册 §11）尚未执行，故 `F1` 暂不计入"可玩"结论；P6 其余屏幕仍未开始。
 
 ---
 
@@ -110,7 +112,7 @@ npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离�
 1. `npm run gate` = 9/9（合流前最后跑一次）；
 2. `npm run gate` ×3 连续全绿（flake 观察）；
 3. `git log main..dev --stat` 人工过目：只应有 server/ tests/ cli/ scripts/ shared/ 与少量 docs 更新；
-4. `docs/` 冲突处理：以 **main 的文档版**为准，dev 侧文档改动逐个核对；**前端实现代码不在本轮**（P6）。注意：原清单中提到的 `screens.md` **已被 `frontend-spec.md` v3 判定废弃**，不得再作为对照物；
+4. `docs/` 冲突处理：以 **main 的文档版**为准，dev 侧文档改动逐个核对；**前端实现代码不在本轮**（P6）。注意：**旧前端设计（`frontend-spec.md` v3 与 `screens.md`）已于 2026-09-20 全量作废并删除**，不得再作为对照物；
 5. `git checkout main && git merge dev --no-ff` → 验收冒烟 §4 再跑一遍 → `git push origin main`。
 
 > **状态**：上述第 1–5 步对应的合流已完成——`dev` 分支已不存在，`main` HEAD = `cee2ebf`，`npm run gate` = 9 PASS / 0 FAIL / 0 PEND（2026-09-16 复核）。注意第 3–4 步中"dev"相关命令当前不可执行；两个未合并分支是 `deepseek-v4.1f` / `glm-5.3f`（前端实验，均未并入 main）。
@@ -129,8 +131,8 @@ npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离�
 ## 8. 历史记录：前端（P6）轮次已失败（原 2026-09-13 记录，**已作废**）
 
 > **⚠ 2026-09-16 复核判定：本节原结论全部不成立，已降级为历史记录。**
-> 复核证据：`main`（HEAD `cee2ebf`）上**没有任何前端代码**——无 `public/` 目录，`server/index.js` 无静态托管路由（`git branch` 中两个前端分支 `deepseek-v4.1f` / `glm-5.3f` 均未合并）。前端轮次的失败根因见 `docs/frontend-spec.md` §0 与 `docs/progress.md` §3.1。
-> **现状**：P6 未开始（0 行代码）；P6 的实现应按 `docs/frontend-spec.md` **v3** 的 F1–F7 批次走。**`docs/screens.md` 已被 frontend-spec v3 判定废弃**，不得再作为验收对照物。
+> 复核证据：`main`（HEAD `cee2ebf`）上**没有任何前端代码**——无 `public/` 目录，`server/index.js` 无静态托管路由（`git branch` 中两个前端分支 `deepseek-v4.1f` / `glm-5.3f` 均未合并）。前端轮次的失败根因见 `docs/reviews/` 与 `docs/progress.md` §3.1（旧 `frontend-spec.md` §0 已随该文档删除）。
+> **现状**：P6 未开始（0 行代码），且**旧 v3 设计已于 2026-09-20 全量作废并删除** —— P6 需从零重新设计，重新设计完成前没有任何验收对照物。
 
 **原记录（保留以备追查，勿作为现状引用）**：
 
@@ -142,6 +144,6 @@ npm run cli -- ranked run --seed 11 --loadout <loadout.json>   # P5：10 场离�
 | 整链路冒烟 | `GET /`、`/js/app.js`、`/css/tokens.css`、`/shared/log.js`、`/js/editor/bridge.js` 全部 200 | ❌ 不成立：无静态托管路由，这些路径均会 404 |
 | 确定性与审查 | golden 战斗 18 tick 一致 | ✅ 这一条属实（gate 项 8，`.audit/golden-battle.json`） |
 
-**原"浏览器侧手工验收建议"**：其中"对照 `docs/screens.md` 的 7 屏示意图核对布局"一条**删除**（`screens.md` 已废弃）；其余闭环流程（菜单→开箱→装配→编辑 AI→对战→回放）属 **P6 计划**，当前不可执行。
+**原"浏览器侧手工验收建议"**：整节作废（依据的 `screens.md`/`frontend-spec.md` 均已删除）；闭环流程（菜单→开箱→装配→编辑 AI→对战→回放）属 **P6 计划**，当前不可执行。
 
 **原"遗留"一行的复核**：L-1 flake 观察中（属实）；L-3 `.review-*` 原称 **67** 个文件 → 复核实测 `git ls-files ".review-*"` = **53** 个（`progress.md` 旧版曾写 24 个，亦已过期）；L-4 `.audit/verify-rest.js` 仍待删（属实）；L-5 `main` 落后 dev 44 提交 → ❌ 已失效（`dev` 不存在，合流完成）。

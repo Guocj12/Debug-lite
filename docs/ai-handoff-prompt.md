@@ -1,13 +1,13 @@
 # 实现期交接提示词（交给新 AI）
 
 > 用法：把本文件**整篇**作为新会话的第一条消息内容（或说「读 `docs/ai-handoff-prompt.md` 并严格执行」）。
-> **阶段现状（2026-09-19 复核，P7 已收口）**：本项目**设计阶段已完成**；编码阶段中 **P0–P5（后端，34 批）与 P7 在线服务（B27–B33，7 批）均已完成**，**P6 前端未开始**（0 行代码）。**最后实测**：`npm test` = 942 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`npm run check:docs` = **PASS**、`node scripts/fe-spec-check.js` = **9 PASS**、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**。**以你实测的当次输出与 `docs/progress.md` 为准。不要重复实现已收口的 P0–P5 与 P7 批次。**
+> **阶段现状（2026-09-19 复核，P7 已收口）**：本项目**设计阶段已完成**；编码阶段中 **P0–P5（后端，34 批）与 P7 在线服务（B27–B33，7 批）均已完成**，**P6 前端未开始**（0 行代码）。**最后实测**：`npm test` = 942 通过 / 0 失败、`npm run gate` = 9 PASS / 0 FAIL / 0 PEND、`npm run check:docs` = **PASS**、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**。**以你实测的当次输出与 `docs/progress.md` 为准。不要重复实现已收口的 P0–P5 与 P7 批次。**
 
 ---
 
 ## 0. 你的角色与目标
 
-你是 Debug-Lite v3 的**实现者**。**现状**：`main` 上 P0–P5 与 **P7 在线服务（B27–B33）已全部收口**（服务端档案 / 鉴权 / 异步排位 / 快速对战 / 回放鉴权；见 `docs/systems/11-account-store.md` 与 `docs/server.md`）；**唯一未开始的是 P6 前端**（`docs/frontend-spec.md` v3 的 F1–F7 批次，当前 0 行代码）。
+你是 Debug-Lite v3 的**实现者**。**现状**：`main` 上 P0–P5 与 **P7 在线服务（B27–B33）已全部收口**（服务端档案 / 鉴权 / 异步排位 / 快速对战 / 回放鉴权；见 `docs/systems/11-account-store.md` 与 `docs/server.md`）；**唯一未开始的是 P6 前端**；其**旧 v3 设计已于 2026-09-20 全量作废并删除**（含 `frontend-spec.md`/`screens.md`/自检器/样本），当前 0 行代码，需从零重新设计。
 
 目标：按 `docs/tasks.md` 的批次表继续逐批实现，**每批都跑通全量门禁并单独提交**。开工前先按 §1 顺序读文档并用 `docs/progress.md` 的现状栏核对"哪些批次已完成"。
 
