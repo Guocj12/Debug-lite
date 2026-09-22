@@ -436,12 +436,21 @@ async function createRuntime(logger, options) {
       };
     }
     rt.auth = authMod.createAuth({ store: rt.store, logger, now: opts.now, account: rt.account, config: opts.authConfig });
+    // F2：管理员账号白名单（DL_ADMIN_USERS，契约 docs/frontend/02-accounts.md §2.1）——唯一判定处
+    rt.adminUsers = adminMod.adminUsersOf(env);
     rt.quick = quickmatchMod.createQuickMatch({
       store: rt.store, logger, now: opts.now, env, config: opts.ratingConfig, runBattle: opts.runBattle,
       loadWarehouse: (playerId) => rt.loadWarehouse(playerId),
     });
-    rt.admin = adminMod.createAdmin({ store: rt.store, logger, now: opts.now, env });
+    rt.admin = adminMod.createAdmin({
+      store: rt.store, logger, now: opts.now, env,
+      adminUsers: rt.adminUsers,
+      // 用户名 → playerId 复用 auth 的用户名索引（不在 admin 层重复实现）
+      resolveUsername: (name) => (rt.auth && typeof rt.auth.usernameIndexOf === 'function' ? rt.auth.usernameIndexOf(name) : null),
+    });
   }
+  // 未装配存储时：管理员判定恒 false（admin 面整体不可用，既有语义不变）
+  rt.isAdminPlayer = (player) => (rt.admin && typeof rt.admin.isAdminPlayer === 'function' ? rt.admin.isAdminPlayer(player) : false);
   if (rt.replayLimit === null) {
     const configured = rt.store && rt.store.config && Number.isInteger(rt.store.config.replayCacheSize)
       ? rt.store.config.replayCacheSize : 0;
@@ -461,7 +470,8 @@ async function createRuntime(logger, options) {
 
 // 路由表：GET/POST → path → handler(ctx) → {status, payload}
 // handler 抛异常 → api.err + 500 internal_error（AP-6）
-// P7-4 形状扩展：`{ auth: true, handler }` = 需 Bearer 鉴权；`{ admin: true }` = 需 DL_ADMIN_TOKEN。
+// P7-4 形状扩展：`{ auth: true, handler }` = 需 Bearer 鉴权；`{ admin: true }` = 需管理员身份
+//   （F2 起：**管理员账号（DL_ADMIN_USERS）或 DL_ADMIN_TOKEN 二者之一**，见 docs/frontend/02-accounts.md §2.2）
 function createHandler(logger, extraRoutes, runtime) {
   const rt = runtime;
   const routes = {
@@ -1091,21 +1101,44 @@ function createHandler(logger, extraRoutes, runtime) {
     return { status: 200, payload: okEnvelope(r.data, logger) };
   }
 
-  /* ----- 管理端（DL_ADMIN_TOKEN；admin.js 内部二次校验） ----- */
+  /* ----- 管理端（F2：管理员账号 DL_ADMIN_USERS **或** DL_ADMIN_TOKEN；判定在 admin.js 的 checkAccess） ----- */
 
   async function adminOp(ctx, op) {
     if (!rt.admin) return failStatus(503, 'store_unavailable', '服务未装配档案存储（管理端不可用）');
     const body = bodyOf(ctx);
     if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
     const adminToken = ctx.adminToken || body.adminToken;
-    const input = { ...body, adminToken };
+    // player：已登录的管理员账号走这条（无/坏 token 在 tolerant 下为 null，仍可走令牌路径）
+    const input = { ...body, adminToken, player: ctx.player || null };
     if (op === 'bots') return respond(await rt.admin.injectDebugBots(input));
     if (op === 'rebuild-index') return respond(await rt.admin.rebuildIndex(input));
     if (op === 'stats') return respond(await rt.admin.stats(input));
     if (op === 'clear-bots') return respond(await rt.admin.clearDebugBots(input));
     if (op === 'ban') return respond(await rt.admin.ban({ ...input, banned: body.banned !== false }));
     if (op === 'unban') return respond(await rt.admin.ban({ ...input, banned: false }));
+    if (op === 'accounts') return respond(await rt.admin.accounts(input));
+    if (op === 'delete-account') return respond(await rt.admin.deleteAccount(input));
     return failStatus(404, 'unknown_endpoint', `未知管理端点 POST /api/v1/admin/${op}`);
+  }
+
+  /* ----- F2：把「是否管理员」注入响应（契约 docs/frontend/02-accounts.md §2.1/§5） ----- */
+  // register/login → data.player.isAdmin；GET /me → data.flags.isAdmin
+  function withIsAdmin(result, isAdmin) {
+    if (!result || !result.payload || result.payload.ok !== true) return result;
+    const data = result.payload.data;
+    if (!data || typeof data !== 'object') return result;
+    if (data.player && typeof data.player === 'object') {
+      return { ...result, payload: { ...result.payload, data: { ...data, player: { ...data.player, isAdmin: isAdmin === true } } } };
+    }
+    if (data.flags && typeof data.flags === 'object') {
+      return { ...result, payload: { ...result.payload, data: { ...data, flags: { ...data.flags, isAdmin: isAdmin === true } } } };
+    }
+    return result;
+  }
+
+  // 白名单里的 username（用于注册响应：此刻账号刚建、用户名索引可能尚未刷新）
+  function isAdminUsername(username) {
+    return !!(rt.adminUsers && rt.adminUsers.names && typeof username === 'string' && rt.adminUsers.names.has(username.toLowerCase()));
   }
 
   /* ----- 静态托管（P6/F1；契约 docs/frontend/01-auth.md §9） -----
@@ -1150,7 +1183,11 @@ function createHandler(logger, extraRoutes, runtime) {
   /* ----- 路由分派 ----- */
 
   const P74_GET = {
-    '/api/v1/me': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getSummary(ctx.player.playerId)) },
+    '/api/v1/me': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => withIsAdmin(respond(await rt.account.getSummary(ctx.player.playerId)), rt.isAdminPlayer(ctx.player)),
+    },
     '/api/v1/me/configs': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.listConfigs(ctx.player.playerId)) },
     '/api/v1/me/warehouse': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getWarehouseMirror(ctx.player.playerId)) },
     '/api/v1/me/records': {
@@ -1193,7 +1230,12 @@ function createHandler(logger, extraRoutes, runtime) {
         });
         // 缺陷 B：注册请求携带的仓库镜像 → 登记（后续对局/回放解析装配引用用；D-130 不落盘）
         if (r.status === 200 && body.warehouse && r.data && r.data.playerId) rt.rememberWarehouse(r.data.playerId, body.warehouse);
-        return respond(r);
+        // F2：注册响应也带 isAdmin（此刻用户名索引可能尚未刷新，故同时按白名单用户名判定）
+        const isAdmin = rt.isAdminPlayer({
+          publicId: r.data ? r.data.publicId : null,
+          playerId: r.data ? r.data.playerId : null,
+        }) || isAdminUsername(body.username);
+        return withIsAdmin(respond(r), isAdmin);
       },
     },
     '/api/v1/auth/login': {
@@ -1201,7 +1243,12 @@ function createHandler(logger, extraRoutes, runtime) {
       handler: async (ctx) => {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-        return respond(await rt.auth.login({ username: body.username, password: body.password, ip: ctx.ip, userAgent: ctx.userAgent }));
+        const r = await rt.auth.login({ username: body.username, password: body.password, ip: ctx.ip, userAgent: ctx.userAgent });
+        // F2：登录响应带 isAdmin（前端据此决定是否渲染管理入口）
+        const isAdmin = r.status === 200 && r.data
+          ? rt.isAdminPlayer({ publicId: r.data.publicId, playerId: r.data.playerId })
+          : false;
+        return withIsAdmin(respond(r), isAdmin);
       },
     },
     '/api/v1/auth/logout': { auth: true, redact: true, handler: async (ctx) => respond(await rt.auth.logout({ token: ctx.token })) },
@@ -1304,7 +1351,7 @@ function createHandler(logger, extraRoutes, runtime) {
     if (meta.legacy !== true && meta.store !== false && !rt.store) {
       return failStatus(503, 'store_unavailable', '服务未装配档案存储（DL_DATA_DIR 未启用）：/auth、/me、/quick、/leaderboard、归档回放不可用');
     }
-    if (meta.legacy !== true && meta.admin !== true) {
+    if (meta.legacy !== true) {
       const token = bearerOf(ctx.headers.authorization);
       if (token) {
         const a = await authenticate(token);
@@ -1337,7 +1384,9 @@ function createHandler(logger, extraRoutes, runtime) {
       ctx.rawBody = raw || '{}';
     }
     // 越权防护（§4.4 步骤 5）：请求体不得指定他人 playerId
-    if (ctx.player) {
+    //   **F2 例外**：admin 面（meta.admin）以他人为操作对象是设计意图（ban/delete-account 都收 playerId），
+    //   其授权由 admin.js 的 checkAccess 承担（管理员账号或 DL_ADMIN_TOKEN），故此处不施加玩家级一致性检查。
+    if (ctx.player && meta.admin !== true) {
       const body = jsonBody(ctx);
       if (body && body.playerId !== undefined && body.playerId !== null && body.playerId !== ctx.player.playerId) {
         logger.warn('api', 'api.reject', 'forbidden: 请求体 playerId 与令牌不一致', { path: ctx.urlPath, publicId: ctx.player.publicId, code: 'forbidden' });
@@ -1405,7 +1454,8 @@ function createHandler(logger, extraRoutes, runtime) {
     // 管理端：POST /api/v1/admin/:op（DL_ADMIN_TOKEN）
     if (req.method === 'POST' && urlPath.startsWith('/api/v1/admin/')) {
       const op = urlPath.slice('/api/v1/admin/'.length);
-      return runEntry({ admin: true, store: false, handler: async (c) => adminOp(c, op) }, ctx);
+      // F2：tolerant → 无/坏 token 不 401，仅按匿名处理；管理员账号身份经 Bearer 解析（adminOp 内判定）
+      return runEntry({ admin: true, store: false, tolerant: true, handler: async (c) => adminOp(c, op) }, ctx);
     }
 
     // 配置槽动态路由：PUT|DELETE /me/configs/:slotId、POST /me/configs/:slotId/activate

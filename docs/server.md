@@ -38,6 +38,7 @@
 | `DL_LEGACY_STATELESS` | `1` | `1` = 保留旧无状态端点；`0` = 遗留端点返回 `410 deprecated`（`ranked/run\|promote` 无 token 时改 `401`） | ✅ **已接线（P7-4）**：`server/index.js` 的 `legacyStatelessOf()`；默认 `1` |
 | `DL_CORS_ORIGIN` | 空 | 前端分离部署时的白名单源；空 = 不发送 CORS 头（同源部署） | ✅ **已接线（P7-4）**：`server/index.js` 读入 CORS 白名单；未配置时**不发送** `Access-Control-Allow-Origin` |
 | `DL_DEBUG_BOTS` | 空 | 调试 bot 注入的**第二道门控**（须 `=1`） | ✅ 已接线（`server/ranked.js`）；未设 → admin 注入返回 `403 debug_bots_disabled` |
+| `DL_ADMIN_USERS` | 空 | **F2 新增**：管理员账号白名单（逗号分隔的**用户名**或 **publicId**/`playerId`，大小写不敏感；空 = 无账号级管理员）。命中者可**不带令牌**调用 `/admin/*` | ✅ **已接线（F2）**：`server/admin.js` 的 `adminUsersOf(env)`（唯一判定处）；`server/index.js` 注入 `auth` 的用户名索引做用户名→playerId 比对 |
 | `DL_TOKEN` | 空 | CLI 的 token 来源（优先级最低，见 §7） | ✅ 已接线（`cli/index.js`：`--token` > `options.token` > `DL_TOKEN`） |
 
 示例：`$env:DL_PORT=3456; $env:DL_LOG_LEVEL='trace'; npm start`
@@ -96,7 +97,7 @@
 | GET | `/api/v1/me/defense` | **防守战绩**（被抽场次/胜负/最近列表） | 401 | B30 |
 | POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`/`no_active_config`/`store_not_found` | B32 |
 | GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`；不回 `playerId`） | 400 `bad_scope` | B30/B32 |
-| POST | `/api/v1/admin/:op` | 运维（单动态路由）：`bots`/`rebuild-index`/`stats`/`clear-bots`/`ban`/`unban`（需 `X-Admin-Token` 或 Bearer + `DL_ADMIN_TOKEN`） | 401/403 `forbidden`；403 `debug_bots_disabled`；404；503 `admin_token_missing`；400 `bad_request` | B33 |
+| POST | `/api/v1/admin/:op` | 运维（单动态路由）：`bots`/`rebuild-index`/`stats`/`clear-bots`/`ban`/`unban` + **F2 新增** `accounts`（分页全量账号列表 `{offset,limit}` → `{total,offset,limit,hasMore,rows[]}`；**total 无 100 条上限**）与 `delete-account`（按 `playerId`/`publicId` 删除，写 `player.removed` 墓碑，禁删自己）。**授权（D-158）**：管理员账号（`DL_ADMIN_USERS`，Bearer）**或** `X-Admin-Token`/Bearer == `DL_ADMIN_TOKEN` | 400 `bad_request`；401/403 `forbidden`；403 `debug_bots_disabled`；404 `store_not_found`/`unknown_endpoint`；409 `cannot_delete_self`；503 `admin_token_missing` | B33 / **F2** |
 
 > `PUT /me/configs/:slotId`、`PUT /me/nickname`、`PUT /me/warehouse`、`DELETE /me/configs/:slotId`、`POST /me/configs/:slotId/activate` 注册在 `server/index.js` 的 PUT/DELETE 路由表中（其余为 GET/POST）。
 

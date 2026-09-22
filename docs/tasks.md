@@ -717,6 +717,8 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 **已落地分册（2026-09-20）**：`docs/frontend/00-rules.md`（总纲：协作协议 §2 / 绘制边界 §1 / 验收机制 §4；结论 FR-1…FR-8）+ `docs/frontend/01-auth.md`（**F1 登录与注册**：屏幕清单 / 按钮↔动作白名单 / 字段来源契约 / 全部失败路径 / 边界条件 / 静态托管契约 / 机器核对 / 人工走查剧本）。实现：`public/**`（零依赖双模模块）+ `server/index.js` 的同源静态托管；机器核对：`tests/frontend/*.test.js`（35 用例）；审查与走查记录：`docs/reviews/F1.md`。**F1 不新增批次号**（§6 仍为 41 批；P6 批次命名见 `00-rules.md` FR-6）。
 
+**F2 账号管理与管理员面板（2026-09-22）**：设计冻结 `docs/frontend/02-accounts.md`（10 项端点映射 / 15 个新增动作 / 14 条新增字段契约 / 9 条边界 / 4 项机器核对 / 17 步走查剧本）。后端契约按 `decisions.md` **D-158** 落地（`DL_ADMIN_USERS` 管理员账号 + `checkAccess` 双路径授权 + 新增 `POST /admin/accounts`（分页、**total 无上限**）与 `POST /admin/delete-account`（`player.removed` 墓碑、禁删自己）+ admin 面豁免玩家级 `playerId` 一致性检查），机器核对 `tests/api/api-admin-accounts.test.js`（AA-1…AA-7）；前端管理面板与 F2 机器核对（含**后端 admin 能力 ↔ 前端面板双向相等**的 `admin-op-parity`）见 `docs/reviews/F2.md`。**F2 同样不新增批次号**（§6 仍为 41 批）。
+
 ---
 
 ## 7. 前端（P6）—— **设计待重做**

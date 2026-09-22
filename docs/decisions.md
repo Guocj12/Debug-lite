@@ -235,6 +235,14 @@
 | **D-156** | **D-139 补充（`random` 位置语义与 `else` 必填）**：**仅语句位** `random` 适用 D-101 分支行动规则（`then`/`else` 各需可达 action）；**表达式位**（`set`/`var` 的值、`if.cond`、`loop.cond`、运算子节点）只取 `prob` 求布尔，`then`/`else` **不参与求值**、**不适用**该规则（校验期仍扫描其结构错误）。`random.else` 为**校验期必填**（缺失或 `null` → `bad_field`，`path` 指向该 `random` 节点），**运行期仍容忍缺省**（按空分支跳过，与 `if` 缺 `else` 一致）——分层原则：校验层拒绝 + 运行层兜底 | `server/ai/ast.js`、`server/ai/runtime.js`、`systems/08-ai.md` §4.2/§4.3、`tests/unit/ai-validate.test.js`、`tests/unit/runtime.test.js` |
 | **D-157** | ⚠️ **匹配池与实例化必须共用同一"可用性"判定**：`/ranked/run` 与 `/quick/run` 的**抽池筛选**与**最终实例化**必须使用同一判据（快照可实例化 + 装配引用有可用仓库镜像）——实现为 `ranked.sideInstantiable(loadout, warehouse, tier)`（与 `battleOne` 同一 `battle.buildPlayer` 实现），两处共用。两处口径不一致会产生"抽得到、打不了"的含混失败（`/quick/run` 曾在"发起者带装配引用 + 抽到默认配置对手 + 进程内镜像缓存缺失"下返回 `409 no_opponent`，**同日已修复**，回归用例 `tests/unit/quickmatch-availability.test.js`）。**任何情况下不得用 bot 凑数**（D-152）；池不足只如实回报 `shortfall`（排位）或 `no_opponent`（快速） | `server/quickmatch.js`（`candidatePool` / `run`）、`server/ranked.js`（`sideInstantiable`）、`systems/10-ranked.md` §4.3、`progress.md` |
 
+### 14.2 F2 管理面补充（2026-09-22 追加，D-158）
+
+> 用户 2026-09-22 就"登录界面显示全部账号 + 删除任意账号"给出的口径：**只做后端已有能力**；引入**管理员账号**（普通账号只显示正常功能）；账号列表**不要上限、要分页**；管理员令牌**仅内存**；并附一条硬要求：**后端以后新增 admin 能力时，管理面板必须同步**。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-158** | ⚠️ **管理面访问模型与两项新契约**：<br>① **管理员身份** = `DL_ADMIN_USERS`（逗号分隔的**用户名**或 **publicId**/`playerId`，大小写不敏感；空 = 无账号级管理员）；判定唯一处 = `server/admin.js` 的 `adminUsersOf(env)` + `isAdminPlayer`，经 `server/index.js` 注入 `auth` 的用户名索引比对；`register`/`login` 响应回带 `data.player.isAdmin`，`GET /me` 回带 `data.flags.isAdmin`。<br>② **`POST /api/v1/admin/:op` 访问判定**（`checkAccess`）：**管理员账号（Bearer）优先放行**，否则回落既有令牌路径（`X-Admin-Token`/Bearer == `DL_ADMIN_TOKEN`；未配置 → 503 `admin_token_missing`，不匹配 → 403 `forbidden`）——两者语义均不改变，`DL_DEBUG_BOTS` 仍只对 `bots` 构成第二道门控。<br>③ **新增 `POST /api/v1/admin/accounts`**：`{offset,limit}` → `{total,offset,limit,hasMore,rows[]}`；**`total` 为全量、无 100 条上限**（分页取完即"显示全部"）；单页 `limit` 缺省 20、上限 200；数据源 = 索引条目（不加载档案）；排序 `updatedAt` desc → `publicId` asc（稳定分页，无遗漏无重复）；`playerId` 属 admin 通道（玩家侧响应才脱敏）。<br>④ **新增 `POST /api/v1/admin/delete-account`**：`{playerId|publicId}` → `store.removeArchive`（写 `player.removed` 墓碑，防 journal 重放复活）；**禁止删除自己**（409 `cannot_delete_self`）；未知 → 404 `store_not_found`。<br>⑤ **越权检查例外**：`runEntry` 的"请求体 `playerId` 必须与令牌一致"检查**不施加于 admin 面**（管理面以他人为操作对象是设计意图，其授权由 `checkAccess` 承担）。<br>⑥ **前端硬要求（可机器判定）**：后端 admin 能力集合与前端管理面板注册表必须**双向相等**（`tests/frontend/admin-op-parity.test.js`）——后端新增 op 而面板未同步即 FAIL | `server/admin.js`（`adminUsersOf`/`isAdminPlayer`/`checkAccess`/`accounts`/`deleteAccount`）、`server/index.js`（`withIsAdmin`/`adminOp`/越权例外）、`docs/interfaces.md` §2/§2.1/§7、`docs/server.md` §2/§3.2、`docs/frontend/02-accounts.md`、`tests/api/api-admin-accounts.test.js`（AA-1…AA-7） |
+
 ---
 
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）

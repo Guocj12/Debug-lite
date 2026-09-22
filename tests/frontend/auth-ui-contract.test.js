@@ -56,10 +56,13 @@ test('UI-2 四屏的 data-action 集合 == ACTIONS 注册表（按钮永不无�
     for (const a of attrValues(html, 'data-action')) rendered.add(a);
   }
   const dead = [...rendered].filter((a) => ACTION_NAMES.indexOf(a) === -1);
-  const unreachable = ACTION_NAMES.filter((a) => !rendered.has(a));
   assert.deepEqual(dead, [], `渲染出的按钮没有实现分支（死按钮）：${dead.join(', ')}`);
-  assert.deepEqual(unreachable, [], `注册了动作但没有入口（不可达）：${unreachable.join(', ')}`);
-  assert.equal(rendered.size, 9, `F1 动作数应为 9，实际 ${rendered.size}：${[...rendered].join(', ')}`);
+  // F2（docs/frontend/02-accounts.md §4）把注册表扩到 25 个动作，其中 16 个管理动作**只在管理员态**渲染；
+  //   本用例的状态是 non-admin（stateFor = initialState），admin/accounts 两屏按 A-1 兜底回主页，
+  //   故这里核对的是「F1 四屏仍恰好渲染 F1 的 9 个动作，且全部已注册」；
+  //   「注册了动作但没有入口」的反向核对（全 25 个）在管理员态下由
+  //   tests/frontend/admin-ui-contract.test.js 的 AU-2 完成（渲染集合 == 注册表集合，双向）。
+  assert.equal(rendered.size, 9, `F1 四屏（非管理员态）动作数应为 9，实际 ${rendered.size}：${[...rendered].join(', ')}`);
 });
 
 test('UI-3 每个动作都有可实现分支与非空标签', () => {

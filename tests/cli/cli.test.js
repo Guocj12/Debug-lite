@@ -8,10 +8,34 @@
 //   本条保留：成功路径（0）、业务拒绝（1）、bootstrap 与"服务端非 200"等**非**用法错误分支。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const net = require('node:net');
 const { createLogger } = require('../../shared/log.js');
 const { start } = require('../../server/index.js');
 const { main, bootstrap } = require('../../cli/index.js');
 const c = require('../helpers/cli.js');
+
+// CLI-13 用：判断端口是否已有服务在听（用于规避"开发服务占用 3000"的假红）
+function isPortOpen(port) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port });
+    const done = (v) => { sock.destroy(); resolve(v); };
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+    sock.setTimeout(800, () => done(false));
+  });
+}
+
+// CLI-13 用：拿到一个"当前可用"的端口（绑定后立即释放 → 该端口此刻无服务）
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 async function withServer(t, fn) {
   const logger = createLogger({ level: 'debug', ringSize: 500 });
@@ -133,11 +157,23 @@ test('CLI-12 bootstrap 引导：可执行且设置 exitCode（进程内覆盖 st
   }
 });
 
-test('CLI-13 默认 baseUrl（无注入）→ 连接 127.0.0.1:3000 失败 → rc 1', async () => {
+test('CLI-13 默认 baseUrl（无注入）→ 连接失败 → rc 1', async (t) => {
+  // 2026-09-22 修复（假红根因）：
+  //   本用例原断言"默认端口 3000 无服务 → rc 1"，但**开发时按文档跑 `npm start`（监听 3000）再跑
+  //   `npm test`/`npm run gate`** 是常规用法 —— 此时 CLI 会真的连上那个开发服务 → rc 0 → 本用例假红，
+  //   且现场表现为"时红时绿、无法区分"（仓库明确要求红必须可区分）。
+  //   现在：3000 空闲 → 行为与原用例完全一致；3000 被占用 → 改用"刚确认可用即释放"的端口，
+  //   仍走**无 `--base` 注入**的默认解析路径（`cli/index.js` 的 opts.baseUrl || DL_PORT || 3000）。
   const prevBase = process.env.DL_PORT;
   try {
+    let target = 3000;
+    if (await isPortOpen(3000)) {
+      target = await freePort();
+      t.diagnostic(`127.0.0.1:3000 正被占用（如 npm start）→ 改用临时端口 ${target} 走同一条默认解析路径`);
+    }
+    process.env.DL_PORT = String(target);
     const out = await c.runCli(['health'], {});
-    assert.equal(out.code, 1, '默认端口无服务 → rc 1');
+    assert.equal(out.code, 1, `端口 ${target} 无服务 → rc 1`);
   } finally {
     if (prevBase === undefined) delete process.env.DL_PORT; else process.env.DL_PORT = prevBase;
   }

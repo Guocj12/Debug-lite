@@ -243,3 +243,53 @@ test('FL-11 提交中（busy）重复点击不再发请求', async () => {
     assert.match(noticeOf(h), /^注册成功：/);
   });
 });
+
+// 2026-09-22 现场故障（用户用 test01/12345678 登录报"用户名或密码错误"）的回归：
+//   实测 7 位密码 / 全角数字 / 末尾空格都会得到 invalid_credentials；且密码框残留旧值会让
+//   用户的下一次输入变成"追加"。以下三条把它钉死。
+test('FL-12 登录业务失败 → 清空密码框、保留用户名（B-14）', async () => {
+  await withHarness(async (h) => {
+    h.form({ username: 'flow12', password: PW1, confirm: PW1 });
+    await h.run('submit-register');
+    await h.run('logout');
+    h.form({ username: 'flow12', password: 'wrongpass1' });
+    await h.run('submit-login');
+    assert.equal(h.state().view, 'login');
+    assert.match(noticeOf(h), /用户名或密码错误/);
+    assert.equal(h.state().form.password, '', '失败后密码框必须清空（否则下次输入会变成追加）');
+    assert.equal(h.state().form.username, 'flow12', '用户名应保留');
+  });
+});
+
+test('FL-13 密码形态差异（7 位 / 全角 / 末尾空格）都落到 invalid_credentials，并给出可排查指引', async () => {
+  await withHarness(async (h) => {
+    h.form({ username: 'flow13', password: PW1, confirm: PW1 });
+    await h.run('submit-register');
+    await h.run('logout');
+    const variants = ['pw1234567', 'ｐｗ１２３４５６７８', PW1 + ' '];
+    for (const pw of variants) {
+      const r = await h.api.login({ username: 'flow13', password: pw });
+      assert.equal(format.errorCodeOf(r.envelope), 'invalid_credentials', `密码形态 ${JSON.stringify(pw)} 应落到 invalid_credentials`);
+    }
+    h.form({ username: 'flow13', password: 'wrongpass1' });
+    await h.run('submit-login');
+    assert.match(noticeOf(h), /不要有多余空格或全角字符/, '文案须含可排查指引');
+  });
+});
+
+test('FL-14 用户名首尾空格被 trim（复制粘贴常见）；纯空白视为空输入', async () => {
+  await withHarness(async (h) => {
+    h.form({ username: 'flow14', password: PW1, confirm: PW1 });
+    await h.run('submit-register');
+    await h.run('logout');
+    h.form({ username: '  flow14  ', password: PW1 });
+    await h.run('submit-login');
+    assert.match(noticeOf(h), /^登录成功：/, `带空格的用户名应能登录，实际：${noticeOf(h)}`);
+    await h.run('logout');
+    h.form({ username: '   ', password: PW1 });
+    const before = h.counter.n;
+    await h.run('submit-login');
+    assert.equal(h.counter.n, before, '纯空白用户名不得发请求');
+    assert.equal(noticeOf(h), '请填写用户名与密码');
+  });
+});

@@ -111,7 +111,8 @@
 
     function dispatch(action) {
       store.dispatch(action);
-      if (action && action.type === 'form.set') return; // 输入不重绘，避免光标跳动
+      // 输入不重绘，避免光标跳动（F1 表单与 F2 管理面板输入框同理）
+      if (action && (action.type === 'form.set' || action.type === 'admin.form.set')) return;
       mount();
     }
 
@@ -127,16 +128,27 @@
     }
 
     // 动作执行：白名单未命中 → 可见兜底提示（「按钮永不无声」的最后一道保险）
-    function run(action) {
+    //   payload = 行级动作的目标（来自被点按钮的 data-player-id / data-public-id，02-accounts.md §3.2）
+    function run(action, payload) {
       var def = DL.actions.ACTIONS[action];
       if (!def || typeof def.run !== 'function') {
         dispatch({ type: 'notice.set', notice: { kind: 'error', text: '未实现的动作：' + action } });
         return Promise.resolve(null);
       }
-      return Promise.resolve(def.run(buildCtx())).catch(function (e) {
+      return Promise.resolve(def.run(buildCtx(), payload || null)).catch(function (e) {
         dispatch({ type: 'notice.set', notice: { kind: 'error', text: '内部错误：' + (e && e.message ? e.message : String(e)) } });
         return null;
       });
+    }
+
+    // 从被点元素上取行级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
+    function payloadOf(el) {
+      var ds = el && el.dataset ? el.dataset : null;
+      if (!ds) return null;
+      var playerId = typeof ds.playerId === 'string' && ds.playerId !== '' ? ds.playerId : null;
+      var publicId = typeof ds.publicId === 'string' && ds.publicId !== '' ? ds.publicId : null;
+      if (playerId === null && publicId === null) return null;
+      return { playerId: playerId, publicId: publicId };
     }
 
     function onClick(ev) {
@@ -149,7 +161,7 @@
         var form = el.form;
         if (form && form.getAttribute && form.getAttribute('data-enter') === action) return;
       }
-      run(action);
+      run(action, payloadOf(el));
     }
 
     function onSubmit(ev) {
@@ -163,7 +175,9 @@
     function onInput(ev) {
       var t = ev.target;
       if (!t || !t.name) return;
-      dispatch({ type: 'form.set', field: t.name, value: t.value });
+      // F2：管理面板输入框（adminToken/adminTarget/adminCount）走 admin.form.set（02-accounts.md §7）
+      var isAdminField = DL.store.ADMIN_FIELDS && DL.store.ADMIN_FIELDS.indexOf(t.name) !== -1;
+      dispatch({ type: isAdminField ? 'admin.form.set' : 'form.set', field: t.name, value: t.value });
     }
 
     // 启动自检（01-auth.md §7.3）：无 token → 登录屏；有 token → GET /me 判定会话真伪
@@ -177,11 +191,14 @@
         return Promise.resolve(null);
       }
       var saved = storage.readSession();
+      // isAdmin **不落盘**（Q3 A / 02-accounts.md §2.1）：本地存储里没有管理员标记，
+      //   管理入口一律等 GET /me 的 data.flags.isAdmin 确认后才出现
       dispatch({
         type: 'session.set', token: token,
         publicId: saved ? saved.publicId : null,
         nickname: saved ? saved.nickname : null,
         expiresAt: saved ? saved.expiresAt : null,
+        isAdmin: false,
       });
       return api.me(token).then(function (result) {
         if (result.transport === 'error') {
@@ -204,7 +221,7 @@
         }
         var session = DL.format.sessionOf(result.envelope);
         dispatch({ type: 'profile.set', envelope: result.envelope });
-        dispatch({ type: 'session.set', token: token, publicId: session.publicId, nickname: session.nickname, expiresAt: session.expiresAt });
+        dispatch({ type: 'session.set', token: token, publicId: session.publicId, nickname: session.nickname, expiresAt: session.expiresAt, isAdmin: session.isAdmin });
         dispatch({ type: 'view.go', view: 'home' });
         dispatch({ type: 'booted.set', booted: true });
         return result;

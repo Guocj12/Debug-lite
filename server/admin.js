@@ -19,8 +19,11 @@ const ranked = require('./ranked.js');
 
 const TOKEN_ENV = 'DL_ADMIN_TOKEN';
 const DEBUG_ENV = 'DL_DEBUG_BOTS';
+const ADMIN_USERS_ENV = 'DL_ADMIN_USERS'; // F2：管理员账号白名单（用户名或 publicId，逗号分隔）
 const BOT_KEY_PREFIX = 'dl-debug-';
 const MAX_BOTS_PER_CALL = 200;
+const ACCOUNTS_LIMIT_DEFAULT = 20; // F2：分页账号列表单页缺省
+const ACCOUNTS_LIMIT_MAX = 200;    // F2：单页上限（**总数无上限**，分页可列全部）
 const TIERS = archiveMod.TIERS;
 
 // 由 botKey + 序号确定性派生 playerId（`pl_` + 16 hex）→ 同 botKey 重复注入 = 幂等（§7.6"按 botKey 去重"）
@@ -31,6 +34,27 @@ function botPlayerIdOf(botKey, index) {
 
 function envOf(env) {
   return env === undefined ? process.env : (env || {});
+}
+
+/* ---------- F2：管理员账号白名单（模块作用域，供 server/index.js 直接复用；契约见
+ * docs/frontend/02-accounts.md §2.1） ----------
+ * 取值 = 逗号分隔的**用户名**或 **publicId**（`u_…`）/ **playerId**（`pl_…`）；空/未配置 = 无账号级管理员。
+ */
+function adminUsersOf(rawEnv) {
+  const raw = rawEnv ? rawEnv[ADMIN_USERS_ENV] : undefined;
+  const names = new Set();
+  const publicIds = new Set();
+  const playerIds = new Set();
+  if (typeof raw === 'string') {
+    for (const part of raw.split(',')) {
+      const v = part.trim();
+      if (v === '') continue;
+      if (v.startsWith('u_')) publicIds.add(v);
+      else if (v.startsWith('pl_')) playerIds.add(v);
+      else names.add(v.toLowerCase());
+    }
+  }
+  return { names, publicIds, playerIds, size: names.size + publicIds.size + playerIds.size };
 }
 
 // 令牌比较：长度不等先补齐再比（沿用 auth.js 口径，避免长度泄露 + 不抛错）
@@ -93,9 +117,41 @@ function createAdmin(options) {
     return { ok: true, status: 200, code: null, message: null };
   }
 
-  async function withToken(input, op, fn) {
+  /* ---------- F2：管理员账号（DL_ADMIN_USERS 白名单；契约 docs/frontend/02-accounts.md §2.1/§2.2） ----------
+   * 语义：
+   *   · 取值 = 逗号分隔的**用户名**或 **publicId**（`u_…`）；大小写不敏感；空/未配置 = 无账号级管理员；
+   *   · 放行优先级：① 请求者账号命中白名单 → 放行（**不需要令牌**，否则该方案无法独立工作）；
+   *                 ② 否则走既有令牌路径（未配置 → 503 admin_token_missing；不匹配 → 403 forbidden）；
+   *   · 用户名匹配经 `opts.resolveUsername`（= server/auth.js 的 usernameIndexOf）转 playerId 比较，
+   *     避免在 admin 层重复实现用户名索引。
+   */
+  function isAdminPlayer(player) {
+    if (!player) return false;
+    const admins = opts.adminUsers || adminUsersOf(env);
+    if (typeof player.publicId === 'string' && admins.publicIds.has(player.publicId)) return true;
+    const playerId = typeof player.playerId === 'string' ? player.playerId : null;
+    if (playerId === null) return false;
+    if (admins.playerIds.has(playerId)) return true;
+    if (admins.names.size === 0) return false;
+    const resolve = typeof opts.resolveUsername === 'function' ? opts.resolveUsername : null;
+    if (resolve === null) return false;
+    for (const name of admins.names) {
+      if (resolve(name) === playerId) return true;
+    }
+    return false;
+  }
+
+  // 访问判定：管理员账号优先，其次令牌（via 便于日志与测试断言）
+  function checkAccess(input) {
     const o = input || {};
+    if (isAdminPlayer(o.player)) return { ok: true, status: 200, code: null, message: null, via: 'account' };
     const auth = checkToken(o.adminToken === undefined ? o.token : o.adminToken);
+    return auth.ok ? { ok: true, status: 200, code: null, message: null, via: 'token' } : auth;
+  }
+
+  async function withAccess(input, op, fn) {
+    const o = input || {};
+    const auth = checkAccess(o);
     if (!auth.ok) return { status: auth.status, code: auth.code, message: auth.message };
     try {
       return await fn(o);
@@ -112,7 +168,7 @@ function createAdmin(options) {
 
   // 重建索引：扫描 players/* → upsert → 保存 index.json（§5.6 / T-ST-5）
   async function rebuildIndex(input) {
-    return withToken(input, 'rebuildIndex', async () => {
+    return withAccess(input, 'rebuildIndex', async () => {
       const stats = await store.index.rebuild();
       const rows = store.index.leaderboard({ scope: 'global', limit: 1 });
       log.info('store', 'store.index.rebuild', `管理端触发索引重建（${stats.players} 玩家，seq=${stats.seq}）`, {
@@ -124,7 +180,7 @@ function createAdmin(options) {
 
   // 只读统计（不要求 token 的部分由 P7-4 决定是否暴露；此处保守要求 token）
   async function stats(input) {
-    return withToken(input, 'stats', async () => {
+    return withAccess(input, 'stats', async () => {
       const base = typeof store.stats === 'function' ? store.stats() : {};
       const snapshotStats = store.snapshot && typeof store.snapshot.stats === 'function' ? store.snapshot.stats() : null;
       const tierCounts = {};
@@ -149,7 +205,7 @@ function createAdmin(options) {
   // P2-7：**令牌校验前置**——未配置/错误 `DL_ADMIN_TOKEN` 时先返回 503/403，而不是先撞 debug 门控
   //   得到含混的 403 debug_bots_disabled（那会让"管理面不可用"看起来像"调试开关没开"）。
   async function injectDebugBots(input) {
-    return withToken(input, 'injectDebugBots', async (o) => {
+    return withAccess(input, 'injectDebugBots', async (o) => {
       if (!debugEnabled()) {
         return {
           status: 403,
@@ -208,7 +264,7 @@ function createAdmin(options) {
 
   // 清理由本模块注入的调试档案（flags.isBot && flags.botKey 以 dl-debug- 开头）
   async function clearDebugBots(input) {
-    return withToken(input, 'clearDebugBots', async () => {
+    return withAccess(input, 'clearDebugBots', async () => {
       const ids = await store.listPlayerIds();
       const removed = [];
       for (const playerId of ids) {
@@ -225,7 +281,7 @@ function createAdmin(options) {
   }
 
   async function ban(input) {
-    return withToken(input, 'ban', async () => {
+    return withAccess(input, 'ban', async () => {
       const o = input || {};
       if (typeof o.playerId !== 'string' || o.playerId === '') {
         return { status: 400, code: 'bad_request', message: '需要 playerId' };
@@ -237,11 +293,100 @@ function createAdmin(options) {
     });
   }
 
+  /* ---------- F2：分页账号列表（**总数无上限**；单页上限 ACCOUNTS_LIMIT_MAX） ----------
+   * 数据源 = 索引条目（server/store/index-file.js entryOf 已有 publicId/nickname/tier/points/peakPoints/
+   *   inPool/isBot/banned/lastSeenAt/updatedAt）+ 索引键 playerId → **不加载档案**，可支撑万级账号。
+   * 排序 = updatedAt 降序 → publicId 升序（**稳定**，保证分页无遗漏/无重复）。
+   * playerId 属 admin 通道（玩家侧响应才脱敏，见 server/index.js 的 redact）。
+   */
+  async function accounts(input) {
+    return withAccess(input, 'accounts', async (o) => {
+      const offset = o.offset === undefined ? 0 : o.offset;
+      if (!Number.isInteger(offset) || offset < 0) {
+        return { status: 400, code: 'bad_request', message: 'offset 必须是非负整数' };
+      }
+      const limit = o.limit === undefined ? ACCOUNTS_LIMIT_DEFAULT : o.limit;
+      if (!Number.isInteger(limit) || limit < 1 || limit > ACCOUNTS_LIMIT_MAX) {
+        return { status: 400, code: 'bad_request', message: `limit 必须是 1..${ACCOUNTS_LIMIT_MAX} 的整数（总数无上限，靠分页取完）` };
+      }
+      const ids = await store.listPlayerIds();
+      const all = [];
+      for (const playerId of ids) {
+        const entry = store.index.get(playerId);
+        if (!entry) continue;
+        all.push({
+          playerId,
+          publicId: entry.publicId === undefined ? null : entry.publicId,
+          nickname: entry.nickname === undefined ? null : entry.nickname,
+          tier: entry.tier === undefined ? null : entry.tier,
+          points: entry.points === undefined ? 0 : entry.points,
+          peakPoints: entry.peakPoints === undefined ? 0 : entry.peakPoints,
+          inPool: entry.inPool === true,
+          isBot: entry.isBot === true,
+          banned: entry.banned === true,
+          lastSeenAt: entry.lastSeenAt === undefined ? null : entry.lastSeenAt,
+          updatedAt: entry.updatedAt === undefined ? null : entry.updatedAt,
+        });
+      }
+      all.sort((a, b) => {
+        const au = a.updatedAt === null ? -1 : a.updatedAt;
+        const bu = b.updatedAt === null ? -1 : b.updatedAt;
+        if (au !== bu) return bu - au;
+        return String(a.publicId).localeCompare(String(b.publicId));
+      });
+      const total = all.length;
+      const rows = all.slice(offset, offset + limit);
+      log.debug('store', 'store.read', `管理端读取账号列表（total=${total} offset=${offset} limit=${limit}）`, {
+        op: 'accounts', total, offset, limit, via: checkAccess(o).via,
+      });
+      return { status: 200, data: { total, offset, limit, hasMore: offset + rows.length < total, rows } };
+    });
+  }
+
+  // 解析目标账号：playerId 优先，其次 publicId（索引只读扫描；无 publicId→playerId 的专用索引）
+  async function resolveTarget(o) {
+    const playerId = typeof o.playerId === 'string' && o.playerId !== '' ? o.playerId : null;
+    if (playerId !== null) return { playerId };
+    const publicId = typeof o.publicId === 'string' && o.publicId !== '' ? o.publicId : null;
+    if (publicId === null) return { error: { status: 400, code: 'bad_request', message: '需要 playerId 或 publicId' } };
+    for (const id of await store.listPlayerIds()) {
+      const entry = store.index.get(id);
+      if (entry && entry.publicId === publicId) return { playerId: id, publicId };
+    }
+    return { error: { status: 404, code: 'store_not_found', message: `账号 ${publicId} 不存在` } };
+  }
+
+  /* ---------- F2：删除账号（写 player.removed 墓碑，防 journal 重放复活） ----------
+   * 拒绝删除请求者自己（409 cannot_delete_self）——避免管理员把自己锁在门外。
+   */
+  async function deleteAccount(input) {
+    return withAccess(input, 'deleteAccount', async (o) => {
+      const target = await resolveTarget(o);
+      if (target.error) return target.error;
+      const me = o.player && typeof o.player.playerId === 'string' ? o.player.playerId : null;
+      if (me !== null && me === target.playerId) {
+        return { status: 409, code: 'cannot_delete_self', message: '不能删除当前登录的管理员账号' };
+      }
+      const archive = await store.loadArchive(target.playerId);
+      if (!archive) return { status: 404, code: 'store_not_found', message: `档案 ${target.playerId} 不存在` };
+      const publicId = archive.publicId;
+      await store.removeArchive(target.playerId);
+      log.warn('store', 'store.player.removed', `管理端删除账号 ${publicId}（${target.playerId}）`, {
+        op: 'deleteAccount', playerId: target.playerId, publicId, via: checkAccess(o).via,
+      });
+      return { status: 200, data: { removed: true, playerId: target.playerId, publicId } };
+    });
+  }
+
   return {
     store,
     checkToken,
+    checkAccess,
+    isAdminPlayer,
     rebuildIndex,
     stats,
+    accounts,
+    deleteAccount,
     injectDebugBots,
     clearDebugBots,
     ban,
@@ -259,9 +404,13 @@ function defaultAdmin(options) {
 module.exports = {
   createAdmin,
   defaultAdmin,
+  adminUsersOf,
   tokenEquals,
   TOKEN_ENV,
   DEBUG_ENV,
+  ADMIN_USERS_ENV,
   BOT_KEY_PREFIX,
   MAX_BOTS_PER_CALL,
+  ACCOUNTS_LIMIT_DEFAULT,
+  ACCOUNTS_LIMIT_MAX,
 };
