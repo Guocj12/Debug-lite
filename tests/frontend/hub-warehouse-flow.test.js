@@ -460,7 +460,10 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     await h.run('config-open', { slot: 'slot2' });
     assert.deepEqual(h.state().modal, { kind: 'config', slotId: 'slot2' });
     assert.equal((h.html().match(/id="modal"/g) || []).length, 1, '替换后仍只有一个弹窗');
-    assert.ok(h.html().includes('出战配置2：' + format.CONFIG_PLACEHOLDER_TEXT), '占位文案必须含 slotId');
+    // 提交③：占位弹窗已换成真编辑器 —— 状态行含 slotId，草稿已从服务端副本灌入
+    assert.ok(h.html().includes('出战配置2：'), '编辑器状态行必须含 slotId');
+    assert.ok(h.html().includes(format.CONFIG_DRAFT_HINT), '编辑器应提示"编辑先落在本地草稿"');
+    assert.ok(h.state().configs.draft, '打开配置弹窗应灌入本地草稿');
     assert.ok(h.html().includes('data-action="modal-close"'), '弹窗必须有背景关闭元素');
     // 缺省 slot（无 payload）→ slot1
     await h.run('config-open');
@@ -482,11 +485,14 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     // 切屏即清弹窗（modal 不跨屏存活）
     await h.run('goto-box');
     assert.equal(h.state().modal, null, '切屏应清弹窗');
-    // 关闭：丢弃未提交输入（本批的弹窗无输入草稿，configs.draft 必须保持 null）
+    // 关闭：丢弃未提交输入（提交③ 起弹窗内有**本地草稿** → 关闭必须一并丢弃）
+    h.dispatch({ type: 'configs.draft.set', draft: { slotId: 'slot1', loadout: { role: null, skills: [null, null, null], ai: null } }, dirty: true });
     h.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: 'slot1' } });
+    assert.equal(h.state().configs.dirty, true, '前置：草稿处于未保存态');
     await h.run('modal-close');
     assert.equal(h.state().modal, null);
     assert.equal(h.state().configs.draft, null, '关闭弹窗必须丢弃未提交草稿');
+    assert.equal(h.state().configs.dirty, false, '丢弃草稿后脏标记必须归零');
 
     // 纯 reducer 守卫：未知弹窗种类不得进状态（防止"半个弹窗"渲染）
     const st2 = store.createStore(store.initialState());

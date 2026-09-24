@@ -56,16 +56,59 @@ const WAREHOUSE_ENVELOPE = {
   },
 };
 
-// 非管理员态下**可能出现的全部渲染**：九屏 + 两类弹窗子态
-//   （item-open / modal-close 只在弹窗打开时渲染 —— UW-5 要求含弹窗的屏必须有 modal-close）
+// 提交③：出战配置编辑器的真实响应形状（真起服务抓取过：docs/frontend/03 §5.1/§5.2）
+const CONFIG_LOADOUT = {
+  role: WAREHOUSE_ENVELOPE.data.buckets.role[0],
+  skills: [WAREHOUSE_ENVELOPE.data.buckets.skill[0], null, null],
+  ai: { type: 'program', version: 1, body: [] },
+  aiId: 'ai_cfg_1',
+};
+const CONFIGS_ENVELOPE = {
+  ok: true,
+  data: {
+    slots: [{ slotId: 'slot1', name: '默认配置', isDefault: true, createdAt: 1, updatedAt: 2, loadout: CONFIG_LOADOUT, snapshot: { hash: 'h_1' } }],
+    activeSlotId: 'slot1',
+    maxSlots: 3,
+  },
+};
+const AI_ENVELOPE = {
+  ok: true,
+  data: {
+    items: [
+      { aiId: 'ai_cfg_1', name: '新手AI', program: { type: 'program' }, createdAt: 1, updatedAt: 2 },
+      { aiId: 'ai_cfg_2', name: '稳健AI', program: { type: 'program' }, createdAt: 3, updatedAt: 4 },
+    ],
+    count: 2,
+    max: 100,
+    usage: { ai_cfg_1: ['slot1'] },
+  },
+};
+
+// 非管理员态下**可能出现的全部渲染**：14 屏 + 五类弹窗子态
+//   （item-detail / config（提交③ 编辑器）/ slot-pick / plugin-pick / ai-pick）
+//   —— 注册表里的每个非管理动作都应在此出现（「按钮永不消失」：无死按钮、无不可达入口）。
+function configEditorState(view, modal) {
+  const state = stateFor(view || 'hub');
+  state.warehouse.envelope = WAREHOUSE_ENVELOPE;
+  state.configs.data = CONFIGS_ENVELOPE;
+  state.configs.ai = AI_ENVELOPE;
+  state.configs.draft = { slotId: 'slot1', loadout: CONFIG_LOADOUT };
+  state.modal = modal;
+  return state;
+}
+
 function nonAdminRenderings() {
   const list = store.VIEWS.map((view) => stateFor(view));
   const itemDetail = stateFor('warehouse');
   itemDetail.warehouse.envelope = WAREHOUSE_ENVELOPE;
   itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
-  const configModal = stateFor('hub');
-  configModal.modal = { kind: 'config', slotId: 'slot1' };
-  list.push(itemDetail, configModal);
+  list.push(itemDetail);
+  // 提交③：编辑器（弹窗 A）+ 三个二级选择弹窗（弹窗 B）—— slot-set / ai-set / plugin-set /
+  //   plugin-clear 只在二级弹窗里出现，故必须把它们作为可达状态纳入渲染集合
+  list.push(configEditorState('hub', { kind: 'config', slotId: 'slot1' }));
+  list.push(configEditorState('hub', { kind: 'slot-pick', slotId: 'slot1', pos: 'role' }));
+  list.push(configEditorState('hub', { kind: 'plugin-pick', slotId: 'slot1', pos: 'role', idx: 0 }));
+  list.push(configEditorState('hub', { kind: 'ai-pick', slotId: 'slot1' }));
   return list;
 }
 
@@ -93,14 +136,11 @@ test('UI-2 非管理员态全部屏的 data-action 集合 == 注册表的非管�
   const dead = [...rendered].filter((a) => ACTION_NAMES.indexOf(a) === -1);
   assert.deepEqual(dead, [], `渲染出的按钮没有实现分支（死按钮）：${dead.join(', ')}`);
 
-  // F3 提交② 口径（03-hub-warehouse-loadout.md §4 / §10 UW-2）：F1 的 UI-2 断言从「F1 四屏恰好 9 个」改成
-  //   「渲染集合 == 注册表中**非管理动作**集合」，且管理动作在非管理员态**一个都不出现**。
-  //   动作数构成（以**实际注册表**为准，不写死）：
-  //     注册表 42 = F1 9 + F2 16 + F3 提交② 17
-  //     非管理 26 = 42 − 16（管理动作）
-  //   提交③（出战配置编辑器）的 config-save / config-activate / slot-pick / slot-set / ai-pick /
-  //   ai-set / plugin-pick / plugin-set / plugin-clear **不先注册空壳**（「按钮永不无声」不允许空动作）；
-  //   分册 §4 给出的 35（= 51 − 16）是提交③ 完成后的目标数，本批按实际值核对。
+  // F3 提交③ 口径（03-hub-warehouse-loadout.md §4 / §10 UW-2）：提交③ 落地配置编辑器后，
+  //   「渲染集合 == 注册表中**非管理动作**集合」的口径不变，数字随实现推进：
+  //     注册表 51 = F1 9 + F2 16 + F3 提交② 17 + F3 提交③ 9
+  //     非管理 35 = 51 − 16（管理动作）
+  //   数字一律由**实际注册表**推出（不写死），失败时打印实际集合便于定位。
   const managed = ACTION_NAMES.filter((a) => !ADMIN_ACTIONS.has(a));
   const expected = [...new Set(managed)].sort();
   const extra = expected.filter((a) => !rendered.has(a));

@@ -71,8 +71,17 @@
     // POST /api/v1/me/box（F3 开箱；D-162：**没有 seed 入参**，响应里的 seed 前端不读不显示）
     { endpoint: 'me/box', path: 'data.items', use: '开箱结果逐件行（名字/分类/品质）' },
     { endpoint: 'me/box', path: 'data.times', use: '结果区「本次获得 <n> 件」' },
-    // GET /api/v1/me/ai（F3 只用列表；提交③ 的配置弹窗才消费候选）
-    { endpoint: 'me/ai', path: 'data.items', use: 'AI 库列表（本批仅登记契约，投影在提交③）' },
+    // GET /api/v1/me/ai（F3 只用列表；提交③ 的配置弹窗消费 ai-pick 候选）
+    { endpoint: 'me/ai', path: 'data.items', use: 'AI 库列表（ai-pick 候选：名字 + aiId + program）' },
+    // GET /api/v1/me/configs（提交③ 的出战配置编辑器；03 §5.1/§5.2）
+    { endpoint: 'me/configs', path: 'data.slots', use: '三套配置的槽正文（loadout/slotId）——编辑器逐位置显示' },
+    { endpoint: 'me/configs', path: 'data.activeSlotId', use: '出战标记（状态行「出战中/非出战」+ B-5 门控：出战中的配置不提供「空」）' },
+    // POST /api/v1/me/warehouse/assemble|disassemble（提交③ 两步顺序的第①步回带；03 §3.7/§5.2）
+    //   ⚠️ 这两个路径是**装配响应**里的回带（`{warehouse, usage, counts, caps}`），不是 GET /me/warehouse 的信封；
+    //   `data.warehouse` 用于"取回更新后的那件物品"（第②步），usage/caps 用于把仓库状态并回同一份数据。
+    { endpoint: 'me/warehouse/assemble', path: 'data.warehouse', use: '装配/拆卸后回带的四桶全文（两步顺序第②步：取回更新后的那件物品替换草稿）' },
+    { endpoint: 'me/warehouse/assemble', path: 'data.usage', use: '装配/拆卸后回带的出战引用映射（刷新仓库屏 [装配于配置N]）' },
+    { endpoint: 'me/warehouse/assemble', path: 'data.caps', use: '装配/拆卸后回带的容量上限（容量行）' },
     // POST /api/v1/admin/accounts（02-accounts.md §2.3/§5）
     { endpoint: 'admin/accounts', path: 'data.total', use: '账号总数（**无上限**）·分页信息行' },
     { endpoint: 'admin/accounts', path: 'data.offset', use: '当前页起点·分页信息行' },
@@ -126,13 +135,29 @@
     'type', 'pluginUid', 'params.v',
   ];
 
+  // 出战配置**槽**上读的子对象字段（03 §5.1 的 `me/configs` 两行；**不含** `data.` 前缀 ——
+  //   它们从 `data.slots[i]` 上读取，故不参与 FC-2/FC-3 的信封级核对，而由
+  //   tests/frontend/config-editor-flow.test.js 的 CF-8 三方核对：
+  //   本表 == format.js 实际读取的槽级路径 == 03 §5.1 登记的子集）
+  //   · loadout 内部的 role/skills/ai/aiId 见 CONFIG_LOADOUT_FIELDS；逐件物品字段复用 ITEM_DETAIL_FIELDS。
+  var CONFIG_SLOT_FIELDS = ['slotId', 'loadout'];
+
+  // 出战配置 **loadout 正文**上读的字段（03 §5.1：`data.slots[].loadout.{role,skills,ai,aiId}`）。
+  //   ⚠️ 审查 F-2：`aiId` 是**库内引用**而不是装饰字段 —— 服务端 `aiRefsOf` 按 `slot.loadout.aiId`
+  //   统计"哪些配置引用了这个 AI"，`DELETE /me/ai/:aiId` 据此拦 409 `ai_in_use`（server/store/adapter-json.js）。
+  //   字段名一旦漂移，"删除出战配置正在引用的 AI"会被静默放行，而机器断言仍会全绿 —— 因为它由
+  //   **直接属性访问**读取（`loadout.aiId`），不进 `pick()` 字面量集合。故 CF-8 增加**源码级**双向断言。
+  var CONFIG_LOADOUT_FIELDS = ['role', 'skills', 'ai', 'aiId'];
+
+  // AI 库条目上读的子对象字段（03 §5.2 的 `me/ai` 行：`data.items[].{aiId,name,program}`；同由 CF-8 核对）
+  var AI_ITEM_FIELDS = ['aiId', 'name', 'program'];
+
   // 分册 §5 登记了、但**本批前端明确不读取**的路径（FC-3 的双向核对靠它闭合：
   //   documented == AUTH_FIELD_CONTRACT ∪ DOC_NOT_READ，且两者无交集）
   var DOC_NOT_READ = [
     { path: 'data.seed', reason: '03 §5.2 me/box：D-162 规定 seed 由服务端生成、不是入参；前端**不传也不显示**（防"找到好 seed 无限复制"）' },
-    { path: 'data.maxSlots', reason: '03 §5.1 me/configs：出战配置编辑器（提交③）才需要；本批只渲染占位弹窗，不请求 /me/configs' },
-    { path: 'data.caps.max', reason: '03 §5.2 me/ai：AI 库上限（F5/提交③ 的 AI 选择弹窗才用）；本批只做只读候选登记' },
-    { path: 'data.warehouse', reason: '03 §5.2 me/warehouse/assemble：装配/拆卸入口在提交③；本批不调用该端点' },
+    { path: 'data.maxSlots', reason: '03 §5.1 me/configs：槽位上限；提交③ 只编辑已有的 3 个槽（新建/删除槽不在本批），前端不需要该字段' },
+    { path: 'data.caps.max', reason: '03 §5.2 me/ai：AI 库上限；ai-pick 只列条目，满库由服务端 409 ai_limit 兜底，前端不做本地上限判定' },
   ];
 
   // 明确「不读取」的字段（防止散文式字段混入）：与上表必须无交集
@@ -148,6 +173,9 @@
     AUTH_FIELD_CONTRACT: AUTH_FIELD_CONTRACT,
     ADMIN_ROW_FIELDS: ADMIN_ROW_FIELDS,
     ITEM_DETAIL_FIELDS: ITEM_DETAIL_FIELDS,
+    CONFIG_SLOT_FIELDS: CONFIG_SLOT_FIELDS,
+    CONFIG_LOADOUT_FIELDS: CONFIG_LOADOUT_FIELDS,
+    AI_ITEM_FIELDS: AI_ITEM_FIELDS,
     DOC_NOT_READ: DOC_NOT_READ,
     UNUSED_FIELDS: UNUSED_FIELDS,
   };

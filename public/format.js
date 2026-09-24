@@ -35,9 +35,7 @@
     leaderboard: { title: '排行榜', batch: 'F7' },
     'ai-editor': { title: 'AI 编辑', batch: 'F5' },
   });
-  // 提交③（出战配置编辑器）未实现 —— 本批只做占位弹窗（03 §3.7；14 §实施计划）
-  var CONFIG_PLACEHOLDER_TEXT = '尚未实现（计划批次 F3-③）';
-  var CONFIG_HINT = '出战配置编辑器属提交③：本批只显示占位（点弹窗外或「关闭」返回）';
+  // 提交③（出战配置编辑器）的文案常量见下方 §3.7 段（CONFIG_ACTIVE_HINT / CONFIG_DRAFT_HINT …）
   var ITEM_GONE_TEXT = '（仓库中已找不到该物品，可能已被清理：点「刷新」重新读取）';
   var NO_DATA_TEXT = '（尚未读取到档案数据）';
   var CLOSE_LABEL = '关闭';
@@ -492,6 +490,522 @@
   var BOX_TIMES_RANGE_TEXT = '开箱次数需为 ' + 1 + '~' + BOX_TIMES_MAX + ' 的整数';
   var BOX_STALE_HINT = '物品已直接入服务端仓库：点「仓库」→「刷新」可看到新物品';
 
+  /* ---------- F3 提交③：出战配置编辑器（03 §3.7/§3.8/§4/§6） ----------
+   *
+   * 两级弹窗：① `config`（逐位置：角色模板 / 角色插槽 / 技能1..3 / 技能插槽 / 战斗AI）
+   *           ② `slot-pick` / `plugin-pick` / `ai-pick`（选择要替换成什么）。
+   * 所有编辑只落在**本地草稿**（state.configs.draft）上；「保存」才 PUT（草稿→服务端）。
+   * 插件装配是**两步**（D-159/§3.7 ⚠️）：先 assemble 改仓库里那件物品，再用服务端回带的
+   *   仓库取回**更新后的那件物品**替换草稿 —— 只做①不做② = 界面看着换了、保存后没换。
+   */
+
+  // 技能位置数（D-160：完整性 = 角色 + **恰 3 技能** + AI；与 store.SKILL_SLOTS 同口径）
+  var SKILL_SLOTS = 3;
+  // 位置键（与 store.CONFIG_POSITIONS 逐条相等；`skillN` = 第 N 个技能，0 起）
+  var POS_ROLE = 'role';
+  var POS_AI = 'ai';
+  var POS_LABELS = Object.freeze({ role: '角色模板', skill0: '技能1', skill1: '技能2', skill2: '技能3', ai: '战斗AI' });
+  var EMPTY_LABEL = '空';
+  // B-5 / §3.7 ③：出战中的配置只能替换，不能拆卸
+  var CONFIG_ACTIVE_HINT = '出战中的配置只能替换，不能拆卸';
+  // §3.7 ③ 明文指定的"保存出战槽失败"可读文案（服务端 message 是「出战配置必须完整（…）」，
+  //   但玩家视角要说明**为什么**只能替换：出战配置不能有空的角色/技能/AI）
+  var CONFIG_INCOMPLETE_SAVE_TEXT = '出战中的配置必须完整，只能替换，不能拆卸';
+  var CONFIG_DRAFT_HINT = '编辑先落在本地草稿：点「保存」才写入服务端';
+  var CONFIG_NO_WAREHOUSE_TEXT = '（尚未读取仓库：点「关闭」后重新打开出战配置）';
+  var CONFIG_NO_AI_TEXT = '（尚未读取 AI 库：点「关闭」后重新打开）';
+  var CONFIG_NO_ITEM_TEXT = '该位置尚未安装物品：先选角色/技能模板，再装插件';
+  // §6：装配/拆卸失败码 → 玩家可读文案（服务端原文附注，便于诊断）
+  var PLUGIN_HINTS = Object.freeze({
+    slot_type_mismatch: '该插件不能装入此槽（类型不符）',
+    slot_occupied: '该插槽已装配插件，请先拆卸',
+    points_exceeded: '插件点数不足',
+    plugin_equipped: '该插件已被装配，请先拆卸',
+    item_missing: '物品不存在（可能已被清除）',
+    slot_empty: '该插槽当前为空',
+    plugin_missing: '该插槽当前为空',
+  });
+
+  function seqOf(pos) {
+    var m = /^skill([0-2])$/.exec(String(pos));
+    return m === null ? null : Number(m[1]);
+  }
+
+  function isConfigPos(pos) {
+    return pos === POS_ROLE || pos === POS_AI || seqOf(pos) !== null;
+  }
+
+  function posLabelOf(pos) {
+    var s = POS_LABELS[pos];
+    if (s !== undefined) return s;
+    var i = seqOf(pos);
+    return i === null ? '未知位置' : '技能' + (i + 1);
+  }
+
+  // 物品标题：`名字（品质）`（03 §3.7「已装：角色名（+ 品质）」）
+  function itemTitle(item) {
+    var name = or(pick(item, 'name'), '（未命名物品）');
+    var quality = str(pick(item, 'quality'));
+    return quality === null ? name : name + '（' + quality + '）';
+  }
+
+  // 三个技能位置（长度恒 3：服务端 `skills[3]`）
+  function skillsOf3(loadout) {
+    var raw = loadout && Array.isArray(loadout.skills) ? loadout.skills : [];
+    var out = [];
+    for (var i = 0; i < SKILL_SLOTS; i += 1) out.push(raw[i] === undefined ? null : raw[i]);
+    return out;
+  }
+
+  function emptyLoadout() {
+    return { role: null, skills: [null, null, null], ai: null };
+  }
+
+  function configSlotOf(env, slotId) {
+    var slots = arrayOf(pick(env, 'data.slots'));
+    for (var i = 0; i < slots.length; i += 1) if (str(pick(slots[i], 'slotId')) === slotId) return slots[i];
+    return null;
+  }
+
+  // GET /me/configs 的槽的 loadout 副本 → 弹窗草稿（槽不存在 → null，调用方须报错而不是开空编辑器）
+  function draftForSlot(env, slotId) {
+    if (env === null) return null;
+    var slot = configSlotOf(env, slotId);
+    if (slot === null) return null;
+    var loadout = pick(slot, 'loadout');
+    return { slotId: slotId, loadout: loadout && typeof loadout === 'object' ? loadout : emptyLoadout() };
+  }
+
+  // 草稿正文（优先草稿；无草稿时回落配置列表里的服务端副本；都没有 → 空配置）
+  function draftLoadoutOf(state, slotId) {
+    var cfg = state && state.configs ? state.configs : null;
+    var draft = cfg === null ? null : cfg.draft;
+    if (draft && typeof draft === 'object' && draft.loadout && typeof draft.loadout === 'object') {
+      if (draft.slotId === undefined || draft.slotId === slotId) return draft.loadout;
+    }
+    var env = cfg === null ? null : cfg.data;
+    var slot = env === null ? null : configSlotOf(env, slotId);
+    var loadout = slot === null ? null : pick(slot, 'loadout');
+    return loadout && typeof loadout === 'object' ? loadout : emptyLoadout();
+  }
+
+  function isActiveSlot(state, slotId) {
+    var env = state && state.configs ? state.configs.data : null;
+    return env !== null && str(pick(env, 'data.activeSlotId')) === slotId;
+  }
+
+  // D-160 完整性判据的**前端本地镜像**（服务端权威仍是 store/archive.loadoutMissingOf；
+  //   这里只为"状态行 + 保存/出战前置提示"服务，**不作为是否发请求的依据**）
+  function missingOf(loadout) {
+    var missing = [];
+    if (!loadout || typeof loadout !== 'object' || Array.isArray(loadout)) return ['loadout'];
+    if (!loadout.role || typeof loadout.role !== 'object') missing.push('role');
+    var skills = Array.isArray(loadout.skills) ? loadout.skills : [];
+    for (var i = 0; i < SKILL_SLOTS; i += 1) if (!skills[i] || typeof skills[i] !== 'object') missing.push('skills[' + i + ']');
+    if (skills.length > SKILL_SLOTS) missing.push('skills.length');
+    if (!loadout.ai || typeof loadout.ai !== 'object') missing.push('ai');
+    return missing;
+  }
+
+  // 缺项 → 玩家可读消息（**与服务端 store/archive.loadoutMissingDetails 同措辞**：
+  //   §6 表格要求 `缺少角色物品` / `技能位置缺失: N` / `缺少 AI 程序` 逐条渲染）
+  function missingMessageOf(p) {
+    if (p === 'loadout') return '缺少出战配置';
+    if (p === 'role') return '缺少角色物品';
+    if (p === 'ai') return '缺少 AI 程序';
+    if (p === 'skills.length') return '技能必须恰 3 个';
+    var m = /^skills\[(\d+)\]$/.exec(String(p));
+    return m === null ? String(p) : '技能位置缺失: ' + m[1];
+  }
+
+  // 缺项路径 → 消息列表（审查 F-5：`p` 为 null 时 `p.path` 会抛 —— 服务端恒给字符串，此处按防御写法）
+  function missingSummaryText(missing) {
+    var list = missing === undefined || missing === null ? [] : missing;
+    return list.map(function (p) {
+      return missingMessageOf(typeof p === 'string' ? p : (p && typeof p === 'object' ? p.path : ''));
+    }).join('、');
+  }
+
+  // 错误信封 details（00-rules §4.2：逐位置 path/message 都来自真实响应）
+  function detailListOf(env) {
+    var details = arrayOf(pick(env, 'error.details'));
+    var out = [];
+    for (var i = 0; i < details.length; i += 1) {
+      out.push({ path: str(pick(details[i], 'path')), message: str(pick(details[i], 'message')) });
+    }
+    return out;
+  }
+
+  function isPositionDetailPath(p) {
+    return p === 'role' || p === 'ai' || p === 'loadout' || p === 'skills.length' || /^skills\[\d+\]$/.test(String(p));
+  }
+
+  // §6 表格：details[] 逐条渲染（path → 可读消息；服务端给了 message 就用它）
+  function detailSummaryText(details) {
+    return (details || []).map(function (d) {
+      if (d.message !== null && d.message !== undefined && d.message !== '') return d.message;
+      return missingMessageOf(d.path === null ? '' : d.path);
+    }).join('、');
+  }
+
+  // 保存失败（§6 loadout_invalid）：出战槽不完整 → 翻成玩家可读文案（不原样抛服务端 message）
+  function configSaveFailText(env) {
+    var code = errorCodeOf(env);
+    if (code !== 'loadout_invalid') return noticeText(env);
+    var details = detailListOf(env);
+    var missing = details.filter(function (d) { return isPositionDetailPath(d.path); });
+    if (details.length === 0 || missing.length !== details.length) return noticeText(env);
+    return CONFIG_INCOMPLETE_SAVE_TEXT + '（' + detailSummaryText(missing) + '）';
+  }
+
+  // 设为出战失败（§6 cannot_activate_incomplete）：逐条显示缺什么
+  function configActivateFailText(env) {
+    var code = errorCodeOf(env);
+    if (code !== 'cannot_activate_incomplete') return noticeText(env);
+    var details = detailListOf(env);
+    var missing = details.filter(function (d) { return isPositionDetailPath(d.path); });
+    var text = missing.length === 0 ? missingSummaryText(details.map(function (d) { return d.path; })) : detailSummaryText(missing);
+    return '该配置不完整，无法设为出战（' + text + '）';
+  }
+
+  // 装配/拆卸失败（§6 slot_type_mismatch / slot_occupied / points_exceeded / plugin_equipped /
+  //   item_missing / slot_empty）：可读改写 + 服务端原文附注
+  function pluginFailText(env) {
+    var hint = PLUGIN_HINTS[errorCodeOf(env)];
+    if (hint === undefined) return noticeText(env);
+    var message = or(pick(env, 'error.message'), '');
+    return message === '' ? hint : hint + '（服务端原文：' + message + '）';
+  }
+
+  // 装配/拆卸响应 = `{warehouse, usage, counts, caps}`（**不是** GET /me/warehouse 的信封形状）
+  //   → 归一成仓库信封，使 `state.warehouse` 与仓库屏共用同一份数据（无需再拉一次）
+  function warehouseChangeEnvelope(env) {
+    var warehouse = pick(env, 'data.warehouse');
+    var usage = pick(env, 'data.usage');
+    var caps = pick(env, 'data.caps');
+    var buckets = warehouse && typeof warehouse === 'object' && warehouse.buckets && typeof warehouse.buckets === 'object'
+      ? warehouse.buckets
+      : { role: [], skill: [], rolePlugin: [], skillPlugin: [] };
+    return {
+      ok: pick(env, 'ok') === true,
+      data: {
+        buckets: buckets,
+        usage: usage && typeof usage === 'object' ? usage : {},
+        caps: caps && typeof caps === 'object' ? caps : {},
+        counts: {},
+      },
+    };
+  }
+
+  // **两步顺序的第②步**：从装配/拆卸响应回带的仓库里取回**更新后的那件物品**
+  function updatedItemOf(env, uid) {
+    if (uid === null) return null;
+    return findItem(warehouseChangeEnvelope(env), uid);
+  }
+
+  // 某位置上已装的物品（角色 / 技能N；AI 位置不是物品）
+  function itemAt(loadout, pos) {
+    if (loadout === null || typeof loadout !== 'object') return null;
+    if (pos === POS_ROLE) return loadout.role && typeof loadout.role === 'object' ? loadout.role : null;
+    var i = seqOf(pos);
+    if (i === null) return null;
+    var item = skillsOf3(loadout)[i];
+    return item && typeof item === 'object' ? item : null;
+  }
+
+  // 替换草稿某位置上的物品（**就地换整件物品**：新物品的插槽状态天然是它自己的 —— §3.7 B-7）
+  function setItemAt(loadout, pos, item) {
+    if (!isConfigPos(pos) || pos === POS_AI) return null;
+    var next = Object.assign({}, loadout);
+    next.skills = skillsOf3(loadout);
+    if (pos === POS_ROLE) next.role = item;
+    else next.skills[seqOf(pos)] = item;
+    return next;
+  }
+
+  // `slot-pick` 选中（本地；候选来自仓库同分类物品）：choice = {pos, uid} 或 {pos, empty:true}
+  function applySlotChoice(state, loadout, choice) {
+    var pos = choice && choice.pos;
+    if (!isConfigPos(pos) || pos === POS_AI) return null;
+    if (choice.empty === true) return setItemAt(loadout, pos, null);
+    var env = state && state.warehouse ? state.warehouse.envelope : null;
+    if (env === null) return null;
+    var bucket = pos === POS_ROLE ? 'role' : 'skill';
+    var items = bucketItems(env, bucket);
+    for (var i = 0; i < items.length; i += 1) {
+      if (str(pick(items[i], 'uid')) === str(choice.uid)) return setItemAt(loadout, pos, items[i]);
+    }
+    return null;
+  }
+
+  // `plugin-pick` 的装配目标：该位置物品的 uid + 插槽序号（装配端点的 body 就是这两个值）
+  function assemblyTargetOf(loadout, pos, idx) {
+    var item = itemAt(loadout, pos);
+    if (item === null) return null;
+    var slots = arrayOf(pick(item, 'slots'));
+    if (!Number.isInteger(idx) || idx < 0 || idx >= slots.length) return null;
+    var uid = str(pick(item, 'uid'));
+    return uid === null ? null : { targetUid: uid, slotIndex: idx };
+  }
+
+  // 插槽类型（用于候选预过滤与"不匹配 → 标灰 + 原因"，B-8）
+  function slotTypeAt(loadout, pos, idx) {
+    var item = itemAt(loadout, pos);
+    if (item === null) return null;
+    var slots = arrayOf(pick(item, 'slots'));
+    if (!Number.isInteger(idx) || idx < 0 || idx >= slots.length) return null;
+    return str(pick(slots[idx], 'type'));
+  }
+
+  // 插件候选（**全部列出**；不匹配的由调用方标灰 + 写原因 —— 用户口径）
+  function pluginCandidatesOf(state, pos) {
+    var env = state && state.warehouse ? state.warehouse.envelope : null;
+    if (env === null) return [];
+    var bucket = pos === POS_ROLE ? 'rolePlugin' : 'skillPlugin';
+    return bucketItems(env, bucket).map(function (plugin) {
+      return { uid: str(pick(plugin, 'uid')), label: itemTitle(plugin), slot: str(pick(plugin, 'slot')) };
+    });
+  }
+
+  // 已装配插件的显示名（仓库里查名字；查不到回落 uid）
+  function pluginLabelOf(state, pluginUid) {
+    if (pluginUid === null) return EMPTY_LABEL;
+    var env = state && state.warehouse ? state.warehouse.envelope : null;
+    var item = env === null ? null : findItem(env, pluginUid);
+    var name = item === null ? null : str(pick(item, 'name'));
+    return name === null ? '已装配 ' + pluginUid : name;
+  }
+
+  // `ai-pick` 候选（GET /me/ai 的 data.items）
+  function aiCandidatesOf(env) {
+    return arrayOf(pick(env, 'data.items')).map(function (ai) {
+      return { aiId: str(pick(ai, 'aiId')), name: str(pick(ai, 'name')), program: pick(ai, 'program') };
+    });
+  }
+
+  function aiOptionOf(env, aiId) {
+    if (aiId === null) return null;
+    var list = aiCandidatesOf(env);
+    for (var i = 0; i < list.length; i += 1) if (list[i].aiId === aiId) return list[i];
+    return null;
+  }
+
+  // `ai-set`：替换草稿的 AI 位置（`ai` = 程序正文、`aiId` = 库内引用；服务端按 aiId 校验）
+  function applyAiChoice(loadout, option) {
+    var next = Object.assign({}, loadout);
+    if (option === null) {
+      next.ai = null;
+      next.aiId = null;
+      return next;
+    }
+    next.ai = option.program;
+    next.aiId = option.aiId;
+    return next;
+  }
+
+  function aiLabelOf(state, loadout) {
+    if (!loadout || !loadout.ai || typeof loadout.ai !== 'object') return EMPTY_LABEL;
+    var aiId = typeof loadout.aiId === 'string' && loadout.aiId !== '' ? loadout.aiId : null;
+    var option = aiOptionOf(state && state.configs ? state.configs.ai : null, aiId);
+    if (option !== null && option.name !== null) return option.name;
+    return aiId === null ? '（已装 AI）' : aiId;
+  }
+
+  // 状态行（03 §3.7）：`出战配置N：未保存/已保存 · 非出战/出战中` + 草稿完整性
+  function configStatusText(state, slotId) {
+    var draftIsDirty = state && state.configs && state.configs.dirty === true;
+    var missing = missingOf(draftLoadoutOf(state, slotId));
+    return '出战配置' + String(slotId).replace(/^slot/, '')
+      + '：' + (draftIsDirty ? '未保存' : '已保存')
+      + ' · ' + (isActiveSlot(state, slotId) ? '出战中' : '非出战')
+      + ' · 草稿' + (missing.length === 0 ? '完整' : '不完整（' + missingSummaryText(missing) + '）');
+  }
+
+  // 编辑器逐位置行：每个位置 = 一个**可点按钮**（`空` 同样是可点按钮）
+  function configEditorRows(state, slotId, busy) {
+    var loadout = draftLoadoutOf(state, slotId);
+    var rows = [];
+    var role = itemAt(loadout, POS_ROLE);
+    rows.push({
+      text: posLabelOf(POS_ROLE),
+      buttons: [{
+        action: 'slot-pick', label: role === null ? EMPTY_LABEL : itemTitle(role), kind: 'button',
+        disabled: busy, slot: slotId, pos: POS_ROLE,
+      }],
+    });
+    if (role !== null) {
+      var roleSlots = arrayOf(pick(role, 'slots'));
+      for (var i = 0; i < roleSlots.length; i += 1) {
+        rows.push({
+          text: '插槽' + (i + 1) + '（' + or(pick(roleSlots[i], 'type'), '未知类型') + '）',
+          buttons: [{
+            action: 'plugin-pick', label: pluginLabelOf(state, str(pick(roleSlots[i], 'pluginUid'))), kind: 'button',
+            disabled: busy, slot: slotId, pos: POS_ROLE, idx: String(i),
+          }],
+        });
+      }
+    }
+    var skills = skillsOf3(loadout);
+    for (var k = 0; k < SKILL_SLOTS; k += 1) {
+      var pos = 'skill' + k;
+      var skill = skills[k] && typeof skills[k] === 'object' ? skills[k] : null;
+      rows.push({
+        text: posLabelOf(pos),
+        buttons: [{
+          action: 'slot-pick', label: skill === null ? EMPTY_LABEL : itemTitle(skill), kind: 'button',
+          disabled: busy, slot: slotId, pos: pos,
+        }],
+      });
+      if (skill === null) continue;
+      var skillSlots = arrayOf(pick(skill, 'slots'));
+      for (var j = 0; j < skillSlots.length; j += 1) {
+        rows.push({
+          text: '技能' + (k + 1) + '·插槽' + (j + 1) + '（' + or(pick(skillSlots[j], 'type'), '未知类型') + '）',
+          buttons: [{
+            action: 'plugin-pick', label: pluginLabelOf(state, str(pick(skillSlots[j], 'pluginUid'))), kind: 'button',
+            disabled: busy, slot: slotId, pos: pos, idx: String(j),
+          }],
+        });
+      }
+    }
+    rows.push({
+      text: posLabelOf(POS_AI),
+      buttons: [{
+        action: 'ai-pick', label: aiLabelOf(state, loadout), kind: 'button', disabled: busy, slot: slotId, pos: POS_AI,
+      }],
+    });
+    return rows;
+  }
+
+  // 弹窗 A：出战配置编辑器
+  function configModal(state, modal, busy) {
+    var slotId = str(modal.slotId) === null ? 'slot1' : str(modal.slotId);
+    var active = isActiveSlot(state, slotId);
+    return {
+      title: '出战配置' + slotId.replace(/^slot/, ''),
+      hint: active ? CONFIG_ACTIVE_HINT + '：' + CONFIG_DRAFT_HINT : CONFIG_DRAFT_HINT,
+      lines: [configStatusText(state, slotId)],
+      rows: configEditorRows(state, slotId, busy),
+      buttons: [
+        { action: 'config-save', label: '保存', kind: 'button', disabled: busy },
+        { action: 'config-activate', label: '设为出战', kind: 'button', disabled: busy },
+        closeButton(busy),
+      ],
+    };
+  }
+
+  // 弹窗 B-1：选择角色/技能模板（仓库同分类物品 + `空`；**出战中的配置不提供 `空`** —— B-5）
+  function slotPickModal(state, modal, busy) {
+    var slotId = str(modal.slotId) === null ? 'slot1' : str(modal.slotId);
+    var pos = str(modal.pos);
+    var bucket = pos === POS_ROLE ? 'role' : 'skill';
+    var active = isActiveSlot(state, slotId);
+    var env = state && state.warehouse ? state.warehouse.envelope : null;
+    var rows = [];
+    var lines = [];
+    if (env === null) lines.push(CONFIG_NO_WAREHOUSE_TEXT);
+    else {
+      var items = bucketItems(env, bucket);
+      for (var i = 0; i < items.length; i += 1) {
+        rows.push({
+          text: '',
+          buttons: [{
+            action: 'slot-set', label: itemTitle(items[i]), kind: 'button', disabled: busy,
+            slot: slotId, pos: pos, uid: str(pick(items[i], 'uid')),
+          }],
+        });
+      }
+    }
+    if (active) lines.push(CONFIG_ACTIVE_HINT + '：候选里没有「' + EMPTY_LABEL + '」');
+    else {
+      rows.push({
+        text: '',
+        buttons: [{ action: 'slot-set', label: EMPTY_LABEL, kind: 'button', disabled: busy, slot: slotId, pos: pos, empty: true }],
+      });
+    }
+    return {
+      title: '选择' + posLabelOf(pos),
+      hint: '候选来自服务端仓库的' + (pos === POS_ROLE ? '角色' : '技能') + '分类；选中即替换草稿',
+      lines: lines,
+      rows: rows,
+      buttons: [closeButton(busy)],
+    };
+  }
+
+  // 弹窗 B-2：某插槽的插件候选（**全部列出**；类型不匹配 → 标灰 + 写原因，B-8）
+  function pluginPickModal(state, modal, busy) {
+    var slotId = str(modal.slotId) === null ? 'slot1' : str(modal.slotId);
+    var pos = str(modal.pos);
+    var idx = Number(modal.idx);
+    var loadout = draftLoadoutOf(state, slotId);
+    var type = slotTypeAt(loadout, pos, idx);
+    if (type === null) {
+      return {
+        title: '选择插件',
+        lines: [CONFIG_NO_ITEM_TEXT],
+        rows: [],
+        buttons: [closeButton(busy)],
+      };
+    }
+    var reason = '此槽只能装 ' + type;
+    var rows = pluginCandidatesOf(state, pos).map(function (candidate) {
+      var match = candidate.slot === type;
+      return {
+        text: match ? '' : reason,
+        buttons: [{
+          action: 'plugin-set', label: candidate.label, kind: 'button',
+          disabled: busy || !match, slot: slotId, pos: pos, idx: String(idx), uid: candidate.uid,
+        }],
+      };
+    });
+    return {
+      title: '选择插件（' + posLabelOf(pos) + ' 插槽' + (idx + 1) + '：' + type + '）',
+      hint: '类型不匹配的候选已标灰并写明原因（' + reason + '）',
+      lines: ['目标槽类型：' + type],
+      rows: rows,
+      buttons: [
+        { action: 'plugin-clear', label: '清空此槽', kind: 'button', disabled: busy, slot: slotId, pos: pos, idx: String(idx) },
+        closeButton(busy),
+      ],
+    };
+  }
+
+  // 弹窗 B-3：AI 库候选（GET /me/ai 的条目；出战中的配置不提供 `空`）
+  function aiPickModal(state, modal, busy) {
+    var slotId = str(modal.slotId) === null ? 'slot1' : str(modal.slotId);
+    var env = state && state.configs ? state.configs.ai : null;
+    var active = isActiveSlot(state, slotId);
+    var lines = [];
+    var rows = [];
+    if (env === null) lines.push(CONFIG_NO_AI_TEXT);
+    else {
+      var items = aiCandidatesOf(env);
+      for (var i = 0; i < items.length; i += 1) {
+        rows.push({
+          text: '',
+          buttons: [{
+            action: 'ai-set', label: items[i].name === null ? '（未命名 AI）' : items[i].name, kind: 'button',
+            disabled: busy, slot: slotId, aiId: items[i].aiId,
+          }],
+        });
+      }
+    }
+    if (active) lines.push(CONFIG_ACTIVE_HINT + '：候选里没有「' + EMPTY_LABEL + '」');
+    else {
+      rows.push({
+        text: '',
+        buttons: [{ action: 'ai-set', label: EMPTY_LABEL, kind: 'button', disabled: busy, slot: slotId, empty: true }],
+      });
+    }
+    return {
+      title: '选择战斗AI',
+      hint: '候选来自 GET /me/ai；选中即替换草稿里的 AI 位置',
+      lines: lines,
+      rows: rows,
+      buttons: [closeButton(busy)],
+    };
+  }
+
   /* ---------- F3 §3.6：四个空页 ---------- */
 
   function emptyPageText(view) {
@@ -547,15 +1061,11 @@
         buttons: [closeButton(busy)],
       };
     }
-    // kind === 'config'：提交③ 的编辑器未实现 → 只显示占位（03 §3.7）
-    var slotId = str(modal.slotId);
-    var slotNo = slotId === null ? '？' : slotId.replace(/^slot/, '');
-    return {
-      title: '出战配置' + slotNo,
-      hint: CONFIG_HINT,
-      lines: ['出战配置' + slotNo + '：' + CONFIG_PLACEHOLDER_TEXT],
-      buttons: [closeButton(busy)],
-    };
+    // 提交③：出战配置编辑器（弹窗 A）与它的两级选择弹窗（弹窗 B）
+    if (modal.kind === 'slot-pick') return slotPickModal(state, modal, busy);
+    if (modal.kind === 'plugin-pick') return pluginPickModal(state, modal, busy);
+    if (modal.kind === 'ai-pick') return aiPickModal(state, modal, busy);
+    return configModal(state, modal, busy);
   }
 
   /* ---------- 各屏视图模型 ---------- */
@@ -825,7 +1335,11 @@
     BUCKET_LABELS: BUCKET_LABELS,
     BUCKET_ORDER: BUCKET_ORDER,
     EMPTY_PAGES: EMPTY_PAGES,
-    CONFIG_PLACEHOLDER_TEXT: CONFIG_PLACEHOLDER_TEXT,
+    SKILL_SLOTS: SKILL_SLOTS,
+    CONFIG_ACTIVE_HINT: CONFIG_ACTIVE_HINT,
+    CONFIG_INCOMPLETE_SAVE_TEXT: CONFIG_INCOMPLETE_SAVE_TEXT,
+    CONFIG_DRAFT_HINT: CONFIG_DRAFT_HINT,
+    PLUGIN_HINTS: PLUGIN_HINTS,
     NICKNAME_MAX_TEXT: NICKNAME_MAX_TEXT,
     BOX_TIMES_RANGE_TEXT: BOX_TIMES_RANGE_TEXT,
     EMPTY_WAREHOUSE_TEXT: EMPTY_WAREHOUSE_TEXT,
@@ -874,6 +1388,37 @@
     boxResultLines: boxResultLines,
     fullBucket: fullBucket,
     boxFullNotice: boxFullNotice,
+    // 提交③：出战配置编辑器（03 §3.7/§3.8）
+    itemTitle: itemTitle,
+    posLabelOf: posLabelOf,
+    isConfigPos: isConfigPos,
+    skillsOf3: skillsOf3,
+    draftForSlot: draftForSlot,
+    draftLoadoutOf: draftLoadoutOf,
+    isActiveSlot: isActiveSlot,
+    missingOf: missingOf,
+    missingMessageOf: missingMessageOf,
+    missingSummaryText: missingSummaryText,
+    detailSummaryText: detailSummaryText,
+    detailListOf: detailListOf,
+    configSaveFailText: configSaveFailText,
+    configActivateFailText: configActivateFailText,
+    pluginFailText: pluginFailText,
+    warehouseChangeEnvelope: warehouseChangeEnvelope,
+    updatedItemOf: updatedItemOf,
+    itemAt: itemAt,
+    setItemAt: setItemAt,
+    applySlotChoice: applySlotChoice,
+    assemblyTargetOf: assemblyTargetOf,
+    slotTypeAt: slotTypeAt,
+    pluginCandidatesOf: pluginCandidatesOf,
+    pluginLabelOf: pluginLabelOf,
+    aiCandidatesOf: aiCandidatesOf,
+    aiOptionOf: aiOptionOf,
+    applyAiChoice: applyAiChoice,
+    aiLabelOf: aiLabelOf,
+    configStatusText: configStatusText,
+    configEditorRows: configEditorRows,
     emptyPageText: emptyPageText,
     emptyPageTitle: emptyPageTitle,
     modalViewModel: modalViewModel,

@@ -153,6 +153,7 @@
 
 - 配置 2/3 初始为 **3 个空槽**（见 §9.1 的注册口径），5 个位置全部显示 `空`，且 `空` 是可点元素。
 - **出战中的配置不可拆卸模板**：出战中时，`slot-pick` 里**不提供"空"选项**（只能替换），且不渲染"拆空"按钮；非出战配置可选中 `空`。
+  - ⚠️ **口径澄清（审查 F-6）**：这里（以及 D-160 的"只能替换、不能拆卸"）说的是**模板位置** —— 角色与 3 个技能**不允许置空**（服务端 409 `loadout_invalid`，逐位置可读文案）。**插槽里的插件不在其内**：出战中的配置同样可以「清空此槽」（服务端 200，`CF-4②` 真实 HTTP 实测）。两者不矛盾：完整性判据（D-160）只看 角色 + 恰 3 技能 + AI，**允许插槽为空**。
 - **拆掉模板后**：该模板及其插件回到"未出战"状态（`usage` 不再标记该配置）。
 - **替换模板不写"拆插件"代码**：插件装在**仓库物品**上（`slots[].pluginUid` 存在服务端仓库里），替换 = 换用仓库里的另一件物品，新物品的插槽状态天然是它自己的（通常全空）。这是服务端权威仓库带来的**简化**，不需要前端清理逻辑。
 
@@ -219,8 +220,9 @@
 | `me/configs` | `data.slots[]`（`slotId`/`name`/`isDefault`/`createdAt`/`updatedAt`） | 配置弹窗 |
 | `me/configs` | `data.slots[].loadout.role`（`uid`/`templateId`/`name`/`quality`/`slotCount`/`slots[].type`/`slots[].pluginUid`/`stats`/`regen`/`pluginPoints`） | 角色位置与插槽 |
 | `me/configs` | `data.slots[].loadout.skills[]`（`uid`/`templateId`/`name`/`quality`/`slotCount`/`slots[]`/`params`） | 技能 1/2/3 |
-| `me/configs` | `data.slots[].loadout.ai` | 战斗 AI 位置 |
-| `me/configs` | `data.slots[].snapshot.hash` | 保存状态行 |
+| `me/configs` | `data.slots[].loadout.ai`（`program` 正文） | 战斗 AI 位置 |
+| `me/configs` | `data.slots[].loadout.aiId`（**库内引用**） | AI 位置的**显示名**来源（`aiId` → `GET /me/ai` 的条目名；取不到时回落裸 `aiId`）。服务端 `aiRefsOf` 也按此字段统计引用 → `DELETE /me/ai/:aiId` 的 409 `ai_in_use` 判据（审查 F-2 登记） |
+| `me/configs` | ~~`data.slots[].snapshot.hash`~~（**前端不读**） | 状态行的「已保存/未保存」由本地 `dirty` 标记决定，不读服务端快照；写出该行属设计稿笔误，实现不依赖它 |
 | `me/configs` | `data.activeSlotId` / `data.maxSlots` | 出战标记 / 槽位上限 |
 | `box`（遗留） | `data.items[]`（`uid`/`kind`/`name`/`quality`/`templateId`/`slotCount`/`slots`/`stats`/`params`/`affixes`/`pointCost`/`costDeltaByTier`） | 物品详情字段来源（与新增 `me/box` 同形） |
 
@@ -273,18 +275,19 @@
 ## 7. 状态与持久化
 
 ```js
-// public/store.js（initialState 增量）
+// public/store.js（initialState 增量；**以下为提交③ 收口后的实际形状**，§15.7 已对账）
 view: 'hub',                                    // hub|profile|warehouse|box|settings|quick|tournament|leaderboard|ai-editor|login|register|password|admin|accounts
-modal: null,                                    // {kind:'item-detail'|'config'|'slot-pick'|'plugin-pick'|'ai-pick'|'confirm', ...}
-warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, usage: {}, caps: {}, loading: false },
+modal: null,                                    // {kind:'item-detail'|'config'|'slot-pick'|'plugin-pick'|'ai-pick', ...}
+warehouse: { envelope: null, loading: false },  // **只存最近一次响应信封**（buckets/usage/caps 都在里面；真源永远重取）
 warehouseBucket: 'role',
 box: { times: 1, result: null },
-configs: { list: null, activeSlotId: null, maxSlots: 3, draft: null, dirty: false },  // draft = 弹窗内未保存的副本
+configs: { data: null, ai: null, draft: null, dirty: false },  // data = GET /me/configs 信封；ai = GET /me/ai 信封；draft = 弹窗内未保存的副本
 settings: { nickname: '', result: null },
 ```
 
 - **持久化只剩会话**：`dl.token` / `dl.session`（F1 已冻结）。**不再有 `dl.warehouse`**（仓库改为服务端权威，用户裁定）。
-- reducer 动作增量：`warehouse.set` / `warehouse.bucket.set` / `box.result.set` / `configs.set` / `configs.draft.set` / `configs.draft.patch` / `modal.set` / `settings.set`。
+- reducer 动作增量：`warehouse.set` / `warehouse.bucket.set` / `box.result.set` / `configs.set` / `configs.ai.set` / `configs.draft.set` / `configs.draft.patch` / `modal.set` / `modal.setIfOpen` / `modal.close` / `settings.set`。
+- **`modal.setIfOpen`（提交③ 收口期新增，审查 F-1）**：**"当前还有弹窗才替换"** 的条件 reducer。用于弹窗内异步动作（装配/拆卸、取 AI 库）在 `await` 回来后"回弹编辑器"——用户若在等待响应期间点了背景关闭（`modal-close` 丢弃草稿），就**不得**把弹窗复活（否则编辑器按服务端副本渲染"未改动"，与"已装配"提示、仓库实际状态三方矛盾）。条件必须放在 reducer：动作拿到的 `ctx.state` 是**动作开始时**的快照（`public/app.js` 的 `buildCtx`），`await` 之后读它判不出用户是否已取消。
 - 配置弹窗采用**本地草稿**（`configs.draft`）：所有替换/装配先在草稿上生效，点「保存」才 `PUT`；点背景关闭即丢弃（§3.8）。
 
 ---
@@ -379,8 +382,8 @@ settings: { nickname: '', result: null },
 | 11 | 点「角色模板」 | 候选弹窗 | 列出仓库里的角色 + `空` |
 | 12 | 选另一件角色 | 配置弹窗 | 角色已替换；插槽随新角色变化（通常全空） |
 | 13 | 点某插槽 | 插件候选 | 类型匹配的可选；**不匹配的标灰并写明原因** |
-| 14 | 选一个插件 | 配置弹窗 | 显示已装配；仓库里该插件行出现 `[装配于配置1]` |
-| 15 | 点「保存」 | 结果区 | `已保存` |
+| 14 | 选一个插件 | 配置弹窗 | 显示已装配（提示写明"已写入仓库那件物品；点「保存」后才进这份配置"）；**仓库里该插件行此时还没有 `[装配于配置1]`** —— 见下方 ⚠️ |
+| 15 | 点「保存」 | 结果区 | `已保存`；**此时**仓库里该插件行才出现 `[装配于配置1]` |
 | 16 | 点「出战配置2」 | 配置弹窗 | 5 个位置**全为空**且可点 |
 | 17 | 点「设为出战」 | 结果区 | `该配置不完整，无法设为出战（缺少 角色）` |
 | 18 | 补上角色但技能只填 2 个 → 保存 → 设为出战 | 结果区 | 保存成功（非出战槽不校验）；设为出战 → `缺少 技能3` |
@@ -393,6 +396,8 @@ settings: { nickname: '', result: null },
 | 25 | **F2 既有 17 步**（`02-accounts.md` §11） | — | 一并走完 |
 
 **未走查前 `F3` 不得判定"能玩"**；结论写入 `docs/reviews/F3.md`。
+
+⚠️ **步 14/15 的口径修正（独立审查 F-7，走查前必读）**：本表原先把"装配后立刻看到 `[装配于配置1]`"写在步 14，但那做不到，也不该做 —— **`usage` 只统计"被某份配置引用"，而引用要等 `PUT /me/configs/:slotId` 落库**（§15.2 行 3）。装配（两步顺序第①步）改的是**仓库里那件物品**的 `slots[].pluginUid`，此时服务端返回的 `usage` 里**还没有**这个插件；点「保存」之后才有。所以：步 14 看"编辑器显示已装配 + 提示写明改的是仓库物品"，步 15 看"仓库里出现 `[装配于配置1]`（需先点「仓库」→「刷新」或重进仓库屏）"。
 
 ---
 
@@ -517,6 +522,77 @@ settings: { nickname: '', result: null },
 
 **提交② 的机器证据**：`tests/frontend/*` **73/73**（原 60 + `hub-warehouse-flow` 13）；`npm test` **1042/0**；`gate` **9 PASS**；`check-docs`/`check-arch` PASS。
 **去 flaky（提交② 期间发现）**：① `tests/api/api-ranked.test.js` P2-5「5 场全平局」→ 固定 `publicId`+`playerId`（starter 种子含两者）后确定；② 本分册新增的 `api-me-warehouse.test.js` UWH-3/4/7 原从**随机开箱**结果里挑"类型匹配组合"→ 改为**注入确定性夹具**（`injectAssemblable`），UWH-4 另补"同槽匹配插件必须成功"的归因对照。详见 `docs/reviews/F3.md` §6.4 R-6。
+
+### 15.7 提交③（出战配置编辑器）实现对账 —— ✅ 已落地（2026-09-25）
+
+**交付物**（改动仅 `public/**` 与 `tests/frontend/**`；`docs/**` 由本次收口补写；`server/**` **未改**）
+
+| 文件 | 内容 |
+|---|---|
+| `public/store.js` | `MODAL_KINDS` +3（`slot-pick`/`plugin-pick`/`ai-pick`）、`CONFIG_POSITIONS`、`SKILL_SLOTS`；`configs = {data, ai, draft, dirty}`；新 reducer `configs.ai.set` / `configs.draft.set` / `configs.draft.patch`（局部替换 = `dirty:true`；无草稿时幂等返回原状态） |
+| `public/format.js` | `modalViewModel` 分派 5 种弹窗；编辑器投影 `configEditorRows`（角色模板 / 角色插槽**按实际数量与类型** / 技能1–3 及其插槽 / 战斗AI；**每个位置都是可点按钮，`空` 也可点**）+ `configStatusText` + 三个候选弹窗（`slot-pick` 同分类 + `空`；`plugin-pick` **全部列出**、类型不符 → 置灰 + 行内写明原因；`ai-pick` 取 AI 库条目）；草稿工具 `draftForSlot`/`draftLoadoutOf`/`applySlotChoice`/`setItemAt`/`assemblyTargetOf`/`pluginCandidatesOf`/`aiOptionOf`/`applyAiChoice`/`missingOf`；两步顺序第②步投影 `warehouseChangeEnvelope`/`updatedItemOf` |
+| `public/render.js` | `modalHtml` 支持 `modal.rows`（候选行，复用 `rowListHtml`）；`targetAttrs` +`data-pos`/`data-idx`/`data-empty`/`data-ai-id`（全部经 `esc()`） |
+| `public/app.js` | `payloadOf` 解析上述 4 个属性 |
+| `public/actions.js` | 9 个新动作 + `config-open` 换成真编辑器 + `modal-close` 一并丢弃草稿；公共工具 `loadConfigs`/`loadAiList`/`warehouseChange`/`applyPluginChange` |
+| `public/api.js` | +`assemble`/`disassemble`/`saveConfig`/`activateConfig`（仍**唯一** `fetch` 出口） |
+| `tests/frontend/config-editor-flow.test.js` | **CF-1…CF-10**（真实 HTTP + 真实前端模块 + 手写假 DOM） |
+| `tests/frontend/render-escaping.test.js` | **ESC-1…ESC-5**（转义不变量，见下 P-2） |
+
+**状态机（一句话）**：`config-open`（`GET /me/configs` + 静默 `GET /me/warehouse` + `GET /me/ai`）→ 灌草稿（`dirty=false`）→ `slot-set`/`ai-set` 只改草稿 → `plugin-set`/`plugin-clear` 走**两步**（① 装配端点改仓库那件物品 → ② 用响应回带的 `warehouse` 取回**更新后的那件物品**替换草稿）→「保存」`PUT /me/configs/:slotId`（成功 `dirty=false` + 静默刷新仓库）→「设为出战」`POST …/activate`（成功刷新配置列表 + 仓库 + `/me`）→「关闭 / 点背景」一律关弹窗 + 丢弃草稿。
+
+| # | 设计稿 | 实现 | 理由 |
+|---|---|---|---|
+| 1 | §4 白名单（提交③ 部分） | 注册表 **51** = F1 9 + F2 16 + 提交② 17 + 提交③ 9；非管理员态 **35** = 51 − 16 管理动作 | UI-2/AU-1 按**实际注册表**双向核对（父代理用独立探针复算：注册表 51、非管理 35、渲染集合与注册表**双向相等**、管理动作零泄漏） |
+| 2 | §3.7 状态行「未保存/已保存 · 非出战/出战中」 | 追加「· 草稿完整/不完整（缺少角色物品、技能位置缺失: N…）」 | 玩家在点「保存」前就需要看到缺什么；完整性用**本地镜像** `format.missingOf`（与服务端 `archive.loadoutMissingOf` 逐规则同判、文案与 `loadoutMissingDetails` 逐字一致），**只用于状态行与前置提示，不用于决定是否发请求**（是否 409 一律由服务端判定） |
+| 3 | §4 `config-activate` 直接发 `POST …/activate` | 追加客户端前置：草稿 `dirty` 时提示「有未保存的修改：请先点「保存」再设为出战」并**不发请求** | `activate` 作用在**服务端**那份配置上；不拦会出现"看着是新的、出战的是旧的"。可见提示 ≠ 无声按钮（00-rules §4） |
+| 4 | §3.7 `config-open` = `GET /me/configs` | 追加 2 个**静默**请求（`GET /me/warehouse` + `GET /me/ai`） | 否则模板候选为空、AI 位置只能显示裸 `aiId` 而非 §3.7 要求的 **AI 名字**；两者失败都可见且不挡开弹窗（候选区显示「尚未读取…」占位） |
+| 5 | §3.8 弹窗背景/关闭 = 「关闭并丢弃未提交输入」 | 二级选择弹窗的关闭**按字面**执行：关闭整个弹窗 + **丢弃整个草稿**（不返回编辑器） | 见 **N-12**（待裁定：另一种读法是"取消本次选择并回到编辑器"，但那会让"关闭即丢弃"这条机器核对断言失去意义） |
+
+**过程中发现并修掉的真问题**
+
+- **P-1（本批唯一真缺陷；父代理自查发现）**：`format.js` 三个**玩家可见**的 `hint` 里混入了 Markdown 强调符（`选中即替换**草稿**` 等）。本 UI **没有任何 Markdown 渲染器**（00-rules §1 只允许按钮/文字/输入框），玩家会原样看到 `**草稿**`。已改为纯文本（`…选中即替换草稿`）。**这条正好是"机器测试 ≠ 能玩"的实例**：三种缺陷（含此条）在 1057 条用例全绿时依然存在。
+- **P-2（前一批遗留的**测试盲区**，本批补网）**：`render.js` 是**唯一** DOM 字符串产出点，而它的 `esc()` **此前没有任何测试钉住**。新增 `tests/frontend/render-escaping.test.js`：ESC-1 逐插值点注入 `'<b>hack</b>'` / `'"><img src=x onerror=alert(1)>'`（title/notice/result/hint/lines/rows/confirm/modal/fields/buttons/`data-*`）→ 输出不得出现未转义标记、且文本以实体形式**保留**（可见降级而非静默丢弃）；ESC-2 `'` 属性禁用（`esc()` **不**转义单引号，故必须恒用双引号属性）；ESC-3 `esc()` 字符表与边界；ESC-4 **真实 HTTP**：昵称 `<b>hack</b>`、AI 名 `<svg/onload=x>` 都**原样落库并原样返回**——实测证明**服务端不消毒**（`isValidNickname` 只校验长度 1~16、`createAi` 只校验 1~24，字符集均不限），故转义是**唯一防线**；ESC-5 结构断言 `render.js` 不引用 `document`/`innerHTML`（与 `public/app.js:109` 是唯一 `innerHTML` 赋值点互为印证）。
+
+**新增登记项（承接 §13 / §15.4）**
+
+- **N-12**：二级选择弹窗的「关闭/点背景」按字面丢弃**整个**草稿——编辑中途误点背景即丢失全部未保存改动。待裁定：保持字面（当前）或改为"回到编辑器、仅取消本次选择"（可复用 `modal-close`，无需新动作，但需改 §3.8 与 WH-8/CF-7 断言语义）。
+- **N-13**：偏差 #3（`activate` 的"先保存"前置）是**超设计稿**的行为，已登记待你确认；若你要求严格照 §4 发请求，则需删掉该前置并同步 CF-6。
+- **N-14**：完整性判据有**两份实现**（服务端 `archive.loadoutMissingOf` + 前端镜像 `format.missingOf`，含 5 条中文文案）。当前逐规则一致（本次收口核对），但服务端改文案时前端**不会**报错。缓解：错误路径优先用服务端 `error.details[].message`（前端镜像只服务状态行）。
+- **N-15**：`public/**` **不在**覆盖率门禁的四目录（`server/core`、`server/ai`、`shared`、`cli`）内。本次实测（仅前端测试，非全仓）：`format.js` 行 98.74 / `render.js` 99.33 / `contract.js` 99.43 / `store.js` 97.49 / `api.js` 97.30 / `actions.js` 93.44，但**分支**偏低（`app.js` 53.01 / `actions.js` 67.45），未覆盖的集中在防御性早返回分支（如 `format.js:941-947` 的"插槽类型取不到"、`format.js:736` 的"仓库未读到时替换模板"）。
+- **N-16**：`plugin-pick`/`plugin-set`/`plugin-clear` 的 `payload === null ? null : payload.idx` 只挡 `null`，传 `undefined` 会抛 TypeError（当前不可达：`public/app.js:138` 唯一调用点已把 `undefined` 归一为 `null`）——**已加固**，见收口修复表 N-16 行。
+- **N-17**：§6 要求的 `插件点数不足（需要 <x>，剩余 <y>）` 与 `技能必须恰 3 个（实际 N）` 里**数字**目前拿不到 —— 服务端 `error.details` 只给 `path`/`code`/`message`（`archive.js` 的 `loadoutMissingDetails`）。要满足表格原文需**后端补 need/left**（00-rules §2.7 流程，本批不做）。
+
+**机器证据（提交③ 收口实跑，2026-09-25；父代理独立复跑，非实现者自报）**
+
+| 命令 | 结果 |
+|---|---|
+| `node --test --test-isolation=none "tests/frontend/*.test.js"` | ✅ **89/89**（HEAD 73 + CF 11 + ESC 5） |
+| `npm test`（**连跑两轮**：一次显式 `npm test` + 一次 gate 项 7） | ✅ **1058 通过 / 0 失败**（两轮一致） |
+| `npm run gate` | ✅ **9 PASS / 0 FAIL / 0 PEND**（项 7：1058 用例；digest `a1c5b11c0092`）；项 3 = 40 文件无依赖违规 |
+| `node scripts/check-docs.js` / `check-arch.js` | ✅ PASS（批次计数仍 **41**）／✅ PASS（**40** 文件） |
+| `node scripts/e2e.js` | ✅ **exit 0，22/22 检查点** |
+| CF 用例稳定性（去 flaky 复核） | ✅ `config-editor-flow.test.js` **连跑 5 次 = 5×11/11 通过**（CF 夹具在需要处注入确定性物品，不赌随机 starter 内容） |
+| 动作注册表独立复算（父代理探针） | ✅ 注册表 **51**（F1 9 + F2 16 + F3 26）；非管理 **35**；我**自己**枚举 14 屏 + 5 类弹窗子态得到的渲染集合与注册表**双向相等**、管理动作零泄漏、无死动作/不可达动作 |
+| 两步顺序的最终证据 | `CF-3`：装配请求体逐字 `{targetUid,pluginUid,slotIndex}` → `assert.notStrictEqual(after,before)`（证明换用了**响应回带**的物品）→ 保存后 `GET /me/configs` 的 `slots[2].loadout.role.slots[0].pluginUid` **真的变了**；`CF-4` 拆卸同断言；`CF-9` 在 DOM 层再造一次同链路 |
+| 契约与措辞核对 | `contract.js` 把 `data.warehouse` 从「明确不读」移入正式契约（`me/warehouse/assemble` 三行）、新增 `me/configs` 两行 + `CONFIG_SLOT_FIELDS`/`AI_ITEM_FIELDS`；`data.maxSlots`/`data.caps.max` 仍留「不读」并写明**为何不需要**；`missingOf` 与服务端 `loadoutMissingOf` 逐规则一致、文案逐字一致 |
+
+**人工走查注意（补进 §11 步 10–21）**：① 改完位置后**先点「保存」再点「设为出战」**，否则会被偏差 #3 拦下（这是设计意图，不是故障）；② 打开二级候选后**不要点弹窗外面**——按 N-12 会连同未保存改动一起丢弃；③ 出战中的配置候选里**没有**「空」，插件可清空、角色/技能置空会被服务端 409 拦下（文案应逐位置可读）；④ 步 14/15 的 `[装配于配置N]` 时点见 §11 末尾的 ⚠️。
+
+**独立审查（2026-09-25）与收口修复**
+
+方式同提交①：**新上下文子代理只读对抗式审查**（探针全部在系统临时目录，仓库零改动），逐条核对 7 项声称并自跑 `npm test`/`gate`/`check-docs`/`check-arch`。**结论「有条件通过（有需修缺陷）」**：编辑器核心（两步顺序、草稿、B-5/B-8、51/35 计数）经真实 HTTP 验证成立，但发现 **2 条需修 + 3 条疑似 + 3 条记录**。逐条处置：
+
+| # | 审查发现 | 处置 |
+|---|---|---|
+| **F-1**（需修） | **取消弹窗会被 in-flight 响应撤销**：`modal-close` 无 busy 守卫、背景元素是弹窗内唯一不随 busy 禁用的可点元素；而装配/取 AI 库在两个 `await` 之后**无条件** `modal.set` → 用户在等待响应时点外面关闭，弹窗会被"复活"，且草稿已被丢弃 ⇒ 编辑器按服务端副本渲染"未改动"，与提示「已装配」、仓库里那件物品**真的装上了**三方矛盾 | ✅ **已修**：新增条件 reducer **`modal.setIfOpen`**（"当前还有弹窗才替换"），装配/拆卸、`ai-pick`、`config-open` 一并改走它。**条件必须在 reducer 里判** —— 动作拿到的 `ctx.state` 是**动作开始时**的快照（`public/app.js` buildCtx），`await` 之后读它永远判不出"用户是否已取消"（我第一版用对象引用比较就是这么错的，被新写的 CF-11 立刻抓住）。回归：**CF-11**（延迟 60ms 响应 + 期间点背景关闭 → 弹窗不得复活、草稿保持丢弃、提示仍可见、仓库确实已改） |
+| **F-2**（需修） | **槽级字段契约缺失，且"三方一致"是单向的**：`format.js` 用**直接属性访问**读 `loadout.aiId`（AI 位置显示名的来源；服务端 `aiRefsOf` 也按它统计引用 → `DELETE /me/ai/:aiId` 的 409 `ai_in_use` 判据），但 `aiId` 既不在 `contract.js` 也不在 §5.1；CF-8 只断言"声明 ⊆ 实读"，而直接属性访问根本不进 `pick()` 字面量集合 ⇒ 字段漂移会让"删除出战配置正在引用的 AI"静默放行而断言全绿 | ✅ **已修**：`contract.js` 新增 **`CONFIG_LOADOUT_FIELDS = ['role','skills','ai','aiId']`**（含"为何 aiId 非装饰字段"的说明）；§5.1 补登记 `data.slots[].loadout.aiId`；**CF-8 增源码级双向断言**（代码里每个 `loadout.<字段>` ⟺ 声明表，且声明 ⊆ §5.1 登记 + 真实响应可解析）。该断言写完立刻抓到我自己引入的假匹配（文件头注释里的分册文件名 `…-loadout.md` → `md`），故扫描**只看代码行** |
+| F-3（疑似） | 取消/切屏只丢弃草稿，**不回滚**两步顺序已造成的仓库改动，且无提示 | ✅ **按"写明"处置（不做回滚）**：服务端第①步已落 journal，回滚不在设计内；改为**成功文案一律写明作用对象** —— `已装配（已写入仓库那件物品；点「保存」后才进这份配置）`／`已拆卸（…）`，两条路径都成立，且顺带解释"为何仓库变了、配置还没变"（CF-3/CF-10 的文案断言同步更新，仍为精确匹配） |
+| F-4（疑似） | `points_exceeded` 文案未给"需要 x / 剩余 y"（§6 表格如此要求），`技能必须恰 3 个（实际 N）` 同理；x/y 无法从错误契约推出 | 📌 **登记待裁定（N-17）**：要给出数字需**后端在 `error.details` 里附带 need/left**（走 00-rules §2.7 的后端变更流程），本批不动；当前实现保留"服务端原文"可读兜底 |
+| F-5（疑似，不可达） | `missingSummaryText` 对 `path === null` 会 `null.path` 抛 TypeError | ✅ **已加固**（1 行防御写法）：`typeof p === 'string' ? p : (p && typeof p === 'object' ? p.path : '')`；服务端恒给字符串路径，故当前不可达 |
+| F-6（疑似） | 「清空此槽」对**出战中**的配置也渲染，而 D-160/§3.7 写"出战中的配置只能替换、不能拆卸" | ✅ **已澄清口径（非代码缺陷）**：该措辞指**模板位置**（角色/技能不允许置空 → 409）；插槽内的插件**可以**清空（服务端 200，CF-4② 实测），与 D-160 的完整性判据（允许插槽为空）一致。§3.7 已就地写明 |
+| F-7（记录） | §11 步 14 要求"装配后立刻在仓库看到 `[装配于配置1]`"，但 `usage` 只统计**已保存**配置 ⇒ 该步按字面**无法通过**（而 §11 是 §4.4 的可玩性出口） | ✅ **已改正剧本**：步 14 = 编辑器显示已装配 + 提示写明改的是仓库物品；**步 15（保存后）**才看 `[装配于配置N]`；§11 末尾加了 ⚠️ 说明 |
+| F-8（记录） | `store.CONFIG_POSITIONS`/`SKILL_SLOTS` 与 `format.js` 私有副本重复；`contract.js` 注释把 CF-8 误写成 CF-10；§7 的状态形状与实现不符 | ✅ **已修**：注释订正为 CF-8；§7 的状态块改为实测形状（`configs = {data, ai, draft, dirty}`、`warehouse = {envelope, loading}`）并补 `modal.setIfOpen` 语义（私有常量重复保留：`format.js` 不读 store 导出属本项目分层约束，行为已由 CF-1 的"恰好 3 个技能位置"断言覆盖） |
+| N-16（父代理探针） | 264 次畸形/敌意 payload 调用中发现：`plugin-pick`/`plugin-set` 在 `payload === undefined` 时抛 TypeError（代码写作 `payload === null ? null : payload.idx`，只挡了 `null`） | ✅ **已加固**（当前不可达：`public/app.js:138` 的 `def.run(ctx, payload \|\| null)` 是唯一调用点，已把 `undefined` 归一为 `null`）。仍修的理由：该"单点归一"一旦消失（第二个调用点/键盘快捷键）就会立刻复活 |
 
 ---
 

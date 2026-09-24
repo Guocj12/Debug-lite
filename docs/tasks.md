@@ -725,7 +725,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 **F2 账号管理与管理员面板（2026-09-22）**：设计冻结 `docs/frontend/02-accounts.md`（10 项端点映射 / 15 个新增动作 / 14 条新增字段契约 / 9 条边界 / 4 项机器核对 / 17 步走查剧本）。后端契约按 `decisions.md` **D-158** 落地（`DL_ADMIN_USERS` 管理员账号 + `checkAccess` 双路径授权 + 新增 `POST /admin/accounts`（分页、**total 无上限**）与 `POST /admin/delete-account`（`player.removed` 墓碑、禁删自己）+ admin 面豁免玩家级 `playerId` 一致性检查），机器核对 `tests/api/api-admin-accounts.test.js`（AA-1…AA-7）；前端管理面板与 F2 机器核对（含**后端 admin 能力 ↔ 前端面板双向相等**的 `admin-op-parity`）见 `docs/reviews/F2.md`。**F2 同样不新增批次号**（§6 仍为 41 批）。
 
-**F3 物品线/主界面（2026-09-22）**：**后端契约已落地（D-159…D-162）**——仓库改为服务端权威（档案 `warehouse` 段 + `GET /me/warehouse` 真源 + `POST /me/warehouse/assemble|disassemble` + `PUT /me/warehouse` 退役为只校验形状）、注册即发 `starter` 并建满 3 槽（`server/starter.js`）、开箱收归服务端（`POST /me/box` 入档、无 `seed` 入参）、AI 库（`GET|POST /me/ai`、`DELETE /me/ai/:aiId`）、配置完整性校验时机（D-160）；端点真源见 `docs/interfaces.md` §2。**前端屏（主界面/仓库/开箱/出战配置编辑器）与 F3 机器核对待做**，设计冻结见 `docs/frontend/03-hub-warehouse-loadout.md`。**F3 同样不新增批次号**（§6 仍为 41 批；见 `docs/frontend/00-rules.md` FR-6）。
+**F3 物品线/主界面（2026-09-22 起）**：**后端契约已落地（D-159…D-162）**——仓库改为服务端权威（档案 `warehouse` 段 + `GET /me/warehouse` 真源 + `POST /me/warehouse/assemble|disassemble` + `PUT /me/warehouse` 退役为只校验形状）、注册即发 `starter` 并建满 3 槽（`server/starter.js`）、开箱收归服务端（`POST /me/box` 入档、无 `seed` 入参）、AI 库（`GET|POST /me/ai`、`DELETE /me/ai/:aiId`）、配置完整性校验时机（D-160）；端点真源见 `docs/interfaces.md` §2。**前端亦已全部落地**：提交② 主界面线（`hub`/`profile`/`warehouse`/`box`/`settings` + 4 空页；2026-09-24）、提交③ 出战配置编辑器（模板替换 / 插件装配的两步顺序 / AI 库选择 / 本地草稿；2026-09-25）；实现对账见 `docs/frontend/03-hub-warehouse-loadout.md` **§15.6/§15.7**。**唯一未完成项 = 浏览器人工走查**（分册 §11 的 25 步 + F2 的 17 步一次收口）——**未走查前 `F3` 不得判定"能玩"**。**F3 同样不新增批次号**（§6 仍为 41 批；见 `docs/frontend/00-rules.md` FR-6）。
 
 ---
 
@@ -742,7 +742,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 - **禁止前端复制战斗公式**：伤害/命中/移动一律由服务端算，前端只消费帧。
 - **验收**：机器测试不能证明"能玩"。每批必须在真实浏览器按端到端剧本人工走查（旧两轮 F0–F8 / R0–R7 均在测试全绿时不可玩）。
 - **后端配合**：静态托管（`public/`、`/shared`、`/assets`）；服务端端点见 `docs/server.md` 与 `docs/systems/11-account-store.md`。
-- **F3（物品线/主界面）后端契约已落地（D-159…D-162）**——仓库服务端权威（真源 `GET /me/warehouse`，装配/拆卸走 `POST /me/warehouse/assemble|disassemble`）、注册即发 starter 并建满 3 槽、`POST /me/box` 服务端权威开箱（无 `seed` 入参）、AI 库 `me/ai*`、配置完整性校验时机（D-160）；**前端屏与出战配置编辑器待做**，设计冻结见 `docs/frontend/03-hub-warehouse-loadout.md`（端点真源 `docs/interfaces.md` §2）。**F3 不新增批次号**（§6 仍为 41 批）。
+- **F3（物品线/主界面）已全部落地**——后端契约（D-159…D-162）：仓库服务端权威（真源 `GET /me/warehouse`，装配/拆卸走 `POST /me/warehouse/assemble|disassemble`）、注册即发 starter 并建满 3 槽、`POST /me/box` 服务端权威开箱（无 `seed` 入参）、AI 库 `me/ai*`、配置完整性校验时机（D-160）；前端：提交② 主界面线 + 提交③ 出战配置编辑器。实现对账见 `docs/frontend/03-hub-warehouse-loadout.md` §15.6/§15.7（端点真源 `docs/interfaces.md` §2）。**未完成项：浏览器人工走查**（分册 §11）。**F3 不新增批次号**（§6 仍为 41 批）。
 
 ---
 

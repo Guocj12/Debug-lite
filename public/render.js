@@ -42,14 +42,20 @@
   }
 
   // 行列表：每行 = 文本（可缺省：如仓库行只有可点的物品名按钮）+ 该行按钮
-  //   （按钮的目标经 data-player-id / data-public-id / data-uid / data-slot / data-bucket 携带）
-  function rowsHtml(vm) {
-    if (!vm.rows || vm.rows.length === 0) return '';
-    return '<div id="rows">' + vm.rows.map(function (row) {
+  //   （按钮的目标经 data-player-id / data-public-id / data-uid / data-slot / data-bucket /
+  //     data-pos / data-idx / data-empty / data-ai-id 携带）
+  function rowListHtml(rows) {
+    if (!rows || rows.length === 0) return '';
+    return rows.map(function (row) {
       var text = row && row.text ? '<div class="line">' + esc(row.text) + '</div>' : '';
       return '<div class="row">' + text
         + '<div class="row-buttons">' + buttonsHtml(row.buttons) + '</div></div>';
-    }).join('') + '</div>';
+    }).join('');
+  }
+
+  function rowsHtml(vm) {
+    if (!vm.rows || vm.rows.length === 0) return '';
+    return '<div id="rows">' + rowListHtml(vm.rows) + '</div>';
   }
 
   // 二次确认块（02-accounts.md §3.2；后端不再二次确认，故前端必须确认）
@@ -62,17 +68,23 @@
   // 屏内弹窗（F3 §3.7/§3.8；FR-10：弹窗 = 屏内绘制的区块，不是浏览器原生弹窗/新窗口）。
   //   背景元素一律带 data-action="modal-close" —— 点击背景 = 关闭并丢弃未提交输入；
   //   弹窗内另有显式「关闭/取消」按钮（同样来自 vm.modal.buttons）。
+  //   提交③ 的两级弹窗复用同一机制：弹窗内也可以有**行列表**（候选：一行一个可点按钮；
+  //   不匹配的候选由 format 置 disabled 并在该行文本里写明原因）。
   function modalHtml(vm) {
     if (!vm.modal) return '';
     var lines = (vm.modal.lines || []).map(function (line) {
       return '<div class="line">' + esc(line) + '</div>';
     }).join('');
+    var rows = vm.modal.rows && vm.modal.rows.length > 0
+      ? '<div class="modal-rows">' + rowListHtml(vm.modal.rows) + '</div>'
+      : '';
     return '<div id="modal" class="modal">'
       + '<div class="modal-background" data-action="modal-close"></div>'
       + '<div class="modal-body">'
       + '<h3>' + esc(vm.modal.title) + '</h3>'
       + (vm.modal.hint ? '<p class="hint">' + esc(vm.modal.hint) + '</p>' : '')
       + lines
+      + rows
       + '<div class="modal-buttons">' + buttonsHtml(vm.modal.buttons) + '</div>'
       + '</div></div>';
   }
@@ -95,6 +107,11 @@
     if (typeof button.uid === 'string' && button.uid !== '') out += ' data-uid="' + esc(button.uid) + '"';
     if (typeof button.slot === 'string' && button.slot !== '') out += ' data-slot="' + esc(button.slot) + '"';
     if (typeof button.bucket === 'string' && button.bucket !== '') out += ' data-bucket="' + esc(button.bucket) + '"';
+    // F3 提交③：配置编辑器的位置寻址（pos=角色/技能N/AI；idx=插槽序号；empty=`空`候选；aiId=库内引用）
+    if (typeof button.pos === 'string' && button.pos !== '') out += ' data-pos="' + esc(button.pos) + '"';
+    if (typeof button.idx === 'string' && button.idx !== '') out += ' data-idx="' + esc(button.idx) + '"';
+    if (button.empty === true) out += ' data-empty="1"';
+    if (typeof button.aiId === 'string' && button.aiId !== '') out += ' data-ai-id="' + esc(button.aiId) + '"';
     return out;
   }
 

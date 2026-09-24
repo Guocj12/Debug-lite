@@ -143,11 +143,12 @@
 
     // 从被点元素上取行级/元素级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
     //   F2：data-player-id / data-public-id；F3：data-uid（物品行）/ data-slot（出战配置）/ data-bucket（分桶）
+    //   提交③：data-pos（位置）/ data-idx（插槽序号）/ data-empty（`空`候选）/ data-ai-id（AI 库引用）
     function payloadOf(el) {
       var ds = el && el.dataset ? el.dataset : null;
       if (!ds) return null;
       var out = {};
-      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket'];
+      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId'];
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;

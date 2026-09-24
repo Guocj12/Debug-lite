@@ -29,6 +29,10 @@
   // 目标解析（publicId → playerId）的翻页上限：后端 ban 只认 playerId，故从账号列表逐页找
   var TARGET_SCAN_PAGES = 25;
   var TARGET_SCAN_LIMIT = 200;
+  // 审查 F-1/F-3：装配/拆卸改的是**仓库那件物品**（两步顺序第①步），配置要等「保存」才变。
+  //   提示一律写明这一点 —— 既解释"为什么仓库变了、配置还没变"，也说明"取消弹窗不会撤销这一步"。
+  var PLUGIN_APPLIED_TEXT = '已装配（已写入仓库那件物品；点「保存」后才进这份配置）';
+  var PLUGIN_CLEARED_TEXT = '已拆卸（已更新仓库那件物品；点「保存」后才从这份配置移除）';
 
   /* ---------- 客户端预校验（01-auth.md §6 预校验行 / §8 B-1..B-5） ---------- */
 
@@ -178,6 +182,138 @@
       if (!quiet) noticeNotice(ctx, 'info', ctx.format.WAREHOUSE_OK_TEXT);
       return undefined;
     });
+  }
+
+  /* ---------- F3 提交③：出战配置编辑器的公共工具（03 §3.7） ---------- */
+
+  // 槽位 / 位置 / 插槽序号 / 物品 uid 都来自被点按钮的 data-*（在 render 层由 vm 搬运）
+  function slotIdOf(payload, fallback) {
+    var v = payload !== null && payload && typeof payload.slot === 'string' && payload.slot !== '' ? payload.slot : null;
+    return v === null ? fallback : v;
+  }
+
+  function posOf(payload) {
+    return payload !== null && payload && typeof payload.pos === 'string' ? payload.pos : '';
+  }
+
+  function uidOf(payload) {
+    return payload !== null && payload && typeof payload.uid === 'string' && payload.uid !== '' ? payload.uid : null;
+  }
+
+  // 非负整数（`data-idx` 是字符串，必须显式解析；"1.5"/"abc"/缺省 一律 null）
+  function intOf(value) {
+    var raw = typeof value === 'string' ? value.trim() : (typeof value === 'number' ? String(value) : '');
+    if (!/^[0-9]+$/.test(raw)) return null;
+    return Number(raw);
+  }
+
+  // 当前弹窗的草稿（`{slotId, loadout}`）—— 所有编辑都作用在它上面，`保存` 才 PUT
+  function draftOf(ctx) {
+    var draft = ctx.state.configs ? ctx.state.configs.draft : null;
+    if (!draft || typeof draft !== 'object') return null;
+    if (!draft.loadout || typeof draft.loadout !== 'object') return null;
+    return draft;
+  }
+
+  // 取配置列表（GET /me/configs）。activate 成功后必须刷新：`activeSlotId` 决定"出战中"与 B-5 门控。
+  //   刷新时按**当前草稿的槽**重建草稿（脏标记归零）；失败可见（网络 / 401 统一登出）。
+  function loadConfigs(ctx) {
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    return ctx.api.configs(token).then(function (result) {
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      var draft = draftOf(ctx);
+      ctx.dispatch({ type: 'configs.set', data: result.envelope });
+      if (draft !== null) {
+        var fresh = ctx.format.draftForSlot(result.envelope, draft.slotId);
+        if (fresh !== null) ctx.dispatch({ type: 'configs.draft.set', draft: fresh, dirty: false });
+      }
+      return undefined;
+    });
+  }
+
+  // 取 AI 库（GET /me/ai）。ai-pick 的候选来源；config-open 也静默取一次（否则 AI 位置只能显示 aiId 而不是名字）。
+  function loadAiList(ctx) {
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    return ctx.api.aiList(token).then(function (result) {
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      ctx.dispatch({ type: 'configs.ai.set', ai: result.envelope });
+      return undefined;
+    });
+  }
+
+  /* ⚠️ 两步顺序（03 §3.7；D-159/D-160）—— 本批最容易踩的坑，唯一实现在这里：
+   *   ① 调装配/拆卸端点（改的是**仓库里那件物品**的 slots[]）
+   *   ② 用响应回带的 `warehouse` 取回**更新后的那件物品** → 替换草稿里的对应物品
+   *   ③ 用户点「保存」→ PUT /me/configs/:slotId
+   *   只做①不做②③ = 界面看着换了、保存后依旧没换。 */
+  function warehouseChange(ctx, payload, kind, invoke) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    var draft = draftOf(ctx);
+    if (draft === null) {
+      noticeNotice(ctx, 'error', '尚未打开出战配置编辑器');
+      return Promise.resolve();
+    }
+    var pos = posOf(payload);
+    var idx = intOf(payload === null || payload === undefined ? null : payload.idx);
+    var pluginUid = uidOf(payload);
+    // 装配目标 = 草稿里该位置物品的 uid 与插槽序号（**必须来自草稿**：草稿是即将保存的那份）
+    var target = ctx.format.assemblyTargetOf(draft.loadout, pos, idx);
+    if (target === null) {
+      noticeNotice(ctx, 'error', '插槽寻址无效（该位置未安装物品，或插槽不存在）');
+      return Promise.resolve();
+    }
+    if (kind === 'assemble' && pluginUid === null) {
+      noticeNotice(ctx, 'error', '缺少插件 uid（plugin-set 需要 data-uid）');
+      return Promise.resolve();
+    }
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    return invoke(ctx, token, target, pluginUid).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        noticeNotice(ctx, 'error', ctx.format.pluginFailText(result.envelope));
+        return undefined;
+      }
+      return applyPluginChange(ctx, result, target, draft, pos,
+        kind === 'assemble' ? PLUGIN_APPLIED_TEXT : PLUGIN_CLEARED_TEXT);
+    });
+  }
+
+  // 两步顺序的第②步（+ 把响应回带的仓库并回 state.warehouse，usage 随之刷新）
+  function applyPluginChange(ctx, result, target, draft, pos, okText) {
+    var updated = ctx.format.updatedItemOf(result.envelope, target.targetUid);
+    if (updated === null) {
+      noticeNotice(ctx, 'error', '服务端已处理，但未从响应取回更新后的物品：请重新打开出战配置再保存');
+      return undefined;
+    }
+    ctx.dispatch({ type: 'warehouse.set', envelope: ctx.format.warehouseChangeEnvelope(result.envelope) });
+    var next = ctx.format.setItemAt(draft.loadout, pos, updated);
+    if (next === null) {
+      noticeNotice(ctx, 'error', '插槽寻址无效（无法写回草稿）');
+      return undefined;
+    }
+    ctx.dispatch({ type: 'configs.draft.patch', patch: { loadout: next } });
+    // 审查 F-1（FR-10）：await 期间用户可能已点背景关闭（`modal-close` 丢弃草稿）——此时**不得**把
+    //   弹窗重新弹开，否则编辑器按服务端副本渲染"未改动"，与"已装配"提示、仓库实际状态三方矛盾。
+    //   条件放在 reducer（`modal.setIfOpen`）：动作手里的 `ctx.state` 是开始时的快照（public/app.js
+    //   buildCtx），await 之后读它永远判不出"用户是否已取消"。
+    ctx.dispatch({ type: 'modal.setIfOpen', modal: { kind: 'config', slotId: draft.slotId } });
+    noticeNotice(ctx, 'info', okText);
+    return undefined;
   }
 
   /* ---------- F2 管理面工具（02-accounts.md §4/§6/§8） ---------- */
@@ -638,9 +774,9 @@
 
     /* ----- F3：主界面线（03-hub-warehouse-loadout.md §3/§4；提交②） -----
      *
-     * 本批**只注册真正要用的动作**：出战配置编辑器（config-save / config-activate / slot-pick /
-     *   slot-set / ai-pick / ai-set / plugin-pick / plugin-set / plugin-clear）属**提交③**，
-     *   §4 表格把它们登记为计划动作，但「按钮永不无声」不允许先注册空壳，故不在此出现。
+     * 提交② 只注册真正要用的动作（「按钮永不无声」不允许先注册空壳）；
+     * 提交③ 在此之上新增 9 个配置编辑器动作（config-save / config-activate / slot-pick / slot-set /
+     *   ai-pick / ai-set / plugin-pick / plugin-set / plugin-clear）→ 注册表 51 = F1 9 + F2 16 + ② 17 + ③ 9。
      */
 
     'goto-hub': {
@@ -741,13 +877,241 @@
       },
     },
 
-    // 打开出战配置占位弹窗（03 §3.7：编辑器属提交③，本批只显示 `尚未实现（计划批次 F3-③）`）
+    // 打开出战配置编辑器（03 §3.7）：取配置列表 → 灌本地草稿 → 开 `config` 弹窗。
+    //   随后**静默**取仓库（角色/技能模板候选 + 插槽里的插件名）与 AI 库（AI 位置要显示**名字**，
+    //   而草稿里只有 `aiId`）——两者失败都可见但不挡开弹窗（候选区显示"尚未读取"占位）。
     'config-open': {
       label: '出战配置',
       run: function (ctx, payload) {
-        var slotId = payload && typeof payload.slot === 'string' && payload.slot !== '' ? payload.slot : 'slot1';
-        ctx.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: slotId } });
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var slotId = slotIdOf(payload, 'slot1');
+        // 审查 F-1（FR-10）：本动作从主界面发起，正常路径下没有弹窗（`hadModal=false` → 无条件打开）；
+        //   若调用方在弹窗内发起，则等待期间用户可能已点背景关闭 → 走后者的条件 reducer。
+        var hadModal = ctx.state.modal !== null;
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.configs(token).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          var draft = ctx.format.draftForSlot(result.envelope, slotId);
+          if (draft === null) {
+            noticeNotice(ctx, 'error', '配置槽 ' + slotId + ' 不存在');
+            return undefined;
+          }
+          ctx.dispatch({ type: 'configs.set', data: result.envelope });
+          ctx.dispatch({ type: 'configs.draft.set', draft: draft, dirty: false });
+          // 审查 F-1（FR-10）：见上文 `hadModal` —— 只有"本来就有弹窗"时才需要防被 in-flight 响应复活
+          if (hadModal) {
+            ctx.dispatch({ type: 'modal.setIfOpen', modal: { kind: 'config', slotId: slotId } });
+          } else {
+            ctx.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: slotId } });
+          }
+          return loadWarehouse(ctx, { quiet: true }).then(function () { return loadAiList(ctx); });
+        });
+      },
+    },
+
+    /* ----- F3 提交③：出战配置编辑器（two-step / 草稿 / B-5 / B-8） ----- */
+
+    // 打开模板候选弹窗（纯本地：候选来自已取到的仓库信封）
+    'slot-pick': {
+      label: '选择位置',
+      run: function (ctx, payload) {
+        var slotId = slotIdOf(payload, null);
+        var pos = posOf(payload);
+        if (slotId === null || !ctx.format.isConfigPos(pos) || pos === 'ai') {
+          noticeNotice(ctx, 'error', '缺少位置（slot-pick 需要 data-slot 与 data-pos）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'slot-pick', slotId: slotId, pos: pos } });
         return Promise.resolve();
+      },
+    },
+
+    // 选中一个模板/`空`：**只改本地草稿**（B-7：换模板 = 换仓库里另一件物品，新物品的插槽状态天然是它自己的，
+    //   不需要任何"先拆插件"的清理代码）
+    'slot-set': {
+      label: '替换',
+      run: function (ctx, payload) {
+        var draft = draftOf(ctx);
+        if (draft === null) {
+          noticeNotice(ctx, 'error', '尚未打开出战配置编辑器');
+          return Promise.resolve();
+        }
+        var choice = { pos: posOf(payload), uid: uidOf(payload), empty: payload !== null && payload.empty === '1' };
+        var next = ctx.format.applySlotChoice(ctx.state, draft.loadout, choice);
+        if (next === null) {
+          noticeNotice(ctx, 'error', choice.empty
+            ? '该位置无法置空（位置参数不合法）'
+            : '候选物品不在仓库里（可能已被清理：点「关闭」后重新打配置）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'configs.draft.patch', patch: { loadout: next } });
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: draft.slotId } });
+        return Promise.resolve();
+      },
+    },
+
+    // 打开 AI 候选弹窗（候选 = GET /me/ai 的条目）
+    'ai-pick': {
+      label: '选择战斗AI',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var slotId = slotIdOf(payload, null);
+        if (slotId === null) {
+          noticeNotice(ctx, 'error', '缺少槽位（ai-pick 需要 data-slot）');
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return loadAiList(ctx).then(function () {
+          busy(ctx, false);
+          // 审查 F-1（FR-10）：await 期间用户可能已点背景关闭（或关掉编辑器）——条件 reducer 判"当前是否还有弹窗"
+          ctx.dispatch({ type: 'modal.setIfOpen', modal: { kind: 'ai-pick', slotId: slotId } });
+          return undefined;
+        });
+      },
+    },
+
+    // 选中一条 AI（或 `空`）：**只改本地草稿**（`ai` = program 正文、`aiId` = 库内引用）
+    'ai-set': {
+      label: '替换AI',
+      run: function (ctx, payload) {
+        var draft = draftOf(ctx);
+        if (draft === null) {
+          noticeNotice(ctx, 'error', '尚未打开出战配置编辑器');
+          return Promise.resolve();
+        }
+        var option = null;
+        if (!(payload !== null && payload.empty === '1')) {
+          var aiId = payload !== null && typeof payload.aiId === 'string' && payload.aiId !== '' ? payload.aiId : null;
+          option = ctx.format.aiOptionOf(ctx.state.configs ? ctx.state.configs.ai : null, aiId);
+          if (option === null) {
+            noticeNotice(ctx, 'error', '该 AI 不在 AI 库里（点「关闭」后重新打开候选）');
+            return Promise.resolve();
+          }
+        }
+        ctx.dispatch({ type: 'configs.draft.patch', patch: { loadout: ctx.format.applyAiChoice(draft.loadout, option) } });
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: draft.slotId } });
+        return Promise.resolve();
+      },
+    },
+
+    // 打开某插槽的插件候选（纯本地；类型不匹配的由 format 标灰 + 写原因 —— B-8）
+    'plugin-pick': {
+      label: '选择插件',
+      run: function (ctx, payload) {
+        var slotId = slotIdOf(payload, null);
+        var pos = posOf(payload);
+        var idx = intOf(payload === null || payload === undefined ? null : payload.idx);
+        if (slotId === null || !ctx.format.isConfigPos(pos) || pos === 'ai' || idx === null) {
+          noticeNotice(ctx, 'error', '缺少插槽寻址（plugin-pick 需要 data-slot / data-pos / data-idx）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'plugin-pick', slotId: slotId, pos: pos, idx: idx } });
+        return Promise.resolve();
+      },
+    },
+
+    /* ⚠️ 两步顺序（03 §3.7；D-159/D-160）：装配改的是**仓库里那件物品**，而配置里存的是物品正文的副本。
+     *   ① POST /me/warehouse/assemble（或 disassemble）
+     *   ② 用响应回带的 `warehouse` 取回**更新后的那件物品** → 替换草稿里的对应物品
+     *   ③ 用户点「保存」才 PUT /me/configs/:slotId
+     *   只做①不做②③ = 界面看着换了、保存后依旧没换（本批最容易踩的坑）。 */
+    'plugin-set': {
+      label: '装配',
+      run: function (ctx, payload) {
+        return warehouseChange(ctx, payload, 'assemble', function (ctx1, token, target, pluginUid) {
+          return ctx1.api.assemble(token, { targetUid: target.targetUid, pluginUid: pluginUid, slotIndex: target.slotIndex });
+        });
+      },
+    },
+
+    'plugin-clear': {
+      label: '清空此槽',
+      run: function (ctx, payload) {
+        return warehouseChange(ctx, payload, 'disassemble', function (ctx1, token, target) {
+          return ctx1.api.disassemble(token, { targetUid: target.targetUid, slotIndex: target.slotIndex });
+        });
+      },
+    },
+
+    // 保存配置（03 §4）：PUT /me/configs/:slotId（体 = {loadout: 草稿}）。
+    //   非出战槽允许不完整（200）；出战槽不完整 → 409 loadout_invalid → 翻成玩家可读文案。
+    'config-save': {
+      label: '保存',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var draft = draftOf(ctx);
+        if (draft === null) {
+          noticeNotice(ctx, 'error', '尚未打开出战配置编辑器');
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.saveConfig(token, draft.slotId, { loadout: draft.loadout }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.configSaveFailText(result.envelope));
+            return undefined;
+          }
+          // 成功：草稿即已落盘（dirty 归零），不重新拉列表（草稿就是服务端副本）
+          ctx.dispatch({ type: 'configs.draft.set', draft: draft, dirty: false });
+          var missing = ctx.format.missingOf(draft.loadout);
+          noticeNotice(ctx, 'info', missing.length === 0
+            ? '已保存'
+            : '已保存（配置不完整：' + ctx.format.missingSummaryText(missing) + '，补齐后才能设为出战）');
+          // 保存会改变引用（usage）→ 静默刷新仓库，否则仓库屏的 [装配于配置N] 会过期
+          return loadWarehouse(ctx, { quiet: true });
+        });
+      },
+    },
+
+    // 设为出战（03 §4 / D-160）：**此时**才由服务端校验完整性 → 409 cannot_activate_incomplete 逐位置
+    'config-activate': {
+      label: '设为出战',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var draft = draftOf(ctx);
+        if (draft === null) {
+          noticeNotice(ctx, 'error', '尚未打开出战配置编辑器');
+          return Promise.resolve();
+        }
+        // 显式前置：activate 作用在**服务端**那份配置上；有未保存修改时先让用户保存（避免"看着是新的、出战的是旧的"）
+        if (ctx.state.configs && ctx.state.configs.dirty === true) {
+          noticeNotice(ctx, 'error', '有未保存的修改：请先点「保存」再设为出战');
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.activateConfig(token, draft.slotId).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.configActivateFailText(result.envelope));
+            return undefined;
+          }
+          noticeNotice(ctx, 'info', '已设为出战配置');
+          // 出战态切换 → 配置列表（activeSlotId / B-5 门控）+ 仓库 usage + /me 摘要（出战槽标记）三处同步
+          return loadConfigs(ctx)
+            .then(function () { return loadWarehouse(ctx, { quiet: true }); })
+            .then(function () { return loadProfile(ctx, token); });
+        });
       },
     },
 
@@ -784,11 +1148,13 @@
       },
     },
 
-    // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9）
+    // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9 / FR-10）
+    //   提交③ 起弹窗内有**本地草稿**（state.configs.draft）→ 关闭必须一并丢弃，否则再打开会看到"上次没保存的改动"
     'modal-close': {
       label: '关闭',
       run: function (ctx) {
         ctx.dispatch({ type: 'modal.close' });
+        ctx.dispatch({ type: 'configs.draft.set', draft: null });
         return Promise.resolve();
       },
     },

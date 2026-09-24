@@ -24,18 +24,21 @@ const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
-// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个）。F3 提交②（03 §4）在此之上再增 17 个
-//   **非管理**动作（见 F3_ACTIONS）→ 注册表 42 = 9 + 16 + 17；管理动作仍是这 16 个。
+// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个）。F3（03 §4）在此之上再增 26 个
+//   **非管理**动作（提交② 17 + 提交③ 9，见 F3_ACTIONS）→ 注册表 51 = 9 + 16 + 17 + 9；管理动作仍是这 16 个。
 //   AU-1 因此改为「管理员态渲染集合 == 注册表全集（实际值）」，数字不再写死（03 §10 UW-3 / K-5）。
 const F1_ACTIONS = ['submit-login', 'submit-register', 'submit-password', 'refresh-profile', 'logout',
   'goto-register', 'goto-login', 'goto-password', 'goto-home'];
 const F2_ACTIONS = ['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
   'accounts-size-20', 'accounts-size-50', 'accounts-size-100', 'admin-delete-account', 'confirm-yes', 'confirm-no',
   'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row'];
-// F3 提交② 实际注册的非管理动作（提交③ 的配置编辑器动作**不先注册空壳**）
+// F3 实际注册的非管理动作：提交② 17（主界面线）+ 提交③ 9（出战配置编辑器）
 const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'goto-quick', 'goto-tournament',
   'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub', 'refresh-warehouse', 'warehouse-bucket',
-  'item-open', 'config-open', 'box-open', 'modal-close', 'settings-nickname-save'];
+  'item-open', 'config-open', 'box-open', 'modal-close', 'settings-nickname-save',
+  // 提交③：出战配置编辑器（03 §4）
+  'config-save', 'config-activate', 'slot-pick', 'slot-set', 'ai-pick', 'ai-set',
+  'plugin-pick', 'plugin-set', 'plugin-clear'];
 
 const ROW = {
   playerId: 'pl_row0001', publicId: 'u_row0001', nickname: '行一', tier: 'common', points: 120,
@@ -62,6 +65,29 @@ const WAREHOUSE_ENVELOPE = {
   },
 };
 
+// 提交③：出战配置编辑器的真实响应形状（真起服务抓取过：docs/frontend/03 §5.1/§5.2）
+const CONFIG_LOADOUT = {
+  role: WAREHOUSE_ENVELOPE.data.buckets.role[0],
+  skills: [null, null, null],
+  ai: { type: 'program', version: 1, body: [] },
+  aiId: 'ai_cfg_1',
+};
+const CONFIGS_ENVELOPE = {
+  ok: true,
+  data: {
+    slots: [{ slotId: 'slot1', name: '默认配置', isDefault: true, createdAt: 1, updatedAt: 2, loadout: CONFIG_LOADOUT, snapshot: { hash: 'h_1' } }],
+    activeSlotId: 'slot1',
+    maxSlots: 3,
+  },
+};
+const AI_ENVELOPE = {
+  ok: true,
+  data: {
+    items: [{ aiId: 'ai_cfg_1', name: '新手AI', program: { type: 'program' }, createdAt: 1, updatedAt: 2 }],
+    count: 1, max: 100, usage: { ai_cfg_1: ['slot1'] },
+  },
+};
+
 // 管理员态（state.session.isAdmin === true）的初始状态
 function adminState(view, extra) {
   const state = store.initialState();
@@ -69,6 +95,16 @@ function adminState(view, extra) {
   state.view = view || 'hub';
   state.admin.accounts = accountsEnvelope();
   return Object.assign(state, extra || {});
+}
+
+// 提交③：带编辑器/候选弹窗的管理员态（草稿 + 仓库 + AI 库齐备 → 全部 9 个新动作可见）
+function adminConfigState(modal) {
+  const state = adminState('hub', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
+  state.configs.data = CONFIGS_ENVELOPE;
+  state.configs.ai = AI_ENVELOPE;
+  state.configs.draft = { slotId: 'slot1', loadout: CONFIG_LOADOUT };
+  state.modal = modal;
+  return state;
 }
 
 function htmlFor(state) { return render.render(format.viewModel(state)); }
@@ -79,7 +115,7 @@ function attrValues(html, attr) {
   return out;
 }
 
-// 管理员态下**全部**屏的渲染（含账号列表的二次确认子态 + F3 的两类弹窗子态）
+// 管理员态下**全部**屏的渲染（含账号列表的二次确认子态 + F3 的五类弹窗子态）
 //   —— 注册表里的每个动作都应在此出现（无"注册了但没有入口"）
 function adminRenderings() {
   const list = store.VIEWS.map((view) => htmlFor(adminState(view, { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) })));
@@ -90,14 +126,16 @@ function adminRenderings() {
   const itemDetail = adminState('warehouse', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
   itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
   list.push(htmlFor(itemDetail));
-  const configModal = adminState('hub');
-  configModal.modal = { kind: 'config', slotId: 'slot1' };
-  list.push(htmlFor(configModal));
+  // 提交③：编辑器 + 三个二级选择弹窗（slot-set / ai-set / plugin-set / plugin-clear 的宿主）
+  list.push(htmlFor(adminConfigState({ kind: 'config', slotId: 'slot1' })));
+  list.push(htmlFor(adminConfigState({ kind: 'slot-pick', slotId: 'slot1', pos: 'role' })));
+  list.push(htmlFor(adminConfigState({ kind: 'plugin-pick', slotId: 'slot1', pos: 'role', idx: 0 })));
+  list.push(htmlFor(adminConfigState({ kind: 'ai-pick', slotId: 'slot1' })));
   return list;
 }
 
-test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交②后按实际值核对）', () => {
-  // F1 + F2 + F3 提交② 的三段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
+test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交③后按实际值核对）', () => {
+  // F1 + F2 + F3（提交②/③）的三段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
   const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);

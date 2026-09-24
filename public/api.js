@@ -91,6 +91,17 @@
       box: function (token, input) { return call('POST', '/api/v1/me/box', input, token); },
       configs: function (token) { return call('GET', '/api/v1/me/configs', undefined, token); },
       aiList: function (token) { return call('GET', '/api/v1/me/ai', undefined, token); },
+      // 提交③：出战配置编辑器（03 §3.7 两步顺序）——
+      //   ① assemble/disassemble 改的是**仓库里那件物品**的 slots[]；
+      //   ② saveConfig 把草稿写回配置槽（PUT /me/configs/:slotId）；③ activateConfig 才校验完整性。
+      assemble: function (token, input) { return call('POST', '/api/v1/me/warehouse/assemble', input, token); },
+      disassemble: function (token, input) { return call('POST', '/api/v1/me/warehouse/disassemble', input, token); },
+      saveConfig: function (token, slotId, input) {
+        return call('PUT', '/api/v1/me/configs/' + encodeURIComponent(String(slotId)), input, token);
+      },
+      activateConfig: function (token, slotId) {
+        return call('POST', '/api/v1/me/configs/' + encodeURIComponent(String(slotId)) + '/activate', {}, token);
+      },
       setNickname: function (token, input) { return call('PUT', '/api/v1/me/nickname', input, token); },
       admin: admin,
     };

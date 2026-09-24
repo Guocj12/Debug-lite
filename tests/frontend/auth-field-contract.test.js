@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { startServer, request } = require('../helpers/http.js');
+const { startServer, request, playerIdByPublicId } = require('../helpers/http.js');
 const contract = require('../../public/contract.js');
 const format = require('../../public/format.js');
 
@@ -34,6 +34,30 @@ const ADMIN_TOKEN = 'fec2-admin-token';
 const RELAXED_AUTH = { auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 5000, maxFailures: 5000 } };
 
 // 真实响应采集（全部走真实 HTTP；不落任何样本文件，避免样本过期后变成假绿）
+//
+// 提交③ 追加两个宿主响应：
+//   · `GET /me/configs`（编辑器读 `data.slots` / `data.activeSlotId`）；
+//   · `POST /me/warehouse/assemble`（两步顺序第①步的回带：`data.warehouse` / `data.usage` / `data.caps`）——
+//     装配需要一个"类型匹配且空闲的插槽 + 同类型插件"的**确定性夹具**（starter 的插件已装在原插槽上，
+//     不能保证还有空位），故按 tests/api/api-me-warehouse.test.js UWH-3/4 的同一手法注入。
+const FIX_ROLE = 'fec3_fix_role';
+const FIX_PLUGIN_MATCH = 'fec3_fix_plugin_atk';
+async function injectAssemblable(store, playerId) {
+  await store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push({
+      uid: FIX_ROLE, kind: 'role', templateId: 'role_bal', name: '契约夹具角色', quality: 'common',
+      slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+      stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+      unlockTier: 'common', pluginPoints: 3,
+    });
+    a.warehouse.buckets.rolePlugin.push({
+      uid: FIX_PLUGIN_MATCH, kind: 'rolePlugin', id: 'rp_atk_flat', name: '攻击 +4', slot: 'atk',
+      category: '攻击提升', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', pointCost: 1,
+    });
+    return null;
+  });
+}
+
 async function capture() {
   const s = await startServer({
     prefix: 'dl-fe-contract-', level: 'warn', authConfig: RELAXED_AUTH,
@@ -60,6 +84,15 @@ async function capture() {
     //   注意顺序：这些请求必须排在 logout 之前（logout 会撤销本会话）
     const wh = await get('/api/v1/me/warehouse', token);
     assert.equal(wh.status, 200, `仓库真源应 200（D-159 起不再 404 warehouse_missing）：${wh.raw.slice(0, 200)}`);
+    const configs = await get('/api/v1/me/configs', token);
+    assert.equal(configs.status, 200, configs.raw);
+    // 提交③：装配（两步顺序第①步）—— 注入确定性夹具后再装配，响应即 `{warehouse,usage,counts,caps}`
+    const playerId = await playerIdByPublicId(s.store, reg.body.data.publicId);
+    assert.ok(playerId, '应能用 publicId 反查到 playerId');
+    await injectAssemblable(s.store, playerId);
+    const asm = await post('/api/v1/me/warehouse/assemble',
+      { targetUid: FIX_ROLE, pluginUid: FIX_PLUGIN_MATCH, slotIndex: 0 }, token);
+    assert.equal(asm.status, 200, `装配应 200：${asm.raw.slice(0, 200)}`);
     const boxResp = await post('/api/v1/me/box', { times: 2 }, token);
     assert.equal(boxResp.status, 200, boxResp.raw);
     const ai = await get('/api/v1/me/ai', token);
@@ -116,6 +149,7 @@ async function capture() {
     return {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
+      configs: configs.body, assemble: asm.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
       adminRebuild: rebuild.body, adminBots: bots.body, adminClearBots: clearBots.body, adminBan: ban.body,
@@ -150,6 +184,9 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'me/box': { envelopes: [real.box], anyOf: false },
     'me/ai': { envelopes: [real.ai], anyOf: false },
     'me/nickname': { envelopes: [real.nickname], anyOf: false },
+    // 提交③：配置列表（编辑器）与装配回带（两步顺序第①步）
+    'me/configs': { envelopes: [real.configs], anyOf: false },
+    'me/warehouse/assemble': { envelopes: [real.assemble], anyOf: false },
     // F2：管理面各组（02-accounts.md §5）
     'admin/accounts': { envelopes: [real.adminAccounts], anyOf: false },
     'admin/delete-account': { envelopes: [real.adminDelete], anyOf: false },

@@ -41,8 +41,14 @@
   // F3：开箱次数上限（与 server/box.js 的 BOX_TIMES_MAX 同口径；03 §3.4）
   var BOX_TIMES_MAX = 100;
   var BOX_TIMES_DEFAULT = 1;
-  // F3：屏内弹窗种类（03 §3.7/§3.8；至多一个）
-  var MODAL_KINDS = Object.freeze(['item-detail', 'config']);
+  // F3：屏内弹窗种类（03 §3.7/§3.8；至多一个）。
+  //   提交③ 新增两级选择弹窗：slot-pick（角色/技能模板）· plugin-pick（某插槽的插件）· ai-pick（AI 库）
+  var MODAL_KINDS = Object.freeze(['item-detail', 'config', 'slot-pick', 'plugin-pick', 'ai-pick']);
+  // F3：配置弹窗里的**位置键**（03 §3.7 逐位置：角色模板 / 角色插槽 / 技能1..3 / 技能插槽 / 战斗AI）。
+  //   `skillN` 表示第 N 个技能（0 起）；插件位置在 `pos` 之外另带 `idx`（插槽序号）。
+  var CONFIG_POSITIONS = Object.freeze(['role', 'skill0', 'skill1', 'skill2', 'ai']);
+  // F3：技能位置数（D-160：完整性判据 = 角色 + **恰 3 技能** + AI）
+  var SKILL_SLOTS = 3;
 
   function emptyForm() {
     return { username: '', password: '', confirm: '', nickname: '', oldPassword: '', newPassword: '', newConfirm: '' };
@@ -59,9 +65,11 @@
     return { envelope: null, loading: false };
   }
 
-  // 出战配置（03 §7）：本批只用 `activeSlotId` 判"出战中"（配置编辑器属提交③）
+  // 出战配置（03 §7）：`data` = GET /me/configs 的**响应信封**（投影仍在 format.js）；
+  //   `ai` = GET /me/ai 的响应信封（提交③ 的 ai-pick 候选来源）；
+  //   `draft` = 弹窗内的**本地草稿**（`{slotId, loadout}`；点「保存」才 PUT）；`dirty` = 是否有未保存编辑。
   function emptyConfigs() {
-    return { data: null, draft: null, dirty: false };
+    return { data: null, ai: null, draft: null, dirty: false };
   }
 
   // 初始状态（01-auth.md §7.1 + 02-accounts.md §7 + 03 §7）
@@ -166,6 +174,15 @@
         });
       case 'modal.close':
         return state.modal === null ? state : Object.assign({}, state, { modal: null });
+      // 审查 F-1（FR-10）：**"用户没取消才打开"** 的弹窗替换 —— 供「编辑器/候选弹窗里的异步动作在
+      //   await 回来后回弹」使用。条件必须在 reducer 里判：动作拿到的 `ctx.state` 是**动作开始时的快照**
+      //   （public/app.js buildCtx），await 之后读它永远是旧值，判不出"用户是否已点背景关闭"。
+      //   语义：当前没有弹窗（= 用户在等待期间点背景关闭，modal-close 已丢弃草稿）→ 保持关闭，不做任何事。
+      case 'modal.setIfOpen': {
+        if (state.modal === null) return state;
+        var nextModal = action.modal && MODAL_KINDS.indexOf(action.modal.kind) !== -1 ? action.modal : null;
+        return nextModal === null ? state : Object.assign({}, state, { modal: nextModal });
+      }
       // 03 §7：仓库整包（GET /me/warehouse 的**响应信封**）＋ 当前桶
       case 'warehouse.set':
         return Object.assign({}, state, {
@@ -183,11 +200,41 @@
         return Object.assign({}, state, { box: Object.assign({}, state.box, { times: boxTimesOf(action.value) }) });
       case 'box.result.set':
         return Object.assign({}, state, { box: Object.assign({}, state.box, { result: action.result || null }) });
-      case 'configs.set':
-        // 提交③ 才消费 /me/configs 的正文；本批只保存响应信封（投影仍在 format.js）
+      case 'configs.set': {
+        // 配置列表整包（GET /me/configs 的**响应信封**）；换列表即丢弃旧草稿（草稿绑定单个槽）
+        var data = objectOr(action.data, null);
         return Object.assign({}, state, {
-          configs: { data: objectOr(action.data, null), draft: null, dirty: false },
+          configs: {
+            data: data,
+            ai: data === null ? null : state.configs.ai,
+            draft: null,
+            dirty: false,
+          },
         });
+      }
+      // 提交③：AI 库列表整包（GET /me/ai 的响应信封；ai-pick 的候选来源）
+      case 'configs.ai.set':
+        return Object.assign({}, state, {
+          configs: Object.assign({}, state.configs, { ai: objectOr(action.ai, null) }),
+        });
+      // 提交③：草稿整体替换（打开配置弹窗时灌入服务端副本；关闭时置 null = 丢弃）
+      case 'configs.draft.set':
+        return Object.assign({}, state, {
+          configs: Object.assign({}, state.configs, {
+            draft: objectOr(action.draft, null),
+            dirty: action.draft === undefined || action.draft === null ? false : action.dirty === true,
+          }),
+        });
+      // 提交③：草稿局部替换（替换模板 / 装配插件都先作用在草稿上；**不动服务端**）
+      case 'configs.draft.patch': {
+        if (state.configs.draft === null) return state;
+        return Object.assign({}, state, {
+          configs: Object.assign({}, state.configs, {
+            draft: Object.assign({}, state.configs.draft, objectOr(action.patch, {})),
+            dirty: true,
+          }),
+        });
+      }
       case 'settings.set':
         return Object.assign({}, state, {
           settings: { nickname: strOf(action.nickname), result: action.result || null },
@@ -262,6 +309,8 @@
     ADMIN_DEFAULT_COUNT: ADMIN_DEFAULT_COUNT,
     WAREHOUSE_BUCKETS: WAREHOUSE_BUCKETS,
     MODAL_KINDS: MODAL_KINDS,
+    CONFIG_POSITIONS: CONFIG_POSITIONS,
+    SKILL_SLOTS: SKILL_SLOTS,
     BOX_TIMES_FIELD: BOX_TIMES_FIELD,
     NICKNAME_FIELD: NICKNAME_FIELD,
     SCREEN_FIELDS: SCREEN_FIELDS,
