@@ -180,8 +180,17 @@ test('P1-4 排位批次级幂等（HTTP）：同 seed 重发 → 同 batchId、b
 
 test('P2-5 真实注册玩家的默认出战配置按身份派生（HTTP）：≥2 种 AI 程序且对局能分出胜负', async () => {
   await h.withServer(null, async (s) => {
+    // D-159：注册即发 starter，其**种子 = sha256('starter|publicId|playerId')** —— 两个身份都随机时
+    //   每次跑出来的物品/插件/数值都不同，"5 场里至少一场分出胜负"就成了概率断言（实测会全平局）。
+    //   固定 publicId + playerId ⇒ starter 内容级确定 ⇒ 对局结果确定（实测 3 次均为
+    //   ["loss","loss","loss","win","win"]，AI 程序 4 种）。断言本意（真实玩家能打出非平局）不变。
     const players = [];
-    for (let i = 0; i < 6; i++) players.push(await h.register(s.port, h.uniqueName('p25')));
+    for (let i = 0; i < 6; i++) {
+      players.push(await h.register(s.port, h.uniqueName('p25'), undefined, {
+        publicId: `u_0000000${i + 1}`,
+        playerId: `pl_${String(i + 1).padStart(16, '0')}`,
+      }));
+    }
     const programs = new Set();
     for (const p of players) {
       const pid = await h.playerIdByPublicId(s.store, p.publicId);

@@ -88,7 +88,8 @@ async function withServer(fn, env, authConfig) {
 async function loginAdmin(h, name) {
   h.form({ username: name || ADMIN_NAME, password: PW1, confirm: PW1 });
   await h.run('submit-register');
-  assert.equal(h.state().view, 'home');
+  // F3（FR-11）：登录/注册成功后的落点 = 主界面 hub
+  assert.equal(h.state().view, 'hub');
   assert.equal(h.state().session.isAdmin, true, `${name || ADMIN_NAME} 应被判为管理员（DL_ADMIN_USERS）`);
   return h.state().session;
 }
@@ -121,11 +122,15 @@ test('AF-1 管理员登录 → 主页出现管理入口 → 面板按钮产出�
     assert.match(resultOf(h), /^重建完成：\d+ 玩家$/, `重建索引文案：${resultOf(h)}`);
 
     // 刷新档案（/me 的 data.flags.isAdmin）后管理入口仍在 —— 否则管理员"刷新一下就掉权限"
+    //   F3（FR-11）：管理入口现渲染在主界面 hub（profile 屏按 §3.2 只有刷新档案/设置密码/返回主界面）
     await h.run('goto-home');
-    assert.equal(h.state().view, 'home');
-    await h.run('refresh-profile');
+    assert.equal(h.state().view, 'profile');
+    assert.ok(!htmlOf(h).includes('>管理员面板</button>'), '用户详情屏不渲染管理入口（§3.2 的按钮清单）');
+    await h.run('goto-hub');
+    assert.equal(h.state().view, 'hub');
+    await h.run('refresh-hub');
     assert.equal(h.state().session.isAdmin, true);
-    assert.ok(htmlOf(h).includes('>管理员面板</button>'), '刷新档案后管理入口不应消失');
+    assert.ok(htmlOf(h).includes('>管理员面板</button>'), '刷新摘要后管理入口不应消失');
   });
 });
 
@@ -141,13 +146,13 @@ test('AF-2 非管理员：管理入口完全不渲染；强制调用 → 403 文
     const before = h.counter.n;
     await h.run('admin-refresh-accounts');
     assert.equal(h.counter.n, before + 1, '强制调用必须真的到服务端（前端不做越权兜底）');
-    assert.equal(h.state().view, 'home', '403 不得切到账号列表屏');
+    assert.equal(h.state().view, 'hub', '403 不得切到账号列表屏');
     assert.match(resultOf(h), /需要管理员权限/, `403 文案：${resultOf(h)}`);
     assert.match(noticeOf(h), /需要管理员权限/, '非管理屏也要有可见文案（按钮永不无声）');
 
     // 强制切屏：入口动作自身也拦（状态被篡改时不进面板）
     await h.run('goto-admin');
-    assert.equal(h.state().view, 'home');
+    assert.equal(h.state().view, 'hub');
   });
 });
 

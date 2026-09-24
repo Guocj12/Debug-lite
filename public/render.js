@@ -41,11 +41,13 @@
     }).join('') + '</div>';
   }
 
-  // 行列表：每行 = 文本 + 该行按钮（按钮的目标经 data-player-id / data-public-id 携带，见 §3.2）
+  // 行列表：每行 = 文本（可缺省：如仓库行只有可点的物品名按钮）+ 该行按钮
+  //   （按钮的目标经 data-player-id / data-public-id / data-uid / data-slot / data-bucket 携带）
   function rowsHtml(vm) {
     if (!vm.rows || vm.rows.length === 0) return '';
     return '<div id="rows">' + vm.rows.map(function (row) {
-      return '<div class="row"><div class="line">' + esc(row.text) + '</div>'
+      var text = row && row.text ? '<div class="line">' + esc(row.text) + '</div>' : '';
+      return '<div class="row">' + text
         + '<div class="row-buttons">' + buttonsHtml(row.buttons) + '</div></div>';
     }).join('') + '</div>';
   }
@@ -55,6 +57,24 @@
     if (!vm.confirm || !vm.confirm.text) return '';
     return '<div id="confirm" class="confirm">' + '<div class="line">' + esc(vm.confirm.text) + '</div>'
       + '<div class="confirm-buttons">' + buttonsHtml(vm.confirm.buttons) + '</div></div>';
+  }
+
+  // 屏内弹窗（F3 §3.7/§3.8；FR-10：弹窗 = 屏内绘制的区块，不是浏览器原生弹窗/新窗口）。
+  //   背景元素一律带 data-action="modal-close" —— 点击背景 = 关闭并丢弃未提交输入；
+  //   弹窗内另有显式「关闭/取消」按钮（同样来自 vm.modal.buttons）。
+  function modalHtml(vm) {
+    if (!vm.modal) return '';
+    var lines = (vm.modal.lines || []).map(function (line) {
+      return '<div class="line">' + esc(line) + '</div>';
+    }).join('');
+    return '<div id="modal" class="modal">'
+      + '<div class="modal-background" data-action="modal-close"></div>'
+      + '<div class="modal-body">'
+      + '<h3>' + esc(vm.modal.title) + '</h3>'
+      + (vm.modal.hint ? '<p class="hint">' + esc(vm.modal.hint) + '</p>' : '')
+      + lines
+      + '<div class="modal-buttons">' + buttonsHtml(vm.modal.buttons) + '</div>'
+      + '</div></div>';
   }
 
   function fieldsHtml(vm) {
@@ -72,6 +92,9 @@
     var out = '';
     if (typeof button.playerId === 'string' && button.playerId !== '') out += ' data-player-id="' + esc(button.playerId) + '"';
     if (typeof button.publicId === 'string' && button.publicId !== '') out += ' data-public-id="' + esc(button.publicId) + '"';
+    if (typeof button.uid === 'string' && button.uid !== '') out += ' data-uid="' + esc(button.uid) + '"';
+    if (typeof button.slot === 'string' && button.slot !== '') out += ' data-slot="' + esc(button.slot) + '"';
+    if (typeof button.bucket === 'string' && button.bucket !== '') out += ' data-bucket="' + esc(button.bucket) + '"';
     return out;
   }
 
@@ -96,6 +119,7 @@
     parts.push(linesHtml(vm));
     parts.push(rowsHtml(vm));
     parts.push(confirmHtml(vm));
+    parts.push(modalHtml(vm));
     var fields = fieldsHtml(vm);
     if (fields !== '') {
       parts.push('<form data-enter="' + esc(vm.enterAction) + '" autocomplete="off">' + fields + '<div class="buttons">' + buttonsHtml(vm.buttons) + '</div></form>');

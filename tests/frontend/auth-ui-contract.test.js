@@ -1,8 +1,10 @@
 'use strict';
 /* tests/frontend/auth-ui-contract.test.js —— F1 界面契约（总纲 §4.1「按钮永不无声」+ §1.5「投影单一真源」）
+ *   （F3 提交②同步：非管理员态口径从「F1 四屏恰好 9 个动作」改为「非管理动作集合」，见 UW-2）
  *
  * 机器判定：
- *   ① 四屏渲染出的 data-action 集合 == ACTIONS 注册表键集合（双向：无死按钮、无无入口实现）；
+ *   ① 非管理员态全部屏（含弹窗子态）渲染出的 data-action 集合 == ACTIONS 注册表中**非管理动作**集合
+ *      （双向：无死按钮、无无入口实现）；
  *   ② 每个动作都有可实现分支（run 是函数）与非空标签；
  *   ③ render.js 零逻辑（不读响应字段、不接触应用状态对象）；
  *   ④ 单一网络出口（fetch 只在 api.js）／单一 DOM 写入点（innerHTML 只在 app.js）。
@@ -23,6 +25,11 @@ const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
+// 02-accounts.md §4 的十六个管理动作（只在管理员态渲染；非管理员态**完全不出现**，A-1）
+const ADMIN_ACTIONS = new Set(['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
+  'accounts-size-20', 'accounts-size-50', 'accounts-size-100', 'admin-delete-account', 'confirm-yes', 'confirm-no',
+  'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row']);
+
 function readPublic(name) {
   return fs.readFileSync(path.join(PUBLIC_DIR, name), 'utf8');
 }
@@ -31,6 +38,35 @@ function stateFor(view) {
   const state = store.initialState();
   state.view = view;
   return state;
+}
+
+// 真实的仓库响应形状（真起服务抓取过：docs/frontend/03 §5.2 / tests/api/api-me-warehouse.test.js）
+const WAREHOUSE_ENVELOPE = {
+  ok: true,
+  data: {
+    buckets: {
+      role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 1, slots: [{ type: 'mp', pluginUid: null }], stats: { hp: 96, atk: 9, def: 7, sp: 58, mp: 41 }, regen: { mp: 1, sp: 2 }, pluginPoints: 3, templateId: 'role_bal' }],
+      skill: [{ uid: 'item_1', kind: 'skill', name: '旋风斩', quality: 'common', slotCount: 1, slots: [{ type: 'basic', pluginUid: null }], params: { multiplier: 0.88, cost: { hp: 0, mp: 0, sp: 12 }, cooldown: 2, bulletLevel: 2 }, templateId: 'skill_melee_whirl' }],
+      rolePlugin: [{ uid: 'item_4', kind: 'rolePlugin', id: 'rp_mp_regen', name: 'MP 优化·回复', desc: 'mp 回复 +1', slot: 'mp', category: 'MP 优化', quality: 'common', tier: 1, pointCost: 1, affixes: [{ id: 'mp_regen', desc: 'mp 回复 +1', params: { v: 1 } }] }],
+      skillPlugin: [{ uid: 'item_6', kind: 'skillPlugin', id: 'sp_displacement', name: '位移增强', desc: '位移距离 +1', slot: 'basic', category: '位移增强', quality: 'common', tier: 1, costDeltaByTier: { sp: [2, 4, 6] }, affixes: [{ id: 'distance_plus', desc: '位移距离 +1', params: { v: 1 } }] }],
+    },
+    usage: { item_0: { slotIds: ['slot1'] }, item_1: { slotIds: ['slot1'] } },
+    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
+    counts: { role: 1, skill: 1, rolePlugin: 1, skillPlugin: 1 },
+  },
+};
+
+// 非管理员态下**可能出现的全部渲染**：九屏 + 两类弹窗子态
+//   （item-open / modal-close 只在弹窗打开时渲染 —— UW-5 要求含弹窗的屏必须有 modal-close）
+function nonAdminRenderings() {
+  const list = store.VIEWS.map((view) => stateFor(view));
+  const itemDetail = stateFor('warehouse');
+  itemDetail.warehouse.envelope = WAREHOUSE_ENVELOPE;
+  itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
+  const configModal = stateFor('hub');
+  configModal.modal = { kind: 'config', slotId: 'slot1' };
+  list.push(itemDetail, configModal);
+  return list;
 }
 
 function htmlFor(view) {
@@ -49,20 +85,30 @@ test('UI-1 public/ 文件清单与设计文档一致（无多无少）', () => {
     `public/ 文件清单漂移：${onDisk.join(', ')}`);
 });
 
-test('UI-2 四屏的 data-action 集合 == ACTIONS 注册表（按钮永不无声，双向）', () => {
+test('UI-2 非管理员态全部屏的 data-action 集合 == 注册表的非管理动作集合（按钮永不无声，双向）', () => {
   const rendered = new Set();
-  for (const view of store.VIEWS) {
-    const html = htmlFor(view);
-    for (const a of attrValues(html, 'data-action')) rendered.add(a);
+  for (const state of nonAdminRenderings()) {
+    for (const a of attrValues(render.render(format.viewModel(state)), 'data-action')) rendered.add(a);
   }
   const dead = [...rendered].filter((a) => ACTION_NAMES.indexOf(a) === -1);
   assert.deepEqual(dead, [], `渲染出的按钮没有实现分支（死按钮）：${dead.join(', ')}`);
-  // F2（docs/frontend/02-accounts.md §4）把注册表扩到 25 个动作，其中 16 个管理动作**只在管理员态**渲染；
-  //   本用例的状态是 non-admin（stateFor = initialState），admin/accounts 两屏按 A-1 兜底回主页，
-  //   故这里核对的是「F1 四屏仍恰好渲染 F1 的 9 个动作，且全部已注册」；
-  //   「注册了动作但没有入口」的反向核对（全 25 个）在管理员态下由
-  //   tests/frontend/admin-ui-contract.test.js 的 AU-2 完成（渲染集合 == 注册表集合，双向）。
-  assert.equal(rendered.size, 9, `F1 四屏（非管理员态）动作数应为 9，实际 ${rendered.size}：${[...rendered].join(', ')}`);
+
+  // F3 提交② 口径（03-hub-warehouse-loadout.md §4 / §10 UW-2）：F1 的 UI-2 断言从「F1 四屏恰好 9 个」改成
+  //   「渲染集合 == 注册表中**非管理动作**集合」，且管理动作在非管理员态**一个都不出现**。
+  //   动作数构成（以**实际注册表**为准，不写死）：
+  //     注册表 42 = F1 9 + F2 16 + F3 提交② 17
+  //     非管理 26 = 42 − 16（管理动作）
+  //   提交③（出战配置编辑器）的 config-save / config-activate / slot-pick / slot-set / ai-pick /
+  //   ai-set / plugin-pick / plugin-set / plugin-clear **不先注册空壳**（「按钮永不无声」不允许空动作）；
+  //   分册 §4 给出的 35（= 51 − 16）是提交③ 完成后的目标数，本批按实际值核对。
+  const managed = ACTION_NAMES.filter((a) => !ADMIN_ACTIONS.has(a));
+  const expected = [...new Set(managed)].sort();
+  const extra = expected.filter((a) => !rendered.has(a));
+  assert.deepEqual(extra, [], `注册了非管理动作但没有入口（不可达）：${extra.join(', ')}`);
+  assert.equal(rendered.size, expected.length,
+    `非管理员态动作数应等于注册表非管理动作数 ${expected.length}，实际 ${rendered.size}`);
+  const leaked = [...rendered].filter((a) => ADMIN_ACTIONS.has(a));
+  assert.deepEqual(leaked, [], `非管理员态渲染了管理动作：${leaked.join(', ')}`);
 });
 
 test('UI-3 每个动作都有可实现分支与非空标签', () => {
@@ -72,21 +118,34 @@ test('UI-3 每个动作都有可实现分支与非空标签', () => {
   }
 });
 
-test('UI-4 回车提交入口（data-enter）全部命中注册表，且三屏各一', () => {
+test('UI-4 回车提交入口（data-enter）全部命中注册表，且每个 submit 按钮都绑定在它所在表单上', () => {
   const enter = new Set();
   for (const view of store.VIEWS) for (const a of attrValues(htmlFor(view), 'data-enter')) enter.add(a);
-  assert.deepEqual([...enter].sort(), ['submit-login', 'submit-password', 'submit-register']);
+  // F1 三屏（login/register/password）+ F3 两屏（box/settings）
+  assert.deepEqual([...enter].sort(), ['box-open', 'settings-nickname-save', 'submit-login', 'submit-password', 'submit-register']);
   for (const a of enter) assert.ok(ACTION_NAMES.indexOf(a) !== -1, `data-enter=${a} 不在注册表`);
+  // 每个 submit 型按钮的 data-action 必须等于其所在表单的 data-enter（否则点按钮与回车会跑两个动作）
+  for (const view of store.VIEWS) {
+    const html = htmlFor(view);
+    const formAction = (html.match(/<form data-enter="([^"]+)"/) || [])[1];
+    const submits = [...html.matchAll(/<button type="submit" data-action="([^"]+)"/g)].map((m) => m[1]);
+    for (const s of submits) assert.equal(s, formAction, `${view} 屏 submit 按钮 ${s} 与表单 data-enter=${formAction} 不一致`);
+  }
 });
 
-test('UI-5 busy 状态下四屏的全部按钮都被禁用（防重复提交）', () => {
-  for (const view of store.VIEWS) {
-    const state = stateFor(view);
+test('UI-5 busy 状态下全部屏（含弹窗）的按钮都被禁用（防重复提交）', () => {
+  const states = nonAdminRenderings();
+  // 管理员两屏也要覆盖（F2 §4）
+  const admin = store.initialState();
+  admin.session = { token: 't', publicId: 'u_admin01', nickname: '管理员', expiresAt: null, isAdmin: true };
+  admin.view = 'admin';
+  states.push(admin);
+  for (const state of states) {
     state.busy = true;
     const html = render.render(format.viewModel(state));
     const buttons = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
-    assert.ok(buttons.length > 0, `${view} 屏应至少有一个按钮`);
-    for (const b of buttons) assert.ok(b.includes('disabled'), `${view} 屏 busy 时按钮未禁用：${b}`);
+    assert.ok(buttons.length > 0, `${state.view} 屏应至少有一个按钮`);
+    for (const b of buttons) assert.ok(b.includes('disabled'), `${state.view} 屏 busy 时按钮未禁用：${b}`);
   }
 });
 

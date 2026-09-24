@@ -126,6 +126,11 @@ async function register(port, username, password, extra) {
   const body = { username: name, password: pw };
   if (o.nickname !== undefined) body.nickname = o.nickname;
   if (o.warehouse !== undefined) body.warehouse = o.warehouse;
+  // D-159：starter 的种子 = sha256('starter|publicId|playerId') → **两个身份都必须固定**才能得到
+  //   确定性的默认出战配置（"随机 publicId 的注册"每次跑出来的物品/插件/数值都不同）。
+  //   需要确定性夹具的用例（如 P2-5 的"对局能分出胜负"）传这两个字段即可。
+  if (o.publicId !== undefined) body.publicId = o.publicId;
+  if (o.playerId !== undefined) body.playerId = o.playerId;
   const r = await request(port, 'POST', '/api/v1/auth/register', body);
   const data = r.body && r.body.ok ? r.body.data : null;
   return {

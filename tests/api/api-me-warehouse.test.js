@@ -33,6 +33,41 @@ function usedUids(warehouse) {
   return used;
 }
 
+// 确定性可装配夹具（**反 flaky**）：starter 与开箱掉落都随身份/随机流变化，"从开箱结果里找一对
+//   类型匹配的组合"是概率断言（实测会找不到 → UWH-3/4/7 偶发红）。改为**直接注入**一件已知角色
+//   （2 个槽：atk 空槽 + def 已装）与两个角色插件（atk 匹配 / def 不匹配），断言完全确定。
+//   物品形状与生成路径同形（与 tests/unit/warehouse-invariants.test.js 的夹具一致）。
+const FIX_ROLE = 'uwh_fix_role';
+const FIX_PLUGIN_MATCH = 'uwh_fix_plugin_atk';
+const FIX_PLUGIN_MISMATCH = 'uwh_fix_plugin_def';
+const FIX_SKILL = 'uwh_fix_skill';
+async function injectAssemblable(s, playerId) {
+  await s.store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push({
+      uid: FIX_ROLE, kind: 'role', templateId: 'role_bal', name: '夹具角色', quality: 'common',
+      slotCount: 2, slots: [{ type: 'atk', pluginUid: null }, { type: 'def', pluginUid: FIX_PLUGIN_MISMATCH }],
+      stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+      unlockTier: 'common', pluginPoints: 3,
+    });
+    a.warehouse.buckets.rolePlugin.push({
+      uid: FIX_PLUGIN_MATCH, kind: 'rolePlugin', id: 'rp_atk_flat', name: '攻击 +4', slot: 'atk',
+      category: '攻击提升', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', pointCost: 1,
+    });
+    a.warehouse.buckets.rolePlugin.push({
+      uid: FIX_PLUGIN_MISMATCH, kind: 'rolePlugin', id: 'rp_def_flat', name: '防御 +3', slot: 'def',
+      category: '防御强化', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', pointCost: 1, equipped: true,
+    });
+    a.warehouse.buckets.skill.push({
+      uid: FIX_SKILL, kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能', quality: 'common',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+      unlockTier: 'common',
+    });
+    return null;
+  });
+  return { roleUid: FIX_ROLE, freeSlotIndex: 0, matchUid: FIX_PLUGIN_MATCH, mismatchUid: FIX_PLUGIN_MISMATCH };
+}
+
 test('UWH-1 GET /me/warehouse 为真源（starter 已入档 + caps + usage）+ 401 负例', async () => {
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uwh1');
@@ -84,95 +119,95 @@ test('UWH-2 usage：出战配置引用的物品与插件都被标记为 slot1（
 test('UWH-3 assemble/disassemble 正例：仓库与 usage 同步更新（记录可重演）', async () => {
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uwh3');
-    // 先开箱拿到更多插件（starter 的插件都已装上）
-    const box = await h.request(s.port, 'POST', '/api/v1/me/box', { times: 30 }, h.authed(p.token));
-    assert.equal(box.status, 200, box.raw);
-
-    const wh0 = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token))).body.data;
+    // 反 flaky：注入**确定性**可装配夹具（角色 atk 空槽 + atk 插件），不再依赖开箱随机掉落
+    const fix = await injectAssemblable(s, p.playerId);
     const cfg0 = (await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(p.token))).body.data;
     const slot1Uid = cfg0.slots.find((x) => x.slotId === 'slot1').loadout.role.uid;
-    const used = usedUids(wh0.warehouse || wh0);
-    // 找一个"有匹配空槽"的角色 + 匹配的未使用角色插件（优先出战配置里的那个角色，以便同时验证 usage）
-    let target = null;
-    const ordered = [...wh0.buckets.role].sort((a, b) => (a.uid === slot1Uid ? -1 : 0) - (b.uid === slot1Uid ? -1 : 0));
-    for (const role of ordered) {
-      const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
-      if (idx < 0) continue;
-      const plugin = wh0.buckets.rolePlugin.find((x) => !used.has(x.uid) && x.slot === role.slots[idx].type);
-      if (!plugin) continue;
-      // 点数预算：装得上才算（core/items 的点数是硬约束）
-      const usedPoints = (role.slots || []).reduce((sum, sl) => {
-        if (!sl.pluginUid) return sum;
-        const q = wh0.buckets.rolePlugin.find((x) => x.uid === sl.pluginUid);
-        return sum + (q && Number.isFinite(q.pointCost) ? q.pointCost : 0);
-      }, 0);
-      if (usedPoints + (plugin.pointCost || 0) > (role.pluginPoints || 0)) continue;
-      target = { role, idx, plugin };
-      break;
-    }
-    assert.ok(target, '应能在开箱结果里找到"类型匹配且点数允许"的可装配组合');
-    // usage 的语义是「该物品被哪个**出战配置**引用」：目标角色若正是出战配置用的那件 → 装配后应被标记；
-    //   否则（开箱得到的、未被任何配置引用的物品）→ 不标记（这正是 usage 与"已装配"两个概念的区别）
-    const targetInConfig = target.role.uid === slot1Uid;
+    const target = { roleUid: fix.roleUid, idx: fix.freeSlotIndex, pluginUid: fix.matchUid };
+    // 夹具物品不被任何配置引用 → usage 不标记（正是 usage 与"已装配"两个概念的区别）
+    assert.notEqual(target.roleUid, slot1Uid, '夹具角色不是出战配置用的那件（用于对照 usage 语义）');
 
     const asm = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
-      targetUid: target.role.uid, pluginUid: target.plugin.uid, slotIndex: target.idx,
+      targetUid: target.roleUid, pluginUid: target.pluginUid, slotIndex: target.idx,
     }, h.authed(p.token));
     assert.equal(asm.status, 200, asm.raw);
-    const after = asm.body.data.warehouse.buckets.role.find((x) => x.uid === target.role.uid);
-    assert.equal(after.slots[target.idx].pluginUid, target.plugin.uid, '装配写入槽位引用');
-    if (targetInConfig) {
-      assert.ok(asm.body.data.usage[target.plugin.uid], 'usage 同步包含新装配的插件（目标在出战配置中）');
-      assert.deepEqual(asm.body.data.usage[target.plugin.uid].slotIds, ['slot1']);
-    } else {
-      assert.equal(asm.body.data.usage[target.plugin.uid], undefined, '目标物品未被任何配置引用 → usage 不标记');
-    }
+    const after = asm.body.data.warehouse.buckets.role.find((x) => x.uid === target.roleUid);
+    assert.equal(after.slots[target.idx].pluginUid, target.pluginUid, '装配写入槽位引用');
+    assert.equal(asm.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === target.pluginUid).equipped, true,
+      'D-159 回归：装配必须把插件 equipped 置 true');
+    assert.equal(asm.body.data.usage[target.pluginUid], undefined, '目标物品未被任何配置引用 → usage 不标记');
 
+    // 反例对照：把**出战配置里那件角色**（slot1 引用）装配后 usage 应标记 slot1
+    const cfgLoadout = cfg0.slots.find((x) => x.slotId === 'slot1').loadout;
+    const roleInCfg = asm.body.data.warehouse.buckets.role.find((x) => x.uid === slot1Uid);
+    const freeIdx = (roleInCfg.slots || []).findIndex((sl) => !sl.pluginUid);
+    if (freeIdx >= 0) {
+      const usedPts = (roleInCfg.slots || []).reduce((sum, sl) => {
+        if (!sl.pluginUid) return sum;
+        const q = asm.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === sl.pluginUid);
+        return sum + (q && Number.isFinite(q.pointCost) ? q.pointCost : 0);
+      }, 0);
+      const cand = asm.body.data.warehouse.buckets.rolePlugin.find((x) => !x.equipped
+        && x.slot === roleInCfg.slots[freeIdx].type && usedPts + (x.pointCost || 0) <= (roleInCfg.pluginPoints || 0));
+      if (cand) {
+        const asm2 = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
+          targetUid: slot1Uid, pluginUid: cand.uid, slotIndex: freeIdx,
+        }, h.authed(p.token));
+        assert.equal(asm2.status, 200, asm2.raw);
+        assert.deepEqual(asm2.body.data.usage[cand.uid].slotIds, ['slot1'], '在出战配置中的物品被引用 → usage 标记 slot1');
+      }
+    }
+    assert.ok(cfgLoadout.role.uid, '出战配置仍有角色（前置断言，避免空跑）');
+
+    // 拆卸（夹具槽）→ 引用清空、插件复位、usage 仍不标记
     const dis = await h.request(s.port, 'POST', '/api/v1/me/warehouse/disassemble', {
-      targetUid: target.role.uid, slotIndex: target.idx,
+      targetUid: target.roleUid, slotIndex: target.idx,
     }, h.authed(p.token));
     assert.equal(dis.status, 200, dis.raw);
-    const after2 = dis.body.data.warehouse.buckets.role.find((x) => x.uid === target.role.uid);
+    const after2 = dis.body.data.warehouse.buckets.role.find((x) => x.uid === target.roleUid);
     assert.equal(after2.slots[target.idx].pluginUid, null, '拆卸清空槽位引用');
-    assert.equal(dis.body.data.usage[target.plugin.uid], undefined, '拆卸后 usage 不再标记该插件');
+    assert.equal(dis.body.data.usage[target.pluginUid], undefined, '拆卸后 usage 不再标记该插件');
   });
 });
 
 test('UWH-4 装配拒绝：类型不符 409 slot_type_mismatch（玩家可读文案）；空槽拆卸 404 slot_empty', async () => {
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uwh4');
-    await h.request(s.port, 'POST', '/api/v1/me/box', { times: 30 }, h.authed(p.token));
+    // 反 flaky：注入确定性夹具（角色槽0=atk 空、槽1=def 已装；插件 atk 匹配 / def 不匹配）
+    const fix = await injectAssemblable(s, p.playerId);
     const wh = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token))).body.data;
-    const used = usedUids(wh);
 
-    // 目标槽：第一个有匹配类型插件的空槽；再找一个类型**不匹配**的插件
-    let match = null;
-    for (const role of wh.buckets.role) {
-      const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
-      if (idx < 0) continue;
-      const ok = wh.buckets.rolePlugin.find((x) => !used.has(x.uid) && x.slot === role.slots[idx].type);
-      if (ok) { match = { role, idx, ok }; break; }
-    }
-    assert.ok(match, '需要一对匹配组合用于对照');
-    const bad = wh.buckets.rolePlugin.find((x) => !used.has(x.uid) && x.slot !== match.role.slots[match.idx].type);
-    if (bad) {
-      const r = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
-        targetUid: match.role.uid, pluginUid: bad.uid, slotIndex: match.idx,
-      }, h.authed(p.token));
-      assert.equal(r.status, 409, r.raw);
-      assert.equal(r.body.error.code, 'slot_type_mismatch');
-      assert.match(r.body.error.message, /不匹配|类型/, `文案应玩家可读（实际 ${r.body.error.message}）`);
-    }
+    // ① 类型不符：def 插件装进 atk 槽 → 409 slot_type_mismatch（文案玩家可读）
+    const r = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
+      targetUid: fix.roleUid, pluginUid: fix.mismatchUid, slotIndex: fix.freeSlotIndex,
+    }, h.authed(p.token));
+    assert.equal(r.status, 409, r.raw);
+    assert.equal(r.body.error.code, 'slot_type_mismatch');
+    assert.match(r.body.error.message, /不匹配|类型/, `文案应玩家可读（实际 ${r.body.error.message}）`);
 
-    // 空槽拆卸 → 404 slot_empty（core/items 口径）
-    const emptyIdx = (match.role.slots || []).findIndex((sl) => !sl.pluginUid && sl.type !== match.ok.slot);
-    if (emptyIdx >= 0) {
-      const r2 = await h.request(s.port, 'POST', '/api/v1/me/warehouse/disassemble', {
-        targetUid: match.role.uid, slotIndex: emptyIdx,
-      }, h.authed(p.token));
-      assert.equal(r2.status, 404, r2.raw);
-      assert.equal(r2.body.error.code, 'slot_empty');
-    }
+    // ② 对照（更强）：同一槽装**匹配**插件 → 200，证明①的拒绝确实来自类型而非其它原因
+    const ok = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
+      targetUid: fix.roleUid, pluginUid: fix.matchUid, slotIndex: fix.freeSlotIndex,
+    }, h.authed(p.token));
+    assert.equal(ok.status, 200, `同槽匹配插件必须成功（否则①的 409 无法归因于类型）：${ok.raw}`);
+    // ③ 同一插件再装到别处 → 409 plugin_equipped（唯一性）
+    const dup = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
+      targetUid: FIX_SKILL, pluginUid: fix.matchUid, slotIndex: 0,
+    }, h.authed(p.token));
+    assert.equal(dup.status, 409, dup.raw);
+    assert.ok(['plugin_equipped', 'slot_type_mismatch'].includes(dup.body.error.code),
+      `类别不符或已装配都应被拒（实际 ${dup.body.error.code}）`);
+    assert.ok(wh.buckets.role.some((x) => x.uid === fix.roleUid), '夹具角色仍在仓库（前置断言）');
+
+    // ④ 空槽拆卸 → 404 slot_empty（core/items 口径）：槽1 已装被占，槽0 刚装上 → 用未装配夹具技能的空槽对照
+    const before = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token))).body.data;
+    const skill = before.buckets.skill.find((x) => x.uid === FIX_SKILL);
+    assert.equal(skill.slots[0].pluginUid, null, '夹具技能槽为空（前置）');
+    const r2 = await h.request(s.port, 'POST', '/api/v1/me/warehouse/disassemble', {
+      targetUid: FIX_SKILL, slotIndex: 0,
+    }, h.authed(p.token));
+    assert.equal(r2.status, 404, r2.raw);
+    assert.equal(r2.body.error.code, 'slot_empty');
   });
 });
 
@@ -224,38 +259,23 @@ test('UWH-7 闭环回归：开箱→装配（equipped 同步）→出战配置�
     assert.equal(foe.status, 200);
 
     // ① 开箱补齐，并找一个"类型匹配 + 点数允许 + 未装配"的组合
-    const box = await h.request(s.port, 'POST', '/api/v1/me/box', { times: 40 }, h.authed(me.token));
-    assert.equal(box.status, 200, box.raw);
+    // 反 flaky：用**注入的确定性夹具**（不再从随机开箱结果里挑组合）
+    const fix = await injectAssemblable(s, me.playerId);
     const wh0 = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(me.token))).body.data;
-    const used = usedUids(wh0);
-    let pick = null;
-    for (const role of wh0.buckets.role) {
-      const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
-      if (idx < 0) continue;
-      const plugin = wh0.buckets.rolePlugin.find((x) => !used.has(x.uid) && x.slot === role.slots[idx].type);
-      if (!plugin) continue;
-      const usedPoints = (role.slots || []).reduce((sum, sl) => {
-        if (!sl.pluginUid) return sum;
-        const q = wh0.buckets.rolePlugin.find((x) => x.uid === sl.pluginUid);
-        return sum + (q && Number.isFinite(q.pointCost) ? q.pointCost : 0);
-      }, 0);
-      if (usedPoints + (plugin.pointCost || 0) > (role.pluginPoints || 0)) continue;
-      pick = { role, idx, plugin };
-      break;
-    }
-    assert.ok(pick, '需要一对可装配组合');
+    assert.ok(wh0.counts.role >= 2, '夹具角色已入档（与 starter 角色并存）');
+    const pick = { roleUid: fix.roleUid, idx: fix.freeSlotIndex, pluginUid: fix.matchUid };
 
     // ② 装配 → **插件的 equipped 必须置位**（loadout 校验用它判"插件未装配"）
     const asm = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
-      targetUid: pick.role.uid, pluginUid: pick.plugin.uid, slotIndex: pick.idx,
+      targetUid: pick.roleUid, pluginUid: pick.pluginUid, slotIndex: pick.idx,
     }, h.authed(me.token));
     assert.equal(asm.status, 200, asm.raw);
-    const plugAfter = asm.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === pick.plugin.uid);
+    const plugAfter = asm.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === pick.pluginUid);
     assert.equal(plugAfter.equipped, true, 'D-159 回归：服务端装配必须把插件 equipped 置为 true');
 
     // ③ 用"装配后的角色物品"构造出战配置 → 必须保存成功（修前：插件未装配 → 409 loadout_invalid）
     const ld0 = (await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(me.token))).body.data.slots[0].loadout;
-    const roleAssembled = asm.body.data.warehouse.buckets.role.find((r) => r.uid === pick.role.uid);
+    const roleAssembled = asm.body.data.warehouse.buckets.role.find((r) => r.uid === pick.roleUid);
     const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', {
       loadout: { ...ld0, role: roleAssembled },
     }, h.authed(me.token));
@@ -274,13 +294,13 @@ test('UWH-7 闭环回归：开箱→装配（equipped 同步）→出战配置�
 
     // ⑤ 拆卸 → **equipped 复位** → 同一插件可**再次装回**（修前：永久 409 plugin_equipped）
     const dis = await h.request(s.port, 'POST', '/api/v1/me/warehouse/disassemble', {
-      targetUid: pick.role.uid, slotIndex: pick.idx,
+      targetUid: pick.roleUid, slotIndex: pick.idx,
     }, h.authed(me.token));
     assert.equal(dis.status, 200, dis.raw);
-    const plugAfterDis = dis.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === pick.plugin.uid);
+    const plugAfterDis = dis.body.data.warehouse.buckets.rolePlugin.find((x) => x.uid === pick.pluginUid);
     assert.equal(plugAfterDis.equipped, false, 'D-159 回归：拆卸必须把插件 equipped 复位为 false');
     const re = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {
-      targetUid: pick.role.uid, pluginUid: pick.plugin.uid, slotIndex: pick.idx,
+      targetUid: pick.roleUid, pluginUid: pick.pluginUid, slotIndex: pick.idx,
     }, h.authed(me.token));
     assert.equal(re.status, 200, `拆下的插件必须能再装回（实际 ${re.raw}）`);
   });

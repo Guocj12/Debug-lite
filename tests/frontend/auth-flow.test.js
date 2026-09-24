@@ -63,7 +63,9 @@ function noticeOf(h) {
   return n ? n.text : '';
 }
 
-const LINES = (h) => format.homeLines(h.state());
+// F3（FR-11）：登录/注册后的落点是主界面 hub；档案各行仍是 F1 的投影（现由 profile 屏消费）
+const SUMMARY = (h) => format.hubSummary(h.state());
+const LINES = (h) => format.detailLines(h.state());
 
 async function withHarness(fn) {
   const s = await startServer({ prefix: 'dl-fe-flow-', level: 'warn' });
@@ -74,16 +76,18 @@ async function withHarness(fn) {
   }
 }
 
-test('FL-1 注册 → 主页（含首屏段位/积分）并落盘 dl.token / dl.session', async () => {
+test('FL-1 注册 → 主界面（含摘要）/ 自动取一次 /me / 落盘 dl.token / dl.session', async () => {
   await withHarness(async (h) => {
     h.form({ username: 'flow1', password: PW1, confirm: PW1 });
+    const before = h.counter.n;
     await h.run('submit-register');
-    assert.equal(h.state().view, 'home');
+    // FR-11：落点 = hub（不再是 F1 的档案页）；hub 摘要只读 GET /me，故落地即自动取一次
+    assert.equal(h.state().view, 'hub');
+    assert.equal(h.counter.n, before + 2, '注册一次 + 自动取一次 /me');
     assert.match(noticeOf(h), /^注册成功：/);
     assert.equal(h.state().session.publicId.indexOf('u_'), 0, '会话应含 publicId');
-    const lines = LINES(h).join('\n');
-    assert.match(lines, /段位：common/);
-    assert.match(lines, /积分：0/);
+    // 摘要行 = `昵称 · 段位 · 积分 · 未读 进攻a/防守d · 在池`（03 §3.1 / §11 步 2）
+    assert.match(SUMMARY(h), /^.+ · common · 0 · 未读 进攻0\/防守0 · 在池$/, `摘要行：${SUMMARY(h)}`);
     // localStorage：两个键（01-auth.md §7.3）
     assert.ok(h.win.map.get('dl.token'), 'dl.token 应已写入');
     const saved = JSON.parse(h.win.map.get('dl.session'));
@@ -95,6 +99,8 @@ test('FL-2 刷新档案 → /me 全量文本（配置槽/战绩/未读）', asyn
   await withHarness(async (h) => {
     h.form({ username: 'flow2', password: PW1, confirm: PW1 });
     await h.run('submit-register');
+    await h.run('goto-profile');
+    assert.equal(h.state().view, 'profile');
     await h.run('refresh-profile');
     assert.equal(noticeOf(h), '档案已刷新');
     const lines = LINES(h).join('\n');
@@ -106,6 +112,10 @@ test('FL-2 刷新档案 → /me 全量文本（配置槽/战绩/未读）', asyn
     assert.match(lines, /仓库校验：/);
     assert.match(lines, /机器人账号：否/);
     assert.equal(h.state().profile !== null, true, 'profile 应为完整信封');
+    // F3 §3.2：profile 屏**不再有**「登出」按钮（登出只保留在设置屏）
+    const html = require('../../public/render.js').render(format.viewModel(h.state()));
+    assert.ok(!html.includes('data-action="logout"'), '用户详情屏不得出现登出按钮');
+    assert.ok(html.includes('data-action="goto-password"'), '用户详情屏应保留「设置密码」');
   });
 });
 
@@ -238,8 +248,9 @@ test('FL-11 提交中（busy）重复点击不再发请求', async () => {
     const first = h.run('submit-register');
     const second = h.run('submit-register'); // busy 期间的第二击
     await Promise.all([first, second]);
-    assert.equal(h.counter.n, before + 1, 'busy 期间不得重复发请求');
-    assert.equal(h.state().view, 'home');
+    // 注册一次 + 落地后自动取一次 /me（FR-11）；busy 期间的第二击不得再发任何请求
+    assert.equal(h.counter.n, before + 2, 'busy 期间不得重复发请求');
+    assert.equal(h.state().view, 'hub');
     assert.match(noticeOf(h), /^注册成功：/);
   });
 });

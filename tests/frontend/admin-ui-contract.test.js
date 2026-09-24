@@ -24,13 +24,18 @@ const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
-// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个；文档标题写"新增 15 个（合计 24）"，
-//   但其表格逐行枚举出来的新增项是 16 个 —— 测试以**表格逐行枚举**为准，见 admin-ui-contract 的 AU-1）
+// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个）。F3 提交②（03 §4）在此之上再增 17 个
+//   **非管理**动作（见 F3_ACTIONS）→ 注册表 42 = 9 + 16 + 17；管理动作仍是这 16 个。
+//   AU-1 因此改为「管理员态渲染集合 == 注册表全集（实际值）」，数字不再写死（03 §10 UW-3 / K-5）。
 const F1_ACTIONS = ['submit-login', 'submit-register', 'submit-password', 'refresh-profile', 'logout',
   'goto-register', 'goto-login', 'goto-password', 'goto-home'];
 const F2_ACTIONS = ['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
   'accounts-size-20', 'accounts-size-50', 'accounts-size-100', 'admin-delete-account', 'confirm-yes', 'confirm-no',
   'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row'];
+// F3 提交② 实际注册的非管理动作（提交③ 的配置编辑器动作**不先注册空壳**）
+const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'goto-quick', 'goto-tournament',
+  'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub', 'refresh-warehouse', 'warehouse-bucket',
+  'item-open', 'config-open', 'box-open', 'modal-close', 'settings-nickname-save'];
 
 const ROW = {
   playerId: 'pl_row0001', publicId: 'u_row0001', nickname: '行一', tier: 'common', points: 120,
@@ -41,11 +46,27 @@ function accountsEnvelope(extra) {
   return { ok: true, data: Object.assign({ total: 1, offset: 0, limit: 20, hasMore: false, rows: [ROW] }, extra || {}) };
 }
 
+// 真实仓库响应形状（03 §5.2；真起服务抓取过）
+const WAREHOUSE_ENVELOPE = {
+  ok: true,
+  data: {
+    buckets: {
+      role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 1, slots: [{ type: 'mp', pluginUid: null }], stats: { hp: 96, atk: 9, def: 7, sp: 58, mp: 41 }, regen: { mp: 1, sp: 2 }, pluginPoints: 3, templateId: 'role_bal' }],
+      skill: [],
+      rolePlugin: [{ uid: 'item_4', kind: 'rolePlugin', id: 'rp_mp_regen', name: 'MP 优化·回复', desc: 'mp 回复 +1', slot: 'mp', category: 'MP 优化', quality: 'common', tier: 1, pointCost: 1, affixes: [] }],
+      skillPlugin: [],
+    },
+    usage: { item_0: { slotIds: ['slot1'] } },
+    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
+    counts: { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0 },
+  },
+};
+
 // 管理员态（state.session.isAdmin === true）的初始状态
 function adminState(view, extra) {
   const state = store.initialState();
   state.session = { token: 'token-for-test', publicId: 'u_admin01', nickname: '管理员', expiresAt: null, isAdmin: true };
-  state.view = view || 'home';
+  state.view = view || 'hub';
   state.admin.accounts = accountsEnvelope();
   return Object.assign(state, extra || {});
 }
@@ -58,29 +79,39 @@ function attrValues(html, attr) {
   return out;
 }
 
-// 管理员态下**全部**屏的渲染（含账号列表的二次确认子态）—— F2 全部 25 个动作都应在此出现
+// 管理员态下**全部**屏的渲染（含账号列表的二次确认子态 + F3 的两类弹窗子态）
+//   —— 注册表里的每个动作都应在此出现（无"注册了但没有入口"）
 function adminRenderings() {
-  const list = ['login', 'register', 'home', 'password', 'admin'].map((view) => htmlFor(adminState(view)));
+  const list = store.VIEWS.map((view) => htmlFor(adminState(view, { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) })));
   list.push(htmlFor(adminState('accounts')));
   list.push(htmlFor(adminState('accounts', { admin: Object.assign(store.emptyAdmin(), {
     accounts: accountsEnvelope(), confirm: { kind: 'delete', playerId: ROW.playerId, publicId: ROW.publicId },
   }) })));
+  const itemDetail = adminState('warehouse', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
+  itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
+  list.push(htmlFor(itemDetail));
+  const configModal = adminState('hub');
+  configModal.modal = { kind: 'config', slotId: 'slot1' };
+  list.push(htmlFor(configModal));
   return list;
 }
 
-test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；含 F2 十六个）', () => {
-  assert.deepEqual([...F1_ACTIONS, ...F2_ACTIONS].sort(), ACTION_NAMES,
-    `动作白名单与 02-accounts.md §4 表格不一致：${ACTION_NAMES.join(', ')}`);
+test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交②后按实际值核对）', () => {
+  // F1 + F2 + F3 提交② 的三段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS])].sort();
+  assert.deepEqual(documented, ACTION_NAMES,
+    `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();
   for (const html of adminRenderings()) for (const a of attrValues(html, 'data-action')) rendered.add(a);
   const dead = [...rendered].filter((a) => ACTION_NAMES.indexOf(a) === -1);
   const unreachable = ACTION_NAMES.filter((a) => !rendered.has(a));
   assert.deepEqual(dead, [], `渲染出的按钮没有实现分支（死按钮）：${dead.join(', ')}`);
   assert.deepEqual(unreachable, [], `注册了动作但没有入口（不可达）：${unreachable.join(', ')}`);
-  assert.equal(rendered.size, 25, `F2 动作数应为 25（F1 九个 + F2 十六个），实际 ${rendered.size}`);
+  assert.equal(rendered.size, ACTION_NAMES.length,
+    `管理员态动作数应等于注册表全集 ${ACTION_NAMES.length}，实际 ${rendered.size}`);
 });
 
-test('AU-2 非管理员态完全不渲染管理入口（A-1）；admin/accounts 两屏兜底回主页', () => {
+test('AU-2 非管理员态完全不渲染管理入口（A-1）；admin/accounts 两屏兜底回主界面', () => {
   const adminActions = new Set(['goto-admin', ...F2_ACTIONS]);
   for (const view of store.VIEWS) {
     const state = store.initialState();
@@ -92,7 +123,7 @@ test('AU-2 非管理员态完全不渲染管理入口（A-1）；admin/accounts 
     assert.ok(!html.includes('管理员面板'), `${view} 屏出现「管理员面板」文本`);
     assert.ok(!html.includes('管理员令牌'), `${view} 屏出现管理员令牌输入框`);
     if (view === 'admin' || view === 'accounts') {
-      assert.equal(format.viewModel(state).title, '已登录', `${view} 屏在非管理员态应兜底为主页`);
+      assert.equal(format.viewModel(state).title, 'Debug-Lite', `${view} 屏在非管理员态应兜底为主界面`);
     }
   }
 });
@@ -102,7 +133,7 @@ test('AU-3 每个动作都有 run 与非空标签；管理动作在 busy 时全�
     assert.equal(typeof def.run, 'function', `动作 ${name} 缺少 run 实现`);
     assert.ok(typeof def.label === 'string' && def.label !== '', `动作 ${name} 缺少可见标签`);
   }
-  for (const view of ['home', 'admin', 'accounts']) {
+  for (const view of ['hub', 'admin', 'accounts']) {
     const state = adminState(view, { busy: true });
     const html = htmlFor(state);
     const buttons = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
@@ -139,15 +170,15 @@ test('AU-5 账号行字段三方一致：contract.js == format.js == 02-accounts
 });
 
 test('AU-6 三屏静态文案与分页/边界（§3、§8 A-2/A-3/A-7）', () => {
-  // 主页：管理员才出现「管理员面板」
-  const homeHtml = htmlFor(adminState('home'));
-  assert.ok(homeHtml.includes('>管理员面板</button>'), '管理员主页应有「管理员面板」按钮');
+  // 主界面：管理员才出现「管理员面板」（F3 后主界面标题为 Debug-Lite，返回键文案为「返回主界面」）
+  const hubHtml = htmlFor(adminState('hub'));
+  assert.ok(hubHtml.includes('>管理员面板</button>'), '管理员主界面应有「管理员面板」按钮');
 
   // 面板：提示行含管理员 publicId 与「令牌仅内存」的已知代价（§3.1 + A-9）
   const adminHtml = htmlFor(adminState('admin'));
   assert.ok(adminHtml.includes('你是管理员账号：u_admin01'), '面板提示行应含管理员 publicId');
   assert.ok(adminHtml.includes('刷新页面后需重填'), '面板提示行应写明令牌仅内存（A-9）');
-  for (const label of ['刷新账号列表', '服务统计', '重建索引', '注入调试 bot', '清除调试 bot', '返回主页']) {
+  for (const label of ['刷新账号列表', '服务统计', '重建索引', '注入调试 bot', '清除调试 bot', '返回主界面']) {
     assert.ok(adminHtml.includes('>' + label + '</button>'), `面板缺少按钮：${label}`);
   }
   assert.ok(adminHtml.includes('管理员令牌'), '面板应有管理员令牌输入框');

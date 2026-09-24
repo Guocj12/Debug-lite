@@ -17,10 +17,11 @@ const format = require('../../public/format.js');
 
 const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
-// F1 分册 + F2 分册（§5 字段来源契约增量）
+// F1 分册 + F2 分册 + F3 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
 const DOC_PATHS = [
   path.join(REPO, 'docs', 'frontend', '01-auth.md'),
   path.join(REPO, 'docs', 'frontend', '02-accounts.md'),
+  path.join(REPO, 'docs', 'frontend', '03-hub-warehouse-loadout.md'),
 ];
 
 const ENVELOPE_PATHS = new Set(contract.AUTH_FIELD_CONTRACT.map((entry) => entry.path));
@@ -54,6 +55,18 @@ async function capture() {
 
     const me = await get('/api/v1/me', token);
     assert.equal(me.status, 200);
+
+    // F3（03 §5.1/§5.2）：本批新接 UI 的端点 —— 注册即发 starter，故仓库/开箱立即有内容。
+    //   注意顺序：这些请求必须排在 logout 之前（logout 会撤销本会话）
+    const wh = await get('/api/v1/me/warehouse', token);
+    assert.equal(wh.status, 200, `仓库真源应 200（D-159 起不再 404 warehouse_missing）：${wh.raw.slice(0, 200)}`);
+    const boxResp = await post('/api/v1/me/box', { times: 2 }, token);
+    assert.equal(boxResp.status, 200, boxResp.raw);
+    const ai = await get('/api/v1/me/ai', token);
+    assert.equal(ai.status, 200, ai.raw);
+    const nick = await request(port, 'PUT', '/api/v1/me/nickname', { nickname: '契约昵称' },
+      { authorization: `Bearer ${token}` });
+    assert.equal(nick.status, 200, nick.raw);
 
     const pwd = await post('/api/v1/auth/password', { oldPassword: PASSWORD, newPassword: 'pw87654321' }, token);
     assert.equal(pwd.status, 200);
@@ -102,6 +115,7 @@ async function capture() {
 
     return {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
+      warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
       adminRebuild: rebuild.body, adminBots: bots.body, adminClearBots: clearBots.body, adminBan: ban.body,
@@ -131,6 +145,11 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     me: { envelopes: [real.me], anyOf: false },
     password: { envelopes: [real.password], anyOf: false },
     logout: { envelopes: [real.logout], anyOf: false },
+    // F3：本批新接 UI 的端点（真起服务抓取；03 §5.1/§5.2）
+    'me/warehouse': { envelopes: [real.warehouse], anyOf: false },
+    'me/box': { envelopes: [real.box], anyOf: false },
+    'me/ai': { envelopes: [real.ai], anyOf: false },
+    'me/nickname': { envelopes: [real.nickname], anyOf: false },
     // F2：管理面各组（02-accounts.md §5）
     'admin/accounts': { envelopes: [real.adminAccounts], anyOf: false },
     'admin/delete-account': { envelopes: [real.adminDelete], anyOf: false },
@@ -165,29 +184,77 @@ test('FC-2 public/format.js 的 pick() 字面量集合 == 契约路径集合（�
   assert.deepEqual(notInContract, [], `format.js 读取了但契约未登记：${notInContract.join(', ')}`);
 });
 
-test('FC-3 两份分册 §5 表格路径集合（并集）== 契约路径集合', () => {
-  const documented = new Set();
-  for (const docPath of DOC_PATHS) {
-    const doc = fs.readFileSync(docPath, 'utf8');
-    const start = doc.indexOf('## 5.');
-    const end = doc.indexOf('## 6.');
-    assert.ok(start !== -1 && end > start, `${path.basename(docPath)} 缺少 §5/§6 章节标记`);
-    const section = doc.slice(start, end);
-    for (const line of section.split('\n')) {
-      if (!line.startsWith('|')) continue; // 只取表格行（散文里提到的"不读取字段"不参与）
-      for (const m of line.matchAll(/`(data\.[A-Za-z0-9_.]+|error\.[A-Za-z0-9_.]+|ok)`/g)) documented.add(m[1]);
+/* ---------- 分册 §5 表格的路径抽取（FC-3）
+ *
+ * 三份分册（01/02/03）的 §5 表格写法不完全一致，抽取必须能把三种写法归一：
+ *   ① 绝对路径：`data.progress.tier`
+ *   ② **兄弟延续**：`data.buckets.role[]` / `.skill[]`（= 同一父级下的兄弟桶）→ 替换最后一段
+ *   ③ 花括号分组：`data.caps.{role,skill,rolePlugin,skillPlugin}`（= `data.caps`）
+ * 归一后：去掉 `[]`、去掉 `{…}` 之后的部分、去掉尾随 `.`。
+ */
+function baseOfPath(token) {
+  const cut = token.search(/[\[{=]/);
+  const head = cut === -1 ? token : token.slice(0, cut);
+  return head.replace(/\.$/, '');
+}
+
+function parentPath(p) {
+  const i = p.lastIndexOf('.');
+  return i === -1 ? '' : p.slice(0, i);
+}
+
+function documentedPaths(doc) {
+  const start = doc.indexOf('## 5.');
+  const end = doc.indexOf('## 6.');
+  assert.ok(start !== -1 && end > start, '分册缺少 §5/§6 章节标记');
+  const out = new Set();
+  for (const line of doc.slice(start, end).split('\n')) {
+    if (!line.startsWith('|')) continue; // 只取表格行（散文里提到的"不读取字段"不参与）
+    let last = null;
+    for (const m of line.matchAll(/`([^`]+)`/g)) {
+      const token = m[1];
+      if (/^data\./.test(token) || /^error\./.test(token)) {
+        last = baseOfPath(token);
+        out.add(last);
+      } else if (token === 'ok') {
+        last = 'ok';
+        out.add('ok');
+      } else if (/^\.[A-Za-z0-9_]/.test(token) && last !== null) {
+        last = parentPath(last) + '.' + baseOfPath(token.slice(1));
+        out.add(last);
+      }
     }
   }
+  return out;
+}
+
+test('FC-3 三份分册 §5 表格路径集合（并集）== 契约 ∪ 显式「本批不读取」登记', () => {
+  const documented = new Set();
+  for (const docPath of DOC_PATHS) {
+    for (const p of documentedPaths(fs.readFileSync(docPath, 'utf8'))) documented.add(p);
+  }
   assert.ok(documented.size >= 30, `§5 表格解析到的路径过少（${documented.size}）`);
+  // ① 每条契约路径都必须有分册依据（规则 4.2：字段名不得来自散文）
   const missingInDoc = [...ENVELOPE_PATHS].filter((p) => !documented.has(p));
-  const extraInDoc = [...documented].filter((p) => !ENVELOPE_PATHS.has(p));
   assert.deepEqual(missingInDoc, [], `契约有但分册 §5 未登记：${missingInDoc.join(', ')}`);
-  assert.deepEqual(extraInDoc, [], `分册 §5 登记了但契约没有：${extraInDoc.join(', ')}`);
+  // ② 分册 §5 登记了、本批前端**明确不读**的路径（如 `data.seed`：D-162 规定前端不传也不显示）
+  //    必须在 contract.DOC_NOT_READ 里逐条登记理由 —— 双向闭合，不允许"文档有、代码不管、也没登记"
+  const notRead = new Map(contract.DOC_NOT_READ.map((e) => [e.path, e.reason]));
+  const unaccounted = [...documented].filter((p) => !ENVELOPE_PATHS.has(p) && !notRead.has(p));
+  assert.deepEqual(unaccounted, [], `分册 §5 登记了但既未读取也未登记"不读取"：${unaccounted.join(', ')}`);
+  // ③ 登记为"不读取"的路径必须真的在分册里（防止用它来掩盖漏读），且不能同时又出现在契约里
+  const phantom = [...notRead.keys()].filter((p) => !documented.has(p));
+  assert.deepEqual(phantom, [], `DOC_NOT_READ 登记了分册里不存在的路径：${phantom.join(', ')}`);
+  for (const [p, reason] of notRead) {
+    assert.ok(typeof reason === 'string' && reason.length > 10, `DOC_NOT_READ 的 ${p} 必须写明理由`);
+  }
 });
 
 test('FC-4 「不读取」字段与契约无交集（防止散文式字段混入）', () => {
   const overlap = contract.UNUSED_FIELDS.filter((p) => ENVELOPE_PATHS.has(p));
   assert.deepEqual(overlap, [], `UNUSED_FIELDS 与契约重复：${overlap.join(', ')}`);
+  const overlapDoc = contract.DOC_NOT_READ.map((e) => e.path).filter((p) => ENVELOPE_PATHS.has(p));
+  assert.deepEqual(overlapDoc, [], `DOC_NOT_READ 与契约重复：${overlapDoc.join(', ')}`);
 });
 
 test('FC-5 投影函数只用契约字段就能产出全部主页文本（无 undefined 泄漏）', async () => {
@@ -221,4 +288,39 @@ test('FC-5 投影函数只用契约字段就能产出全部主页文本（无 un
   assert.match(format.clearBotsText(real.adminClearBots), /^已清除 \d+ 个$/);
   assert.match(format.banText(real.adminBan, 'u_x'), /^已封禁 u_x$/);
   assert.match(format.deleteAccountText(real.adminDelete, null), /^已删除 u_/);
+});
+
+test('FC-6 F3 三个新投影只用契约字段就能产出可见文本（真实响应；无 undefined 泄漏）', async () => {
+  const real = await capture();
+  // hub 摘要（只读 GET /me；03 §3.1）
+  const summary = format.hubSummary({ profile: real.me });
+  assert.match(summary, /^.+( · .+){4}$/, `hub 摘要格式：${summary}`);
+  assert.match(summary, /^契约 · common · 0 · 未读 进攻0\/防守0 · 在池$/, `hub 摘要内容：${summary}`);
+  // 仓库容量行 + 物品行 + 物品详情（03 §3.3/§5.3）
+  const capacity = format.warehouseCapacityText(real.warehouse);
+  assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500$/, `容量行：${capacity}`);
+  const buckets = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
+  let items = 0;
+  for (const bucket of buckets) {
+    for (const item of format.bucketItems(real.warehouse, bucket)) {
+      items += 1;
+      const lines = format.itemDetailLines(real.warehouse, item);
+      assert.ok(lines.length >= 4, `物品详情行过少：${lines.join(' | ')}`);
+      for (const line of lines) {
+        assert.ok(typeof line === 'string' && line.length > 0, '详情行必须是非空字符串');
+        assert.ok(!line.includes('undefined') && !line.includes('null'), `详情行出现未投影值：${line}`);
+      }
+      const label = format.itemLabel(real.warehouse, item);
+      assert.ok(!label.includes('undefined'), `物品行出现未投影值：${label}`);
+    }
+  }
+  assert.ok(items >= 5, `starter 应至少有 5 件物品（1 角色 + 3 技能 + 插件），实际 ${items}`);
+  // 开箱结果逐件行（03 §3.4）：**不显示 seed**（D-162）
+  const boxLines = format.boxResultLines(real.box);
+  assert.match(boxLines[0], /^本次获得 2 件：$/, `开箱结果首行：${boxLines[0]}`);
+  assert.equal(boxLines.length, 3, 'times=2 时应回两件物品');
+  for (const line of boxLines.slice(1)) assert.match(line, /^.+（(角色|技能|角色插件|技能插件)·.+）$/, `逐件行：${line}`);
+  const seed = String(real.box.data.seed);
+  assert.ok(seed !== 'undefined', '响应应回带 seed（仅服务端审计）');
+  assert.ok(!boxLines.join('\n').includes(seed), '开箱结果区不得显示 seed（D-162）');
 });

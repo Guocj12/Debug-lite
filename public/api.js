@@ -12,6 +12,9 @@
  *   · 鉴权二选一：`X-Admin-Token: <DL_ADMIN_TOKEN>` **或** 管理员账号的 Bearer；两者都带上时服务端
  *     以账号身份优先（server/admin.js 的 checkAccess）。
  *   · 令牌只经参数传入（内存值），本文件不读也不写任何存储。
+ * F3 增量（docs/frontend/03-hub-warehouse-loadout.md §3）：新增 `warehouse` / `box` / `setNickname`
+ *   （本批接 UI）与 `configs` / `aiList`（提交③ 的配置编辑器用；本批只登记出口）。**开箱请求体不设 seed**
+ *   （D-162：随机性收归服务端）。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -82,6 +85,13 @@
       logout: function (token) { return call('POST', '/api/v1/auth/logout', {}, token); },
       changePassword: function (token, input) { return call('POST', '/api/v1/auth/password', input, token); },
       me: function (token) { return call('GET', '/api/v1/me', undefined, token); },
+      // F3（docs/frontend/03-hub-warehouse-loadout.md §3）：仓库真源 / 开箱 / 改昵称；
+      //   出战配置与 AI 库只登记出口（提交③ 才接 UI）—— 同样只回 {transport,status,envelope}。
+      warehouse: function (token) { return call('GET', '/api/v1/me/warehouse', undefined, token); },
+      box: function (token, input) { return call('POST', '/api/v1/me/box', input, token); },
+      configs: function (token) { return call('GET', '/api/v1/me/configs', undefined, token); },
+      aiList: function (token) { return call('GET', '/api/v1/me/ai', undefined, token); },
+      setNickname: function (token, input) { return call('PUT', '/api/v1/me/nickname', input, token); },
       admin: admin,
     };
   }

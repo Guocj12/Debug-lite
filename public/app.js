@@ -111,8 +111,8 @@
 
     function dispatch(action) {
       store.dispatch(action);
-      // 输入不重绘，避免光标跳动（F1 表单与 F2 管理面板输入框同理）
-      if (action && (action.type === 'form.set' || action.type === 'admin.form.set')) return;
+      // 输入不重绘，避免光标跳动（F1 表单 / F2 管理面板 / F3 开箱与设置输入框同理）
+      if (action && (action.type === 'form.set' || action.type === 'admin.form.set' || action.type === 'screen.form.set')) return;
       mount();
     }
 
@@ -141,14 +141,18 @@
       });
     }
 
-    // 从被点元素上取行级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
+    // 从被点元素上取行级/元素级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
+    //   F2：data-player-id / data-public-id；F3：data-uid（物品行）/ data-slot（出战配置）/ data-bucket（分桶）
     function payloadOf(el) {
       var ds = el && el.dataset ? el.dataset : null;
       if (!ds) return null;
-      var playerId = typeof ds.playerId === 'string' && ds.playerId !== '' ? ds.playerId : null;
-      var publicId = typeof ds.publicId === 'string' && ds.publicId !== '' ? ds.publicId : null;
-      if (playerId === null && publicId === null) return null;
-      return { playerId: playerId, publicId: publicId };
+      var out = {};
+      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket'];
+      for (var i = 0; i < keys.length; i++) {
+        var v = ds[keys[i]];
+        if (typeof v === 'string' && v !== '') out[keys[i]] = v;
+      }
+      return Object.keys(out).length === 0 ? null : out;
     }
 
     function onClick(ev) {
@@ -177,7 +181,13 @@
       if (!t || !t.name) return;
       // F2：管理面板输入框（adminToken/adminTarget/adminCount）走 admin.form.set（02-accounts.md §7）
       var isAdminField = DL.store.ADMIN_FIELDS && DL.store.ADMIN_FIELDS.indexOf(t.name) !== -1;
-      dispatch({ type: isAdminField ? 'admin.form.set' : 'form.set', field: t.name, value: t.value });
+      // F3：开箱次数 / 新昵称走 screen.form.set（03 §7；各自落 state.box.times / state.settings.nickname）
+      var isScreenField = DL.store.SCREEN_FIELDS && DL.store.SCREEN_FIELDS.indexOf(t.name) !== -1;
+      dispatch({
+        type: isAdminField ? 'admin.form.set' : (isScreenField ? 'screen.form.set' : 'form.set'),
+        field: t.name,
+        value: t.value,
+      });
     }
 
     // 启动自检（01-auth.md §7.3）：无 token → 登录屏；有 token → GET /me 判定会话真伪
@@ -222,7 +232,8 @@
         var session = DL.format.sessionOf(result.envelope);
         dispatch({ type: 'profile.set', envelope: result.envelope });
         dispatch({ type: 'session.set', token: token, publicId: session.publicId, nickname: session.nickname, expiresAt: session.expiresAt, isAdmin: session.isAdmin });
-        dispatch({ type: 'view.go', view: 'home' });
+        // FR-11：登录态下的落点 = 主界面 hub（F1 的 home 已降级为 profile 子屏）
+        dispatch({ type: 'view.go', view: 'hub' });
         dispatch({ type: 'booted.set', booted: true });
         return result;
       });

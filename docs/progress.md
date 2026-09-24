@@ -21,7 +21,6 @@
 ---
 
 ## 0.1 F3 后端契约 ①（`D-159`…`D-162`）—— **✅ 已交付（2026-09-22）**
-
 > **本次未新增批次号**（F3 不是编号批次，见 `docs/frontend/00-rules.md` FR-6）：`docs/tasks.md`/`docs/progress.md` 的"**共 41 批**"**保持不变**（P0–P5 的 34 + P7/B27–B33 的 7）。本节记录的是 `docs/frontend/03-hub-warehouse-loadout.md` §14 的**提交①（后端契约）**；该分册的提交②（主界面线）/③（出战配置编辑器）**尚未开始**。
 
 - **实现范围（`D-159` 仓库改服务端权威，推翻 D-130）**：新文件 `server/starter.js`（注册即发 starter，种子 = `sha256('starter|publicId|playerId')` 前 8 hex → **同身份内容级可复现**；1 角色 `role_bal`/common **必带 ≥1 插槽** + 3 技能（重掷至至少 1 个有槽）+ 1~2 角色插件 + 1 技能插件，**按实际槽类型筛池并已装配**）；档案新增 `warehouse` 四桶（**每桶 500**）与 `ai` 段，`ARCHIVE_VERSION` 1 → 2、`migrateV1toV2` 补**空**仓库（**老账号保持空仓**，需删号重注册）；`GET /me/warehouse` 为**真源**（`buckets/usage/caps/counts/starterIssued`，`usage[uid].slotIds[]` 可多配置引用），新增 `POST /me/warehouse/assemble|disassemble`（**服务端态**，校验由 `core/items` 纯函数单点完成，落 journal 增量记录），`PUT /me/warehouse` **退役**为"只校验形状"（引用不覆盖出战配置不再 409 → 200 + `verified:false`）；注册建满 **3 槽**（`slot2`/`slot3` 空槽无快照）。
@@ -34,6 +33,21 @@
 - **交付实测**：`node scripts/check-docs.js` = **PASS**（批次计数仍 **41**、勾选 41/41、审查记录 41/41、文档引用的脚本/数据表全部存在）；`scripts/check-arch.js` 分层规则已含 `starter`（L6）。
 - **独立审查（提交①，2026-09-24 完成）**：新上下文子代理**只读对抗式审查**（探针在系统临时目录，仓库零改动）→ 结论「未发现高危；2 条真缺陷（1 中 1 低）+ 4 条疑似/含糊；核心链路实测全部成立」。**已闭环**：F-1（`createPlayerArchive` 显式 loadout 路径丢弃入参 `warehouse` → 校验镜像 ≠ 落档镜像、引用永久悬空）已修；F-2（`box.opened` 防御分支静默丢弃超限物品 → journal 与档案永久漂移）已修为逐件 `error` + `dropped` 入 `grantIds` 条目；疑似1（直接替换槽位未复位旧插件 `equipped`）已加固。**新增回归网** `tests/unit/warehouse-invariants.test.js`（WI-1…WI-5，含 **300 次开箱溢出 grantIds(256) 后重建不丢不翻倍**、同槽并发装配的"引用 ↔ equipped"不变量）。**登记待决**：N-9（L6 "读→校验→写"非原子，终态自洽）、N-10（**桶满 500 后无删除/分解端点 → 产品级待决**）、N-11（v1 老账号配置存不回，details 可判定）。审查记录与逐条处置见 `docs/reviews/F3.md` §3.2/§3.4。
 - **待办（本批之后）**：① **F1/F2/F3 的浏览器人工走查尚未执行**（剧本：F1 = `01-auth.md` §11、F2 = `02-accounts.md` §11 的 17 步、F3 = `03-hub-warehouse-loadout.md` §11 的 25 步 + F2 的 17 步一次收口）——**未走查前 `F1`/`F2`/`F3` 均不得判定"能玩"**，结论写入 `docs/reviews/F3.md`；② **前端 F3 三屏（主界面/仓库/开箱/设置）+ 出战配置编辑器尚未实现**（提交① **只做后端**；提交②/③ 见分册 §14）；③ 老账号无 starter，验收需删号重注册（用户裁定，分册 K-11）；④ **N-10 待你拍板**：桶满 500 后是否需要"删除/分解物品"能力。
+
+---
+
+## 0.2 F3 提交② 前端主界面线 —— **✅ 已交付（2026-09-24）**
+
+> 设计依据：`docs/frontend/03-hub-warehouse-loadout.md`；实现对账见该分册 **§15.6**；审查/登记项见 `docs/reviews/F3.md` §6。
+
+- **屏与落点**：新增 `hub`（主界面）/`profile`（F1 `home` 降级）/`warehouse`/`box`/`settings` + 4 个空页（`quick`/`tournament`/`leaderboard`/`ai-editor`）；**登录/注册/启动自检的落点改为 `hub`**（FR-11）；**`logout` 只在设置屏**；`public/` **仍恰好 9 个文件**（UI-1）。
+- **动作**：注册表 **42**（F1 9 + F2 16 + 提交② 17）；非管理员态渲染 **26**（= 42 − 16 管理动作，UI-2 按实际注册表双向核对）；提交③ 的 9 个编辑器动作**未注册空壳**。
+- **弹窗**：屏内区块 + `data-action="modal-close"` 背景（点外面 = 取消并丢弃未提交输入）+ 显式「关闭」；至多一个（FR-10）。
+- **字段契约**：`contract.js` 新增 9 条信封路径（全部来自**真起服务的实测抓取**）+ 34 条物品详情子路径；另立「明确不读」4 条并纳入 FC-3/FC-4 双向核对。
+- **一个规格修正**：进入开箱屏时**静默取一次 `GET /me/warehouse`**、开箱成功后静默刷新 —— 否则"满仓按钮禁用且不发请求"无法本地判定（分册 §3.4 已同步）。
+- **收口实跑（2026-09-24）**：前端 `tests/frontend/*` = **73/73**；`npm test` = **1042 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`check-docs`/`check-arch` PASS。
+- **去 flaky**：`api-ranked` P2-5 与新增的 `api-me-warehouse` UWH-3/4/7 原依赖"随机 starter/开箱掉落"里的匹配组合 → 分别改为**固定 `publicId`+`playerId`** 与**注入确定性夹具**（连续多次运行恒定）。
+- **待办**：① 浏览器人工走查（分册 §11 的 25 步 + F2 的 17 步一次收口）；② **提交③ 出战配置编辑器**（模板替换/插件装配/空位/AI 库选择/仓库 usage 标记）；③ N-10 产品级待决（桶满解封）。
 
 ---
 

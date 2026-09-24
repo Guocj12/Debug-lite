@@ -19,6 +19,8 @@
   var PW_MIN = 8;
   var PW_MAX = 72;
   var NICK_MAX = 16;
+  // F3：开箱次数上限（与 server/box.js 的 BOX_TIMES_MAX 同口径；03 §3.4 / §8 B-3）
+  var BOX_TIMES_MAX = 100;
 
   // F2：账号列表每页条数三档、bots 单次注入上限（与 server/admin.js 的 MAX_BOTS_PER_CALL 同口径）
   var ADMIN_LIMITS = [20, 50, 100];
@@ -56,6 +58,23 @@
     return null;
   }
 
+  /* ---------- F3 客户端预校验（03 §8 B-3 / B-11） ---------- */
+
+  // 开箱次数：1~100 的**整数**（"1.5"/"abc"/""/"0"/"101" 一律拦下，不发请求）
+  function validateTimes(value) {
+    var raw = typeof value === 'string' ? value.trim() : (typeof value === 'number' ? String(value) : '');
+    if (!/^[0-9]+$/.test(raw)) return null;
+    var n = Number(raw);
+    return n >= 1 && n <= BOX_TIMES_MAX ? n : null;
+  }
+
+  // 新昵称：1~16 字符（服务端也会夹到 ≤16，前端提示为准；B-11）
+  function validateNickname(value) {
+    var raw = typeof value === 'string' ? value.trim() : '';
+    if (raw === '' || raw.length > NICK_MAX) return null;
+    return raw;
+  }
+
   /* ---------- 公共小工具（全部经 format 投影，本文件不读响应字段） ---------- */
 
   function noticeNotice(ctx, kind, text) {
@@ -85,13 +104,81 @@
     ctx.dispatch({ type: 'session.clear' });
     ctx.dispatch({ type: 'auth.set', envelope: null });
     ctx.dispatch({ type: 'profile.set', envelope: null });
+    clearUserState(ctx);
     clearAdminState(ctx);
     ctx.dispatch({ type: 'view.go', view: 'login' });
     if (result && result.envelope) noticeNotice(ctx, 'error', ctx.format.noticeText(result.envelope));
     else noticeNotice(ctx, 'error', '会话已失效，请重新登录');
   }
 
+  // F3：随会话一起清掉的用户态数据（仓库/开箱结果/设置输入）—— 不残留上一个账号的内容
+  function clearUserState(ctx) {
+    ctx.dispatch({ type: 'warehouse.set', envelope: null });
+    ctx.dispatch({ type: 'box.result.set', result: null });
+    ctx.dispatch({ type: 'configs.set', data: null });
+    ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
+    ctx.dispatch({ type: 'modal.close' });
+  }
+
   function busy(ctx, value) { ctx.dispatch({ type: 'busy.set', busy: value }); }
+
+  /* ---------- F3 会话后的公共取数（hub 摘要与仓库都读服务端） ---------- */
+
+  // 取 /me 并落 profile + session（**不写提示**：调用方决定成功文案）。失败按 F1 §6 统一处理。
+  //   token 必须由调用方传入：动作内的 ctx.state 是本次执行开始时的快照（dispatch 不会回写 ctx）
+  function loadProfile(ctx, token) {
+    return ctx.api.me(token).then(function (result) {
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      var session = ctx.format.sessionOf(result.envelope);
+      ctx.dispatch({ type: 'profile.set', envelope: result.envelope });
+      // isAdmin 必须一并刷新：否则管理员点「刷新」后管理入口会消失（§5：data.flags.isAdmin）
+      ctx.dispatch({
+        type: 'session.set', token: token, publicId: session.publicId, nickname: session.nickname,
+        expiresAt: ctx.state.session.expiresAt, isAdmin: session.isAdmin,
+      });
+      return result.envelope;
+    });
+  }
+
+  // 刷新档案/摘要（hub 与 profile 同一实现；文案见 01 §4「档案已刷新」）
+  function refreshProfile(ctx) {
+    if (ctx.state.busy) return Promise.resolve();
+    if (!ctx.state.session.token) return sessionLost(ctx, null);
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    return loadProfile(ctx, ctx.state.session.token).then(function (env) {
+      busy(ctx, false);
+      if (env === undefined) return undefined;   // 失败文案已写入
+      noticeNotice(ctx, 'info', ctx.format.REFRESH_OK_TEXT);
+      return undefined;
+    });
+  }
+
+  // 取仓库真源（03 §3.3）。成功落 warehouse.set（**仓库屏与开箱屏共用这一份状态**，不产生第二个数据源）。
+  //   opts.quiet = true 时不写成功提示（也不清旧提示）—— 用于"进入开箱屏 / 开箱成功后的静默刷新"；
+  //   **失败一律可见**（网络文案 / 401 统一登出），且不影响调用方已渲染的内容。
+  function loadWarehouse(ctx, opts) {
+    var quiet = opts !== undefined && opts !== null && opts.quiet === true;
+    if (ctx.state.busy) return Promise.resolve();
+    if (!ctx.state.session.token) return sessionLost(ctx, null);
+    busy(ctx, true);
+    if (!quiet) ctx.dispatch({ type: 'notice.set', notice: null });
+    return ctx.api.warehouse(ctx.state.session.token).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      ctx.dispatch({ type: 'warehouse.set', envelope: result.envelope });
+      if (!quiet) noticeNotice(ctx, 'info', ctx.format.WAREHOUSE_OK_TEXT);
+      return undefined;
+    });
+  }
 
   /* ---------- F2 管理面工具（02-accounts.md §4/§6/§8） ---------- */
 
@@ -226,9 +313,11 @@
           ctx.dispatch({ type: 'auth.set', envelope: result.envelope });
           ctx.dispatch({ type: 'session.set', token: session.token, publicId: session.publicId, nickname: session.nickname, expiresAt: session.expiresAt, isAdmin: session.isAdmin });
           ctx.dispatch({ type: 'form.clear', fields: ['password', 'confirm', 'newPassword', 'newConfirm'] });
-          ctx.dispatch({ type: 'view.go', view: 'home' });
+          // FR-11：登录/注册成功后的落点 = 主界面 hub；hub 摘要只读 GET /me，故落地即取一次
+          //   （否则用户看到的是「尚未读取到档案数据」，与走查剧本 §11 步 2 的期望不符）
+          ctx.dispatch({ type: 'view.go', view: 'hub' });
           noticeNotice(ctx, 'info', ctx.format.loginOkText(result.envelope));
-          return undefined;
+          return loadProfile(ctx, session.token).then(function () { return undefined; });
         });
       },
     },
@@ -252,9 +341,10 @@
           ctx.dispatch({ type: 'auth.set', envelope: result.envelope });
           ctx.dispatch({ type: 'session.set', token: session.token, publicId: session.publicId, nickname: session.nickname, expiresAt: session.expiresAt, isAdmin: session.isAdmin });
           ctx.dispatch({ type: 'form.clear', fields: ['password', 'confirm', 'newPassword', 'newConfirm'] });
-          ctx.dispatch({ type: 'view.go', view: 'home' });
+          // FR-11：注册成功后的落点同样是主界面 hub（并立即取一次 /me 填摘要）
+          ctx.dispatch({ type: 'view.go', view: 'hub' });
           noticeNotice(ctx, 'info', ctx.format.registerOkText(result.envelope));
-          return undefined;
+          return loadProfile(ctx, session.token).then(function () { return undefined; });
         });
       },
     },
@@ -285,26 +375,7 @@
 
     'refresh-profile': {
       label: '刷新档案',
-      run: function (ctx) {
-        if (ctx.state.busy) return Promise.resolve();
-        if (!ctx.state.session.token) return sessionLost(ctx, null);
-        busy(ctx, true);
-        ctx.dispatch({ type: 'notice.set', notice: null });
-        return ctx.api.me(ctx.state.session.token).then(function (result) {
-          busy(ctx, false);
-          if (result.transport === 'error') return failFrom(ctx, result);
-          if (!ctx.format.isOk(result.envelope)) {
-            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
-            return failFrom(ctx, result);
-          }
-          var session = ctx.format.sessionOf(result.envelope);
-          ctx.dispatch({ type: 'profile.set', envelope: result.envelope });
-          // isAdmin 必须一并刷新：否则管理员点「刷新档案」后管理入口会消失（§5：data.flags.isAdmin）
-          ctx.dispatch({ type: 'session.set', token: ctx.state.session.token, publicId: session.publicId, nickname: session.nickname, expiresAt: ctx.state.session.expiresAt, isAdmin: session.isAdmin });
-          noticeNotice(ctx, 'info', ctx.format.REFRESH_OK_TEXT);
-          return undefined;
-        });
-      },
+      run: function (ctx) { return refreshProfile(ctx); },
     },
 
     logout: {
@@ -319,6 +390,7 @@
           ctx.dispatch({ type: 'session.clear' });
           ctx.dispatch({ type: 'auth.set', envelope: null });
           ctx.dispatch({ type: 'profile.set', envelope: null });
+          clearUserState(ctx);
           clearAdminState(ctx);
           ctx.dispatch({ type: 'view.go', view: 'login' });
           noticeNotice(ctx, 'info', text);
@@ -359,10 +431,11 @@
     },
 
     'goto-home': {
-      label: '返回主页',
+      label: '返回用户详情',
       run: function (ctx) {
         ctx.dispatch({ type: 'form.clear', fields: ['oldPassword', 'newPassword', 'newConfirm'] });
-        ctx.dispatch({ type: 'view.go', view: 'home' });
+        // F3 §4：`goto-home` 在 F3 中指"切回 profile（原 home）"
+        ctx.dispatch({ type: 'view.go', view: 'profile' });
         return Promise.resolve();
       },
     },
@@ -562,7 +635,208 @@
         });
       },
     },
+
+    /* ----- F3：主界面线（03-hub-warehouse-loadout.md §3/§4；提交②） -----
+     *
+     * 本批**只注册真正要用的动作**：出战配置编辑器（config-save / config-activate / slot-pick /
+     *   slot-set / ai-pick / ai-set / plugin-pick / plugin-set / plugin-clear）属**提交③**，
+     *   §4 表格把它们登记为计划动作，但「按钮永不无声」不允许先注册空壳，故不在此出现。
+     */
+
+    'goto-hub': {
+      label: '返回主界面',
+      run: function (ctx) { return goView(ctx, 'hub'); },
+    },
+
+    'goto-profile': {
+      label: '用户',
+      run: function (ctx) { return goView(ctx, 'profile'); },
+    },
+
+    // 切到仓库屏**并**取真源（03 §4：成功可见文本「仓库」+ 列表更新）
+    'goto-warehouse': {
+      label: '仓库',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'view.go', view: 'warehouse' });
+        return loadWarehouse(ctx);
+      },
+    },
+
+    // 切到开箱屏**并**取一次仓库真源（03 §3.4：目标分类已达上限 → 按钮**禁用**且**不发请求**）。
+    //   要"本地禁用且不发请求"就必须在渲染该屏时已握有 caps/桶长度 → 进入时取一次（不轮询）；
+    //   与仓库屏共用同一份 state.warehouse，避免两处数据不一致。
+    //   读取失败（网络/401）**不影响进入屏**：按钮保持可用，由服务端 409 兜底（§6 warehouse_full）。
+    'goto-box': {
+      label: '开箱',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'view.go', view: 'box' });
+        return loadWarehouse(ctx, { quiet: true });
+      },
+    },
+
+    'goto-quick': {
+      label: '快速对战',
+      run: function (ctx) { return goView(ctx, 'quick'); },
+    },
+
+    'goto-tournament': {
+      label: '锦标赛',
+      run: function (ctx) { return goView(ctx, 'tournament'); },
+    },
+
+    'goto-leaderboard': {
+      label: '排行榜',
+      run: function (ctx) { return goView(ctx, 'leaderboard'); },
+    },
+
+    'goto-ai-editor': {
+      label: 'AI编辑',
+      run: function (ctx) { return goView(ctx, 'ai-editor'); },
+    },
+
+    'goto-settings': {
+      label: '设置',
+      run: function (ctx) {
+        // 进入设置屏时清空上次的昵称输入（避免残留旧值被误提交）
+        ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
+        return goView(ctx, 'settings');
+      },
+    },
+
+    'refresh-hub': {
+      label: '刷新',
+      run: function (ctx) { return refreshProfile(ctx); },
+    },
+
+    'refresh-warehouse': {
+      label: '刷新',
+      run: function (ctx) { return loadWarehouse(ctx); },
+    },
+
+    // 分桶切换是**纯本地**动作（不再请求；数据一次取全）
+    'warehouse-bucket': {
+      label: '分桶',
+      run: function (ctx, payload) {
+        var bucket = payload && typeof payload.bucket === 'string' ? payload.bucket : '';
+        if (bucket === '') {
+          noticeNotice(ctx, 'error', '缺少分桶名（warehouse-bucket 需要 data-bucket）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'warehouse.bucket.set', bucket: bucket });
+        return Promise.resolve();
+      },
+    },
+
+    // 打开物品详情弹窗（03 §3.3/§3.8；纯本地，不发请求）
+    'item-open': {
+      label: '物品详情',
+      run: function (ctx, payload) {
+        var uid = payload && typeof payload.uid === 'string' && payload.uid !== '' ? payload.uid : '';
+        if (uid === '') {
+          noticeNotice(ctx, 'error', '缺少物品 uid（item-open 需要 data-uid）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'item-detail', uid: uid } });
+        return Promise.resolve();
+      },
+    },
+
+    // 打开出战配置占位弹窗（03 §3.7：编辑器属提交③，本批只显示 `尚未实现（计划批次 F3-③）`）
+    'config-open': {
+      label: '出战配置',
+      run: function (ctx, payload) {
+        var slotId = payload && typeof payload.slot === 'string' && payload.slot !== '' ? payload.slot : 'slot1';
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: slotId } });
+        return Promise.resolve();
+      },
+    },
+
+    // 开箱（03 §3.4）：客户端先拦次数与"仓库已满"（B-2/B-3），**不传也不显示 seed**（D-162）
+    'box-open': {
+      label: '开箱',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        if (!ctx.state.session.token) return sessionLost(ctx, null);
+        var times = validateTimes(ctx.state.box ? ctx.state.box.times : '');
+        if (times === null) {
+          noticeNotice(ctx, 'error', ctx.format.BOX_TIMES_RANGE_TEXT);
+          return Promise.resolve();
+        }
+        var full = ctx.format.boxFullNotice(ctx.state);
+        if (full !== null) {
+          noticeNotice(ctx, 'error', full);
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.box(ctx.state.session.token, { times: times }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          ctx.dispatch({ type: 'box.result.set', result: { lines: ctx.format.boxResultLines(result.envelope) } });
+          noticeNotice(ctx, 'info', ctx.format.BOX_OK_TEXT);
+          // 成功后**静默刷新一次仓库**：连续开箱时"满仓 → 按钮立刻禁用"才成立（03 §3.4/§8 B-2）
+          return loadWarehouse(ctx, { quiet: true }).then(function () { return undefined; });
+        });
+      },
+    },
+
+    // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9）
+    'modal-close': {
+      label: '关闭',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'modal.close' });
+        return Promise.resolve();
+      },
+    },
+
+    // 设置屏·改昵称（03 §3.5；预校验 ≤16 字符 → PUT /me/nickname）
+    'settings-nickname-save': {
+      label: '保存昵称',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var nickname = validateNickname(ctx.state.settings ? ctx.state.settings.nickname : '');
+        if (nickname === null) {
+          noticeNotice(ctx, 'error', ctx.format.NICKNAME_MAX_TEXT);
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.setNickname(token, { nickname: nickname }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
+          noticeNotice(ctx, 'info', ctx.format.nicknameOkText(result.envelope));
+          // 摘要与本地会话里的昵称同步：再取一次 /me（**静默**：失败不影响上面的成功文案）
+          return ctx.api.me(token).then(function (me) {
+            if (!me || me.transport !== 'response' || !ctx.format.isOk(me.envelope)) return undefined;
+            var session = ctx.format.sessionOf(me.envelope);
+            ctx.dispatch({ type: 'profile.set', envelope: me.envelope });
+            ctx.dispatch({
+              type: 'session.set', token: token, publicId: session.publicId, nickname: session.nickname,
+              expiresAt: ctx.state.session.expiresAt, isAdmin: session.isAdmin,
+            });
+            return undefined;
+          });
+        });
+      },
+    },
   };
+
+  // F3：切屏（view.go 已负责清提示与弹窗；此处只补"切屏不需要请求"这一语义）
+  function goView(ctx, view) {
+    ctx.dispatch({ type: 'view.go', view: view });
+    return Promise.resolve();
+  }
 
   // 每页条数切换（§4：改 limit 并回到第 1 页）
   function setPageSize(ctx, limit) {
