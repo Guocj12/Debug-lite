@@ -300,7 +300,12 @@ function createAccount(options) {
           { slotId: archiveMod.slotIdOf(store.config || {}, 2), name: '配置2', loadout: archiveMod.emptyIncompleteLoadout() },
           { slotId: archiveMod.slotIdOf(store.config || {}, 3), name: '配置3', loadout: archiveMod.emptyIncompleteLoadout() },
         ] : undefined,
-        warehouse: starter ? starter.warehouse : undefined,
+        // D-159（独立审查 F-1 修复）：**校验所用仓库必须与落档仓库一致** ——
+        //   starter 路径用 starter 的仓库；显式 loadout 路径用调用方传入的 `o.warehouse`
+        //   （这是**服务端内部缝**：HTTP 注册路由从不传 loadout，故客户端无法借此注入物品）。
+        //   修前只传 `starter.warehouse`，显式路径下入参 warehouse 被静默丢弃 → 档案仓库为空、
+        //   该配置的插件引用在档案侧永久悬空（`GET /me/warehouse` 与 `usage` 自相矛盾）。
+        warehouse: starter ? starter.warehouse : (o.warehouse || undefined),
         aiLibrary: starter ? starter.aiLibrary : undefined,
       });
       if (!archive) return fail('store_write_failed', '注册档案落盘失败');

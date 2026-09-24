@@ -452,6 +452,9 @@ settings: { nickname: '', result: null },
 | 3 | **`boxSeed` 注入缝 off-by-one**：注释/文档写"第 n 次 = `boxSeed+n−1`"，实现为 `boxSeed+n` | 文档与行为不一致（测试无法据文档写期望） | 已修**代码**对齐文档：实测 `start({boxSeed:1000})` 两次开箱回带 `1000,1001` |
 | 4 | **旧测试的潜在缺陷被新对局结果触发**：`quickmatch` 回带的 `delta` = 档案落盘值之差（受 §8.3 下限保护 `clamp(…,0,cap)` 影响），而测试按"公式原始 Δ"复算；0 分玩家输球时两者不等 | 该断言只在"无 0 分输球"时成立（flaky by design） | 已改写为**更强**断言：守恒式恒真 + 仅在未裁剪时比公式值 + 裁剪档断言 `pointsAfter===0`；并新增全局对账 `ΣΔ_applied === ΣΔ_formula + floorInjection`（同时把"下限保护会注入分数"记入 `11-account-store.md` §8.3） |
 | 5 | **`isRecordApplied` 未覆盖新记录类型**（设计时即考虑）：新记录是"状态量"，若沿用"未知类型 → 视为已应用"会在水位缺口时漏 apply | 崩溃恢复可能丢物品/丢 AI | 已实现内容级幂等键：`box.opened` 用 `grantIds` 环形窗口（256）、`warehouse.*` 用"目标槽当前引用是否已等于记录值"、`ai.*` 用 `aiId` 存在性；`WR-3` 断言重复重放不翻倍、`stats.reapplied === 0` |
+| 6 | **`createPlayerArchive` 显式 loadout 路径丢弃入参 `warehouse`**（**独立审查 F-1，中**）：用 `o.warehouse` 做校验与冻结快照，却只把 `starter.warehouse` 落档 | 校验所用镜像 ≠ 落档镜像 → 该配置的插件引用在**档案侧永久悬空**（`GET /me/warehouse` 与 `usage` 自相矛盾），之后连"重存同一份出战配置"都 409；`admin`/工具类调用方踩坑 | 已修为一行为 `warehouse: starter ? starter.warehouse : (o.warehouse \|\| undefined)`（HTTP 注册路由从不传 loadout，故此缝不构成客户端注入面）；回归用例 **WI-1**（落档计数 + 重存配置 200 + 引用齐备） |
+| 7 | **`box.opened` 防御分支静默丢弃超限物品**（**独立审查 F-2，低**）：桶满 `continue` 只记 warn，仍返回 `changed:true` 并推进水位 | journal 写"N 件"、档案只落 M<N 件且**永久漂移**（水位已过，rebuild 也补不回）；正常路径由 `grantBox` 前置拒绝（实测 409 原子零写入），仅"档案与 journal 不一致"时可达 | 已修为：逐件 **error** 记录（带 `grantId`/`uid`/桶）+ 把 `dropped`/`droppedUids` 落进 `grantIds` 环形条目（差额**可审计**；不抛错——抛错会让 journal 重放永久失败）；回归用例 **WI-3** |
+| 8 | **直接替换槽位引用时未复位旧插件的 `equipped`**（**独立审查加固项**）：HTTP 路径被 `slot_occupied` 拦死，故不可达；畸形/重放记录可构造 | 旧插件永久停在 `equipped=true`（再也装不回去） | 已加固：`warehouse.assemble` 分支在 `prevPluginUid !== record.pluginUid` 时把旧插件复位为 `false`；回归用例 **WI-2**（走 store 层构造替换记录） |
 
 ### 15.4 已知项 / 未覆盖（承接 §13）
 
@@ -465,6 +468,9 @@ settings: { nickname: '', result: null },
 | N-6 | `PUT /api/v1/warehouse`（遗留纯函数路径） | 未纳入 UI；`POST /api/v1/box`（遗留）同样未接 UI（登记于 §1 第 20 行） |
 | N-7 | **`core/effects.js` 的 effect uid 是进程级自增 → 归档回放帧只做到"除 `eff_N` 外逐字节一致"**（**既有缺陷，本批暴露未修**） | `server/core/effects.js:36-44` 模块级 `let uidSeq = 0`；同一场对局在同进程内重算两次会得到不同的 `eff_N` 文本（并进入 `aiTrace` 文案）。旧默认配置无插件 → 无持续效果 → 掩盖了它；D-159 的 starter 带 `castEffect`/`hitEffect` 词条后暴露。**现状**：`tests/api/api-replay-auth.test.js` 的 RP-3/RP-8 按"uid 抹平 + 按首现序重编号后逐字节一致"断言（只放过这一个非确定性维度）。**建议修法**（不在本批范围）：把 uid 改为按对局确定的量（如 `eff_t<tick>_<n>` 或 `createBattle` 内重置计数器），修后需按 `.audit/` 的流程重锚黄金战斗并同步 `interfaces.md` §4.2 |
 | N-8 | `PUT /me/warehouse` 回执的两个字段语义分叉 | 已补 `archiveUnverifiedLoadout`（档案真源口径）并保留 `unverifiedLoadout`（本次镜像口径）；`interfaces.md` §2 该行已写清（B29 遗留命名，退役端点） |
+| N-9 | **L6 的"读→校验→写"不在 store 的同一把玩家锁内**（独立审查 WI-5 实测）：同一槽并发装配时可能"两次都 200、后写胜出"，而非"一成一败 409" | 后果可控：终态**自洽**（已装配集合 ≡ 被槽引用集合，WI-5 断言），且单客户端界面不会并发；更严格的修法是把校验挪进 store 的 `queueFor` 临界区（本批未做，登记） |
+| N-10 | **桶满（500）后玩家无法自行解封**：目前**没有物品删除/分解端点**，D-159 只给了"超限拒绝开箱" | **产品级决策待定**（需用户拍板）：是否新增"删除/分解物品"能力，或把上限做成软限制；在决策前，界面上只能如实提示"仓库已满"（提交② 的禁用 + 提示已按此实现） |
+| N-11 | v1 老账号"可玩但配置存不回"：老账号仓库为空（D-159② 有意口径），重存同一份出战配置会 409 `loadout_invalid`（details 逐条 `悬挂引用 <uid>`，**可判定**） | 属过渡态（用户已裁定"老账号删号重注册"）；若要更友好，可在响应里给 `missingWarehouseRefs` 摘要（本批未做，登记） |
 
 ### 15.5 机器证据（提交① 收口实跑，2026-09-22）
 

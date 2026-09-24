@@ -1033,12 +1033,18 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
     }
     case 'battle.recorded':
       return applyBattleRecorded(archive, record, playerId, ctx);
-    // D-159：开箱发放（幂等键 = grantId 环形窗口；物品按 kind 入桶；超限防御性丢弃并告警）
+    // D-159：开箱发放（幂等键 = grantId 环形窗口；物品按 kind 入桶）
+    //   超限防御分支（独立审查 F-2）：正常路径由 `adapter.grantBox` **前置**拒绝（409 原子、零写入），
+    //   本分支只在"档案仓库与 journal 不一致"时可达。修前它**静默丢弃**却仍报 `changed:true` 并推进水位
+    //   → journal 写"N 件"、档案只落 M<N 件且**永久漂移**（水位已过，rebuild 也补不回）。
+    //   现改为：逐件 `error` 记录（带 grantId/uid/桶）+ 把 `dropped` 落进 grantIds 环形条目，
+    //   使差额**可审计、可判定**（不改判定语义、不抛错——抛错会让 journal 重放永久失败）。
     case 'box.opened': {
       const cap = warehouseMaxPerBucketOf(ctx.config);
       const ring = (archive.warehouse && Array.isArray(archive.warehouse.grantIds)) ? archive.warehouse.grantIds : [];
       if (record.grantId && ring.some((g) => g && g.grantId === record.grantId)) return { changed: false };
       let added = 0;
+      const dropped = [];
       for (const it of Array.isArray(record.items) ? record.items : []) {
         if (!it || typeof it !== 'object' || typeof it.uid !== 'string' || it.uid === '') continue;
         const bucket = it.kind === 'skillPlugin' ? 'skillPlugin'
@@ -1048,19 +1054,25 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
         if (!Array.isArray(list)) continue;
         if (findWarehouseItem(archive.warehouse, it.uid)) continue; // uid 四桶唯一
         if (list.length >= cap) {
-          ctx.logger.warn('store', 'store.warehouse.full',
-            `开箱发放超限丢弃（${bucket} 已达 ${cap}）`, { playerId, uid: it.uid, bucket, cap });
+          dropped.push({ uid: it.uid, kind: it.kind, bucket });
+          ctx.logger.error('store', 'store.warehouse.full',
+            `开箱发放超限丢弃（${bucket} 已达 ${cap}）——journal 与档案出现差额，需人工核对`,
+            { playerId, uid: it.uid, bucket, cap, grantId: record.grantId || null, droppedCount: dropped.length });
           continue;
         }
         list.push(deepClone(it));
         added += 1;
       }
       if (record.grantId) {
-        ring.push({ grantId: record.grantId, seq: record.seq, at, count: added });
+        // `dropped` 落进环形条目：差额在档案里**可见**（`GET /me/warehouse` 不带该字段，但 journal/档案可审计）
+        ring.push({
+          grantId: record.grantId, seq: record.seq, at, count: added,
+          ...(dropped.length > 0 ? { dropped: dropped.length, droppedUids: dropped.map((d) => d.uid).slice(0, 8) } : {}),
+        });
         while (ring.length > GRANT_WINDOW) ring.shift();
         archive.warehouse.grantIds = ring;
       }
-      return { changed: added > 0 || !!record.grantId };
+      return { changed: added > 0 || !!record.grantId || dropped.length > 0 };
     }
     // D-159：装配/拆卸 —— 改目标物品的插槽引用 **并同步插件物品的 `equipped` 标志**。
     //   `equipped` 是**语义承重**字段：`server/loadout.js` 用它判"插件未装配"（`p.equipped !== true`
@@ -1087,6 +1099,13 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       }
       const prevPluginUid = slot.pluginUid === undefined ? null : slot.pluginUid;
       slot.pluginUid = record.type === 'warehouse.assemble' ? record.pluginUid : null;
+      // 独立审查加固：**直接替换**槽位引用时（journal 里出现"装 A 再装 B 到同一槽"）必须把 A 复位为
+      //   未装配，否则 A 会永久停在 equipped=true（再也装不回去）。HTTP 路径由 core/items 的
+      //   `slot_occupied` 拦死，故本分支不可达；这里做的是"畸形/重放记录"下的自洽兜底。
+      if (record.type === 'warehouse.assemble' && prevPluginUid !== null && prevPluginUid !== record.pluginUid) {
+        const prev = findWarehouseItem(archive.warehouse, prevPluginUid);
+        if (prev && prev.item) prev.item.equipped = false;
+      }
       if (record.type === 'warehouse.disassemble') {
         // 拆下来的插件恢复"未装配"（找不到物品时只记 warn：数据自洽性由 L6 前置校验保证）
         const prev = prevPluginUid === null ? null : findWarehouseItem(archive.warehouse, prevPluginUid);
