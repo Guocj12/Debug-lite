@@ -6,35 +6,40 @@
  *   · docs/plan-p7-playable.md §P7-5（本阶段验收）+ §0（全局约束）
  *   · docs/reviews/P7-7-test-audit.md §B1「P7-5 应覆盖的检查点清单（22 条）」——本脚本**按该表顺序**逐步执行
  *   · docs/interfaces.md §2（端点表）/§7（环境变量）；docs/systems/11-account-store.md §10（端点/状态码）
- *   · decisions.md D-130/D-131/D-132/D-133/D-135/D-152
+ *   · decisions.md D-131/D-132/D-133/D-135/D-152 + **D-159（仓库服务端权威，推翻 D-130）/D-160（配置完整性校验时机）
+ *     /D-161（AI 库）/D-162（开箱 seed 服务端独占）**
  *
  * 覆盖的 22 个检查点（编号 = §B1 表格行号，`[n/22]` 前缀即该行）：
  *   1 注册 200 + token；重名 409 user_exists；2 登录 / 错密码 401 / 连错 429 锁定 / logout 后 401；
- *   3 GET /me 401 三态与字段；4 GET /me 幂等；5 开箱 → PUT /me/warehouse → GET 往返一致；
- *   6 配置槽 ≤3 / 409 slot_limit / 409 slot_locked / 唯一出战 / 注册即默认配置；
+ *   3 GET /me 401 三态与字段（**D-159：注册即 3 槽 + GET /me/warehouse 真源 starter 已发放**）；4 GET /me 幂等；
+ *   5 **服务端权威仓库**：`POST /me/box`（无 seed 入参，D-162）→ `POST /me/warehouse/assemble`（不传整仓）
+ *     → `GET /me/warehouse` 真源；`PUT /me/warehouse` 退役为只校验形状（不覆盖出战配置 → 200 verified:false）；
+ *   6 配置槽 ≤3 / 409 slot_limit / 409 slot_locked / 唯一出战 / **注册即 3 槽（slot1 完整出战 + slot2·3 空槽）**
+ *     / **D-160**：非出战槽可写不完整（200 complete:false）、出战槽不完整 409 loadout_invalid、空槽激活 409
+ *     cannot_activate_incomplete；
  *   7 POST /panel 与单测 buildPanel 逐值一致；8 /ai/validate 三态（非法 400+path / 合法 warnings:[] /
  *     废弃动作 warnings 非空）；9 /ai/compile programHash 稳定；10 池空 quick/run **不注入 bot**；
  *   11 有对手时双方都是真实注册玩家；12 Elo 双向变动可复算 + cap 3000 不越界；13 积分守恒（对局 + 全局）；
  *   14 ranked/run 抽池排除自己 + 24h 去重 + 候选不足 shortfall；15 发起者同步结算 / 防守方离线只记战绩；
  *   16 战绩增量游标 + 未读归零；17 /me/defense 汇总；18 /leaderboard 降序且不暴露 playerId；
- *   19 回放：非参与者 403 / 过期或淘汰 410；20 CLI auth/me/quick/leaderboard + 退出码 3 = 未鉴权（并含
- *     `/ranked/promote`：兼容端点读档案、不越权落盘）；21 DL_LEGACY_STATELESS 兼容口径（=1 零回归 / =0 410）；
- *   22 一条命令退出码 0，且每一步打印真实响应关键字段。
+ *   19 回放：非参与者 403 / 过期或淘汰 410 + **D-159-R1 回归**（保存配置**不带 warehouse** → 打一场 → 回放 200）；
+ *   20 CLI auth/me/quick/leaderboard + 退出码 3 = 未鉴权（并含 `/ranked/promote`：兼容端点读档案、不越权落盘）；
+ *   21 DL_LEGACY_STATELESS 兼容口径（=1 零回归 / =0 410）；22 一条命令退出码 0，且每一步打印真实响应关键字段。
  *
- * 约束（项目铁律）：零依赖；CommonJS；**禁 child_process / Math.random**（随机性一律来自显式 seed）；
+ * 约束（项目铁律）：零依赖；CommonJS；**禁 child_process / Math.random**（随机性一律来自显式 seed；
+ *   D-162 起**开箱**的随机性由服务端独占 —— `start({ boxSeed })` 注入确定性序列，见 `E2E_BOX_SEED`）；
  *   进程内起服务（`server/index.js` 导出的 handler + `node:http` 监听随机端口）；数据根 `os.tmpdir()` 隔离。
  *
  * 🚫 无占位 bot（用户 2026-09-16 明令 / D-152）：对局双方一律是 `/auth/register` 注册的**真实档案**；
  *   本脚本对每场对局涉及的每个 publicId 都回查 `store.index` → `playerId` → 档案 + 出战快照作为证据
  *   （末尾"无 bot 证据"清单逐条打印）。
  *
- * ✅ 装配引用端到端（缺陷 B + 缺口 1 均已修 → 2026-09-19 **回收**旧"剥离装配引用"适配）：第 5 步的装配
- *   结果**原样保留**为出战配置（slot.pluginUid 不剥离、不清空）。第 6 步冻结快照时随正文持久化仓库镜像
- *   片段（缺口 1：`freezeSnapshot({warehouse})` → `archive.warehouseExcerpt`），第 7 步 `POST /panel` 用
- *   **真镜像**聚合并与单测 `buildPanel` 逐值比对（另有"去掉 warehouse 必 missing_warehouse"的反证），
- *   第 11/14/22 步用**含装配插件的配置真的打完对局**。服务端口径见 server/ranked.js「缺陷 B」段：
- *   ①进程内镜像优先 → ②已校验快照退化为基准面板 → ③从未校验则如实 `missing_warehouse`。
- *   本脚本**不再**有任何"为绕过缺陷而剥离引用"的适配。
+ * ✅ 装配引用端到端（**D-159 服务端权威口径**）：第 5 步用 `POST /me/box` 开箱（物品入服务端仓库）+
+ *   `POST /me/warehouse/assemble` 装配（只传 targetUid/pluginUid/slotIndex，不传整仓；服务端落档 `equipped=true`）；
+ *   第 6 步保存出战配置时把**真源**一并提交，使快照随正文持久化"引用到的插件项"（缺口 1 的镜像片段）。
+ *   第 7 步 `POST /panel` 用真源聚合并与单测 `buildPanel` 逐值比对（另有"去掉 warehouse 必 missing_warehouse"的反证）；
+ *   第 11/14/19/22 步用**含装配插件的配置真的打完对局**（含 D-159-R1：保存时不带 warehouse 也能回放重算）。
+ *   本脚本**不再**有任何"为绕过缺陷而剥离引用"的适配；客户端也不再是仓库权威（D-130 已被 D-159 推翻）。
  *
  * ⚠️ 抽池可控性（2026-09-19 复审修正）：`/quick/run`、`/ranked/run` 的**对手**由服务端抽池决定
  *   （池内任意真实玩家，默认配置者 0 处装配引用），故"含装配插件能出战"的判定一律**锚在发起者侧**
@@ -66,6 +71,10 @@ const PASSWORD = 'pw12345678';
 const FAST_AUTH = { auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 1000 } };
 const RATE_LIMIT = 100000000; // 等价关闭全局限速（限速语义由 tests/api/api-auth.test.js AU-8 专测）
 const MODE = 'common';        // 门控默认关闭（D-137），tier 仅作回带
+// D-162：开箱随机性收归**服务端**（HTTP 层没有 `seed` 入参，传了被静默忽略）→ 本脚本改用实例级注入缝
+//   `start({ boxSeed })` 提供**确定性 seed 序列**（第 n 次开箱 = boxSeed + n − 1），
+//   使"同一条命令两次运行得到同一批物品"这一可复现性依旧成立（不依赖客户端 seed）。
+const E2E_BOX_SEED = 20260921;
 
 const out = (s) => process.stdout.write(`${s}\n`);
 const j = (v) => JSON.stringify(v);
@@ -77,7 +86,7 @@ const short = (v, n) => {
 
 /* ---------- 运行框架：任一步失败 → 打印上游真实响应 + 非零退出 ---------- */
 
-const state = { step: 0, steps: [], facts: { tokens: {} } }; // tokens: publicId → 会话 token（夹具持有全部注册玩家）
+const state = { step: 0, steps: [], facts: { tokens: {}, quickBattles: [] } }; // tokens: publicId → 会话 token（夹具持有全部注册玩家）
 const noBotLog = [];
 
 function fail(msg, upstream) {
@@ -227,39 +236,80 @@ function findItem(wh, uid) {
   return null;
 }
 
-async function openAndAssemble(port, token, seedBase, tag, wantRole, wantSkill) {
-  const warehouse = itemsCore.emptyWarehouse();
+// GET /me/warehouse —— D-159 的**仓库真源**（客户端不再持权威镜像）
+async function warehouseOf(port, token, tag) {
+  const r = await request(port, 'GET', '/api/v1/me/warehouse', undefined, authed(token));
+  expect(r.status === 200, `${tag ? `${tag} ` : ''}GET /me/warehouse（D-159 真源）应 200，实得 ${r.status}`, r.raw);
+  const d = r.body.data;
+  expect(d && d.buckets && Array.isArray(d.buckets.role) && Array.isArray(d.buckets.skill)
+    && d.caps && d.counts && typeof d.starterIssued === 'boolean',
+    'GET /me/warehouse 应含 buckets/caps/counts/starterIssued（D-159 契约）', short(r.raw, 300));
+  return d;
+}
+
+/* 开箱 → 装配，**全部走服务端权威写路径**（D-159 / D-162）：
+ *   · `POST /me/box`：体只 `{tier,times}` —— **没有 seed 入参**（D-162；确定性由 `start({boxSeed})` 提供），
+ *     物品直接入服务端仓库（不再是遗留 `/box` 的"无状态、不入档"）；
+ *   · `POST /me/warehouse/assemble`：体只 `{targetUid,pluginUid,slotIndex}` —— **不传整仓**（整仓版
+ *     `/warehouse/assemble` 是遗留无状态路径）；点数/槽型/唯一性全部由服务端裁决，并落档 `equipped=true`；
+ *   · 结束时回带 `GET /me/warehouse` 的**真源正文**，后续步骤一律用它构造出战配置。
+ * 返回 { warehouse, opened, placed, skipped, rounds, countsBefore, equippedBefore, equippedAfter }。
+ */
+async function openAndAssemble(port, token, tag, wantRole, wantSkill) {
   const opened = [];
-  let round = 0;
-  while ((warehouse.buckets.role.length < wantRole || warehouse.buckets.skill.length < wantSkill) && round < 8) {
-    const r = await request(port, 'POST', '/api/v1/box', { seed: seedBase + round * 977, tier: MODE, times: 12 }, authed(token));
-    expect(r.status === 200, `${tag} 开箱失败 ${r.status}`, r.raw);
-    for (const it of r.body.data.items) {
-      if (!Array.isArray(warehouse.buckets[it.kind])) warehouse.buckets[it.kind] = [];
-      warehouse.buckets[it.kind].push(it);
-      opened.push(it);
-    }
-    round += 1;
-  }
-  expect(warehouse.buckets.role.length >= wantRole && warehouse.buckets.skill.length >= wantSkill,
-    `${tag} 开箱 ${round} 轮仍不足（角色 ${warehouse.buckets.role.length}/${wantRole}，技能 ${warehouse.buckets.skill.length}/${wantSkill}）`);
-  let cur = warehouse;
+  let wh = await warehouseOf(port, token, tag);
+  const countsBefore = { ...wh.counts };
+  let rounds = 0;
+  // 至少开一轮（检查点 5 的"开箱"必须是真请求；starter 已给角色/技能，故用 do-while）
+  do {
+    const r = await request(port, 'POST', '/api/v1/me/box', { tier: MODE, times: 12 }, authed(token));
+    expect(r.status === 200, `${tag} POST /me/box 应 200，实得 ${r.status}`, r.raw);
+    expect(Array.isArray(r.body.data.items) && r.body.data.items.length === 12,
+      `${tag} 开箱应回带 12 件物品，实得 ${r.body.data && r.body.data.items && r.body.data.items.length}`, short(r.raw, 300));
+    expect(typeof r.body.data.grantId === 'string' && r.body.data.grantId.startsWith('bx_'),
+      `${tag} 服务端权威开箱应回带 grantId（幂等批次标识，D-159）`, short(r.raw, 300));
+    for (const it of r.body.data.items) opened.push(it);
+    rounds += 1;
+    wh = await warehouseOf(port, token, tag);
+  } while ((wh.buckets.role.length < wantRole || wh.buckets.skill.length < wantSkill) && rounds < 8);
+  expect(wh.buckets.role.length >= wantRole && wh.buckets.skill.length >= wantSkill,
+    `${tag} 开箱 ${rounds} 轮仍不足（角色 ${wh.buckets.role.length}/${wantRole}，技能 ${wh.buckets.skill.length}/${wantSkill}）`);
+  const totalBefore = countsBefore.role + countsBefore.skill + countsBefore.rolePlugin + countsBefore.skillPlugin;
+  const totalAfter = wh.counts.role + wh.counts.skill + wh.counts.rolePlugin + wh.counts.skillPlugin;
+  expect(totalAfter >= totalBefore + opened.length,
+    `${tag} 开箱物品必须真的入档（服务端权威仓库）：${totalBefore} + ${opened.length} ≤ ${totalAfter}`,
+    j({ before: countsBefore, after: wh.counts }));
+
+  const equippedBefore = wh.buckets.rolePlugin.concat(wh.buckets.skillPlugin).filter((p) => p.equipped === true).length;
   const placed = [];
   const skipped = [];
-  for (const t0 of cur.buckets.role.concat(cur.buckets.skill)) {
-    for (let i = 0; i < (t0.slots || []).length; i++) {
-      const target = findItem(cur, t0.uid);
-      if (!target || !target.slots[i] || target.slots[i].pluginUid) continue;
-      const kind = target.kind === 'role' ? 'rolePlugin' : 'skillPlugin';
-      const cand = (cur.buckets[kind] || []).find((p) => p.slot === target.slots[i].type && p.equipped !== true);
-      if (!cand) { skipped.push(`${target.uid}[${i}] 无 ${target.slots[i].type} 槽插件`); continue; }
-      const a = await request(port, 'POST', '/api/v1/warehouse/assemble',
-        { warehouse: cur, targetUid: target.uid, pluginUid: cand.uid, slotIndex: i, tier: MODE }, authed(token));
-      if (a.status === 200) { cur = a.body.data.warehouse; placed.push(`${cand.uid}→${target.uid}[${i}]`); }
-      else skipped.push(`${target.uid}[${i}] ${a.body.error.code}`);
+  const used = new Set();
+  for (const t0 of wh.buckets.role.concat(wh.buckets.skill)) {
+    if (placed.length >= 4) break; // 控制请求数：每玩家最多 4 处
+    const target = findItem(wh, t0.uid);
+    if (!target) continue;
+    const kind = target.kind === 'role' ? 'rolePlugin' : 'skillPlugin';
+    for (let i = 0; i < (target.slots || []).length; i++) {
+      if (placed.length >= 4) break;
+      const slot = target.slots[i];
+      if (!slot || slot.pluginUid) continue;
+      const cand = (wh.buckets[kind] || []).find((p) => p.slot === slot.type && p.equipped !== true && !used.has(p.uid));
+      if (!cand) { skipped.push(`${target.uid}[${i}] 无 ${slot.type} 槽插件`); continue; }
+      used.add(cand.uid);
+      const a = await request(port, 'POST', '/api/v1/me/warehouse/assemble',
+        { targetUid: target.uid, pluginUid: cand.uid, slotIndex: i }, authed(token));
+      if (a.status === 200) {
+        wh = a.body.data.warehouse;
+        placed.push(`${cand.uid}→${target.uid}[${i}]`);
+      } else {
+        skipped.push(`${target.uid}[${i}] ${a.body.error && a.body.error.code}`);
+      }
     }
   }
-  return { warehouse: cur, opened, placed, skipped, rounds: round };
+  // 装配响应里的 `warehouse` 只是仓库正文（不含 usage/caps/counts/starterIssued）→ 收尾统一回读真源
+  wh = await warehouseOf(port, token, tag);
+  const equippedAfter = wh.buckets.rolePlugin.concat(wh.buckets.skillPlugin).filter((p) => p.equipped === true).length;
+  return { warehouse: wh, opened, placed, skipped, rounds, countsBefore, equippedBefore, equippedAfter };
 }
 
 // 出战配置里的**真实装配引用**条数（回收 D1 适配后的核心验收量）：
@@ -350,6 +400,7 @@ async function main() {
       authConfig: FAST_AUTH,
       rateLimitPerMinute: RATE_LIMIT,
       env: { DL_DATA_DIR: dataDir, DL_LEGACY_STATELESS: '1' },
+      boxSeed: E2E_BOX_SEED, // D-162：开箱 seed 服务端独占 → 用注入缝保证确定性序列
     });
     const port = s.port;
     const base = `http://127.0.0.1:${port}`;
@@ -448,12 +499,31 @@ async function main() {
       expect(d.publicId === state.facts.A.publicId, 'publicId 应与注册一致', me.raw);
       expect(typeof d.progress.tier === 'string', '/me 应含 progress.tier', me.raw);
       expect(typeof d.rating.points === 'number', '/me 应含 rating.points', me.raw);
-      expect(Array.isArray(d.slots) && d.slots.length === 1 && d.slots[0].isDefault === true, '注册即默认配置（D-131）', me.raw);
+      expect(Array.isArray(d.slots) && d.slots.length === 3, `D-159：注册即建满 3 槽，实得 ${d.slots && d.slots.length}`, me.raw);
+      expect(d.slots[0].slotId === 'slot1' && d.slots[0].isDefault === true
+        && d.slots.filter((x) => x.isDefault === true).length === 1, 'slot1 且仅 slot1 为默认配置', me.raw);
+      expect(typeof d.slots[0].snapshotHash === 'string', 'slot1 已有冻结快照（D-159 starter 出战配置）', me.raw);
+      expect(d.slots[1].snapshotHash === null && d.slots[2].snapshotHash === null,
+        'slot2/slot3 为**空槽**（无快照，D-160 允许非出战槽不完整）', me.raw);
       expect(d.activeSlotId === 'slot1', `出战槽应为 slot1，实得 ${d.activeSlotId}`, me.raw);
       expect(typeof d.record.unread.attack === 'number' && typeof d.record.unread.defense === 'number', '/me 应含 unread 计数', me.raw);
       expect(!me.raw.includes('pl_'), '/me 不得回带 playerId（§4.5）', me.raw);
-      okLine(3, 'GET /me 鉴权与字段', `401 unauthorized / 401（坏 token）/ 401 session_expired / 200 {publicId:${d.publicId}, tier:${d.progress.tier}, points:${d.rating.points}, slots:${d.slots.length}, unread:${j(d.record.unread)}}`);
-      return `tier=${d.progress.tier} points=${d.rating.points} slots=${d.slots.length}`;
+      // D-159：仓库为服务端权威（真源）——注册即发放 starter 且**已装配**（1 角色 + 3 技能 + ≥1 角色插件 + 1 技能插件）
+      const wh = await warehouseOf(port, state.facts.A.token, 'A');
+      expect(wh.starterIssued === true, 'A 的 starter 应已发放（starterIssued=true）', short(wh ? j(wh.counts) : '', 200));
+      expect(wh.counts.role === 1 && wh.counts.skill === 3 && wh.counts.rolePlugin >= 1 && wh.counts.skillPlugin === 1,
+        `starter 应为 1 角色 + 3 技能 + 1~2 角色插件 + 1 技能插件，实得 ${j(wh.counts)}`, j(wh.counts));
+      const whEquipped = wh.buckets.rolePlugin.concat(wh.buckets.skillPlugin).filter((p) => p.equipped === true).length;
+      expect(whEquipped >= 2, `starter 的插件应**已装配**进槽（equipped=true ≥2），实得 ${whEquipped}`, j(wh.counts));
+      const cfg0 = await request(port, 'GET', '/api/v1/me/configs', undefined, authed(state.facts.A.token));
+      expect(cfg0.status === 200 && cfg0.body.data.unverifiedLoadout === false,
+        'D-159：新号 flags.unverifiedLoadout 应为 false', cfg0.raw);
+      const activeLd = cfg0.body.data.slots.find((x) => x.slotId === cfg0.body.data.activeSlotId).loadout;
+      expect(activeLd && activeLd.role && Array.isArray(activeLd.skills) && activeLd.skills.length === 3
+        && activeLd.skills.every((x) => x) && activeLd.ai,
+        'slot1 的 starter 出战配置必须完整（角色 + 恰 3 技能 + AI）', short(cfg0.raw, 300));
+      okLine(3, 'GET /me 鉴权与字段', `401 unauthorized / 401（坏 token）/ 401 session_expired / 200 {publicId:${d.publicId}, tier:${d.progress.tier}, points:${d.rating.points}, slots:${d.slots.length}（slot1 完整出战 + slot2/3 空槽）, unread:${j(d.record.unread)}}；GET /me/warehouse 真源 starterIssued=true，buckets=${j(wh.counts)}，已装配插件 ${whEquipped} 个`);
+      return `tier=${d.progress.tier} points=${d.rating.points} slots=${d.slots.length} starter=${j(wh.counts)}`;
     });
 
     /* ---- [4/22] GET /me 幂等 ---- */
@@ -466,36 +536,112 @@ async function main() {
       return 'deepEqual';
     });
 
-    /* ---- [5/22] 开箱 → 仓库镜像往返一致 ---- */
-    await step(5, '开箱 → PUT /me/warehouse → GET /me/warehouse 往返一致（round-trip）', async () => {
-      const asmA = await openAndAssemble(port, state.facts.A.token, 4242, 'A', 1, 3);
-      const asmB = await openAndAssemble(port, state.facts.B.token, 9100, 'B', 1, 3);
+    /* ---- [5/22] 服务端权威仓库：开箱 → 装配 → 真源校验；PUT 退役为只校验形状 ---- */
+    await step(5, 'POST /me/box → POST /me/warehouse/assemble（服务端权威，D-159/D-162）→ GET /me/warehouse 真源；PUT /me/warehouse 退役为只校验形状', async () => {
+      const asmA = await openAndAssemble(port, state.facts.A.token, 'A', 1, 3);
+      const asmB = await openAndAssemble(port, state.facts.B.token, 'B', 1, 3);
       state.facts.asmA = asmA;
       state.facts.asmB = asmB;
-      const merged = itemsCore.emptyWarehouse();
-      for (const k of Object.keys(merged.buckets)) merged.buckets[k] = asmA.warehouse.buckets[k].concat(asmB.warehouse.buckets[k]);
-      state.facts.merged = merged;
 
-      const put = await request(port, 'PUT', '/api/v1/me/warehouse', { warehouse: asmA.warehouse }, authed(state.facts.A.token));
-      expect(put.status === 200, `PUT /me/warehouse 应 200，实得 ${put.status}`, put.raw);
-      expect(put.body.data.saved === true && typeof put.body.data.warehouseHash === 'string', 'PUT 应回带 saved/warehouseHash', put.raw);
-      const get = await request(port, 'GET', '/api/v1/me/warehouse', undefined, authed(state.facts.A.token));
-      expect(get.status === 200, `GET /me/warehouse 应 200，实得 ${get.status}`, get.raw);
-      expect(get.body.data.warehouseHash === put.body.data.warehouseHash,
-        `往返 hash 必须一致：PUT ${put.body.data.warehouseHash} ≠ GET ${get.body.data.warehouseHash}`, `${short(put.raw, 300)} VS ${short(get.raw, 300)}`);
-      expect(j(get.body.data.warehouse) === j(put.body.data.warehouse), '往返正文必须逐值一致', short(get.raw, 400));
-      const counts = {};
-      for (const [k, arr] of Object.entries(asmA.warehouse.buckets)) counts[k] = arr.length;
-      okLine(5, '开箱 → 装配 → 仓库镜像往返', `开箱 ${asmA.rounds * 12 + asmB.rounds * 12} 箱（A ${asmA.opened.length} 件/装配成功 ${asmA.placed.length} 处；B ${asmB.opened.length} 件/装配成功 ${asmB.placed.length} 处）；PUT hash=${short(put.body.data.warehouseHash, 24)} ≡ GET hash；A 仓库 buckets=${j(counts)}`);
-      return `hash 往返一致`;
+      // 真源形状与自洽性（D-159）
+      const whA = asmA.warehouse;
+      expect(whA.starterIssued === true, 'A 的 starterIssued 应为 true', j(whA.counts));
+      expect(whA.caps.role === 500, `caps.role 应为 500，实得 ${whA.caps.role}`, j(whA.caps));
+      expect(whA.counts.role === whA.buckets.role.length && whA.counts.skill === whA.buckets.skill.length
+        && whA.counts.rolePlugin === whA.buckets.rolePlugin.length && whA.counts.skillPlugin === whA.buckets.skillPlugin.length,
+        'counts 必须与四桶长度逐项一致', j({ counts: whA.counts }));
+      expect(whA.usage && typeof whA.usage === 'object'
+        && Object.values(whA.usage).every((v) => v && Array.isArray(v.slotIds)),
+        'usage 应为 {uid:{slotIds:[]}}（D-159 契约）', short(j(whA.usage), 300));
+      expect(whA.counts.role >= 1 && whA.counts.skill >= 3,
+        `真源应备齐 1 角色 + 3 技能（starter + 开箱），实得 ${j(whA.counts)}`);
+
+      // 装配真的落档：equipped=true 的插件数 = 装配前 + 本次装配成功数
+      expect(asmA.equippedAfter === asmA.equippedBefore + asmA.placed.length,
+        `装配落档：equipped ${asmA.equippedBefore} + 成功 ${asmA.placed.length} ≠ ${asmA.equippedAfter}`, j(asmA.skipped));
+      expect(asmA.placed.length > 0, `本步必须真的装配成功过（实测 ${asmA.placed.length} 处）`, `skipped=${j(asmA.skipped)}`);
+      // 引用齐备：出战材料（角色[0] + 技能[0..2]）引用的每个插件都在真源里且 equipped=true
+      const materialRefs = [];
+      for (const item of [whA.buckets.role[0]].concat(whA.buckets.skill.slice(0, 3))) {
+        for (const s of item.slots || []) if (s && s.pluginUid) materialRefs.push(s.pluginUid);
+      }
+      expect(materialRefs.length > 0, 'A 的出战材料应含真实装配引用（否则后续"含插件出战"会空转）', j(whA.counts));
+      const allA = whA.buckets.role.concat(whA.buckets.skill, whA.buckets.rolePlugin, whA.buckets.skillPlugin);
+      for (const uid of materialRefs) {
+        const hit = allA.find((x) => x.uid === uid);
+        expect(hit && hit.equipped === true, `引用 ${uid} 必须在真源里 equipped=true (D-159)`, j(whA.counts));
+      }
+
+      // D-159：PUT /me/warehouse **退役为只做形状校验**（不再 409；引用不覆盖出战配置 → 200 + verified:false）
+      const badShape = await request(port, 'PUT', '/api/v1/me/warehouse', { warehouse: { buckets: 'nope' } }, authed(state.facts.A.token));
+      expect(badShape.status === 400 && badShape.body.error.code === 'bad_request',
+        `形状非法仍应 400 bad_request，实得 ${badShape.status} ${j(badShape.body.error)}`, badShape.raw);
+      const uncovered = await request(port, 'PUT', '/api/v1/me/warehouse', { warehouse: itemsCore.emptyWarehouse() }, authed(state.facts.A.token));
+      expect(uncovered.status === 200,
+        `形状合法但引用不覆盖出战配置 → 200（D-159 起不再 409），实得 ${uncovered.status}`, uncovered.raw);
+      expect(uncovered.body.data.saved === true && uncovered.body.data.verified === false,
+        'PUT 退役语义：saved:true + verified:false', short(uncovered.raw, 300));
+      const putTruth = await request(port, 'PUT', '/api/v1/me/warehouse', { warehouse: whA }, authed(state.facts.A.token));
+      expect(putTruth.status === 200 && putTruth.body.data.verified === true,
+        `提交**真源**应 verified:true，实得 ${putTruth.status} ${j(putTruth.body.data)}`, putTruth.raw);
+      expect(typeof putTruth.body.data.warehouseHash === 'string' && putTruth.body.data.warehouseHash !== uncovered.body.data.warehouseHash,
+        'warehouseHash 为内容寻址（真源 ≠ 空仓）', short(putTruth.raw, 200));
+      const putTruth2 = await request(port, 'PUT', '/api/v1/me/warehouse', { warehouse: whA }, authed(state.facts.A.token));
+      expect(putTruth2.body.data.warehouseHash === putTruth.body.data.warehouseHash,
+        '同正文两次 PUT → 同 warehouseHash（内容寻址稳定）', short(putTruth2.raw, 200));
+      const whAfter = await warehouseOf(port, state.facts.A.token, 'A');
+      expect(j(whAfter.counts) === j(whA.counts),
+        'PUT 镜像不改变真源（服务端权威，D-159）', j({ before: whA.counts, after: whAfter.counts }));
+      const cfgAfter = await request(port, 'GET', '/api/v1/me/configs', undefined, authed(state.facts.A.token));
+      expect(cfgAfter.body.data.unverifiedLoadout === false,
+        '不覆盖的镜像不得把档案标成 unverifiedLoadout', cfgAfter.raw);
+      okLine(5, '服务端权威仓库（开箱 → 装配 → 真源 + PUT 退役）', `A：POST /me/box ${asmA.rounds} 轮（${asmA.opened.length} 件入档，grantId 校验通过）→ 装配成功 ${asmA.placed.length} 处（equipped ${asmA.equippedBefore}→${asmA.equippedAfter}）；B：${asmB.rounds} 轮/${asmB.placed.length} 处；真源 buckets=${j(whA.counts)} caps=${j(whA.caps)} starterIssued=true；出战材料引用 ${materialRefs.length} 处全部 equipped=true；PUT：非法形状 → 400 bad_request；空仓镜像 → 200 verified:false（不再 409）；真源镜像 → 200 verified:true 且 hash 稳定、真源不被镜像改写`);
+      return `A 装配 ${asmA.placed.length} 处 / 真源 ${j(whA.counts)}`;
     });
 
-    /* ---- [6/22] 配置槽规则 ---- */
-    await step(6, '配置槽：建 ≤3；第 4 个 409 slot_limit；删出战槽 409 slot_locked；激活唯一；注册即默认配置', async () => {
-      const me0 = await request(port, 'GET', '/api/v1/me', undefined, authed(state.facts.A.token));
-      expect(me0.body.data.slots.length === 1 && me0.body.data.slots[0].isDefault === true, '注册即默认配置', me0.raw);
+    /* ---- [6/22] 配置槽规则（D-159 注册即 3 槽；D-160 完整性校验时机） ---- */
+    await step(6, '配置槽：注册即 3 槽（slot1 完整出战 / slot2·3 空槽）→ 第 4 槽 409 slot_limit → 空槽激活 409 cannot_activate_incomplete → 完整后激活 200 → 删出战槽 409 slot_locked', async () => {
+      const A = authed(state.facts.A.token);
+      const me0 = await request(port, 'GET', '/api/v1/me', undefined, A);
+      expect(me0.body.data.slots.length === 3, `D-159：注册即建满 3 槽，实得 ${me0.body.data.slots.length}`, me0.raw);
+      expect(me0.body.data.slots[0].slotId === 'slot1' && me0.body.data.slots[0].isDefault === true,
+        '注册即默认配置（slot1 = 默认配置，D-131 的唯一出战语义不变）', me0.raw);
+      expect(me0.body.data.slots[1].snapshotHash === null && me0.body.data.slots[2].snapshotHash === null,
+        'slot2/slot3 是空槽（无快照，D-160）', me0.raw);
 
-      // 出战配置来自真实开箱物品，**装配引用（pluginUid）原样保留**（不再剥离，见 pluginRefsOf / 文件头）
+      // D-160：非出战槽允许写**不完整**配置 → 200 + snapshot:null + complete:false + missing[...]
+      const partial = { role: null, skills: [null, null, null], ai: null };
+      const putPartial2 = await request(port, 'PUT', '/api/v1/me/configs/slot2', { loadout: partial }, A);
+      expect(putPartial2.status === 200, `非出战槽写不完整配置应 200，实得 ${putPartial2.status}`, putPartial2.raw);
+      expect(putPartial2.body.data.complete === false && putPartial2.body.data.snapshot === null,
+        '非出战槽不完整 → complete:false 且**不冻结快照**', short(putPartial2.raw, 300));
+      expect(Array.isArray(putPartial2.body.data.missing) && putPartial2.body.data.missing.length === 5,
+        `missing 应逐位置列出 5 个缺项（role + skills[0..2] + ai），实得 ${j(putPartial2.body.data.missing)}`, putPartial2.raw);
+      // D-160：**出战槽**写不完整 → 409 loadout_invalid（details 逐位置文案）
+      const putPartial1 = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: partial }, A);
+      expect(putPartial1.status === 409 && putPartial1.body.error.code === 'loadout_invalid',
+        `出战槽写不完整应 409 loadout_invalid，实得 ${putPartial1.status} ${j(putPartial1.body.error)}`, putPartial1.raw);
+      const msgs = putPartial1.body.error.details.map((x) => x.message).join('|');
+      expect(/缺少角色物品/.test(msgs) && /技能位置缺失: 1/.test(msgs) && /缺少 AI 程序/.test(msgs),
+        `details 应逐位置说明缺项（含"缺少角色物品"/"技能位置缺失: 1"/"缺少 AI 程序"），实得 ${msgs}`, putPartial1.raw);
+      // D-160：**激活时**才校验完整性 → 不完整槽激活 409 cannot_activate_incomplete
+      const actEmpty = await request(port, 'POST', '/api/v1/me/configs/slot2/activate', {}, A);
+      expect(actEmpty.status === 409 && actEmpty.body.error.code === 'cannot_activate_incomplete',
+        `激活不完整槽应 409 cannot_activate_incomplete，实得 ${actEmpty.status} ${j(actEmpty.body.error)}`, actEmpty.raw);
+      // 3 槽已满 → 新建 409 slot_limit（D-160：POST /me/configs 建**空槽**，不再复制出战配置）
+      const c3 = await request(port, 'POST', '/api/v1/me/configs', { name: '第四套' }, A);
+      expect(c3.status === 409 && c3.body.error.code === 'slot_limit', `第 4 槽应 409 slot_limit，实得 ${c3.status} ${j(c3.body.error)}`, c3.raw);
+      // 删掉空槽 → 再建：新槽必须仍是**空槽**（snapshot:null、loadout 空），且复用槽号
+      const del3 = await request(port, 'DELETE', '/api/v1/me/configs/slot3', undefined, A);
+      expect(del3.status === 200 && del3.body.data.deleted === 'slot3', `非出战空槽应可删（200），实得 ${del3.status}`, del3.raw);
+      const c1 = await request(port, 'POST', '/api/v1/me/configs', { name: '第三套' }, A);
+      expect(c1.status === 200, `删除后重建第 3 槽应 200，实得 ${c1.status}`, c1.raw);
+      expect(c1.body.data.snapshot === null && c1.body.data.slot && c1.body.data.slot.loadout
+        && c1.body.data.slot.loadout.role === null,
+        'D-160：POST /me/configs 建空槽（snapshot:null + 空 loadout），不再复制出战配置', short(c1.raw, 300));
+      expect(c1.body.data.slotId === 'slot3', `空出的槽号应复用为 slot3，实得 ${c1.body.data.slotId}`, c1.raw);
+
+      // 出战配置来自真实开箱物品（**服务端权威真源**），装配引用（pluginUid）原样保留
       const ldA = scriptedLoadout(state.facts.asmA.warehouse, false); // A：正常 hp（用于 /panel ≡ buildPanel）
       const ldB = scriptedLoadout(state.facts.asmB.warehouse, false);
       state.facts.ldA = ldA;
@@ -507,41 +653,33 @@ async function main() {
       expect(state.facts.pluginRefsB > 0,
         `B 的出战配置必须含真实装配引用（实测 ${state.facts.pluginRefsB} 处）`,
         `placed=${j(state.facts.asmB.placed)}`);
-      expect(state.facts.asmA.placed.length > 0,
-        `第 5 步必须真的装配成功过（实测 ${state.facts.asmA.placed.length} 处），否则"含插件"无来源`,
-        `skipped=${j(state.facts.asmA.skipped)}`);
-      const save = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: ldA, warehouse: state.facts.asmA.warehouse }, authed(state.facts.A.token));
+      const save = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: ldA, warehouse: state.facts.asmA.warehouse }, A);
       expect(save.status === 200, `PUT /me/configs/slot1 应 200，实得 ${save.status}`, save.raw);
-      expect(typeof save.body.data.snapshot.hash === 'string', '保存应冻结新快照', save.raw);
+      expect(typeof save.body.data.snapshot.hash === 'string' && save.body.data.complete === true && save.body.data.missing.length === 0,
+        '保存出战配置应冻结新快照且 complete:true/missing:[]', short(save.raw, 300));
       const saveB = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: ldB, warehouse: state.facts.asmB.warehouse }, authed(state.facts.B.token));
       expect(saveB.status === 200, `PUT /me/configs/slot1（B）应 200，实得 ${saveB.status}`, saveB.raw);
-
-      const c1 = await request(port, 'POST', '/api/v1/me/configs', { name: '第二套' }, authed(state.facts.A.token));
-      expect(c1.status === 200, `新建第 2 槽应 200，实得 ${c1.status}`, c1.raw);
-      const c2 = await request(port, 'POST', '/api/v1/me/configs', { name: '第三套' }, authed(state.facts.A.token));
-      expect(c2.status === 200, `新建第 3 槽应 200，实得 ${c2.status}`, c2.raw);
-      expect(c2.body.data.slots.length === 3, `槽数应达 3，实得 ${c2.body.data.slots.length}`, c2.raw);
-      const c3 = await request(port, 'POST', '/api/v1/me/configs', { name: '第四套' }, authed(state.facts.A.token));
-      expect(c3.status === 409, `第 4 槽应 409，实得 ${c3.status}`, c3.raw);
-      expect(c3.body.error.code === 'slot_limit', `第 4 槽错误码应为 slot_limit，实得 ${j(c3.body.error)}`, c3.raw);
-
-      const act = await request(port, 'POST', '/api/v1/me/configs/slot2/activate', {}, authed(state.facts.A.token));
+      // 把同一份完整配置写进 slot2 → 激活 200（唯一出战 + activeSnapshotHash 同步）
+      const saveOn2 = await request(port, 'PUT', '/api/v1/me/configs/slot2', { loadout: ldA, warehouse: state.facts.asmA.warehouse }, A);
+      expect(saveOn2.status === 200 && typeof saveOn2.body.data.snapshot.hash === 'string',
+        `slot2 写入完整配置应 200 并冻结快照，实得 ${saveOn2.status}`, saveOn2.raw);
+      const act = await request(port, 'POST', '/api/v1/me/configs/slot2/activate', {}, A);
       expect(act.status === 200 && act.body.data.activeSlotId === 'slot2', `激活 slot2 应 200 且 activeSlotId=slot2，实得 ${act.status}`, act.raw);
       expect(typeof act.body.data.activeSnapshotHash === 'string', '激活应同步 activeSnapshotHash', act.raw);
 
-      const lockedDel = await request(port, 'DELETE', '/api/v1/me/configs/slot2', undefined, authed(state.facts.A.token));
+      const lockedDel = await request(port, 'DELETE', '/api/v1/me/configs/slot2', undefined, A);
       expect(lockedDel.status === 409 && lockedDel.body.error.code === 'slot_locked', `删出战槽应 409 slot_locked，实得 ${lockedDel.status} ${j(lockedDel.body.error)}`, lockedDel.raw);
-      const back = await request(port, 'POST', '/api/v1/me/configs/slot1/activate', {}, authed(state.facts.A.token));
+      const back = await request(port, 'POST', '/api/v1/me/configs/slot1/activate', {}, A);
       expect(back.status === 200 && back.body.data.activeSlotId === 'slot1', '切回 slot1', back.raw);
-      const del = await request(port, 'DELETE', '/api/v1/me/configs/slot2', undefined, authed(state.facts.A.token));
+      const del = await request(port, 'DELETE', '/api/v1/me/configs/slot2', undefined, A);
       expect(del.status === 200 && del.body.data.deleted === 'slot2', `非出战槽应可删（200），实得 ${del.status}`, del.raw);
-      const delDefault = await request(port, 'DELETE', '/api/v1/me/configs/slot1', undefined, authed(state.facts.A.token));
+      const delDefault = await request(port, 'DELETE', '/api/v1/me/configs/slot1', undefined, A);
       expect(delDefault.status === 409 && delDefault.body.error.code === 'slot_locked', `默认槽不可删（409 slot_locked），实得 ${delDefault.status}`, delDefault.raw);
 
       const noAuth = await request(port, 'POST', '/api/v1/me/configs', { name: 'x' });
       expect(noAuth.status === 401, `未鉴权新建槽应 401，实得 ${noAuth.status}`, noAuth.raw);
-      okLine(6, '配置槽规则', `注册即 slot1(isDefault) → 建到 3 槽 OK → 第 4 槽 409 slot_limit → 激活 slot2(activeSlotId=slot2, activeSnapshotHash 同步) → 删出战槽 409 slot_locked → 切回后可删 → 默认槽 409 slot_locked；未鉴权 401；A/B 出战配置各含**真实装配引用** ${state.facts.pluginRefsA}/${state.facts.pluginRefsB} 处（未剥离 pluginUid）`);
-      return 'slot_limit / slot_locked / 唯一出战全中';
+      okLine(6, '配置槽规则', `注册即 3 槽（slot1 完整出战/slot2·3 空槽）→ 非出战槽写不完整 200(complete:false, missing×5) / 出战槽写不完整 409 loadout_invalid（逐位置文案）→ 空槽激活 409 cannot_activate_incomplete → 3 槽满再建 409 slot_limit → 删空槽后重建为**空槽**（snapshot:null）→ 完整配置写入并激活 slot2（activeSlotId/activeSnapshotHash 同步）→ 删出战槽 409 slot_locked → 切回后可删 → 默认槽 409 slot_locked；未鉴权 401；A/B 出战配置各含**真实装配引用** ${state.facts.pluginRefsA}/${state.facts.pluginRefsB} 处（未剥离 pluginUid）`);
+      return 'slot_limit / cannot_activate_incomplete / slot_locked / 唯一出战全中';
     });
 
     /* ---- [7/22] 装配后 POST /panel ≡ buildPanel（真仓库镜像） ---- */
@@ -560,11 +698,14 @@ async function main() {
       expect(pluginRefsOf(state.facts.ldA) === state.facts.pluginRefsA && state.facts.pluginRefsA > 0,
         '本步使用的配置必须仍是"含装配引用"的那一份（引用数不得被中途剥离）');
       const st = pan.body.data.panel.role.stats;
-      // 装配链路的独立证据：仓库里确实产生了 equipped=true 的插件（走 POST /warehouse/assemble）
+      // 装配链路的独立证据：真源里确实产生了 equipped=true 的插件（走 POST /me/warehouse/assemble；
+      //   starter 本身也带已装配插件，故基线是 equippedBefore，而不是 0）
       const equipped = state.facts.asmA.warehouse.buckets.rolePlugin.concat(state.facts.asmA.warehouse.buckets.skillPlugin).filter((p) => p.equipped === true);
-      expect(equipped.length === state.facts.asmA.placed.length,
-        `装配成功 ${state.facts.asmA.placed.length} 处，但仓库里 equipped=true 的插件 ${equipped.length} 个（不一致）`);
-      okLine(7, 'POST /panel ≡ buildPanel（真镜像）', `五维 hp${st.hp}/atk${st.atk}/def${st.def}/sp${st.sp}/mp${st.mp}；技能参数 ${pan.body.data.panel.skills.length} 条；与单测逐值一致；本玩家仓库 equipped=true 插件 ${equipped.length} 个（=装配成功数）；配置含真实装配引用 ${state.facts.pluginRefsA} 处（去掉 warehouse 必 missing_warehouse → 反证引用为真）`);
+      expect(equipped.length === state.facts.asmA.equippedAfter,
+        `真源里 equipped=true 的插件应为 ${state.facts.asmA.equippedAfter} 个，实得 ${equipped.length}`);
+      expect(equipped.length === state.facts.asmA.equippedBefore + state.facts.asmA.placed.length,
+        `equipped ${state.facts.asmA.equippedBefore}（starter）+ 装配成功 ${state.facts.asmA.placed.length} ≠ ${equipped.length}`);
+      okLine(7, 'POST /panel ≡ buildPanel（真镜像）', `五维 hp${st.hp}/atk${st.atk}/def${st.def}/sp${st.sp}/mp${st.mp}；技能参数 ${pan.body.data.panel.skills.length} 条；与单测逐值一致；真源 equipped=true 插件 ${equipped.length} 个（= starter ${state.facts.asmA.equippedBefore} + 本次装配 ${state.facts.asmA.placed.length}）；配置含真实装配引用 ${state.facts.pluginRefsA} 处（去掉 warehouse 必 missing_warehouse → 反证引用为真）`);
       return `hp=${st.hp} atk=${st.atk} def=${st.def} refs=${state.facts.pluginRefsA}`;
     });
 
@@ -618,6 +759,7 @@ async function main() {
       if (r.status === 200) {
         await assertReal(s.store, [state.facts.solo.publicId, r.body.data.opponent.publicId], 'quick/run(池空分支)');
         expect(r.body.data.opponent.isBot === false, '对手不得是 bot', r.raw);
+        state.facts.quickBattles.push(r.body.data.battleId);
       } else {
         expect(r.status === 409, `池空/无候选应 409，实得 ${r.status}`, r.raw);
         expect(r.body.error.code === 'no_opponent', `错误码应为 no_opponent，实得 ${j(r.body.error)}`, r.raw);
@@ -676,6 +818,7 @@ async function main() {
         : `抽中对手 = ${d.opponent.publicId}（默认配置：${pluginRefsOf(foeSnap.loadout)} 处装配引用）→ 抽池不受控，本项验收锚在**发起者 B**（${selfSide.refs} 处引用 / 镜像片段 ${selfSide.whItems} 项；面板 ≡ 真镜像 hp${selfSide.stats.hp}/atk${selfSide.stats.atk}/def${selfSide.stats.def}/sp${selfSide.stats.sp}/mp${selfSide.stats.mp}）`;
       state.facts.refs = { b: selfSide.refs, bWh: selfSide.whItems, foeIsA, aRefs: foeSide ? foeSide.refs : null };
       state.facts.quick1 = d;
+      state.facts.quickBattles.push(d.battleId);
       okLine(11, 'quick/run 双方都是真实玩家（含装配插件出战 ✔）', `发起者 ${state.facts.B.publicId}(${state.facts.B.playerId}) vs 对手 ${d.opponent.publicId} → 档案库回查 OK（isBot=false，出战快照可用）；battleId=${d.battleId}；ticks=${d.ticks}>0；响应无 pl_；**${foeNote}**`);
       return `对手=${d.opponent.publicId}`;
     });
@@ -934,8 +1077,42 @@ async function main() {
       expect(/snapshot_gc|engine_mismatch|data_mismatch/.test(gone.body.error.message), `410 消息应带失效原因，实得 ${gone.body.error.message}`, gone.raw);
       const unknown = await request(port, 'GET', '/api/v1/replay/b_ffffffffffffffff', undefined, authed(state.facts.B.token));
       expect(unknown.status === 404 && unknown.body.error.code === 'unknown_replay', `未知回放应 404 unknown_replay，实得 ${unknown.status} ${j(unknown.body.error)}`, unknown.raw);
-      okLine(19, '回放鉴权与失效', `参与者 200（${mine.body.data.frames.length} 帧 = ticks ${d.ticks}）；未鉴权 401；非参与者 403 replay_forbidden；快照缺失归档 ${goneId} → 410 replay_expired（${gone.body.error.message}）；未知 id → 404 unknown_replay`);
-      return '200/401/403/410/404';
+
+      /* ⭐ D-159-R1 回归（用户裁决 + server 侧修复）：保存出战配置时**完全不传 warehouse**
+       *   （引用校验与快照的镜像片段全部由**服务端权威仓库**自解析）→ 真的打一场 → 归档回放重算必须 200。
+       *   修前该路径 `buildPlayer` 拿不到仓库 → 410 replay_expired（"服务端仓库已含真源、客户端不再提交镜像" 的闭环证据）。
+       */
+      const regP = await registerPlayer(port, 'e2e_replay_8', '回归');
+      expect(regP.status === 200 || regP.status === 201, `回归用例注册失败 ${regP.status}`, regP.raw);
+      state.facts.replayPlayer = {
+        token: regP.body.data.token, publicId: regP.body.data.publicId,
+        playerId: await playerIdByPublicId(s.store, regP.body.data.publicId),
+      };
+      state.facts.tokens[state.facts.replayPlayer.publicId] = state.facts.replayPlayer.token;
+      const noWhLoadout = scriptedLoadout(state.facts.asmB.warehouse, false);
+      const noWhSave = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: noWhLoadout }, authed(state.facts.B.token));
+      expect(noWhSave.status === 200 && typeof noWhSave.body.data.snapshot.hash === 'string',
+        `不带 warehouse 保存出战配置应 200 并冻结快照，实得 ${noWhSave.status}`, noWhSave.raw);
+      const noWhCfg = await request(port, 'GET', '/api/v1/me/configs', undefined, authed(state.facts.B.token));
+      const noWhActive = noWhCfg.body.data.slots.find((x) => x.slotId === noWhCfg.body.data.activeSlotId);
+      expect(noWhActive.snapshot && noWhActive.snapshot.verifiedAgainstWarehouse === true,
+        'D-159：服务端权威仓库足以完成引用校验（verifiedAgainstWarehouse=true，无需客户端镜像）', short(noWhCfg.raw, 300));
+      await clearOpponentHistory(s.store, state.facts.B.playerId);
+      const regRun = await request(port, 'POST', '/api/v1/quick/run', { seed: 606061 }, authed(state.facts.B.token));
+      expect(regRun.status === 200, `不带 warehouse 保存后的快速对战应 200（池中有真实候选），实得 ${regRun.status}`, regRun.raw);
+      state.facts.quickBattles.push(regRun.body.data.battleId);
+      const regRecord = await s.store.findBattleRecord(regRun.body.data.battleId);
+      const regSnap1 = await s.store.snapshot.get(regRecord.p1.snapshotHash);
+      const regRefs = pluginRefsOf(regSnap1.loadout);
+      expect(regRefs > 0, `D-159-R1 的前提：该侧快照确实含装配引用（实测 ${regRefs} 处），否则回放不需要仓库`, short(noWhSave.raw, 300));
+      const regReplay = await request(port, 'GET', `/api/v1/replay/${regRun.body.data.battleId}`, undefined, authed(state.facts.B.token));
+      expect(regReplay.status === 200,
+        `D-159-R1：不带 warehouse 保存的出战配置，归档回放重算必须 200（实得 ${regReplay.status} ${regReplay.body.error ? j(regReplay.body.error) : ''}）`, regReplay.raw);
+      expect(regReplay.body.data.frames.length === regRun.body.data.ticks,
+        `回放帧数应等于 ticks（${regRun.body.data.ticks}），实得 ${regReplay.body.data.frames.length}`, regReplay.raw);
+
+      okLine(19, '回放鉴权与失效 + D-159-R1', `参与者 200（${mine.body.data.frames.length} 帧 = ticks ${d.ticks}）；未鉴权 401；非参与者 403 replay_forbidden；快照缺失归档 ${goneId} → 410 replay_expired（${gone.body.error.message}）；未知 id → 404 unknown_replay；**D-159-R1**：不带 warehouse 保存（含真实引用 ${regRefs} 处、verifiedAgainstWarehouse=true）→ quick/run 成场 → 归档回放重算 200（${regReplay.body.data.frames.length} 帧 = ticks）`);
+      return '200/401/403/410/404 + D-159-R1 回归';
     });
 
     /* ---- [20/22] /ranked/promote ---- */
@@ -960,7 +1137,7 @@ async function main() {
       const restore = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: scriptedLoadout(state.facts.asmA.warehouse, false), warehouse: state.facts.asmA.warehouse }, authed(state.facts.A.token));
       expect(restore.status === 200, `恢复 A 配置应 200，实得 ${restore.status}`, restore.raw);
       state.facts.ldA = scriptedLoadout(state.facts.asmA.warehouse, false);
-      const box = await request(port, 'POST', '/api/v1/box', { seed: 1, tier: MODE, times: 1 });
+      const box = await request(port, 'POST', '/api/v1/box', { tier: MODE, times: 1 });
       expect(box.status === 200, `legacy box 应 200，实得 ${box.status}`, box.raw);
       const wh = await request(port, 'GET', '/api/v1/warehouse');
       expect(wh.status === 200, `legacy warehouse 应 200，实得 ${wh.status}`, wh.raw);
@@ -985,8 +1162,10 @@ async function main() {
         s2 = await serverMod.start({
           port: 0, dataDir: dir2, authConfig: FAST_AUTH, rateLimitPerMinute: RATE_LIMIT,
           env: { DL_DATA_DIR: dir2, DL_LEGACY_STATELESS: '0' },
+          boxSeed: E2E_BOX_SEED, // D-162：同上（该实例只验 410 deprecated，保持口径一致）
         });
-        const off = await request(s2.port, 'POST', '/api/v1/box', { seed: 1 });
+        // D-162：旧无状态开箱路径同样不设 seed 入参（旧写法 `{seed: 1}` 会被静默忽略）
+        const off = await request(s2.port, 'POST', '/api/v1/box', {});
         expect(off.status === 410 && off.body.error.code === 'deprecated', `STATELESS=0 时旧端点应 410 deprecated，实得 ${off.status} ${j(off.body.error)}`, off.raw);
         const health2 = await request(s2.port, 'GET', '/api/v1/health');
         expect(health2.status === 200, '基础设施端点应保持可用', health2.raw);
@@ -1014,6 +1193,7 @@ async function main() {
       const r = await request(port, 'POST', '/api/v1/quick/run', { seed: 777001 }, authed(state.facts.A.token));
       expect(r.status === 200, `A 的快速对战应 200（已清冷却，池中有真实候选），实得 ${r.status}`, r.raw);
       const d = r.body.data;
+      state.facts.quickBattles.push(d.battleId);
       // 发起者固定 = A（其第 21 步刚恢复的配置含真实装配引用）→ 又一次**确定性**的"含插件能出战"核验
       const eloSide = await verifyPluginSide(s.store, '第 22 步发起者 A（本场 p1）',
         state.facts.A.playerId, state.facts.asmA.warehouse, MODE);
@@ -1116,9 +1296,11 @@ async function main() {
       seen.add(p.playerId);
       out(`  · [${p.where}] ${p.publicId} → playerId=${p.playerId} nickname=${p.nickname} tier=${p.tier} points=${p.points} isBot=${p.isBot} snapshot=${short(p.snapshotHash, 26)}`);
     }
-    out(`  · 结算对局：quick ${2} 场 + ranked ${state.facts.ranked1.matches} 场；双方 playerId 全部落在上述真实档案内（0 个 bot）`);
+    out(`  · 结算对局：quick ${state.facts.quickBattles.length} 场 + ranked ${state.facts.ranked1.matches} 场；双方 playerId 全部落在上述真实档案内（0 个 bot）`);
     out('');
-    out('✅ 装配引用端到端（旧 D1 注记已删除）：第 5 步装配成功 ' + state.facts.asmA.placed.length + ' 处（A）/ '
+    out('✅ 服务端权威仓库 + 装配引用端到端（D-159/D-162）：第 5 步 POST /me/box 开箱 '
+      + state.facts.asmA.opened.length + '（A）/' + state.facts.asmB.opened.length + '（B）件 → **真源入档**；'
+      + 'POST /me/warehouse/assemble 装配成功 ' + state.facts.asmA.placed.length + ' 处（A）/ '
       + state.facts.asmB.placed.length + ' 处（B）；第 6 步出战配置**原样保留 pluginUid**（A/B 各 '
       + state.facts.pluginRefsA + '/' + state.facts.pluginRefsB + ' 处引用）。');
     out('   → 含装配引用的出战方逐条核验：快照 refs>0 + verifiedAgainstWarehouse=true + 正文持久化仓库镜像片段'
@@ -1126,8 +1308,12 @@ async function main() {
       + (state.facts.refs.foeIsA ? 'quick/run 抽中 A → 双方均为含插件配置' : 'quick/run 抽中默认配置玩家 → 验收锚在发起者侧（抽池不受控）')
       + '）；面板 ≡ 完整真镜像（去 warehouse 必 missing_warehouse 反证引用为真）；'
       + 'quick/run、ranked/run 与 legacy /battle 均以含装配插件的配置成功出战（ticks>0、invalids=0）。');
-    out('   旧注记「已知后端缺陷 D1 → 第 6 步剥离装配引用 / missing_warehouse」已失效并移除：'
-      + '缺陷 B（进程内镜像 + 已校验快照退化）与缺口 1（快照持久化仓库镜像片段）均已修复。');
+    out('   → D-159-R1 回归（第 19 步）：保存出战配置**不传 warehouse**（引用校验由服务端权威仓库自解析，'
+      + 'verifiedAgainstWarehouse=true）→ 真的打一场 → 归档回放按需重算 200（帧数 = ticks）；'
+      + '该路径完全不依赖客户端镜像。');
+    out('   → D-162：HTTP 开箱（`/box` 与 `/me/box`）**没有 seed 入参**（传了被静默忽略）；本脚本用 '
+      + `start({boxSeed: ${E2E_BOX_SEED}}) 注入确定性序列（第 n 次开箱 = boxSeed + n − 1），`
+      + 'CLI `box` 也不再接受 `--seed`（给了即参数错误 exit 2）。');
     out(`摘要行：e2e PASS 检查点=22/22 步=${passed} 用时=${ms}ms 端口=${port} 数据根=${path.basename(dataDir)}`);
     return 0;
   } finally {

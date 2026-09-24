@@ -117,11 +117,18 @@ const CASES = [
     const arch = a.archive;
     assert.match(arch.playerId, /^pl_[0-9a-f]{16}$/);
     assert.match(arch.publicId, /^u_[0-9a-f]{8}$/);
-    assert.equal(arch.archiveVersion, 1);
+    assert.equal(arch.archiveVersion, 2, 'D-159：ARCHIVE_VERSION=2');
     for (const key of ['playerId', 'publicId', 'nickname', 'createdAt', 'lastLoginAt', 'lastSeenAt', 'auth',
-      'progress', 'rating', 'configs', 'pool', 'record', 'flags', 'updatedAt']) {
+      'progress', 'rating', 'configs', 'pool', 'record', 'flags',
+      // D-159/D-161：服务端权威仓库段 + AI 库段
+      'warehouse', 'ai', 'updatedAt']) {
       assert.ok(Object.prototype.hasOwnProperty.call(arch, key), `档案缺字段 ${key}`);
     }
+    // D-159：warehouse 段 = 四桶 + starterIssued + grantIds（开箱幂等环形窗口）；D-161：ai 段
+    assert.deepEqual(Object.keys(arch.warehouse.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
+    assert.equal(arch.warehouse.starterIssued, false, '显式 loadout 建号（非 starter 路径）→ 不发放 starter');
+    assert.deepEqual(arch.warehouse.grantIds, []);
+    assert.deepEqual(arch.ai, { items: [] });
     assert.equal(arch.progress.tier, 'common');
     assert.equal(arch.progress.peakTier, 'common');
     assert.equal(arch.rating.points, 0);
@@ -154,35 +161,61 @@ const CASES = [
     await assert.rejects(() => store.loadArchive(''), (e) => e.code === 'bad_request');
   }],
 
-  ['CN-3 配置槽规则：≤3 / 必有出战 / 默认与出战不可删 / 乐观锁', async ({ store }) => {
+  ['CN-3 配置槽规则：≤3 / 必有出战 / 默认与出战不可删 / D-160 新建=空槽 / 乐观锁', async ({ store }) => {
     const a = await account(store, 'a');
     const pid = a.archive.playerId;
-    const c2 = await store.createConfigSlot({ playerId: pid, name: '第二套', loadout: sampleLoadout('b') });
+    // D-160：新建槽**不再复制出战配置**，也**不切换出战** —— 默认建空槽（无快照、complete:false）
+    const c2 = await store.createConfigSlot({ playerId: pid, name: '第二套' });
     assert.equal(c2.archive.configs.slots.length, 2);
-    assert.equal(c2.archive.configs.activeSlotId, c2.slot.slotId, '新建默认切为出战');
-    assert.equal(c2.archive.configs.activeSnapshotHash, c2.snapshot.hash);
-    assert.notEqual(c2.snapshot.hash, a.snapshot.hash);
-    // 不传 loadout → 复制当前出战配置（§5.3 用户确认口径）
+    assert.equal(c2.snapshot, null, 'D-160：新建槽无快照');
+    assert.deepEqual(c2.slot.loadout, { role: null, skills: [null, null, null], ai: null }, 'D-160：新建槽为空槽');
+    assert.equal(c2.archive.configs.activeSlotId, 'slot1', 'D-160：新建槽不改变出战（旧"默认切为出战"已废除）');
+    assert.equal(c2.archive.configs.activeSnapshotHash, a.snapshot.hash, '出战快照仍指向 slot1');
+    // 不传 loadout → 同样是空槽（旧"复制当前出战配置"已废除）
     const c3 = await store.createConfigSlot({ playerId: pid, name: '第三套' });
     assert.equal(c3.archive.configs.slots.length, 3);
-    assert.deepEqual(c3.slot.loadout, sampleLoadout('b'));
+    assert.equal(c3.snapshot, null);
+    assert.deepEqual(c3.slot.loadout, { role: null, skills: [null, null, null], ai: null });
+    assert.equal(c3.archive.configs.activeSlotId, 'slot1');
     await assert.rejects(() => store.createConfigSlot({ playerId: pid, name: '第四套', loadout: sampleLoadout('d') }),
       (e) => e.code === 'slot_limit');
     assert.throws(() => store.freezeSnapshot(null), (e) => e.code === 'loadout_invalid');
     await assert.rejects(() => store.saveConfigSlot({ playerId: pid, slotId: 'slot1', loadout: 'not-an-object' }),
       (e) => e.code === 'loadout_invalid');
+    // D-160：非出战槽允许不完整（无快照 + 正文落盘 + 不完整 details）
+    const partial = await store.saveConfigSlot({ playerId: pid, slotId: 'slot2', loadout: { role: null, skills: [null, null, null], ai: null } });
+    assert.equal(partial.snapshot, null);
+    assert.deepEqual(partial.slot.loadout, { role: null, skills: [null, null, null], ai: null });
+    assert.equal(partial.archive.configs.activeSlotId, 'slot1');
+    // D-160：出战槽写不完整 → loadout_invalid（逐位置 details）
+    await assert.rejects(() => store.saveConfigSlot({ playerId: pid, slotId: 'slot1', loadout: { role: null, skills: [], ai: null } }),
+      (e) => e.code === 'loadout_invalid' && e.details.some((d) => d.path === 'skills[1]'));
+    // D-160：空槽不可激活 → cannot_activate_incomplete
+    await assert.rejects(() => store.activateConfigSlot({ playerId: pid, slotId: 'slot2' }),
+      (e) => e.code === 'cannot_activate_incomplete' && e.status === 409);
 
     // 默认槽不可删
     await assert.rejects(() => store.deleteConfigSlot({ playerId: pid, slotId: 'slot1' }), (e) => e.code === 'slot_locked');
-    // 出战槽不可删
+    // 把 slot3 写满完整配置并设为出战 → 成为出战槽，不可删（D-160：激活才校验完整性）
+    await store.saveConfigSlot({ playerId: pid, slotId: 'slot3', loadout: sampleLoadout('c') });
+    const act3 = await store.activateConfigSlot({ playerId: pid, slotId: 'slot3' });
+    assert.equal(act3.archive.configs.activeSlotId, 'slot3');
     await assert.rejects(() => store.deleteConfigSlot({ playerId: pid, slotId: c3.slot.slotId }), (e) => e.code === 'slot_locked');
-    // 切回 slot1 后可删 slot2
+    // 切到写满完整 loadout 的 slot2 后，slot2 成为出战槽（不可删），slot1 仍因默认槽不可删
+    await store.saveConfigSlot({ playerId: pid, slotId: 'slot2', loadout: sampleLoadout('b') });
+    const act2 = await store.activateConfigSlot({ playerId: pid, slotId: 'slot2' });
+    assert.equal(act2.archive.configs.activeSlotId, 'slot2');
+    assert.equal(act2.archive.configs.activeSnapshotHash, act2.slot.snapshot.hash, 'activate 后 activeSnapshotHash 跟随');
+    assert.notEqual(act2.archive.configs.activeSnapshotHash, a.snapshot.hash);
+    await assert.rejects(() => store.deleteConfigSlot({ playerId: pid, slotId: 'slot2' }), (e) => e.code === 'slot_locked');
+    // 切回 slot1 后可删非出战槽 slot2
     await store.activateConfigSlot({ playerId: pid, slotId: 'slot1' });
     const after = await store.loadArchive(pid);
     assert.equal(after.configs.activeSlotId, 'slot1');
     assert.equal(after.configs.activeSnapshotHash, a.snapshot.hash);
-    const del = await store.deleteConfigSlot({ playerId: pid, slotId: c2.slot.slotId });
+    const del = await store.deleteConfigSlot({ playerId: pid, slotId: 'slot2' });
     assert.equal(del.archive.configs.slots.length, 2);
+    assert.equal(del.archive.configs.slots.some((s) => s.slotId === 'slot2'), false);
     await assert.rejects(() => store.deleteConfigSlot({ playerId: pid, slotId: 'slot9' }), (e) => e.code === 'slot_not_found');
     await assert.rejects(() => store.activateConfigSlot({ playerId: pid, slotId: 'slot9' }), (e) => e.code === 'slot_not_found');
 
@@ -467,6 +500,64 @@ const CASES = [
     assert.throws(() => store.sessions.put({ playerId: pid }), (e) => e.code === 'bad_request');
   }],
 
+  ['CN-14 D-159/D-161：服务端权威仓库（真源 / 开箱发放 / 装配拆卸）+ AI 库', async ({ store }) => {
+    const a = await account(store, 'wh');
+    const pid = a.archive.playerId;
+    // 真源：adapter 层返回 {warehouse, usage, caps, counts, starterIssued}（L6 account 再拍平成 buckets）
+    const wh0 = await store.getWarehouse(pid);
+    assert.deepEqual(Object.keys(wh0).sort(), ['caps', 'counts', 'starterIssued', 'usage', 'warehouse']);
+    assert.deepEqual(Object.keys(wh0.warehouse.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
+    assert.deepEqual(wh0.counts, { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0 });
+    assert.equal(wh0.starterIssued, false, '显式 loadout 建号 → 不发 starter');
+    assert.equal(wh0.caps.role, 500);
+    await assert.rejects(() => store.getWarehouse('pl_0000000000000000'), (e) => e.code === 'store_not_found');
+    // 开箱发放：物品按 kind 入桶，写 journal（box.opened），返回 grantId + 新视图
+    const role = { uid: 'itr_1', kind: 'role', templateId: 'role_bal', quality: 'common', slots: [{ type: 'atk', pluginUid: null }], pluginPoints: 4 };
+    const plugin = { uid: 'itp_1', kind: 'rolePlugin', id: 'atk_up', slot: 'atk', quality: 'common', tier: 2, pointCost: 2, equipped: false };
+    const granted = await store.grantBox({ playerId: pid, seed: 123, tier: 'common', times: 2, items: [role, plugin] });
+    assert.match(granted.grantId, /^bx_/);
+    assert.deepEqual(granted.counts, { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0 });
+    assert.equal(granted.starterIssued, false);
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'box.opened' && r.grantId === granted.grantId),
+      'D-159：开箱必须落 journal（可重放）');
+    // 装配：校验在 L6，adapter 只落增量记录（warehouse.assemble）并回放可重演
+    const asm = await store.applyWarehouseChange({ playerId: pid, op: 'assemble', targetUid: 'itr_1', pluginUid: 'itp_1', slotIndex: 0 });
+    assert.equal(asm.warehouse.buckets.role[0].slots[0].pluginUid, 'itp_1');
+    assert.equal(asm.warehouse.buckets.rolePlugin[0].equipped, true);
+    assert.equal(asm.counts.rolePlugin, 1, '装配不搬移物品：插件仍在桶内，只标注 equipped + 被槽位引用');
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'warehouse.assemble' && r.pluginUid === 'itp_1'));
+    const dis = await store.applyWarehouseChange({ playerId: pid, op: 'disassemble', targetUid: 'itr_1', slotIndex: 0 });
+    assert.equal(dis.warehouse.buckets.role[0].slots[0].pluginUid, null);
+    assert.equal(dis.warehouse.buckets.rolePlugin[0].equipped, false);
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'warehouse.disassemble'));
+    // 目标不存在 → item_missing（不写记录）
+    await assert.rejects(() => store.applyWarehouseChange({ playerId: pid, op: 'assemble', targetUid: 'nope', pluginUid: 'itp_1', slotIndex: 0 }),
+      (e) => e.code === 'item_missing');
+    // D-161：AI 库（列表 / 新建 / 删除 / 未知 404 / 出战引用拒删）
+    const ai0 = await store.listAi(pid);
+    assert.deepEqual(ai0.items, []);
+    assert.equal(ai0.max, 100);
+    assert.deepEqual(ai0.usage, {});
+    const made = await store.createAi({ playerId: pid, name: '我的AI', program: { type: 'program', version: 1, body: { type: 'seq', statements: [] } } });
+    assert.match(made.ai.aiId, /^ai_/);
+    assert.equal(made.ai.name, '我的AI');
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'ai.created' && r.aiId === made.ai.aiId));
+    assert.equal((await store.listAi(pid)).items.length, 1);
+    const delAi = await store.deleteAi({ playerId: pid, aiId: made.ai.aiId });
+    assert.deepEqual(delAi.referencedBy, []);
+    assert.deepEqual(delAi.items, []);
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'ai.deleted' && r.aiId === made.ai.aiId));
+    await assert.rejects(() => store.deleteAi({ playerId: pid, aiId: 'ai_nope' }), (e) => e.code === 'store_not_found');
+    // 被**出战配置**引用 → ai_in_use（非出战配置的引用只提示）
+    const refAi = await store.createAi({ playerId: pid, name: '出战AI', program: { type: 'program' } });
+    const ld = sampleLoadout('ai');
+    ld.aiId = refAi.ai.aiId;
+    await store.saveConfigSlot({ playerId: pid, slotId: 'slot1', loadout: ld });
+    assert.deepEqual((await store.listAi(pid)).usage[refAi.ai.aiId], ['slot1']);
+    await assert.rejects(() => store.deleteAi({ playerId: pid, aiId: refAi.ai.aiId }),
+      (e) => e.code === 'ai_in_use' && e.status === 409);
+  }],
+
   ['CN-13 墓碑记录 player.removed：删除走 journal、可重放、幂等', async ({ store }) => {
     const a = await account(store, 'rm');
     const pid = a.archive.playerId;
@@ -535,6 +626,8 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
     for (const method of ['open', 'close', 'loadArchive', 'saveArchive', 'updateArchive', 'listPlayerIds',
       'createAccount', 'setPasswordHash', 'setBanned', 'setNickname', 'setPool', 'touchLastSeen', 'markRecordsSeen',
       'saveConfigSlot', 'createConfigSlot', 'activateConfigSlot', 'deleteConfigSlot', 'freezeSnapshot',
+      // D-159/D-161：服务端权威仓库 + AI 库
+      'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'deleteAi',
       'append', 'appendMany', 'applyRecord', 'applyRecords', 'settleBattle', 'readRecords', 'findBattleRecord',
       // P7-6 修复 1/2 追加的结算原语：批量结算 + 参与集合结算锁 + 锁内单场 + 索引立即落盘
       'settleBatch', 'settleBattleLocked', 'withSettlementLock', 'flushIndex',

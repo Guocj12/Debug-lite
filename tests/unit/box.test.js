@@ -70,16 +70,32 @@ test('B17-3 种子确定性：同 seed 内容级一致；缺 seed 生成并回�
   assert.ok(Number.isInteger(g.data.seed) && g.data.seed >= 1, `服务端生成 seed=${g.data.seed}`);
 });
 
-test('B17-4 参数错误：bad_tier / bad_times / bad_seed → 400 + code', () => {
+test('B17-4 参数错误：bad_tier / bad_times / bad_seed（显式非法 seed 一律拒绝，含非数值）', () => {
   assert.equal(box.openBoxes({ tier: 'diamond' }).code, 'bad_tier');
   assert.equal(box.openBoxes({ times: 0 }).code, 'bad_times');
   assert.equal(box.openBoxes({ times: -1 }).code, 'bad_times');
   assert.equal(box.openBoxes({ times: 1.5 }).code, 'bad_times');
   assert.equal(box.openBoxes({ times: box.BOX_TIMES_MAX + 1 }).code, 'bad_times');
-  assert.equal(box.openBoxes({ seed: 'abc' }).code, 'bad_seed');
+  // D-162：HTTP 层**不传** seed（随机性服务端独占）；但**进程内调用方显式提供了非法值**时
+  //   **必须如实 400 `bad_seed`**（不静默忽略——静默会让内部调用方把拼错的参数当成生效）。
+  //   非数值（如 'abc'）与数值越界一视同仁。
+  assert.equal(box.openBoxes({ seed: 'abc' }).code, 'bad_seed', '非数值显式 seed → bad_seed（不静默忽略）');
+  assert.equal(box.openBoxes({ seed: 'abc' }).status, 400);
+  assert.equal(box.openBoxes({ seed: null }).status, 200, 'null = 未提供 → 服务端生成（HTTP 路径同此语义）');
+  assert.equal(box.openBoxes({ seed: undefined }).status, 200, 'undefined = 未提供 → 服务端生成');
+  // 数值型越界 seed 同样如实拒绝
   assert.equal(box.openBoxes({ seed: 0 }).code, 'bad_seed');
+  assert.equal(box.openBoxes({ seed: -1 }).code, 'bad_seed');
+  assert.equal(box.openBoxes({ seed: 1.5 }).code, 'bad_seed');
   assert.equal(box.openBoxes({ seed: 0x80000000 }).code, 'bad_seed', 'seed 上界（防 32 位回绕）');
   assert.equal(box.openBoxes({ seed: 4294967297 }).code, 'bad_seed', 'seed ≥2^32 拒绝（P2 落实）');
+  // 未提供时由服务端生成合法 seed 并回带
+  const generated = box.openBoxes({});
+  assert.ok(Number.isInteger(generated.data.seed) && generated.data.seed >= 1 && generated.data.seed <= 0x7fffffff,
+    `缺省 seed 由服务端生成且合法：${generated.data.seed}`);
+  // D-162 注入缝：`opts.seedFactory` 优先于 crypto（HTTP 层由 `start({boxSeed})` 接线）
+  assert.equal(box.openBoxes({ seedFactory: () => 77 }).data.seed, 77, 'seedFactory 提供确定性 seed');
+  assert.equal(box.openBoxes({ seed: 88, seedFactory: () => 77 }).data.seed, 88, '显式数值 seed 优先于 seedFactory');
 });
 
 test('B17-5 409 tier_locked：门控后掉落池为空（RangeError 映射；防御路径）', () => {

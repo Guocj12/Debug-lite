@@ -18,12 +18,15 @@ const os = require('node:os');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { createLogger } = require('../../shared/log.js');
 const serverMod = require('../../server/index.js');
 const itemsApi = require('../../server/core/items.js');
 const astApi = require('../../server/ai/ast.js');
 const loadoutMod = require('../../server/loadout.js');
 const battleApi = require('../../server/battle.js');
+const boxMod = require('../../server/box.js');
+const rankedMod = require('../../server/ranked.js');
 const archiveMod = require('../../server/store/archive.js');
 const ledger = require('../../server/store/ledger.js');
 const rankingConfig = require('../../server/data/rating-config.json');
@@ -47,6 +50,9 @@ const DEFAULTS = Object.freeze({
   boxes: 20,
   tier: 'common',
   seed: 20260918,
+  // D-162：`start({boxSeed})` = 开箱 seed 的**确定性序列**注入缝（第 n 次 = boxSeed + n − 1）。
+  //   默认给一个固定基值 → 批量流程里所有 HTTP 开箱都可复现；显式传 `null` 则退回 crypto 随机。
+  boxSeed: 20260918,
   slotsMax: 2,
   warehouseBucketMax: 24,
   deep: false,
@@ -499,136 +505,175 @@ async function registerPlayer(ctx, index) {
   };
 }
 
+// D-159：starter 的 AI 由服务端 `ranked.buildDefaultLoadout(identity)` 按**身份哈希**派生
+//   （3 预设族 × 3 子变体）。这里复算同一个身份哈希（只取预设名），使报告里的 `presets` 直方图
+//   仍是**真实预设**而不是编造值；`setupPlayer` 同时用 `buildDefaultLoadout` 逐字节核对程序本体。
+function presetOfIdentity(publicId, playerId) {
+  const key = typeof publicId === 'string' && publicId !== '' ? publicId : playerId;
+  if (typeof key !== 'string' || key === '') return rankedMod.DEFAULT_AI_PRESETS[0];
+  const digest = crypto.createHash('sha256').update(`dl-default-ai|${key}`).digest();
+  return rankedMod.DEFAULT_AI_PRESETS[digest.readUInt32BE(0) % rankedMod.DEFAULT_AI_PRESETS.length];
+}
+
+/**
+ * setupPlayer(ctx, p) —— D-159/D-160 口径：**默认路径不开箱、不装配**。
+ *
+ * 依据：注册（无显式 loadout 且非 bot）即下发 starter —— `slot1`（默认配置、出战）已是
+ *   "角色 1 + 技能恰 3 + AI"的**完整**配置，且其插件**已在服务端仓库里装配好**、快照已冻结。
+ *   因此"配齐出战配置"退化为**读真源并校验不变量**（真实 HTTP，不做第二套裁决）：
+ *     ① GET /me/configs：出战槽 loadout 完整（role / skills[3] 全非空 / ai）+ snapshot 非空 + unverifiedLoadout=false；
+ *     ② GET /me/warehouse（D-159 真源）：loadout 引用的每个 pluginUid 都在库内且 equipped=true（引用齐备）；
+ *     ③ starter 的 AI 必须逐字节等于服务端身份派生的默认 AI（`ranked.buildDefaultLoadout`）。
+ *   `deep` 时额外压测**服务端权威写路径**：`POST /me/box`（D-162：无 seed 入参）+ 用刚开出的物品做一次
+ *   `POST /me/warehouse/assemble` → `disassemble` → `assemble` **往返**（体只带 targetUid/pluginUid/slotIndex，
+ *   不再传整仓 —— 整仓版 `/warehouse/assemble` 是遗留无状态路径）；往返成功同时是
+ *   "装配/拆卸会同步插件 `equipped` 标志"的回归护栏（否则卸下的插件装不回去 → 409 plugin_equipped）。
+ */
 async function setupPlayer(ctx, p) {
   const auth = bearer(p.token);
-  const detail = { index: p.index, publicId: p.publicId, equipped: 0, rejects: {}, preset: null, programHash: null };
+  const detail = {
+    index: p.index, publicId: p.publicId, equipped: 0, rejects: {}, preset: null, programHash: null,
+    boxRequests: 0, items: 0, refs: 0, danglingRefs: 0,
+    deepAssembled: 0, deepDisassembled: 0, deepReassembled: 0, deepPairsTried: 0,
+  };
 
   // 1) GET /me（档案摘要）
   const me = await call(ctx.metrics, null, ctx.port, 'GET', '/api/v1/me', null, auth);
   if (me.status !== 200) return { ok: false, code: 'me_failed', status: me.status, detail };
   detail.tier = (envelopeData(me) || {}).progress ? envelopeData(me).progress.tier : null;
 
-  // 2) 开箱：分步请求 `times = 4,8,12,…`，**取每次响应里的新增物品**（uid 进程内单调 ⇒ 天然去重；
-  //    每次都是服务端真实掉落），直到凑齐出战材料（角色 ≥1、技能 ≥3）。步长最多 14 次请求，
-  //    最坏 60 箱；命中极低，正常一轮（times=20）即够。
-  const accumulated = new Map();
-  let boxRequests = 0;
-  let totalItems = 0;
-  let lastSeed = 0;
-  for (let step = 1; step <= 14; step += 1) {
-    const times = 4 * step;
-    lastSeed = randSeed(ctx.rng);
-    const boxRes = await call(ctx.metrics, 'box', ctx.port, 'POST', '/api/v1/box',
-      { seed: lastSeed, tier: ctx.tier, times }, auth);
-    if (boxRes.status !== 200) return { ok: false, code: 'box_failed', status: boxRes.status, detail, errorCode: boxRes.errorCode };
-    boxRequests += 1;
-    const boxed = (envelopeData(boxRes) || {}).items || [];
-    for (const item of boxed) if (item && typeof item.uid === 'string') accumulated.set(item.uid, item);
-    totalItems = accumulated.size;
-    const byKind = { role: 0, skill: 0 };
-    for (const item of accumulated.values()) if (byKind[item.kind] !== undefined) byKind[item.kind] += 1;
-    if (byKind.role >= 1 && byKind.skill >= 3) break;
-  }
-  const warehouse = itemsApi.emptyWarehouse();
-  for (const item of accumulated.values()) {
-    if (!Array.isArray(warehouse.buckets[item.kind])) warehouse.buckets[item.kind] = [];
-    warehouse.buckets[item.kind].push(item);
-  }
-  detail.boxRequests = boxRequests;
-  detail.items = totalItems;
-  detail.boxSeed = lastSeed;
-
-  // 3) 装配：本地规划（纯函数）→ 逐条 POST /warehouse/assemble（服务端为权威）。
-  //    每次请求提交**装配前的仓库**（接口是纯函数：返回新仓库，入参不变）；装配结果只在本地视图叠加，
-  //    点数/槽位占用/唯一性全部由服务端裁决（拒绝进报告，不做第二套判定）。
-  const assembleBase = warehouse;
-  const assignments = new Map();
-  const usedPluginUids = new Set();
-  const planned = planLoadout(assembleBase, { slotsMax: ctx.slotsMax });
-  if (!planned.loadout) return { ok: false, code: 'loadout_materials_missing', detail };
-  for (;;) {
-    const view = makeWarehouseView(assembleBase, assignments);
-    const candidate = nextCandidate(view, planned.loadout, ctx.slotsMax, usedPluginUids, assignments);
-    if (!candidate) break;
-    const res = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/warehouse/assemble',
-      {
-        warehouse: view.raw,
-        targetUid: candidate.targetUid,
-        pluginUid: candidate.pluginUid,
-        slotIndex: candidate.slotIndex,
-        tier: ctx.tier,
-      }, auth);
-    const data = envelopeData(res);
-    if (res.status === 200 && data && data.warehouse) {
-      assignments.set(`${candidate.targetUid}#${candidate.slotIndex}`, candidate.pluginUid);
-      usedPluginUids.add(candidate.pluginUid);
-      detail.equipped += 1;
-      continue;
-    }
-    // 服务端拒绝（points_exceeded / slot_type_mismatch / …）：标记该插件已试，换下一个候选
-    const code = res.errorCode || `status_${res.status}`;
-    detail.rejects[code] = (detail.rejects[code] || 0) + 1;
-    usedPluginUids.add(candidate.pluginUid);
-  }
-  if (assignments.size > 0) {
-    const finalPlan = planLoadout(assembleBase, { slotsMax: ctx.slotsMax, assignments });
-    planned.loadout.role = finalPlan.loadout.role;
-    planned.loadout.skills = finalPlan.loadout.skills;
-  }
-
-  // 4) 为每人生成**行为各不相同**的 AI → /ai/validate + /ai/compile
-  const skillTypes = planned.loadout.skills.map((s) => {
-    const tpl = skillTemplates.find((x) => x.id === s.templateId);
-    return tpl ? tpl.type : 'straight';
-  });
-  const ai = buildAiProgram(randSeed(ctx.rng), skillTypes);
-  planned.loadout.ai = ai.program;
-  detail.preset = ai.preset;
-  detail.programHash = astApi.programHash(ai.program);
-  const localCheck = astApi.validate(ai.program, ctx.tier);
-  detail.localAiValid = localCheck.ok;
-  if (!localCheck.ok) {
-    return { ok: false, code: 'local_ai_invalid', detail, errors: localCheck.errors.slice(0, 3) };
-  }
-  const v1 = await call(ctx.metrics, 'ai', ctx.port, 'POST', '/api/v1/ai/validate', { program: ai.program, tier: ctx.tier }, auth);
-  if (v1.status !== 200) return { ok: false, code: 'ai_validate_failed', status: v1.status, detail, errorCode: v1.errorCode };
-  const v2 = await call(ctx.metrics, 'ai', ctx.port, 'POST', '/api/v1/ai/compile', { program: ai.program }, auth);
-  if (v2.status !== 200) return { ok: false, code: 'ai_compile_failed', status: v2.status, detail, errorCode: v2.errorCode };
-  detail.compiledHash = (envelopeData(v2) || {}).programHash || null;
-
-  // 5b) **后端缺陷兜底**（只报告，不改 server/**）：已装配插件的出战配置在档案驱动对局路径
-  //     （`ranked.js:406` / `quickmatch.js` → `battle.buildPlayer`）拿不到仓库镜像 → loadout 校验报
-  //     `missing_warehouse`，排位 409 loadout_invalid、快速 409 no_opponent（详见报告 notes.backendDefects）。
-  //     为让批量链路可跑通并暴露该缺陷，这里把"含装配引用但无仓库不可自证"的引用剔除后再出战，
-  //     并如实统计 `missingWarehouse`。
-  let strippedRefs = 0;
-  const stageCheck = loadoutMod.validateLoadout(planned.loadout, { warehouse: null, tier: ctx.tier });
-  if (!stageCheck.ok && stageCheck.errors.some((e) => e.code === 'missing_warehouse')) {
-    for (const item of [planned.loadout.role].concat(planned.loadout.skills || [])) {
-      for (const s of item.slots || []) {
-        if (s && s.pluginUid) { s.pluginUid = null; strippedRefs += 1; }
-      }
-    }
-    detail.missingWarehouse = true;
-    detail.strippedRefs = strippedRefs;
-  } else {
-    detail.missingWarehouse = false;
-  }
-
-  // 6) 仓库镜像（引用校验用）+ PUT /me/configs/:slot（默认槽，≤3 且唯一出战）
-  const mirror = mirrorOfLoadout(planned.loadout, assembleBase, ctx.warehouseBucketMax);
-  const whRes = await call(ctx.metrics, null, ctx.port, 'PUT', '/api/v1/me/warehouse', { warehouse: mirror }, auth);
-  if (whRes.status !== 200) return { ok: false, code: 'warehouse_mirror_failed', status: whRes.status, detail, errorCode: whRes.errorCode };
-
+  // 2) 配置真源：GET /me/configs（槽全文 + 快照视图）
   const cfgs = await call(ctx.metrics, 'config', ctx.port, 'GET', '/api/v1/me/configs', null, auth);
-  if (cfgs.status !== 200) return { ok: false, code: 'configs_failed', status: cfgs.status, detail };
+  if (cfgs.status !== 200) return { ok: false, code: 'configs_failed', status: cfgs.status, detail, errorCode: cfgs.errorCode };
   const cfgData = envelopeData(cfgs) || {};
   detail.slots = (cfgData.slots || []).length;
   detail.activeSlotId = cfgData.activeSlotId;
-  const save = await call(ctx.metrics, 'config', ctx.port, 'PUT', `/api/v1/me/configs/${cfgData.activeSlotId}`,
-    { loadout: planned.loadout, warehouse: mirror, activate: true }, auth);
-  if (save.status !== 200) return { ok: false, code: 'config_save_failed', status: save.status, detail, errorCode: save.errorCode };
-  return { ok: true, detail, mirror };
+  detail.unverifiedLoadout = cfgData.unverifiedLoadout === true;
+  const active = (cfgData.slots || []).find((s) => s && s.slotId === cfgData.activeSlotId);
+  if (!active) return { ok: false, code: 'active_slot_missing', status: cfgs.status, detail };
+  const ld = active.loadout || {};
+  const missing = [];
+  if (!ld.role || typeof ld.role.uid !== 'string') missing.push('role');
+  if (!Array.isArray(ld.skills) || ld.skills.length !== 3 || ld.skills.some((s) => !s || typeof s.uid !== 'string')) missing.push('skills[3]');
+  if (!ld.ai || typeof ld.ai !== 'object' || !ld.ai.body) missing.push('ai');
+  detail.missing = missing;
+  if (missing.length > 0) return { ok: false, code: 'starter_incomplete', status: cfgs.status, detail };
+  if (!active.snapshot || typeof active.snapshot.hash !== 'string') {
+    return { ok: false, code: 'starter_snapshot_missing', status: cfgs.status, detail };
+  }
+  detail.snapshotHash = active.snapshot.hash;
+  // D-159：新号不标"未校验配置"（旧 D-130 的 flags.unverifiedLoadout=true 已随契约废除）
+  if (detail.unverifiedLoadout) return { ok: false, code: 'starter_unverified', status: cfgs.status, detail };
+
+  // 3) 仓库真源：GET /me/warehouse（D-159 起不再 404 warehouse_missing）
+  const wh = await call(ctx.metrics, null, ctx.port, 'GET', '/api/v1/me/warehouse', null, auth);
+  if (wh.status !== 200) return { ok: false, code: 'warehouse_failed', status: wh.status, detail, errorCode: wh.errorCode };
+  const whData = envelopeData(wh) || {};
+  const buckets = whData.buckets || {};
+  detail.starterIssued = whData.starterIssued === true;
+  detail.warehouseCounts = whData.counts || null;
+  detail.warehouseCaps = whData.caps || null;
+
+  // 4) 引用齐备：loadout 的每个 pluginUid 必须在服务端仓库内且 equipped=true（服务端权威，不再要客户端镜像）
+  const byUid = new Map();
+  for (const list of Object.values(buckets)) {
+    if (!Array.isArray(list)) continue;
+    for (const it of list) if (it && typeof it.uid === 'string') byUid.set(it.uid, it);
+  }
+  const refs = [];
+  for (const item of [ld.role].concat(ld.skills)) {
+    const slots = Array.isArray(item.slots) ? item.slots : [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const s = slots[i];
+      if (!s || !s.pluginUid) continue;
+      refs.push({ targetUid: item.uid, slotIndex: i, pluginUid: s.pluginUid });
+    }
+  }
+  const dangling = refs.filter((r) => {
+    const it = byUid.get(r.pluginUid);
+    return !it || it.equipped !== true;
+  });
+  detail.refs = refs.length;
+  detail.danglingRefs = dangling.length;
+  detail.equipped = refs.length - dangling.length;
+  if (dangling.length > 0) {
+    detail.dangling = dangling.slice(0, 3);
+    return { ok: false, code: 'warehouse_refs_missing', status: wh.status, detail };
+  }
+  // D-159：starter 恒含 ≥1 角色插件 + 1 技能插件 → 出战配置必有引用（否则"引用齐备"是空断言）
+  if (refs.length === 0) return { ok: false, code: 'starter_has_no_refs', status: wh.status, detail };
+  detail.refsVerified = true;
+
+  // 5) AI 真源核对：starter 的 AI = 服务端身份派生的默认 AI（逐字节）
+  const expected = rankedMod.buildDefaultLoadout({ publicId: p.publicId, playerId: p.playerId });
+  detail.programHash = astApi.programHash(ld.ai);
+  detail.aiMatchesDefault = detail.programHash === astApi.programHash(expected.ai);
+  detail.preset = presetOfIdentity(p.publicId, p.playerId);
+  if (!detail.aiMatchesDefault) return { ok: false, code: 'starter_ai_mismatch', status: wh.status, detail };
+
+  // 6) `--deep`：服务端权威写路径（D-159/D-162）
+  if (ctx.deep) {
+    const wantTimes = Number.isInteger(ctx.boxes) && ctx.boxes > 0 ? ctx.boxes : 1;
+    const times = Math.max(1, Math.min(wantTimes, boxMod.BOX_TIMES_MAX));
+    // D-162：`seed` 不是入参（传了被忽略）→ 请求体只给 tier/times；确定性由 `start({boxSeed})` 提供
+    const boxRes = await call(ctx.metrics, 'box', ctx.port, 'POST', '/api/v1/me/box', { tier: ctx.tier, times }, auth);
+    detail.boxRequests = 1;
+    detail.boxTimes = times;
+    if (boxRes.status !== 200) return { ok: false, code: 'box_failed', status: boxRes.status, detail, errorCode: boxRes.errorCode };
+    const boxData = envelopeData(boxRes) || {};
+    const boxed = Array.isArray(boxData.items) ? boxData.items : [];
+    detail.items = boxed.length;
+    detail.grantId = boxData.grantId || null;
+
+    // 装配 → 拆卸 → 再装配（**服务端权威**新端点；体只带 targetUid/pluginUid/slotIndex，不传整仓）：
+    //   · 装配/拆卸各压一次端到端；
+    //   · "再装配"是**回归护栏**：`warehouse.assemble|disassemble` 落档必须同步插件的 `equipped` 标志
+    //     （装配 → true、拆卸 → false）。若漏同步，卸下的插件再装回会 409 `plugin_equipped`
+    //     （该缺陷曾在 D-159 落地时真实存在，已修；这里如实要求它能装回，失败即 setup 失败）。
+    const targets = boxed.filter((it) => it && (it.kind === 'role' || it.kind === 'skill'));
+    const plugins = boxed.filter((it) => it && (it.kind === 'rolePlugin' || it.kind === 'skillPlugin'));
+    const usedPlugins = new Set();
+    for (const target of targets) {
+      if (detail.deepReassembled >= 2) break;
+      const want = target.kind === 'role' ? 'rolePlugin' : 'skillPlugin';
+      const slots = Array.isArray(target.slots) ? target.slots : [];
+      for (let i = 0; i < slots.length; i += 1) {
+        if (!slots[i] || slots[i].pluginUid) continue;
+        const plugin = plugins.find((pl) => pl.kind === want && pl.slot === slots[i].type
+          && pl.equipped !== true && !usedPlugins.has(pl.uid));
+        if (!plugin) continue;
+        usedPlugins.add(plugin.uid);
+        detail.deepPairsTried += 1;
+        const body = { targetUid: target.uid, pluginUid: plugin.uid, slotIndex: i };
+        const asm = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/me/warehouse/assemble', body, auth);
+        if (asm.status !== 200) {
+          const code = asm.errorCode || `status_${asm.status}`;
+          detail.rejects[code] = (detail.rejects[code] || 0) + 1;
+          break; // 结构匹配却被拒（如点数超限）= 真拒绝，如实计数；该目标不再试
+        }
+        detail.deepAssembled += 1;
+        const dis = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/me/warehouse/disassemble',
+          { targetUid: target.uid, slotIndex: i }, auth);
+        if (dis.status !== 200) {
+          const code = dis.errorCode || `status_${dis.status}`;
+          detail.rejects[code] = (detail.rejects[code] || 0) + 1;
+          return { ok: false, code: 'deep_disassemble_failed', status: dis.status, detail, errorCode: dis.errorCode };
+        }
+        detail.deepDisassembled += 1;
+        const again = await call(ctx.metrics, 'assemble', ctx.port, 'POST', '/api/v1/me/warehouse/assemble', body, auth);
+        if (again.status !== 200) {
+          const code = again.errorCode || `status_${again.status}`;
+          detail.rejects[code] = (detail.rejects[code] || 0) + 1;
+          return {
+            ok: false, code: 'deep_reassemble_failed', status: again.status, detail, errorCode: again.errorCode,
+          };
+        }
+        detail.deepReassembled += 1;
+        break; // 每个目标最多一对
+      }
+    }
+  }
+  return { ok: true, detail };
 }
 
 // 下一个可提交的装配候选（在"装配前仓库 + 本地已生效赋值"视图上规划；跳过已试过的插件与已占用槽位）
@@ -728,13 +773,16 @@ async function runLoadTest(options) {
     versions: { engine: VERSION },
     rateLimitPerMinute: o.rateLimitPerMinute,
     authConfig: { auth: { ...scryptBlock, rateLimitPerMinute: o.authRateLimitPerMinute } },
+    // D-162：开箱随机性收归服务端 —— 注入确定性 seed 序列（第 n 次 = boxSeed + n − 1），
+    //   使批量流程里 `POST /me/box`（deep）可复现；`boxSeed: null` → 退回服务端 crypto 随机。
+    boxSeed: Number.isInteger(o.boxSeed) ? o.boxSeed : undefined,
     ...(o.serverOptions || {}),
   });
 
   const ctx = {
     port: server.port, store: server.store, runtime: server.runtime, logger, metrics, rng,
     seed: o.seed, tier: o.tier, boxes: o.boxes, slotsMax: o.slotsMax,
-    warehouseBucketMax: o.warehouseBucketMax,
+    warehouseBucketMax: o.warehouseBucketMax, deep: !!o.deep,
   };
 
   const report = {
@@ -744,6 +792,9 @@ async function runLoadTest(options) {
     options: {
       players: o.players, concurrency: o.concurrency, rankRuns: o.rankRuns, quickRuns: o.quickRuns,
       boxes: o.boxes, tier: o.tier, seed: o.seed, slotsMax: o.slotsMax, deep: !!o.deep,
+      // D-162：HTTP 开箱不再接受客户端 seed；确定性由实例级注入缝提供 → 报告里显式可见
+      boxSeed: Number.isInteger(o.boxSeed) ? o.boxSeed : null,
+      deterministicBoxes: Number.isInteger(o.boxSeed),
       scrypt: o.fastAuth ? 'N=1024（测试快速档）' : 'N=16384（生产默认）',
       rateLimitPerMinute: o.rateLimitPerMinute, authRateLimitPerMinute: o.authRateLimitPerMinute,
       dataDirKind: o.dataDir ? 'injected' : 'os.tmpdir()',
@@ -756,6 +807,13 @@ async function runLoadTest(options) {
       // 同一玩家**内部**是否串行发请求。默认 true = 规避已确认的后端缺陷（见 defects），
       // 使账务断言（②③）能在**服务端当前实现**下给出可信结论；`--interleave` 可显式复现缺陷。
       serializePerPlayer: o.serializePerPlayer !== false,
+      // D-159：仓库改为**服务端权威**（`GET /me/warehouse` 为真源；注册即发放并装配 starter）。
+      //   旧的 D-130 客户端镜像口径与其"档案驱动路径拿不到仓库"的 DEF-2 缺陷一同废除：
+      //   本脚本**不再**做任何"剥离装配引用"的兜底（装配引用直接来自服务端仓库，天然可自证）。
+      warehouseAuthority: 'server（D-159；starter 注册即发放并已装配 → 默认路径不开箱/不装配）',
+      boxSeedAuthority: Number.isInteger(o.boxSeed)
+        ? `server（D-162；start({boxSeed: ${o.boxSeed}}) 提供确定性序列）`
+        : 'server（D-162；未注入 boxSeed → crypto 随机）',
       defects: [
         {
           id: 'DEF-1-archive-lost-update',
@@ -768,16 +826,17 @@ async function runLoadTest(options) {
         },
         {
           id: 'DEF-2-missing-warehouse-blocks-match',
-          severity: 'high',
-          title: '含装配插件的出战配置无法进入对局（档案驱动路径拿不到仓库镜像 → missing_warehouse）',
-          repro: '任意玩家装配插件并保存出战配置后 POST /ranked/run → 409 loadout_invalid(details: missing_warehouse)；'
-            + 'POST /quick/run → 409 no_opponent("抽到的对手快照无法实例化")',
-          observed: '本次运行 playersWithStrippedRefs / strippedRefs 见 phases.setup.assemble —— 含插件引用时排位与快速全部无法成场',
-          suspect: 'server/ranked.js:406 validateLoadout(snapshot.loadout, { warehouse: null }) 与 quickmatch→battle.buildPlayer 的 buildPanel '
-            + '都未传仓库；而档案有 flags.unverifiedLoadout（archive.js:455）本可表达"已校验快照"却未被读取',
+          severity: 'fixed',
+          status: 'D-159 已废除',
+          title: '（历史）含装配插件的出战配置无法进入对局（档案驱动路径拿不到仓库镜像 → missing_warehouse）',
+          repro: 'D-130 时代：装配插件并保存出战配置后 POST /ranked/run → 409 loadout_invalid(details: missing_warehouse)',
+          observed: 'D-159 起仓库在服务端权威（store.getWarehouse + 快照自带 warehouseExcerpt）→ 本脚本不再剥离引用，'
+            + 'phases.setup.assemble.playersWithStrippedRefs/strippedRefs 恒为 0（字段保留以稳定报告形状）。',
+          suspect: '（已由 D-159 服务端权威仓库修复；保留条目仅供报告对照）',
         },
       ],
-      compat: '本脚本对 DEF-2 做了兜底（剔除无法自证的装配引用后再出战），仅报告不改 server/**；'
+      compat: '默认路径直接使用注册下发的 starter（D-159）→ 不再开箱/装配/提交镜像；'
+        + '`--deep` 时额外压测服务端权威写路径（POST /me/box + POST /me/warehouse/{disassemble,assemble}）。'
         + 'DEF-1 未做兜底，只能通过 --interleave=false（默认）规避。',
     },
     ok: false,
@@ -810,7 +869,7 @@ async function runLoadTest(options) {
     }
     const username = (p, i) => `${p.username || `#${i}`}(${p.publicId || '-'})`;
 
-    /* ---- 阶段 2：为每个玩家配齐完整出战配置 ---- */
+    /* ---- 阶段 2：校验每个玩家的 starter 出战配置（D-159：注册即已配齐，无需开箱/装配） ---- */
     const t2 = Date.now();
     const setup = await mapLimit(players, o.concurrency, (p) => setupPlayer(ctx, p));
     const phase2Ms = Date.now() - t2;
@@ -819,12 +878,31 @@ async function runLoadTest(options) {
     report.phases.setup = {
       requested: players.length, ok: ready.length, failed: players.length - ready.length, ms: phase2Ms,
       failures: setup.filter((s) => s && !s.ok).map((s) => ({ code: s.code, status: s.status || null, detail: s.detail, errorCode: s.errorCode || null })).slice(0, 10),
+      // D-159/D-160：默认路径**不开箱、不装配** —— 只读真源（GET /me/configs + GET /me/warehouse）并校验
+      //   "starter 完整 + 引用齐备 + AI 与服务端派生一致"。装配计数只在 `--deep` 下非零（服务端权威端点往返）。
+      starter: {
+        refs: setup.reduce((n, s) => n + ((s && s.detail && s.detail.refs) || 0), 0),
+        resolved: setup.reduce((n, s) => n + ((s && s.detail && s.detail.equipped) || 0), 0),
+        dangling: setup.reduce((n, s) => n + ((s && s.detail && s.detail.danglingRefs) || 0), 0),
+        starterIssued: setup.filter((s) => s && s.detail && s.detail.starterIssued).length,
+        snapshotsFrozen: setup.filter((s) => s && s.detail && typeof s.detail.snapshotHash === 'string').length,
+        aiMatchesDefault: setup.filter((s) => s && s.detail && s.detail.aiMatchesDefault).length,
+        minSlots: setup.reduce((n, s) => Math.min(n, (s && s.detail && s.detail.slots) || 0), Number.POSITIVE_INFINITY),
+      },
       assemble: {
-        placed: setup.reduce((n, s) => n + ((s && s.detail && s.detail.equipped) || 0), 0),
+        // `--deep` 走的 `POST /me/warehouse/assemble` 成功数（默认路径为 0；字段名保留以稳定报告形状）
+        placed: setup.reduce((n, s) => n + ((s && s.detail && s.detail.deepAssembled) || 0), 0),
+        disassembled: setup.reduce((n, s) => n + ((s && s.detail && s.detail.deepDisassembled) || 0), 0),
+        // 拆卸后**再装回**成功数（`equipped` 标志同步的回归护栏；deep 下与 disassembled 相等）
+        reassembled: setup.reduce((n, s) => n + ((s && s.detail && s.detail.deepReassembled) || 0), 0),
         rejections: mergeCounters(setup.map((s) => (s && s.detail && s.detail.rejects) || {})),
-        // 含装配引用的出战配置在档案驱动对局路径无法自证（后端缺陷，见 notes.backendDefects）
-        playersWithStrippedRefs: setup.filter((s) => s && s.detail && s.detail.missingWarehouse).length,
-        strippedRefs: setup.reduce((n, s) => n + ((s && s.detail && s.detail.strippedRefs) || 0), 0),
+        // D-159 起仓库服务端权威 → 不再需要"剥离无法自证的装配引用"；两字段保留（恒 0）
+        playersWithStrippedRefs: 0,
+        strippedRefs: 0,
+      },
+      boxes: {
+        requests: setup.reduce((n, s) => n + ((s && s.detail && s.detail.boxRequests) || 0), 0),
+        items: setup.reduce((n, s) => n + ((s && s.detail && s.detail.items) || 0), 0),
       },
     };
     if (ready.length !== players.length) {

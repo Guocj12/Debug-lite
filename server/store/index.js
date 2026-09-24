@@ -24,6 +24,8 @@
  *   生命周期 open/close/isOpen；档案 loadArchive/saveArchive/updateArchive/listPlayerIds/getSummary；
  *   账号 createAccount/setPasswordHash/setBanned/setNickname/setPool/touchLastSeen/markRecordsSeen；
  *   配置槽 saveConfigSlot/createConfigSlot/activateConfigSlot/deleteConfigSlot/freezeSnapshot；
+ *   **D-159 服务端权威仓库** getWarehouse/grantBox/applyWarehouseChange；
+ *   **D-161 AI 库** listAi/createAi/deleteAi；
  *   journal append/appendMany/applyRecord/applyRecords/settleBattle/readRecords/findBattleRecord/replayJournal/maxSeq/compactJournal；
  *   战绩 records/defenseSummary/opponentWindow；索引 index.{snapshot,get,byTier,leaderboard,rank,rebuild,save,stats}；
  *   快照 snapshot.{freeze,put,get,has,list,ref,refCount,gc,stats}；会话 sessions.{put,get,touch,revoke,revokePlayer,list,prune,size}；

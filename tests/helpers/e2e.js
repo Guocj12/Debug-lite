@@ -12,6 +12,8 @@
  *   · 注册用快速 scrypt（N=1024；生产默认 N=16384 每次约 60ms，端到端无需承担）；
  *   · 全局限速放宽到极大值（本链路用请求数 ~200，默认 600 次/分/IP 会拦截）——
  *     限速语义本身由 `tests/api/api-auth.test.js` AU-8 专门覆盖，不在本夹具角色内；
+ *   · D-162：HTTP 开箱**没有 `seed` 入参**（传了被静默忽略）；要"同 seed 复现"请用
+ *     `startE2E({ boxSeed })` —— 服务端确定性序列（第 n 次开箱 = boxSeed + n − 1）。
  *   · 不 spawn 任何子进程、不用 `Math.random`（项目铁律）。
  *
  * 无 bot 断言口径（用户明令 "不许用占位 bot 敷衍"）：
@@ -90,6 +92,9 @@ async function startE2E(options) {
     configDir: o.configDir,
     config: o.config,
     replayLimit: o.replayLimit,
+    // D-162：开箱 seed **服务端独占**（HTTP 无 seed 入参）→ 需要"同 seed 复现"的用例改为注入
+    //   `boxSeed`（服务端确定性序列：第 n 次开箱 = boxSeed + n − 1）。
+    boxSeed: Number.isInteger(o.boxSeed) ? o.boxSeed : undefined,
   });
   const state = {
     server: s.server,
@@ -98,6 +103,7 @@ async function startE2E(options) {
     runtime: s.runtime,
     dataDir,
     fastAuth: o.authConfig === undefined || o.authConfig === FAST_AUTH,
+    boxSeed: Number.isInteger(o.boxSeed) ? o.boxSeed : null,
   };
   state.request = (method, urlPath, body, headers) => request(s.port, method, urlPath, body, headers);
   state.req = (method, urlPath, body, headers) => state.request(method, urlPath, body, headers);
@@ -182,6 +188,9 @@ async function assertRealPlayers(store, publicIds, fail) {
 /* ---------- 开箱 / 装配 / 出战配置（走真实端点与真实物品） ---------- */
 
 // 开箱并合并进仓库（多次调用直至备齐 1 角色 + 3 技能；每次请求 ≤ BOX_TIMES_MAX）
+// D-162：HTTP 层**不设 `seed` 入参**（请求体里带了会被静默忽略）→ 这里只送 `tier`/`times`。
+//   `seedBase` 仅为**旧调用点签名兼容**保留（现有调用方仍在传），已不参与请求；
+//   需要确定性复现的用例请改用 `startE2E({ boxSeed })`（服务端确定性 seed 序列）。
 async function openIntoWarehouse(s, token, seedBase, tier, needRole, needSkill) {
   const warehouse = itemsCore.emptyWarehouse();
   const opened = [];
@@ -189,8 +198,7 @@ async function openIntoWarehouse(s, token, seedBase, tier, needRole, needSkill) 
   const wantSkill = needSkill === undefined ? 3 : needSkill;
   let round = 0;
   while ((warehouse.buckets.role.length < wantRole || warehouse.buckets.skill.length < wantSkill) && round < 8) {
-    const seed = seedBase + round * 977;
-    const r = await s.request('POST', '/api/v1/box', { seed, tier, times: 12 }, authed(token));
+    const r = await s.request('POST', '/api/v1/box', { tier, times: 12 }, authed(token));
     if (r.status !== 200) return { ok: false, res: r, warehouse, opened };
     for (const it of r.body.data.items) {
       if (!Array.isArray(warehouse.buckets[it.kind])) warehouse.buckets[it.kind] = [];
@@ -213,6 +221,9 @@ function findItem(warehouse, uid) {
 }
 
 // 逐槽装配（走 POST /warehouse/assemble；失败即跳过并记录原因——与 scripts/play.js 同风格）
+// 注意（D-159）：这是**遗留无状态**端点（入参携带整仓、返回新仓，服务端不落盘）。服务端权威装配
+//   是 `POST /me/warehouse/assemble`（体只带 `{targetUid,pluginUid,slotIndex}`，扣服务端仓库），
+//   本夹具保留 legacy 形态以维持既有调用点契约；改用新端点的迁移由消费方用例负责。
 async function assembleAll(s, token, warehouse, tier) {
   let cur = warehouse;
   const placed = [];

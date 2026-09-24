@@ -86,6 +86,8 @@ const SERVICE_CONFIG_FROZEN = Object.freeze({
   snapshot: { retentionDays: 90 },
   replayCacheSize: 64,
   pool: { ttlDays: 0, opponentCooldownHours: 24 },
+  warehouse: { maxPerBucket: 500 },
+  ai: { maxPerPlayer: 100 },
 });
 
 const RATING_CONFIG_FROZEN = Object.freeze({
@@ -577,6 +579,11 @@ function validateStructure(dataDir, assetsDir) {
     // P2-8：`pool.ttlDays` 只做形状校验 —— 当前**无任何消费方**（参数已留、未启用，与 rating.dailyBattleLimit 同口径）
     if (!isNum(pl.ttlDays) || pl.ttlDays < 0) problems.push('service-config.pool.ttlDays 应为 ≥0 的数（0 = 池不过期；当前参数已留、未启用）');
     if (!isNum(pl.opponentCooldownHours) || pl.opponentCooldownHours < 0) problems.push('service-config.pool.opponentCooldownHours 应为 ≥0 的数');
+    // D-159/D-161：仓库每桶上限与 AI 库上限（服务端权威，超限拒绝写入）
+    const whc = sc.warehouse || {};
+    if (!isInt(whc.maxPerBucket) || whc.maxPerBucket < 1) problems.push('service-config.warehouse.maxPerBucket 应为正整数（每桶上限；超限拒绝开箱）');
+    const aic = sc.ai || {};
+    if (!isInt(aic.maxPerPlayer) || aic.maxPerPlayer < 1) problems.push('service-config.ai.maxPerPlayer 应为正整数（AI 库上限，与物品分别计数）');
   }
 
   // ---------- P7 积分配置表：键集 + 类型/范围 + 冻结数值（D-133 §8.3；D-122/D-136） ----------

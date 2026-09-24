@@ -186,6 +186,56 @@ function buildAccountRecord(input) {
     points: Number.isInteger(o.points) ? o.points : undefined,
     flags: o.flags ? deepClone(o.flags) : undefined,
     slot: o.slot ? deepClone(o.slot) : undefined,
+    // D-159：注册即发 starter（服务端权威仓库 + 多槽 + 库内默认 AI）
+    warehouse: o.warehouse ? deepClone(o.warehouse) : undefined,
+    slots: Array.isArray(o.slots) ? deepClone(o.slots) : undefined,
+    aiLibrary: Array.isArray(o.aiLibrary) ? deepClone(o.aiLibrary) : undefined,
+  };
+}
+
+// D-159：开箱批次的幂等键（服务端**独占**随机性：seed 由服务端生成，客户端不传 →
+//   grantId 天然唯一；仍内容寻址以便"同一条记录重复出现在 journal/检查点"时可判定）
+function boxGrantIdOf(input) {
+  const o = input || {};
+  return `bx_${shortDigest([o.playerId || '', o.seed === undefined || o.seed === null ? '' : o.seed,
+    o.tier || '', o.times === undefined || o.times === null ? '' : o.times].join('|'), 16)}`;
+}
+
+// box.opened：items 为本次开出的物品正文（有界：times ≤ 100、每桶上限 500）
+function buildBoxRecord(input) {
+  const o = input || {};
+  const items = Array.isArray(o.items) ? deepClone(o.items) : [];
+  const seed = Number.isInteger(o.seed) ? o.seed : null;
+  return {
+    type: 'box.opened', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    grantId: o.grantId || boxGrantIdOf({ playerId: o.playerId, seed, tier: o.tier, times: o.times }),
+    seed, tier: o.tier === undefined ? null : o.tier,
+    times: Number.isInteger(o.times) ? o.times : items.length,
+    items,
+  };
+}
+
+// D-159：装配/拆卸（增量记录：只记"哪个物品的第几个槽装了哪个插件"）
+function buildWarehouseRecord(input) {
+  const o = input || {};
+  return {
+    type: o.op === 'disassemble' ? 'warehouse.disassemble' : 'warehouse.assemble',
+    v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    targetUid: o.targetUid,
+    slotIndex: Number.isInteger(o.slotIndex) ? o.slotIndex : 0,
+    pluginUid: o.op === 'disassemble' ? null : (o.pluginUid === undefined ? null : o.pluginUid),
+  };
+}
+
+// D-161：AI 库增删（program 正文随记录携带，有界：单条 AI 程序体积受 ast 校验上限约束）
+function buildAiRecord(input) {
+  const o = input || {};
+  if (o.op === 'delete') {
+    return { type: 'ai.deleted', v: RECORD_VERSION, at: o.at, playerId: o.playerId, aiId: o.aiId };
+  }
+  return {
+    type: 'ai.created', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    aiId: o.aiId, name: o.name === undefined ? null : o.name, program: deepClone(o.program),
   };
 }
 
@@ -247,6 +297,8 @@ function buildConfigRecord(input) {
     create: o.create === true, activate: o.activate === true, deleted: o.deleted === true,
     isDefault: o.isDefault === true, warehouseVerified: o.warehouseVerified === true,
     versions: o.versions ? deepClone(o.versions) : undefined,
+    // D-160：非出战槽允许不完整 —— 无快照时把 loadout 正文随记录携带（空/半成品配置，体积有界）
+    loadout: o.loadout === undefined ? undefined : deepClone(o.loadout),
   };
 }
 
@@ -288,6 +340,10 @@ module.exports = {
   battleIdOf,
   buildAccountRecord,
   buildBotRecord,
+  boxGrantIdOf,
+  buildBoxRecord,
+  buildWarehouseRecord,
+  buildAiRecord,
   buildPasswordRecord,
   buildBanRecord,
   buildNicknameRecord,

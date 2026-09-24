@@ -312,6 +312,19 @@ function envOf(options) {
   return env;
 }
 
+// D-162 注入缝：`start({boxSeed})` 提供**确定性 seed 序列**——**第 n 次调用 = boxSeed + n − 1**
+//   （与 `docs/interfaces.md` §7 的契约逐字一致；归一化到合法区间 1..0x7ffffffe）。
+//   为什么不是"每次都用同一个 seed"：同 seed 会开出同一批物品（实测），无法验证"每次不同"的语义。
+function makeBoxSeedFactory(base) {
+  if (typeof base !== 'number' || !Number.isInteger(base)) return null;
+  let n = 0;
+  return () => {
+    const seed = base + n;
+    n += 1;
+    return ((seed - 1) % 0x7ffffffe) + 1;
+  };
+}
+
 async function createRuntime(logger, options) {
   const opts = options || {};
   const env = envOf(opts);
@@ -333,6 +346,9 @@ async function createRuntime(logger, options) {
     evicted: new Set(),      // 已淘汰 id（区分 410 与 404）
     ownReplays: [],          // 本实例登记的帧 id（LRU 淘汰记账）
     runBattle: typeof opts.runBattle === 'function' ? opts.runBattle : null, // 测试接缝（P2-1：排位/快速同源）
+    // D-162：开箱 seed **服务端独占** —— `start({boxSeed})` 提供确定性 seed 序列（注入缝，
+    //   同 `replayLimit` 的实例级覆盖风格；缺省 null → box.js 用 crypto.randomInt）
+    boxSeedFactory: makeBoxSeedFactory(opts.boxSeed),
   };
   // 缺陷 B：仓库镜像解析。来源 ① account 模块镜像缓存（PUT /me/warehouse）；
   //   ② 携带 warehouse 的配置保存/注册请求（校验通过后登记，见 rememberWarehouse/路由接线）；
@@ -375,7 +391,18 @@ async function createRuntime(logger, options) {
     const needs = loadoutOfPlayer ? rankedMod.needsWarehouse(loadoutOfPlayer) : false;
     const covers = (wh) => !needs || rankedMod.warehouseCovers(loadoutOfPlayer, wh);
     const sources = [];
-    // ① account 模块镜像（PUT /me/warehouse 的显式提交）
+    // ⓪ D-159：**服务端权威仓库（真源）** —— 仓库上云后这是首选来源；命中即用。
+    if (rt.store && typeof rt.store.getWarehouse === 'function') {
+      try {
+        const view = await rt.store.getWarehouse(playerId);
+        if (view && view.warehouse) sources.push({ name: 'archive', warehouse: view.warehouse });
+      } catch (err) {
+        logger.warn('store', 'store.read', `读取服务端仓库失败：${err && err.message ? err.message : err}`, {
+          op: 'loadWarehouse', playerId, source: 'archive',
+        });
+      }
+    }
+    // ① account 模块镜像（PUT /me/warehouse 的显式提交；D-130 遗留路径）
     if (rt.account && typeof rt.account.getWarehouseMirror === 'function') {
       const r = await rt.account.getWarehouseMirror(playerId);
       if (r && r.ok === true && r.data && r.data.warehouse) sources.push({ name: 'account', warehouse: r.data.warehouse });
@@ -421,20 +448,10 @@ async function createRuntime(logger, options) {
       versions: opts.versions || { engine: VERSION },
     });
     rt.account = accountMod.createAccount({ store: rt.store, logger, now: opts.now });
-    // P2-5：默认出战配置按玩家身份派生（`account.js` 的默认构造回调无身份入参，且该文件不在本批所有权内）
-    //   → 在装配层补一层：**仅当调用方未显式提供 loadout** 时，用身份派生的默认配置组装调用。
-    //   身份 = publicId（注册时生成）优先，其次 playerId；两者都缺 → ranked 内部回落 steady/0（确定性）。
-    if (typeof rt.account.createPlayerArchive === 'function') {
-      const createArchiveInner = rt.account.createPlayerArchive;
-      rt.account.createPlayerArchive = (input) => {
-        const o = input || {};
-        if (o.loadout !== undefined && o.loadout !== null) return createArchiveInner(o);
-        return createArchiveInner({
-          ...o,
-          loadout: rankedMod.buildDefaultLoadout({ publicId: o.publicId, playerId: o.playerId }),
-        });
-      };
-    }
+    // D-159（2026-09-22）：注册默认配置改由 `account.createPlayerArchive` 内部走 **starter**
+    //   （服务端权威仓库 + 已装配配置 + 三个槽 + 库内默认 AI）。
+    //   原先 P2-5 在此处注入 `ranked.buildDefaultLoadout` 的那层包装**已删除**——它会用合成物品
+    //   （bot_role/bot_skill1..3，不在仓库里）顶掉 starter 路径，导致"仓库空、配置满"的矛盾（R-6）。
     rt.auth = authMod.createAuth({ store: rt.store, logger, now: opts.now, account: rt.account, config: opts.authConfig });
     // F2：管理员账号白名单（DL_ADMIN_USERS，契约 docs/frontend/02-accounts.md §2.1）——唯一判定处
     rt.adminUsers = adminMod.adminUsersOf(env);
@@ -635,11 +652,13 @@ function createHandler(logger, extraRoutes, runtime) {
         },
       },
       '/api/v1/box': async (ctx) => {
-        // B17：开箱（seed/tier/次数；D-122 段位品质上限 + I-9 掉落池门控；seed 回带 T-AP-5）
+        // B17（**遗留无状态路径**）：开箱 —— D-162 起 HTTP 层**不接受客户端 seed**（接口没有该字段），
+        //   随机性由服务端生成（`start({boxSeed})` 为测试/e2e 提供确定性序列）。
+        //   本路径**不入档**（物品不写服务端仓库）；服务端权威开箱见 `POST /api/v1/me/box`。
         const boxApi = require('./box.js');
         const body = jsonBody(ctx);
         if (body === null) return { status: 400, payload: errEnvelope('bad_json', '请求体不是合法 JSON') };
-        const r = boxApi.openBoxes({ seed: body.seed, tier: body.tier, times: body.times, logger });
+        const r = boxApi.openBoxes({ tier: body.tier, times: body.times, logger, seedFactory: rt.boxSeedFactory });
         if (r.status !== 200) {
           return { status: r.status, payload: errEnvelope(r.code, r.message || '开箱请求被拒绝') };
         }
@@ -881,7 +900,8 @@ function createHandler(logger, extraRoutes, runtime) {
       if (!hash) return null;
       const snap = await rt.store.snapshot.get(hash);
       if (!snap || snap.hash !== hash || !snap.loadout) return null;
-      const warehouse = snap.warehouse || (await rt.loadWarehouse(playerId)) || null;
+      // D-159：服务端权威仓库优先（真源、始终最新）；快照自带的装配引用子集仅作兜底
+      const warehouse = (await rt.loadWarehouse(playerId)) || snap.warehouse || null;
       return { loadout: snap.loadout, warehouse };
     } catch (err) {
       logger.warn('store', 'store.snapshot.missing', `读取调用方出战配置失败：${err && err.message ? err.message : err}`, {
@@ -1021,13 +1041,17 @@ function createHandler(logger, extraRoutes, runtime) {
       return failStatus(410, 'replay_expired', `回放过期：快照已不可用（snapshot_gc）`);
     }
     const tier = (record.p1 && record.p1.tierBefore) || 'common';
-    // 缺口 2：归档回放重算必须**逐侧**给出仓库镜像——含装配引用的一侧若拿不到镜像，
+    // 缺口 2 / D-159：归档回放重算必须**逐侧**给出仓库镜像——含装配引用的一侧若拿不到镜像，
     //   buildPlayer → buildPanel 会报 missing_warehouse，本端点只能如实 410（replay_expired）。
-    //   镜像来源 = 各自快照正文里的装配引用子集（缺口 1 落盘；旧快照无该字段 → null，保持原 410 行为）。
+    //   **来源优先级（D-159 起）**：① 服务端权威仓库（`rt.loadWarehouse`，真源、始终最新；
+    //   配置保存不再要求客户端提交镜像 → 快照里可能没有子集）→ ② 快照自带的装配引用子集（旧数据兜底）。
+    //   修前只取 ②，会导致"不带 warehouse 保存的配置"所打的对局**回放永久 410**。
+    const p1Wh = (await rt.loadWarehouse(record.p1.playerId)) || snap1.warehouse || null;
+    const p2Wh = (await rt.loadWarehouse(record.p2.playerId)) || snap2.warehouse || null;
     const r = battleApi.runBattle({
       p1: snap1.loadout, p2: snap2.loadout, seed: record.seed, tier,
-      p1Warehouse: snap1.warehouse || null,
-      p2Warehouse: snap2.warehouse || null,
+      p1Warehouse: p1Wh,
+      p2Warehouse: p2Wh,
     });
     if (r.status !== 200) return failStatus(410, 'replay_expired', `回放过期：快照无法实例化（${r.code}）`);
     registerReplay({
@@ -1189,7 +1213,10 @@ function createHandler(logger, extraRoutes, runtime) {
       handler: async (ctx) => withIsAdmin(respond(await rt.account.getSummary(ctx.player.playerId)), rt.isAdminPlayer(ctx.player)),
     },
     '/api/v1/me/configs': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.listConfigs(ctx.player.playerId)) },
-    '/api/v1/me/warehouse': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getWarehouseMirror(ctx.player.playerId)) },
+    // D-159：仓库**真源**（服务端权威；D-130 的镜像语义退役，PUT 仍保留为"只校验"路径）
+    '/api/v1/me/warehouse': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.getWarehouse(ctx.player.playerId)) },
+    // D-161：AI 库（本批前端只用 list）
+    '/api/v1/me/ai': { auth: true, redact: true, handler: async (ctx) => respond(await rt.account.listAi(ctx.player.playerId)) },
     '/api/v1/me/records': {
       auth: true,
       redact: true,
@@ -1287,6 +1314,70 @@ function createHandler(logger, extraRoutes, runtime) {
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
         const uptoSeq = body.uptoSeq === undefined ? intOf(ctx.query.uptoSeq) : body.uptoSeq;
         return respond(await rt.account.markSeen({ playerId: ctx.player.playerId, uptoSeq }));
+      },
+    },
+    // D-159：开箱（**服务端权威**：物品直接入档；D-162：接口不设 seed 入参）
+    '/api/v1/me/box': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        const boxApi = require('./box.js');
+        // D-162：不接受客户端 seed（接口没有该字段）；seed 由服务端生成，注入缝保证测试/e2e 确定性
+        const r = boxApi.openBoxes({ tier: body.tier, times: body.times, logger, seedFactory: rt.boxSeedFactory });
+        if (r.status !== 200) return respond(r);
+        try {
+          const granted = await rt.store.grantBox({
+            playerId: ctx.player.playerId, seed: r.data.seed, tier: r.data.tier,
+            times: r.data.times, items: r.data.items,
+          });
+          return {
+            status: 200,
+            payload: okEnvelope({
+              seed: r.data.seed, tier: r.data.tier, times: r.data.times, items: r.data.items,
+              counts: granted.counts, caps: granted.caps, grantId: granted.grantId,
+            }, logger),
+          };
+        } catch (err) {
+          return respond(err);
+        }
+      },
+    },
+    // D-159：装配/拆卸（校验用 core/items 纯函数，落 journal 增量记录）
+    '/api/v1/me/warehouse/assemble': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.assemblePlugin({
+          playerId: ctx.player.playerId, targetUid: body.targetUid,
+          pluginUid: body.pluginUid, slotIndex: body.slotIndex,
+        }));
+      },
+    },
+    '/api/v1/me/warehouse/disassemble': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.disassemblePlugin({
+          playerId: ctx.player.playerId, targetUid: body.targetUid, slotIndex: body.slotIndex,
+        }));
+      },
+    },
+    // D-161：AI 库创建（命名保存；上限 100 → 409 ai_limit）
+    '/api/v1/me/ai': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.createAi({
+          playerId: ctx.player.playerId, name: body.name, program: body.program,
+        }));
       },
     },
     '/api/v1/quick/run': {
@@ -1492,6 +1583,21 @@ function createHandler(logger, extraRoutes, runtime) {
       }
       if (parts.length === 2 && parts[1] === 'activate' && req.method === 'POST') {
         return runEntry({ auth: true, handler: async (c) => respond(await rt.account.activateConfig({ playerId: c.player.playerId, slotId })) }, ctx);
+      }
+    }
+
+    // D-161：AI 库动态路由 DELETE /me/ai/:aiId（删除被出战配置引用者 → 409 ai_in_use）
+    const aiPrefix = '/api/v1/me/ai/';
+    if (req.method === 'DELETE' && urlPath.startsWith(aiPrefix)) {
+      const rest = urlPath.slice(aiPrefix.length);
+      if (rest !== '' && !rest.includes('/')) {
+        let aiId = null;
+        try {
+          aiId = decodeURIComponent(rest);
+        } catch (e) {
+          return failStatus(400, 'bad_request', `非法 aiId ${rest}`);
+        }
+        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.deleteAi({ playerId: c.player.playerId, aiId })) }, ctx);
       }
     }
 

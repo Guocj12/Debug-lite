@@ -35,9 +35,10 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   assert.deepEqual(missing, [], `无落点的 D 编号：${missing.join('、')}`);
   // decisions.md 编号有跳段（D-01..D-08、D-10..D-19、D-20..D-35、D-40..D-46、D-50..51、
   // D-60..62、D-70..72、D-80..84、D-90..92、D-100..104、D-110..118、D-120..128、D-129..D-136、
-  // D-137..D-153、D-154..D-157、D-158），共 110 条（2026-09-16：P7 冲刺组 D-137..D-153 共 17 条；
-  //   2026-09-19：P7 收口补充 D-154..D-157 共 4 条；2026-09-22：F2 管理面补充 D-158）
-  assert.equal(decided.size, 110, `D 编号数量应为 110（decisions.md 无跳段之外的编号）`);
+  // D-137..D-153、D-154..D-157、D-158、D-159..D-162），共 114 条（2026-09-16：P7 冲刺组 D-137..D-153 共 17 条；
+  //   2026-09-19：P7 收口补充 D-154..D-157 共 4 条；2026-09-22：F2 管理面补充 D-158；
+  //   2026-09-22：F3 物品线补充 D-159..D-162 共 4 条）
+  assert.equal(decided.size, 114, `D 编号数量应为 114（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {
@@ -83,7 +84,8 @@ test('IF-3 API 契约 v1：§2.3 端点全部登记', () => {
 });
 
 test('IF-4 CLI 契约 v1：子命令与退出码登记', () => {
-  for (const cmd of ['box --seed', 'wh list', 'panel --loadout', 'ai validate', 'battle --p1', 'replay --file', 'ranked run', 'log --level', 'health', 'data <table>']) {
+  // D-162：`box` 不再接受 `--seed`（seed 服务端独占）→ 登记串改为 `box --tier`
+  for (const cmd of ['box --tier', 'wh list', 'panel --loadout', 'ai validate', 'battle --p1', 'replay --file', 'ranked run', 'log --level', 'health', 'data <table>']) {
     assert.ok(INTERFACES.includes(cmd), `interfaces.md 缺 CLI 子命令 ${cmd}`);
   }
   assert.ok(INTERFACES.includes('退出码：`0` 成功 / `1` 业务拒绝 / `2` 参数错误'), '退出码契约缺失');

@@ -1,6 +1,6 @@
 # Debug-Lite v3
 
-「编程式自动对战」游戏后端。玩家为角色编写 AI 逻辑（JSON AST），服务器逐 tick 确定性模拟自动战斗；强度来自开箱得到的角色/技能模板与插件。当前开发范围：**P0–P5 全部后端 + P7 在线服务（B27–B33）均已交付**；**P6 前端已重新设计并落地第一批 `F1`（登录与注册，2026-09-20）**，其余屏幕待重做。
+「编程式自动对战」游戏后端。玩家为角色编写 AI 逻辑（JSON AST），服务器逐 tick 确定性模拟自动战斗；强度来自开箱得到的角色/技能模板与插件。当前开发范围：**P0–P5 全部后端 + P7 在线服务（B27–B33）均已交付**；**P6 前端已重启**：`F1`（登录与注册）/`F2`（账号管理与管理员面板）已落地，`F3`（主界面/仓库/开箱/出战配置）**后端契约已落地（D-159…D-162，2026-09-22）**、前端屏与出战配置编辑器待做；**仓库已改为服务端权威**（D-159 推翻 D-130 的客户端持有）。
 
 ## 文档权威链
 
@@ -30,7 +30,7 @@ docs/ai-handoff-prompt.md   实现期交接提示词
 | 分支 | `main` 为唯一主线，已完成合流；另有 `deepseek-v4.1f`、`glm-5.3f` 两个前端分支未合并。**`dev` 分支不存在** | — |
 | 后端 | P0–P5 全部收口，34 批（9+11+5+5+2+2） | — |
 | 在线服务（P7/B27–B33） | ✅ **已交付（2026-09-19）**：账号/登录/会话、服务端档案（配置槽 ≤3、唯一出战）、异步排位双向记账、快速对战非对称 Elo、战绩/防守/未读、排行榜、回放鉴权 + LRU 64 + 按需重算、`admin` 运维端点；`server/store/*`、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 在库，`runtime/`（`DL_DATA_DIR`）为运行时数据根 | P6 前端；`DL_STORE=sqlite` 适配器（`open()` 抛 `store_adapter_unavailable`，预留）；CLI 的 `configs`/`records`/`defense`/`admin *` 子命令；`scripts/bench-store.js`（**未实现**，T-ST-8 容量哨兵无承载） |
-| 前端 | **P6 已重启并落地 `F1`（登录与注册，2026-09-20）**：`public/`（零依赖双模模块 + 文本界面）、`server/index.js` 的 `public/` 只读静态托管、`tests/frontend/*`（35 用例：字段契约 / 按钮白名单 / 真实 HTTP 流程 / 静态托管）；设计分册 `docs/frontend/00-rules.md` + `01-auth.md`，审查与走查记录 `docs/reviews/F1.md` | P6 其余屏幕（开箱/仓库/装配/AI 编辑器/对战/回放/战绩/排位/快速对战）；`public/` 的 L7 分层登记尚未纳入 `scripts/check-arch.js`（总纲 O-7 剩余部分） |
+| 前端 | **P6 已重启**：`F1`（登录与注册，2026-09-20）与 `F2`（账号管理与管理员面板，2026-09-22）已落地 —— `public/`（零依赖双模模块 + 文本界面，**仍 9 个文件**）、`server/index.js` 的 `public/` 只读静态托管、`tests/frontend/*`（**60 用例**）；设计分册 `docs/frontend/{00-rules,01-auth,02-accounts}.md`，审查与走查记录 `docs/reviews/F{1,2}.md`。**`F3` 后端契约已落地（2026-09-22，D-159…D-162）**：服务端权威仓库（四桶 ≤500/桶）+ AI 库（≤100）+ 注册即发 starter 与「三槽」初始形态 + 非出战配置允许不完整 + 开箱 seed 收归服务端；设计分册 `docs/frontend/03-hub-warehouse-loadout.md` | **P6 其余屏**（主界面/用户/仓库/开箱/设置/出战配置编辑器：`F3` 前端部分；AI 编辑器/对战/回放/排位/快速/排行榜）；`public/` 的 L7 分层登记尚未纳入 `scripts/check-arch.js`（总纲 O-7 剩余部分） |
 | 回放 | `POST /battle` 帧由 **HTTP 层 LRU（默认 64，`replayCacheSize`）** 管理，淘汰 → `410 replay_expired`；归档回放（`b_`）按需重算 + **参与者鉴权**（非参与者 403）；`aiTrace` 按请求者 side 裁剪（`?trace=self` 默认、`?trace=all` 需管理员令牌）；遗留 `r<seq>` 回放默认仍对持有 id 者可见（`DL_LEGACY_STATELESS=1`） | 回放响应/帧**不含 `programHash`**（无法据回放核验 AI 程序；见 `11-account-store` §9.4 仍缺项）；`battle.js` 模块级 Map 无内建上限（限流只由 HTTP 层施加） |
 | P7 环境变量与端点 | `DL_DATA_DIR`/`DL_STORE`/`DL_ADMIN_TOKEN`/`DL_LEGACY_STATELESS`/`DL_CORS_ORIGIN` 均**已接线**；`/auth/*`、`/me*`、`/quick/*`、`/leaderboard`、`/admin/*` 均已注册并鉴权 | `DL_LOG_CHANNELS` 仍未接线（通道级覆盖只经 `POST /api/v1/log-level`） |
 
@@ -44,7 +44,7 @@ docs/ai-handoff-prompt.md   实现期交接提示词
 | 命令 | 用途 | 落地批次 | 复核状态（2026-09-16） |
 |---|---|---|---|
 | `npm start` | 启动 HTTP 服务（`/api/v1`；`main()` 显式启用档案存储，数据根默认 `<repo>/runtime`） | P0-8 / P7 | ✅ 已接线（启动冒烟见 gate 项 9 的同进程等价路径） |
-| `npm test` | 单进程全量测试 | P0-3 固化 | ✅ **最后实测 942 通过 / 0 失败**（2026-09-19；用例数随并行改动会变，**以当次输出为准**）。状态源见 `docs/progress.md` |
+| `npm test` | 单进程全量测试 | P0-3 固化 | ✅ **最后实测 1024 通过 / 0 失败**（2026-09-22；用例数随并行改动会变，**以当次输出为准**）。状态源见 `docs/progress.md` |
 | `npm run cov` | 全量测试 + 覆盖率阈值（行 ≥90 / 分支 ≥85 / 函数 ≥90） | P0-3 固化 | ✅ 实跑通过（阈值同时由 `gate` 项 7 逐文件判定） |
 | `npm run gate` | 全量门禁（9 项，任一失败即非零退出） | P0-5 | ✅ **最后实测 9 PASS / 0 FAIL / 0 PEND**（含项 5 文档↔数据一致性 + D 编号落点 D-137…D-157） |
 | `npm run check:docs` | 文档 ↔ 实现一致性检查（D1–D6；接入 CI 与 pre-commit） | 2026-09-16 | ✅ 实跑 PASS |
@@ -98,7 +98,7 @@ runtime/           【P7】运行时数据根（`DL_DATA_DIR` 默认此处；已
 
 ## 阶段（2026-09-19 复核）
 
-**当前状态**：后端 **P0–P5（34 批）+ P7 在线服务（B27–B33，7 批）= 41 批全部收口**。最后实测（2026-09-19）：`npm test` = **942 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = PASS、`npm run e2e` = **22/22**、`npm run load-test -- --players 50 --deep` = **7/7 完整性断言**——**用例数与数字随并行改动会变，以当次输出为准**（`docs/progress.md` 是唯一状态源）。**P6 前端**：`F1`（登录与注册）已于 2026-09-20 落地（`public/**` + 静态托管 + `tests/frontend/*` 35 用例），其余屏幕待重做；**F1 的浏览器人工走查剧本见 `docs/frontend/01-auth.md` §11，结论记入 `docs/reviews/F1.md`**。
+**当前状态**：后端 **P0–P5（34 批）+ P7 在线服务（B27–B33，7 批）= 41 批全部收口**。**F3 后端契约（D-159…D-162）已于 2026-09-22 落地**（仓库服务端权威 / starter + 三槽 / AI 库 / 开箱 seed 收归服务端；**不新增批次号，仍 41 批**）。最后实测（2026-09-22）：`npm test` = **1024 通过 / 0 失败**、`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**、`npm run check:docs` = PASS、`node scripts/check-arch.js` = PASS（40 文件）、`npm run e2e` = **22/22**、`npm run load-test -- --players 20 --deep` = **7/7 完整性断言**——**用例数与数字随并行改动会变，以当次输出为准**（`docs/progress.md` 是唯一状态源）。**P6 前端**：`F1`（登录与注册，2026-09-20）与 `F2`（账号管理与管理员面板，2026-09-22）已落地（`public/**` + 静态托管 + `tests/frontend/*` 60 用例），`F3` 的前端屏与出战配置编辑器待做；**F1/F2/F3 的浏览器人工走查均尚未执行**（剧本见 `docs/frontend/01-auth.md` §11、`02-accounts.md` §11、`03-hub-warehouse-loadout.md` §11，结论分别记入 `docs/reviews/F{n}.md`）。
 
 | 阶段 | 内容 | 批次真值 | 状态 |
 |---|---|---|---|
@@ -111,7 +111,7 @@ runtime/           【P7】运行时数据根（`DL_DATA_DIR` 默认此处；已
 | — | 后端合计（P0–P5） | **34** | ✅ |
 | P7 | 在线服务（账号/登录/档案/配置槽/战绩/排行榜/快速对战/异步排位/回放鉴权） | B27–B33（7） | ✅ **已完成（2026-09-19）**；D-129 部分推翻 D-123，见 `docs/reviews/B27.md`…`B33.md` |
 | — | **后端合计（P0–P5 + P7）** | **41** | ✅ |
-| P6 | 前端 | `F1` 已落地；其余待定（**不得沿用旧稿**） | 🔄 **进行中**：`F1` 登录与注册 = `public/**` + `public/` 静态托管 + `tests/frontend/*`（2026-09-20）；设计分册 `docs/frontend/00-rules.md` + `01-auth.md`；**旧 v3 设计已于 2026-09-20 全量作废并删除** |
+| P6 | 前端 | `F1`/`F2` 已落地，`F3` 后端已落地；其余待定（**不得沿用旧稿**） | 🔄 **进行中**：`F1`（登录与注册，2026-09-20）+ `F2`（账号管理与管理员面板，2026-09-22）= `public/**` + 静态托管 + `tests/frontend/*`（60 用例）；`F3` 后端契约（D-159…D-162，2026-09-22，前端待做）；设计分册 `docs/frontend/{00-rules,01-auth,02-accounts,03-hub-warehouse-loadout}.md`；**旧 v3 设计已于 2026-09-20 全量作废并删除** |
 
 > 权威链现状：`docs/progress.md` 是唯一状态源；`docs/tasks.md` §6 的批次勾选与计数（**共 41 批**）与本表一致，由 `node scripts/check-docs.js`（D1–D6）机器核对。
 > **验收/可玩入口**：`npm run play`（离线文本闭环，无需 `npm start`）、`npm run e2e`（联网全链路 22 检查点，随机端口 + 临时数据根）、`npm run load-test -- --players 50 --deep`（批量真实玩家 + 7 条完整性断言）、`npm run demo`。

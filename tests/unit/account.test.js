@@ -54,13 +54,17 @@ test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；�
     assert.match(res.data.publicId, /^u_[0-9a-f]{8}$/);
     assert.deepEqual(res.data.progress, { tier: 'common', peakTier: 'common', batchesPlayed: 0, batchesPromoted: 0 });
     assert.deepEqual(res.data.rating, { points: 0, peakPoints: 0, games: 0, wins: 0, losses: 0, draws: 0 });
-    assert.equal(res.data.slots.length, 1);
+    assert.equal(res.data.slots.length, 3, 'D-159：注册即建满 3 个槽');
+    assert.deepEqual(res.data.slots.map((s) => s.slotId), ['slot1', 'slot2', 'slot3']);
     assert.equal(res.data.slots[0].slotId, 'slot1');
     assert.equal(res.data.slots[0].isDefault, true);
     assert.equal(res.data.slots[0].name, '默认配置');
     assert.equal(res.data.slots[0].snapshotHash, res.data.activeSnapshotHash);
     assert.ok(res.data.slots[0].updatedAt > 0);
+    assert.equal(res.data.slots[1].snapshotHash, null, 'D-160：非出战空槽无快照');
+    assert.equal(res.data.slots[2].snapshotHash, null, 'D-160：非出战空槽无快照');
     assert.equal(res.data.activeSlotId, 'slot1');
+    assert.equal(res.data.flags.unverifiedLoadout, false, 'D-159：starter 自带服务端权威仓库 → 注册即已校验');
     assert.deepEqual(res.data.pool, { inPool: true, drawnCount: 0 });
     assert.deepEqual(res.data.record.unread, { attack: 0, defense: 0, fromSeq: 0 });
     assert.equal(res.data.playerId, undefined, '摘要**不返回** playerId（§4.5）');
@@ -76,30 +80,38 @@ test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；�
   }
 });
 
-test('ACC-2 配置槽：最多 3 套（第 4 个 409 slot_limit）、唯一出战、必有出战（D-131）', async () => {
+test('ACC-2 配置槽：注册即 3 槽（D-159）、第 4 个 409 slot_limit、唯一出战、必有出战（D-131）', async () => {
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Slot_1' });
     const first = await activeOf(fx, u.playerId);
-    assert.equal(first.slots.length, 1);
+    // D-159：注册发放 starter 并建满 3 槽 —— slot1 完整出战，slot2/slot3 为空槽（无快照）
+    assert.equal(first.slots.length, 3);
     assert.equal(first.maxSlots, 3);
-    const s2 = await fx.account.createSlot({ playerId: u.playerId, name: '二套' });
-    assert.equal(s2.ok, true);
-    assert.equal(s2.data.slotId, 'slot2');
-    assert.equal(s2.data.slot.isDefault, false);
-    assert.equal(s2.data.activeSlotId, 'slot1', '新建槽默认不改变出战');
-    const s3 = await fx.account.createSlot({ playerId: u.playerId });
-    assert.equal(s3.data.slotId, 'slot3');
-    const s4 = await fx.account.createSlot({ playerId: u.playerId });
+    assert.deepEqual(first.slots.map((s) => s.slotId), ['slot1', 'slot2', 'slot3']);
+    assert.equal(first.activeSlotId, 'slot1');
+    assert.equal(typeof first.slots[0].snapshot.hash, 'string', '出战槽必有快照');
+    assert.equal(first.slots[1].snapshot, null, 'D-160：非出战空槽可无快照');
+    assert.equal(first.slots[2].snapshot, null);
+    // 已满 3 槽 → 第 4 个 409 slot_limit（旧写法"再建 2 个成功再撞限"已废除）
+    const s4 = await fx.account.createSlot({ playerId: u.playerId, name: '四套' });
     assert.equal(s4.ok, false);
     assert.equal(s4.code, 'slot_limit');
     assert.equal(s4.status, 409);
     assert.equal(s4.details[0].code, 'slot_limit');
-    // 必有出战：每一步 activeSlotId 都指向存在且唯一的槽
+    // 必有出战：activeSlotId 指向存在且唯一的槽
     const three = await activeOf(fx, u.playerId);
     assert.equal(three.slots.length, 3);
     assert.equal(three.slots.filter((s) => s.slotId === three.activeSlotId).length, 1);
-    // 唯一出战：切换只有一个生效，且 activeSnapshotHash 跟随
+    // D-160：空槽不可设为出战 → 409 cannot_activate_incomplete（完整性校验推迟到 activate）
+    const actEmpty = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
+    assert.equal(actEmpty.ok, false);
+    assert.equal(actEmpty.code, 'cannot_activate_incomplete');
+    assert.equal(actEmpty.status, 409);
+    assert.ok(actEmpty.details.length > 0, 'details 逐位置列出缺项');
+    // 写入完整配置后激活：唯一出战，且 activeSnapshotHash 跟随
+    const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    assert.equal(saved.ok, true, JSON.stringify(saved.details));
     const act = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
     assert.equal(act.ok, true);
     assert.equal(act.data.activeSlotId, 'slot2');
@@ -120,19 +132,22 @@ test('ACC-3 删除保护：默认槽 / 出战槽 → 409 slot_locked；切换后
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Del_1' });
-    await fx.account.createSlot({ playerId: u.playerId });
-    await fx.account.createSlot({ playerId: u.playerId });
+    // D-159：注册即 3 槽；先让非默认槽 slot2 成为出战槽（空槽不可激活 → 先写完整配置）
+    const fill = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    assert.equal(fill.ok, true, JSON.stringify(fill.details));
     const delDefault = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot1' });
     assert.equal(delDefault.code, 'slot_locked');
     assert.equal(delDefault.status, 409);
     // slot1 既是默认槽又是出战槽：切到 slot2 后仍不可删（默认槽语义，§5.3）
-    await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
+    const act = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
+    assert.equal(act.ok, true, JSON.stringify(act.details));
     const delDefaultActive = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot1' });
     assert.equal(delDefaultActive.code, 'slot_locked', '默认槽可改不可删');
     const delActiveNow = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot2' });
     assert.equal(delActiveNow.code, 'slot_locked', '出战槽不可删（提示先切换）');
+    // D-160：非出战槽（未写入完整配置的 slot3）可直接删除
     const del3 = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot3' });
-    assert.equal(del3.ok, true);
+    assert.equal(del3.ok, true, JSON.stringify(del3.details));
     assert.deepEqual(del3.data.slots.map((s) => s.slotId), ['slot1', 'slot2']);
     assert.equal(del3.data.activeSlotId, 'slot2');
     // 必有出战：删掉非出战槽后出战槽仍在
@@ -173,9 +188,16 @@ test('ACC-4 快照冻结（T-AC-4）：保存后改客户端对象不影响已�
     const saved2 = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: other });
     assert.notEqual(saved2.data.snapshot.hash, hash1, '不同内容 → 不同快照 hash');
     assert.equal(saved2.data.activeSnapshotHash, saved2.data.snapshot.hash);
-    // 新槽复制出战配置 → 快照 hash 与出战槽一致（复用同一份快照）
+    // D-160：新槽是**空槽**（不再复制出战配置）→ snapshot 为 null、loadout 为空骨架；出战仍是 slot1
+    //   先释放一个非出战槽（D-159：注册即满 3 槽，直接 createSlot 会撞 409 slot_limit）
+    const released = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot3' });
+    assert.equal(released.ok, true, JSON.stringify(released.details));
     const s2 = await fx.account.createSlot({ playerId: u.playerId });
-    assert.equal(s2.data.slot.snapshot.hash, saved2.data.snapshot.hash);
+    assert.equal(s2.ok, true, JSON.stringify(s2.details));
+    assert.equal(s2.data.snapshot, null, 'D-160：新建槽无快照');
+    assert.equal(s2.data.slot.snapshot, null, 'D-160：槽记录内 snapshot 为 null');
+    assert.deepEqual(s2.data.slot.loadout, { role: null, skills: [null, null, null], ai: null }, 'D-160：新建槽为空槽');
+    assert.equal(s2.data.activeSlotId, 'slot1', 'D-160：新建槽不改变出战');
   } finally {
     await fx.cleanup();
   }
@@ -207,24 +229,48 @@ test('ACC-6 loadout 校验：非法 → 409 loadout_invalid（带 details.path�
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Valid_1' });
+    // D-160：**出战槽**要求完整 —— 不完整 → 409 loadout_invalid + 逐位置 details
     const bad = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: { role: null, skills: [], ai: null } });
     assert.equal(bad.code, 'loadout_invalid');
     assert.equal(bad.status, 409);
     assert.ok(bad.details.length > 0);
     assert.ok(bad.details.every((d) => typeof d.path === 'string' && typeof d.code === 'string'));
-    assert.ok(bad.details.some((d) => d.path === 'skills'));
+    assert.deepEqual(bad.details.map((d) => d.path), ['role', 'skills[0]', 'skills[1]', 'skills[2]', 'ai'], '逐位置列出缺项');
+    assert.equal(bad.details[0].message, '缺少角色物品');
+    assert.equal(bad.details[1].message, '技能位置缺失: 0');
+    assert.equal(bad.details[4].message, '缺少 AI 程序');
+    // D-160：**非出战槽**允许写不完整配置 → 200（无快照、complete:false、missing 逐位置）
+    const partial = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: { role: null, skills: [], ai: null } });
+    assert.equal(partial.ok, true, JSON.stringify(partial.details));
+    assert.equal(partial.status, 200);
+    assert.equal(partial.data.complete, false);
+    assert.deepEqual(partial.data.missing, ['role', 'skills[0]', 'skills[1]', 'skills[2]', 'ai']);
+    assert.equal(partial.data.snapshot, null, '不完整 → 不冻结快照');
+    const partial2 = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: { role: null, skills: [null, null, null], ai: null } });
+    assert.equal(partial2.data.complete, false);
+    assert.deepEqual(partial2.data.missing, ['role', 'skills[0]', 'skills[1]', 'skills[2]', 'ai'],
+      '空骨架 = 三个 null 技能位 → 与 saveConfig 的完整性判据一致（逐位置列出）');
+    // 非出战槽缺少 loadout 字段 → 仍 400（缺 loadout 与"不完整 loadout"是两件事）
     const noLoadout = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1' });
     assert.equal(noLoadout.code, 'bad_request');
     assert.equal(noLoadout.status, 400);
+    // D-160：缺 loadout 时出战槽同样 400（先于完整性判定）
+    const noLoadout2 = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2' });
+    assert.equal(noLoadout2.code, 'bad_request');
+    assert.equal(noLoadout2.status, 400);
     const unknownSlot = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot9', loadout: sampleLoadout(fx.account) });
     assert.equal(unknownSlot.code, 'slot_not_found');
+    // createSlot 带**显式不完整** loadout → 409 loadout_invalid（空槽是"不传 loadout"，不是"传空 loadout"）
     const badSlotCreate = await fx.account.createSlot({ playerId: u.playerId, loadout: { role: null, skills: [], ai: null } });
     assert.equal(badSlotCreate.code, 'loadout_invalid');
-    // 引用完整性：有装配引用但没给仓库镜像 → loadout_invalid（missing_warehouse，I-12d/T-PB-9）
+    assert.equal(badSlotCreate.status, 409);
+    // D-159：引用校验改用**服务端权威仓库**（不再是 missing_warehouse；真源里没有该插件 → 悬挂引用）
     const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
     const noWh = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef });
     assert.equal(noWh.code, 'loadout_invalid');
-    assert.ok(noWh.details.some((d) => d.code === 'missing_warehouse'));
+    assert.equal(noWh.status, 409);
+    assert.ok(noWh.details.some((d) => d.code === 'loadout_invalid'));
+    assert.ok(!noWh.details.some((d) => d.code === 'missing_warehouse'), 'D-159：不再因"未提交镜像"拒绝');
   } finally {
     await fx.cleanup();
   }
@@ -234,31 +280,42 @@ test('ACC-7 仓库镜像：形状校验 400；与出战配置一致才 verified�
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Wh_1' });
-    assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, true, '注册未提交仓库镜像 → 标记未校验');
-    // 形状非法
+    // D-159：starter 自带服务端权威仓库并写入 slot1 → 注册即已校验（旧断言"未提交镜像 → true"已废除）
+    assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, false, 'D-159：注册发放 starter → 已校验');
+    // D-159：GET /me 路径的仓库读取（account.getWarehouse）= 服务端真源，不再是 warehouse_missing
+    const server = await fx.account.getWarehouse(u.playerId);
+    assert.equal(server.ok, true, JSON.stringify(server.details));
+    assert.deepEqual(Object.keys(server.data).sort(), ['buckets', 'caps', 'counts', 'starterIssued', 'usage']);
+    assert.equal(server.data.starterIssued, true);
+    assert.equal(server.data.counts.skill, 3);
+    assert.equal(server.data.caps.role, 500);
+    // 形状非法（PUT /me/warehouse 退役为只做形状校验）
     for (const bad of [null, [], {}, { buckets: [] }, { buckets: { role: 'nope' } }]) {
       const res = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: bad });
       assert.equal(res.code, 'bad_request', JSON.stringify(bad));
       assert.equal(res.status, 400);
       assert.ok(res.details[0].path.startsWith('warehouse'));
     }
-    // 把带装配引用的配置存起来（必须同时给仓库镜像才能通过引用校验）
+    // 带装配引用的配置：D-159 起引用校验优先用服务端仓库；显式 warehouse 仍被接受（测试缝）
     const wh = { buckets: { skillPlugin: [{ uid: 'plg1', kind: 'skillPlugin', equipped: true, tier: 2, unlockTier: 'common' }], role: [], skill: [] } };
     const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
     const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef, warehouse: wh });
     assert.equal(saved.ok, true, JSON.stringify(saved.details));
     assert.equal(saved.data.unverifiedLoadout, false, '提交仓库镜像 → verifiedAgainstWarehouse');
-    // 空镜像与出战配置不一致 → loadout_invalid
+    // D-159：引用不覆盖出战配置的镜像 → **不再 409 loadout_invalid**，改 200 + verified:false + saved:true
     const mismatched = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: { buckets: { skillPlugin: [] } } });
-    assert.equal(mismatched.code, 'loadout_invalid');
-    assert.equal(mismatched.status, 409);
-    assert.ok(mismatched.details.some((d) => d.code === 'loadout_invalid'));
+    assert.equal(mismatched.ok, true, JSON.stringify(mismatched.details));
+    assert.equal(mismatched.status, 200);
+    assert.equal(mismatched.data.saved, true);
+    assert.equal(mismatched.data.verified, false, 'D-159：不覆盖出战配置引用 → verified:false（旧 409 已废除）');
+    assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, false, 'D-159：真源为服务端仓库 → 档案标志不被镜像降级');
     // 一致的镜像 → verified，并回读一致（round-trip）
     const good = await fx.account.saveWarehouseMirror({ playerId: u.playerId, warehouse: wh });
     assert.equal(good.ok, true);
     assert.equal(good.data.verified, true);
     assert.equal(good.data.unverifiedLoadout, false);
     assert.deepEqual(good.data.buckets, { skillPlugin: 1, role: 0, skill: 0 });
+    assert.deepEqual(good.data.warehouse, wh, '回执带镜像正文');
     assert.match(good.data.warehouseHash, /^sha256:[0-9a-f]{64}$/);
     const back = await fx.account.getWarehouseMirror(u.playerId);
     assert.equal(back.ok, true);
@@ -266,9 +323,10 @@ test('ACC-7 仓库镜像：形状校验 400；与出战配置一致才 verified�
     assert.equal(back.data.warehouseHash, good.data.warehouseHash);
     assert.equal((await activeOf(fx, u.playerId)).unverifiedLoadout, false);
     assert.equal(fx.account.mirrorCacheSize(), 1, '镜像缓存按玩家计条目');
-    // 未提交过镜像的玩家 → warehouse_missing
+    // 未提交过镜像的玩家 → warehouse_missing（镜像缓存语义保留；注意与服务端真源是两回事）
     const other = await registerPlayer(fx.auth, { username: 'Wh_2' });
     assert.equal((await fx.account.getWarehouseMirror(other.playerId)).code, 'warehouse_missing');
+    assert.equal((await fx.account.getWarehouse(other.playerId)).ok, true, 'D-159：真源对每位玩家恒可读（不再 404）');
   } finally {
     await fx.cleanup();
   }

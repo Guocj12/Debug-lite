@@ -33,13 +33,45 @@ test('AU-1 注册：200 信封 + 下发 token/默认配置 + playerId 不外泄 
     assert.ok(s.logger.records.some((x) => x.event === 'api.req' && x.data.path === '/api/v1/auth/register'));
     assert.ok(s.logger.records.some((x) => x.event === 'api.res' && x.data.status === 200));
     assert.ok(s.logger.records.some((x) => x.event === 'store.auth.register'));
-    // 注册即下发默认出战配置（D-131：slot1 + 唯一出战 + 快照已冻结）
+    // D-159：注册即发 starter 并**建满 3 个槽** —— slot1 = starter 完整出战配置（快照已冻结、快照自带装配引用
+    //   摘录），slot2/slot3 = 空槽（`snapshotHash: null`），出战仍是 slot1（D-160：非出战槽允许不完整）。
     const me = await h.request(s.port, 'GET', '/api/v1/me', undefined, h.authed(r.body.data.token));
     assert.equal(me.status, 200);
     assert.equal(me.body.data.activeSlotId, 'slot1');
-    assert.equal(me.body.data.slots.length, 1);
+    assert.equal(me.body.data.slots.length, 3, 'D-159：注册即建满 3 个槽');
+    assert.deepEqual(me.body.data.slots.map((s) => s.slotId), ['slot1', 'slot2', 'slot3']);
     assert.equal(me.body.data.slots[0].isDefault, true);
-    assert.equal(typeof me.body.data.slots[0].snapshotHash, 'string');
+    assert.equal(typeof me.body.data.slots[0].snapshotHash, 'string', 'slot1 出战槽必有已冻结快照');
+    assert.equal(me.body.data.slots[1].snapshotHash, null, 'D-160：非出战空槽无快照');
+    assert.equal(me.body.data.slots[2].snapshotHash, null, 'D-160：非出战空槽无快照');
+    // D-159：starter 自带服务端权威仓库 → 已校验（不再等待客户端提交仓库镜像）
+    assert.equal(me.body.data.flags.unverifiedLoadout, false, 'D-159：starter 已发仓库 → unverifiedLoadout=false');
+    // D-159：starter 仓库四桶非空 + starterIssued 标记（GET /me/warehouse = 真源）
+    const wh = await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(r.body.data.token));
+    assert.equal(wh.status, 200, wh.raw);
+    assert.equal(wh.body.data.starterIssued, true);
+    assert.ok(wh.body.data.counts.role >= 1, 'starter 至少 1 个角色物品');
+    assert.equal(wh.body.data.counts.skill, 3, 'starter 恰 3 个技能物品');
+    assert.ok(wh.body.data.counts.rolePlugin >= 1, 'starter 至少 1 个角色插件');
+    assert.equal(wh.body.data.counts.skillPlugin, 1, 'starter 恰 1 个技能插件');
+    assert.equal(wh.body.data.caps.role, 500);
+    // D-161：starter 同时登记一条默认 AI（名字 '新手AI'），并被出战配置 slot1 引用
+    const ai = await h.request(s.port, 'GET', '/api/v1/me/ai', undefined, h.authed(r.body.data.token));
+    assert.equal(ai.status, 200, ai.raw);
+    assert.equal(ai.body.data.count, 1);
+    assert.equal(ai.body.data.max, 100);
+    assert.equal(ai.body.data.items[0].name, '新手AI');
+    assert.deepEqual(ai.body.data.usage[ai.body.data.items[0].aiId], ['slot1'], 'D-161：starter AI 被出战配置引用');
+    // GET /me/configs：3 套配置正文；slot1 完整（有快照），slot2/slot3 空且无快照
+    const cfgs = await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(r.body.data.token));
+    assert.equal(cfgs.status, 200, cfgs.raw);
+    assert.equal(cfgs.body.data.slots.length, 3);
+    assert.equal(cfgs.body.data.slots[0].loadout.skills.length, 3);
+    assert.equal(cfgs.body.data.slots[0].loadout.aiId, ai.body.data.items[0].aiId, 'slot1 的 loadout.aiId 指向库内默认 AI');
+    assert.equal(typeof cfgs.body.data.slots[0].snapshot.hash, 'string');
+    assert.deepEqual(cfgs.body.data.slots[1].loadout, { role: null, skills: [null, null, null], ai: null }, 'D-160：新建/注册出的空槽形状');
+    assert.equal(cfgs.body.data.slots[1].snapshot, null);
+    assert.equal(cfgs.body.data.slots[2].snapshot, null);
     // 鉴权后的请求把 publicId 记进 api.req/api.res（§4.6 脱敏口径：只记 publicId，不记 token）
     assert.ok(s.logger.records.some((x) => x.event === 'api.req' && x.data.path === '/api/v1/me' && x.data.publicId === r.body.data.publicId), 'api.req 带 publicId');
     assert.ok(s.logger.records.some((x) => x.event === 'api.res' && x.data.path === '/api/v1/me' && x.data.publicId === r.body.data.publicId), 'api.res 带 publicId');
@@ -192,9 +224,18 @@ test('AU-7 越权 403：请求体指定他人 playerId → forbidden；banned �
     assert.equal(forbidden.status, 403);
     assert.equal(forbidden.body.error.code, 'forbidden');
     assert.ok(s.logger.records.some((x) => x.event === 'api.reject' && x.data.code === 'forbidden'), '越权应记 api.reject(warn)');
-    // 自己的 playerId 允许（不构成越权）
-    const self = await h.request(s.port, 'POST', '/api/v1/me/configs', { playerId: aId }, h.authed(a.token));
+    // 自己的 playerId 允许（不构成越权）。D-159：注册已建满 3 槽 → POST /me/configs 会先撞 409 slot_limit，
+    //   无法再断言 200；改用同一条越权检查覆盖的端点 POST /me/records/seen 验证"自己 = 放行"。
+    const self = await h.request(s.port, 'POST', '/api/v1/me/records/seen', { playerId: aId, uptoSeq: 0 }, h.authed(a.token));
     assert.equal(self.status, 200, self.raw);
+    // 反向对照：同一端点上带他人 playerId 仍必须 403（证明上一条不是因为端点忽略 playerId 才 200）
+    const forbidden2 = await h.request(s.port, 'POST', '/api/v1/me/records/seen', { playerId: bId, uptoSeq: 0 }, h.authed(a.token));
+    assert.equal(forbidden2.status, 403);
+    assert.equal(forbidden2.body.error.code, 'forbidden');
+    // D-159 连带：注册即 3 槽 → 再建槽必须 409 slot_limit（旧写法"再建 2 个槽测上限"会提前撞限）
+    const overLimit = await h.request(s.port, 'POST', '/api/v1/me/configs', {}, h.authed(a.token));
+    assert.equal(overLimit.status, 409);
+    assert.equal(overLimit.body.error.code, 'slot_limit');
     // 档案被标记 banned（保留会话）→ 中间件 403 banned（§4.4 步骤 3）
     await s.store.updateArchive(bId, (arch) => { arch.flags.banned = true; return null; });
     const banned = await h.request(s.port, 'GET', '/api/v1/me', undefined, h.authed(b.token));

@@ -26,7 +26,7 @@ const LAYER_RULES = [
   [/^server\/core\/engine\.js$/, 4],
   [/^server\/ai\//, 5],
   [/^server\/store\//, 6], // D-129 存储层（server/store/*：json/sqlite 适配器、journal、快照库、索引、锁、会话）
-  [/^server\/(index|ranked|runner|box|loadout|battle|auth|account|quickmatch|admin)\.js$/, 6],
+  [/^server\/(index|ranked|runner|box|loadout|battle|auth|account|quickmatch|admin|starter)\.js$/, 6],
   [/^cli\//, 6],
 ];
 

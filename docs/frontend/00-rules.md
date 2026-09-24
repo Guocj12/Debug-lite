@@ -116,6 +116,10 @@
 | FR-7 | 2026-09-20 | **会话 token 存放 = `localStorage`**（键 `dl.token` / `dl.session`，`dl.` 前缀统一命名空间）；`localStorage` 不可用时降级为内存会话并提示 | 用户本轮 Q4 结论 A；分册 §7.3 |
 | FR-8 | 2026-09-20 | **前端模块形态 = 零依赖双模模块**（浏览器 globals + Node `require`），配「单一网络出口 / 单一 DOM 写入点 / 纯 `render(state)`」，使 §4.1「按钮永不无声」与 §4.2「字段名可追溯」成为机器可判定断言 | 分册 §2 / §10；D-124 |
 | FR-9 | 2026-09-20 | **「反驳式提问」的定义澄清 = 由 AI 反驳用户的提案**（找用户设计的不合适之处）；**不是**我会出 A/B 选项供用户挑选——该模式产出的结论（含 F1/F2 已冻结项）不构成定稿依据，须按新 §2 重新受审 | 用户本轮澄清 |
+| FR-10 | 2026-09-22 | **弹窗 = 屏内绘制区块**（`state.modal`），不是浏览器原生弹窗/新窗口；**点击弹窗外 = 取消并丢弃未提交输入**（弹窗内另有显式「取消」按钮） | 用户 2026-09-22 口径（F3 问答）；分册 `03-hub-warehouse-loadout.md` §2/§3.8 |
+| FR-11 | 2026-09-22 | **登录/注册成功后的落点 = 主界面 `hub`**；F1 的 `home` 降级为 `profile`（用户详情）子屏；`logout` **只保留在设置屏**（F1 契约变更清单见 F3 分册 §9/§11） | 用户 2026-09-22 口径；F3 分册 §3.1/§3.2 |
+| FR-12 | 2026-09-22 | **空页规范**：标题 + 一行 `尚未实现（计划批次 F#）` + 返回主界面按钮；**不做任何请求**；每个按钮都必须命中已注册动作（「按钮永不无声」不因空页而放宽） | 用户 2026-09-22 口径（"所有按钮做全，空页面只留返回键"）；F3 分册 §3.6/§4 |
+| FR-13 | 2026-09-22 | **仓库为服务端权威**（`GET /me/warehouse` 为真源；装配/拆卸走服务端端点并落 journal）——取代本目录中一切"仓库由客户端 localStorage 持有"的旧表述（D-130 已被 **D-159** 推翻） | 用户 2026-09-22 裁定；`docs/decisions.md` D-159 |
 
 ---
 
@@ -135,3 +139,7 @@
 | O-10 | `/admin/accounts` 声称「数据源=索引、不加载档案、可支撑万级账号」，但实现是 `listPlayerIds()` 全量 + 逐条 `index.get` + **构造全部行 + 全量排序** 后才 `slice`：分页未节省任何服务端成本，每翻一页重复一次；且 `total` 以「档案目录 ∩ 索引」为口径，**索引缺失的账号被静默跳过**（面板显示的「全部账号」可能少于真实档案数且无提示） | `server/admin.js:312-338`；`server/store/index-file.js` 已有 `byTier`/`leaderboard` 等预派生结构可对照 | F2 独立审查前 |
 | O-11 | 账号列表分页的**排序键漂移**：设计称「排序稳定 → 分页无遗漏/无重复」，但排序键是 `updatedAt`（任何结算/登录 touch 都会改），而每次请求重新全量读取重排 → 翻页期间被更新的账号会跨页移动，造成**漏行或重复行**。「稳定排序」只解决并列次序，不解决键变化 | `server/admin.js:331-338`；分册 §2.3 的稳定性论证 | F2 独立审查前 |
 | O-12 | §2.10「判定结论须由独立审查出具」的**做法**：由谁承担（新上下文子代理 / 你自己逐条复核 / 只保留 `docs/reviews/F<n>.md` 自述） | 前两轮失败根因（`docs/acceptance.md` §8：判定与被判同源） | 下一次定稿前 |
+| O-13 | **starter 内容规格**（用哪个角色模板/技能/插件、品质、种子派生、重掷规则）：本文件不裁定，由 F3 分册附录 D 给草案、用户逐条改；**定稿前不得实现** | F3 分册 `03-hub-warehouse-loadout.md` 附录 D；`docs/decisions.md` D-159⑤ | 提交① 实现前 | **已定稿并落地（2026-09-22）**：`server/starter.js`（`role_bal` + `skill_melee_whirl`/`skill_straight_precise` + 按实际槽类型筛插件、`common`、种子 = `sha256('starter\|publicId\|playerId')`、技能重掷上限 20）；单测 `tests/unit/starter.test.js` ST-1…ST-9 |
+| O-14 | **`usage`（"装配于配置几"）的最终形状**：设计约定为 `data.usage[uid].slotIds[]`，落地后必须用**真实响应**回填并纳入字段契约核对 | F3 分册 §5.2；`docs/interfaces.md` §2 `me/warehouse` 行 | 提交② 前 | **已回填（2026-09-22）**：实测与契约一致；断言见 `tests/api/api-me-warehouse.test.js` UWH-2/UWH-3（含"同一物品可被多配置引用"） |
+| O-15 | **非出战槽保存时是否冻结快照**：分册建议"不冻结，等 `activate` 时再冻结" | F3 分册 §9.2；D-160 | 提交① 实现前 | **已按建议落地（2026-09-22）**：不完整配置 `snapshot:null`、`loadout` 正文随 journal 记录落盘；断言见 `tests/api/api-configs-incomplete.test.js` UCI-2 |
+| O-16 | **插槽类型 ↔ 插件类型的完整枚举**（可从 `role-templates.json` 的 `slotWeights` 与 `plugins.json` 的 `slot` 取） | F3 分册 §5.3/§13 K-4 | 提交③ 前 | **已确认（2026-09-22）**：角色槽 ∈ `{atk,def,hp,sp,mp,special}`（`role-templates.json` 的 `slotWeights` 键集）、技能槽 ∈ `{basic,special}`（`skill-templates.json`）、插件 `slot` 必须与目标槽 `type` 相等（`core/items.assemble` ③ 判定） |

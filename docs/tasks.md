@@ -109,7 +109,7 @@ L7  public/**（P6）
 | GET | `/api/v1/health` | 存活与版本 | — |
 | GET | `/api/v1/data/:table` | 数据表（含 `battle-config`） | 404 `unknown_table` |
 | GET | `/api/v1/unlock?tier=` | 该段位可用节点/模板/技能 | 400 `bad_tier` |
-| POST | `/api/v1/box` | 开箱（seed/tier/次数） | 400 / 409 `tier_locked` |
+| POST | `/api/v1/box` | 开箱（seed/tier/次数）**D-162：无 `seed` 入参**（客户端传了被忽略），seed 服务端生成；**不入档** | 400 / 409 `tier_locked` |
 | GET | `/api/v1/warehouse` | 仓库（分桶 + 装配状态） | — |
 | POST | `/api/v1/warehouse/assemble` | 装配 | 409 `slot_type_mismatch` / `points_exceeded` / `slot_occupied` / `tier_locked` / `plugin_equipped` / `item_missing` |
 | POST | `/api/v1/warehouse/disassemble` | 拆卸 | 404 `slot_empty` / `plugin_missing` |
@@ -124,7 +124,7 @@ L7  public/**（P6）
 | POST | `/api/v1/ranked/promote` | 晋升 + 段位奖励（读档案） | 409 `already_max` |
 | POST | `/api/v1/auth/register` \| `login` \| `logout` \| `password` | 账号与会话（P7/B28，D-129） | 401 / 409 `username_taken` / 429 |
 | GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 |
-| GET/POST/PUT/DELETE | `/api/v1/me/configs[/:slotId]`（+`/activate`） | 配置槽 CRUD（≤3、唯一出战，P7/B29，D-131） | 409 `slot_limit` / `slot_locked` / `config_conflict` |
+| GET/POST/PUT/DELETE | `/api/v1/me/configs[/:slotId]`（+`/activate`） | 配置槽 CRUD（≤3、唯一出战，P7/B29，D-131）；**D-160**：注册即建满 3 槽（`slot2`/`slot3` 空槽）、非出战槽允许不完整（不冻结快照）、`activate` 才校验完整性、新建槽 = 空槽 | 409 `slot_limit` / `slot_locked` / `config_conflict` / `cannot_activate_incomplete` |
 | GET | `/api/v1/me/records` \| `/api/v1/me/defense` | 战绩与**防守战绩**（被抽场次/胜负，P7/B30） | 401 |
 | POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，P7/B32，D-133） | 409 `no_opponent` |
 | GET | `/api/v1/leaderboard` | 排行榜 | 400 `bad_scope` |
@@ -132,12 +132,18 @@ L7  public/**（P6）
 | GET | `/api/v1/log-level` | 日志总控（非 production） | 400 `bad_level` |
 
 - **统一信封**：成功 `{ok:true,data,log:{level,events}}`；失败 `{ok:false,error:{code,message,details}}`。
-- 随机性由请求 `seed` 显式传入（缺省服务端生成并**回带**），保证可复现。
+- 随机性由请求 `seed` 显式传入（缺省服务端生成并**回带**），保证可复现。**例外（D-162）**：两个开箱端点（遗留 `POST /api/v1/box` 与服务端权威 `POST /api/v1/me/box`）**都没有 `seed` 入参**——客户端传了被**静默忽略**（不再有 `bad_seed`），seed 一律服务端生成；HTTP 侧确定性由实例级注入缝 `start({boxSeed})` 提供（第 n 次 = `boxSeed + n − 1`），CLI `box` 移除 `--seed`。
+- **D-159…D-162 的仓库/AI 端点（真源 = `docs/interfaces.md` §2 与其后的 D-159/D-160/D-162 契约注记；本表不复制细节，避免双源漂移）**：
+  - **仓库（D-159，推翻 D-130 的客户端权威）**：`GET /api/v1/me/warehouse` = **真源**（`{buckets,usage,caps,counts,starterIssued}`）；`POST /api/v1/me/warehouse/assemble|disassemble` = **服务端态写**（体只有增量：`{targetUid,pluginUid,slotIndex}` / `{targetUid,slotIndex}`，**不再传整仓**）；`PUT /api/v1/me/warehouse` **退役**为只校验形状（引用不覆盖 → 200 + `verified:false`）。
+  - **开箱（D-159/D-162）**：`POST /api/v1/me/box` = **服务端权威、物品入档**（任一桶超 500 → 409 `warehouse_full` 且不入档）。
+  - **AI 库（D-161）**：`GET|POST /api/v1/me/ai`、`DELETE /api/v1/me/ai/:aiId`（上限 100、被出战配置引用 → 409 `ai_in_use`）。
+  - **配置完整性（D-160）**：见上表 `me/configs` 行。
+  - **前端分册**：`docs/frontend/03-hub-warehouse-loadout.md`（F3 主界面/仓库/开箱/出战配置）。
 
 ### 2.4 CLI 契约（本轮唯一"操作台"）
 
 ```
-box --seed 1 --tier common --times 10
+box --tier common --times 10        # D-162：**不接受 --seed**（给了即参数错误，退出码 2；seed 由服务端生成）
 wh list|assemble|disassemble ...
 panel --loadout <file>
 ai validate|compile|battle --file ai.json [--tier rare] [--opponent kiter]
@@ -241,7 +247,7 @@ health | data <table>
 | T-AP-2 | 每端点参数错误 → 400 + `error.code` | 各 API 批次 | 失败 |
 | T-AP-3 | 每端点业务拒绝 → 409 + `error.code` | 各 API 批次 | 失败 |
 | T-AP-4 | 服务端重新执行 AI，不信任客户端结果 | B16 | 失败 |
-| T-AP-5 | seed 显式化：带 seed 请求可复现、响应回带 seed | B16 | 确定 |
+| T-AP-5 | seed 显式化：带 seed 请求可复现、响应回带 seed。**D-162 修订**：**开箱两个端点（`/box`、`/me/box`）例外——无 `seed` 入参**（客户端传了被忽略，不再有 `bad_seed`），seed 服务端生成；HTTP 侧确定性改由 `start({boxSeed})` 注入缝提供（第 n 次 = `boxSeed+n−1`） | B16 | 确定 |
 | T-CLI-1 | CLI 后端闭环：开箱→仓库→装配→loadout→校验 AI→对战→回放 | B16 | 正常 |
 | T-CLI-2 | CLI 退出码 0/1/2 与输出结构 | P0-8 | 边界 |
 | T-PB-1..10 | **插件连接 10 条不变量**（§3.6） | B18–B21 | 属性 |
@@ -719,6 +725,8 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 **F2 账号管理与管理员面板（2026-09-22）**：设计冻结 `docs/frontend/02-accounts.md`（10 项端点映射 / 15 个新增动作 / 14 条新增字段契约 / 9 条边界 / 4 项机器核对 / 17 步走查剧本）。后端契约按 `decisions.md` **D-158** 落地（`DL_ADMIN_USERS` 管理员账号 + `checkAccess` 双路径授权 + 新增 `POST /admin/accounts`（分页、**total 无上限**）与 `POST /admin/delete-account`（`player.removed` 墓碑、禁删自己）+ admin 面豁免玩家级 `playerId` 一致性检查），机器核对 `tests/api/api-admin-accounts.test.js`（AA-1…AA-7）；前端管理面板与 F2 机器核对（含**后端 admin 能力 ↔ 前端面板双向相等**的 `admin-op-parity`）见 `docs/reviews/F2.md`。**F2 同样不新增批次号**（§6 仍为 41 批）。
 
+**F3 物品线/主界面（2026-09-22）**：**后端契约已落地（D-159…D-162）**——仓库改为服务端权威（档案 `warehouse` 段 + `GET /me/warehouse` 真源 + `POST /me/warehouse/assemble|disassemble` + `PUT /me/warehouse` 退役为只校验形状）、注册即发 `starter` 并建满 3 槽（`server/starter.js`）、开箱收归服务端（`POST /me/box` 入档、无 `seed` 入参）、AI 库（`GET|POST /me/ai`、`DELETE /me/ai/:aiId`）、配置完整性校验时机（D-160）；端点真源见 `docs/interfaces.md` §2。**前端屏（主界面/仓库/开箱/出战配置编辑器）与 F3 机器核对待做**，设计冻结见 `docs/frontend/03-hub-warehouse-loadout.md`。**F3 同样不新增批次号**（§6 仍为 41 批；见 `docs/frontend/00-rules.md` FR-6）。
+
 ---
 
 ## 7. 前端（P6）—— **设计待重做**
@@ -734,6 +742,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 - **禁止前端复制战斗公式**：伤害/命中/移动一律由服务端算，前端只消费帧。
 - **验收**：机器测试不能证明"能玩"。每批必须在真实浏览器按端到端剧本人工走查（旧两轮 F0–F8 / R0–R7 均在测试全绿时不可玩）。
 - **后端配合**：静态托管（`public/`、`/shared`、`/assets`）；服务端端点见 `docs/server.md` 与 `docs/systems/11-account-store.md`。
+- **F3（物品线/主界面）后端契约已落地（D-159…D-162）**——仓库服务端权威（真源 `GET /me/warehouse`，装配/拆卸走 `POST /me/warehouse/assemble|disassemble`）、注册即发 starter 并建满 3 槽、`POST /me/box` 服务端权威开箱（无 `seed` 入参）、AI 库 `me/ai*`、配置完整性校验时机（D-160）；**前端屏与出战配置编辑器待做**，设计冻结见 `docs/frontend/03-hub-warehouse-loadout.md`（端点真源 `docs/interfaces.md` §2）。**F3 不新增批次号**（§6 仍为 41 批）。
 
 ---
 
@@ -760,7 +769,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | R2 | 函数参数/返回值 | ✅ **已决**：= 打包代码块，无参无返回，有独立作用域+调用栈（D-102/103） | 已决 |
 | R3 | `costDelta` 基础值 / 最大插件点数 | ✅ **已决**：统一 `costDeltaByTier` 逐档数组 + `items-data` 建议点数（D-113/116） | 已决 |
 | R4 | 晋升阈值 / 段位→品质 | ✅ **已决**：x = 6，段位序号即品质上限（D-122） | 已决 |
-| R5 | 存档位置 | ✅ **已决**：**D-129 服务端存档**（`runtime/`，段位/积分/配置槽/战绩落盘）+ D-130 仓库仍客户端；D-123 的"不做存档"已部分推翻 | 已决 |
+| R5 | 存档位置 | ✅ **已决**：**D-129 服务端存档**（`runtime/`，段位/积分/配置槽/战绩落盘）→ **D-159 起仓库/物品/装配/AI 库也改服务端权威**（推翻 D-130 的"仓库仍客户端"）；D-123 的"不做存档"已推翻 | 已决 |
 | R6 | 前端框架 | ✅ **已决**：无框架（D-124） | 已决 |
 | R7 | 沙箱多进程 runner 不可用 | ✅ 已定：单进程 `--test-isolation=none` | 已决 |
 | R8 | 美术占位规格细节 | 按 `items-data` §1（本轮只作数据表） | P6 前 |
@@ -773,7 +782,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 | **R16** | **设计文档需同步重写受影响章节**（D-126） | 我按 `decisions.md` 逐章重写 `v3-design` / `systems/*` / `items-data` | **P0-7 前** |
 | **R17** | **`dodge` 的闪避加成数值** | ✅ **已决（B21 校准，D-127）**：`dodgeChanceBonus = +20%`（叠加面板 dodgeChance，封顶 1） | 已决 |
 | **R18** | 文档编辑工具纪律 | ✅ 已加入铁律 L17（禁用 PS 5.1 读写中文文档） | 已定 |
-| **R19** | **混合权威导致段位/积分不可信**（D-130） | 已在 `11-account-store.md` §15.1 登记风险与缓解；"服务端物品账本"列为后续阶段（需重新走决策） | 已知风险 |
+| **R19** | **混合权威导致段位/积分不可信**（D-130） | **D-159（2026-09-22）已关闭其中"客户端权威仓库 ⇒ 可携带任意属性 loadout"这条路径**（仓库/物品/装配/开箱改服务端权威，`11-account-store.md` §15.1.1 已标**已处置**并附证据；`docs/security-backlog.md` 的 SEC-07 同步回填）；**但"段位/积分仍不具竞技可信度"的结论保留**（残余：`wins`/`pool` 等入参、"理论上限校验"未做），风险登记见 `11-account-store.md` §15.1.3 | 已知风险（范围已收窄） |
 | **R20** | **回放与引擎/数据版本强耦合**（D-135） | 版本不匹配返回 `410 replay_expired`；是否改存帧见 `11-account-store.md` §15.5 Q3 | 已定（可再议） |
 | **R21** | **单进程 JSON 存储的容量上限** | 实测 0.175~0.280 ms/场、索引 ~200 B/玩家；>5 万玩家或写 QPS >500 时切 `node:sqlite` 适配器（`11-account-store.md` §11.4） | 已定（有判据） |
 

@@ -3,7 +3,7 @@
  *
  * 权威：docs/plan-p7-playable.md §P7-6（批量注册真实玩家 → 配齐出战配置 → 先建池后匹配 → 完整性断言）；
  *      docs/systems/11-account-store.md §6.1/§6.3（journal 幂等）/§7（异步排位）/§8（快速对战与积分守恒）；
- *      decisions.md D-132/D-133/D-134/D-136/D-152。
+ *      decisions.md D-132/D-133/D-134/D-136/D-152 + **D-159/D-160/D-161/D-162**（本批契约变更）。
  *
  * 规模：`--players 12` 等价（并发 6、快速 scrypt N=1024）→ 时长控制在 1~3 s，可纳入 `npm test`。
  * 断言：
@@ -13,8 +13,19 @@
  *   ⑤ 回放 LRU 不越界
  *   ⑥ 每场对局双方均为真实注册玩家（无 bot 补位；可从未删档案追溯）
  *   ⑦ 无 5xx
- * 另有"流程完整度"断言：N 个玩家全部注册成功 → 全部配齐出战配置（开箱 / GET /me / 装配 / AI validate+compile /
- *   配置槽）→ 池就绪（档案 + 可用快照 ≥ N）→ 真打了对局（排位 + 快速）。
+ * 另有"流程完整度"断言：N 个玩家全部注册成功 → 全部配齐出战配置 → 池就绪（档案 + 可用快照 ≥ N）→ 真打了对局。
+ *
+ * 🆕 D-159…D-162 迁移要点（本文件改动的依据，逐处标注）：
+ *   · D-159：注册即发 starter（服务端权威仓库 + slot1 完整已装配出战 + 3 槽 + 库内默认 AI）。
+ *     → 旧断言"**开箱次数 / 装配 HTTP 次数 / PUT /me/warehouse 镜像次数** = 结构完整度判据"的前提被推翻：
+ *       开箱随机性已收归服务端（D-162），装配次数不再是确定性量。本文件把这些**分布计数断言**换成
+ *       **服务端真源不变量**（`assertServerTruth`）：逐玩家核对"出战配置完整 + 每个装配引用都在其服务端仓库中、
+ *       equipped=true、且装在那件物品自己的槽上"，并逐玩家核对"出战 AI 逐字节等于服务端按身份派生的默认 AI"。
+ *       这比"某个 HTTP 端点被调了 N 次"更强（直接对真源），且不依赖随机掉落。
+ *   · D-160：`POST /me/configs` 建空槽、非出战槽允许不完整 —— 由 `tests/integration/e2e-play.test.js` 覆盖。
+ *   · D-161：AI 库（`/me/ai`）—— 同上，本文件只断言"starter 的默认 AI 与配置一致"。
+ *   · D-162：HTTP 开箱**没有 seed 入参**（传了被静默忽略，不再有 bad_seed）；确定性由 `start({boxSeed})` 提供
+ *     → 断言"不得出现 bad_seed"，并新增 LOAD-6b 用两个同 `boxSeed` 的独立实例验证"同 seed 同批次内容"。
  *
  * 实现共用 `tests/helpers/load.js`（与 `scripts/load-test.js` 同一份引擎，避免第二套语义）；
  * 本文件**只做断言**，不复制批量流程，也不 mock store（走真实 HTTP + 真实 store）。
@@ -25,11 +36,13 @@ const load = require('../helpers/load.js');
 const serverMod = require('../../server/index.js');
 const archiveMod = require('../../server/store/archive.js');
 const astApi = require('../../server/ai/ast.js');
+const rankedMod = require('../../server/ranked.js');
+const { createLogger } = require('../../shared/log.js');
 
 const PLAYERS = 12;   // 小规模：时长可控（生产规模用 `node scripts/load-test.js --players 200`）
 const SEED = 424242;
 
-// 单次共享运行：8 个断言共享同一份批量结果。**run() 自身绝不 assert、绝不抛出** ——
+// 单次共享运行：全部断言共享同一份批量结果。**run() 自身绝不 assert、绝不抛出** ——
 // 否则一个断言失败会污染其余用例（甚至读不到 storeHandle）。失败信息一律通过返回值断言。
 let shared = null;
 async function run() {
@@ -41,7 +54,7 @@ async function run() {
     quickRuns: 1,
     boxes: 20,
     seed: SEED,
-    deep: true,          // 小规模：开启索引重建比对（断言 ④ 的"重建后一致"）
+    deep: true,          // 小规模：开启索引重建比对（断言 ④）+ 服务端权威写端点往返（D-159）
     fastAuth: true,      // N=1024；默认（生产）为 N=16384，见 scripts/load-test.js
     keepDataDir: true,   // 保留临时数据根与 store 句柄 → 供断言做独立复核；由 after() 清理
     level: 'error',
@@ -55,13 +68,88 @@ function checkOf(report, id) {
   return hit;
 }
 
-// 收尾：关闭共享的进程内服务 + 删除临时数据根（本文件的 8 个用例共用一次批量运行）
+/* ---------- D-159 服务端真源不变量（替代旧的"开箱/装配/镜像 分布计数"断言） ---------- */
+
+function findInWarehouse(wh, uid) {
+  for (const list of Object.values((wh && wh.buckets) || {})) {
+    if (!Array.isArray(list)) continue;
+    const hit = list.find((x) => x && x.uid === uid);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// 出战配置里"引用 → 宿主物品 + 槽下标"（用于断言引用确实装在那件物品自己的槽上）
+function refSitesOfLoadout(ld) {
+  const out = [];
+  for (const item of [ld.role].concat(ld.skills || [])) {
+    if (!item || typeof item.uid !== 'string') continue;
+    (item.slots || []).forEach((s, i) => {
+      if (s && s.pluginUid) out.push({ targetUid: item.uid, slotIndex: i, pluginUid: s.pluginUid });
+    });
+  }
+  return out;
+}
+
+/**
+ * D-159：对**服务端档案真源**逐玩家核对批量流程要达成的全部不变量。
+ *   为什么这样替代旧断言：旧断言数的是"测试脚本自己发了几次开箱/装配/镜像请求"，
+ *   D-162 之后开箱序列由服务端独占、次数不再确定；而"配齐出战配置"的真实语义是
+ *   **每人的出战配置完整、且其装配引用在服务端仓库里确实装配着** —— 直接核真源既确定又更强。
+ * 返回 { players, refs, distinctAi, aiMatches } 供报告 ↔ 真源交叉比对。
+ */
+let truthCache = null;
+async function truth() {
+  if (truthCache) return truthCache;
+  const report = await run();
+  const store = report.storeHandle;
+  const ids = store.index.playerIds();
+  assert.equal(ids.length, PLAYERS, '档案数 = 注册玩家真实数');
+  let refs = 0;
+  let aiMatches = 0;
+  const aiHashes = new Set();
+  for (const pid of ids) {
+    const archive = await store.loadArchive(pid);
+    assert.ok(archive, `${pid} 档案必须存在（可追溯）`);
+    assert.equal(archive.archiveVersion, archiveMod.ARCHIVE_VERSION, `${pid} 档案必须是当前版本（D-159）`);
+    // 出战槽正文（D-159/D-160：出战槽必须完整）
+    const active = archiveMod.activeSlot ? archiveMod.activeSlot(archive)
+      : archive.configs.slots.find((s) => s.slotId === archive.configs.activeSlotId);
+    assert.ok(active && active.loadout, `${pid} 必须有出战槽正文`);
+    assert.deepEqual(archiveMod.loadoutMissingOf(active.loadout), [], `${pid} 出战配置必须完整（角色 + 恰 3 技能 + AI）`);
+    // 每个装配引用都必须落在服务端仓库里且真的装在那件物品的槽上
+    const sites = refSitesOfLoadout(active.loadout);
+    assert.ok(sites.length >= 1, `${pid} starter 出战配置必须至少 1 处装配引用（D-159）`);
+    for (const site of sites) {
+      refs += 1;
+      const plugin = findInWarehouse(archive.warehouse, site.pluginUid);
+      assert.ok(plugin, `${pid} 引用插件 ${site.pluginUid} 必须在服务端仓库中（D-159）`);
+      assert.equal(plugin.equipped, true, `${pid} 引用插件 ${site.pluginUid} 必须 equipped=true（D-159）`);
+      const host = findInWarehouse(archive.warehouse, site.targetUid);
+      assert.ok(host, `${pid} 宿主物品 ${site.targetUid} 必须在服务端仓库中`);
+      assert.equal(host.slots[site.slotIndex].pluginUid, site.pluginUid,
+        `${pid} 引用必须落在宿主自己的槽上：${site.targetUid}[${site.slotIndex}]`);
+    }
+    // D-159：出战 AI = 服务端按身份派生的默认 AI（逐字节）
+    const expected = rankedMod.buildDefaultLoadout({ publicId: archive.publicId, playerId: pid });
+    const got = astApi.programHash(active.loadout.ai);
+    const want = astApi.programHash(expected.ai);
+    assert.equal(got, want, `${pid} 出战 AI 必须等于服务端身份派生的默认 AI（D-159）`);
+    aiMatches += 1;
+    aiHashes.add(got);
+  }
+  truthCache = { players: ids.length, refs, distinctAi: aiHashes.size, aiMatches };
+  return truthCache;
+}
+
+// 收尾：关闭共享的进程内服务 + 删除临时数据根（本文件共享同一份批量运行的用例在此清理）
 after(async () => {
   if (shared) await load.closeReport(shared);
   shared = null;
+  truthCache = null;
 });
 
-test('LOAD-0 批量流程完整度：N 个真实玩家全部注册 + 配齐出战配置 + 池就绪 + 真打对局（无 bot）', async (t) => {
+test('LOAD-0 批量流程完整度：N 个真实玩家全部注册 + 配齐出战配置（starter 服务端权威）+ 池就绪 + 真打对局（无 bot）', async (t) => {
   const report = await run();
   assert.equal(report.options.players, PLAYERS);
   assert.equal(report.options.scrypt.includes('N=1024'), true, '集成测试走快速 scrypt（生产默认 N=16384）');
@@ -74,12 +162,32 @@ test('LOAD-0 批量流程完整度：N 个真实玩家全部注册 + 配齐出�
   const setup = report.phases.setup;
   assert.equal(setup.ok, PLAYERS, `配齐出战配置失败：${JSON.stringify(setup.failures)}`);
   assert.ok(setup.assemble, '报告缺少装配统计');
-  // 装配走真实 HTTP（POST /warehouse/assemble）路径：逐条提交、服务端裁决
-  assert.ok(setup.assemble.placed > 0, '至少应有若干装配成功（真实插件入槽）');
-  assert.ok(report.metrics.statusDistribution['POST /api/v1/warehouse/assemble 200'] > 0, '装配请求必须走 HTTP 端点并成功');
-  assert.ok(report.metrics.statusDistribution['POST /api/v1/ai/validate 200'] === PLAYERS, 'AI validate 全部 200');
-  assert.ok(report.metrics.statusDistribution['POST /api/v1/ai/compile 200'] === PLAYERS, 'AI compile 全部 200');
-  assert.ok(report.metrics.statusDistribution['PUT /api/v1/me/warehouse 200'] === PLAYERS, '仓库镜像全部提交成功');
+  // D-159：默认路径**不开箱、不装配**；`--deep` 时才走服务端权威写端点（每人恰一次拆卸→装配往返）。
+  //   本夹具固定 deep:true，故这里断言"每人至少一次成功往返"（覆盖 12 个真实玩家的写路径）。
+  assert.equal(report.options.deep, true, '本夹具走 --deep 路径（压测服务端权威写端点，D-159）');
+  assert.ok(setup.assemble.placed >= PLAYERS,
+    `--deep 下每人至少一次 POST /me/warehouse/assemble 成功（实得 ${setup.assemble.placed}）`);
+  assert.ok(setup.assemble.disassembled >= PLAYERS,
+    `--deep 下每人至少一次 POST /me/warehouse/disassemble 成功（实得 ${setup.assemble.disassembled}）`);
+  assert.equal(setup.assemble.placed, setup.assemble.disassembled, '拆卸/装配往返数必须配平');
+
+  // D-159 真源不变量（**替代**旧的"装配 HTTP 处数 > 0 / PUT /me/warehouse 200 === PLAYERS"）：
+  //   旧断言数的是测试自己发的请求；新断言直接核对"每人的出战配置完整、引用齐备且真的装在槽上"。
+  const tr = await truth();
+  assert.equal(tr.players, PLAYERS);
+  assert.ok(tr.refs >= PLAYERS * 2, `每人 starter 至少 2 处装配引用（1 角色插件 + 1 技能插件），实得 ${tr.refs}`);
+  const dist0 = report.metrics.statusDistribution;
+  // D-159：真源读路径必须覆盖每个玩家（配齐出战配置的 HTTP 证据）
+  assert.ok(dist0['GET /api/v1/me 200'] >= PLAYERS, '每人至少一次 /me 摘要读取');
+  assert.ok(dist0['GET /api/v1/me/configs 200'] >= PLAYERS, 'D-159：每人至少一次配置真源读取');
+  assert.ok(dist0['GET /api/v1/me/warehouse 200'] >= PLAYERS, 'D-159：每人至少一次仓库真源读取');
+  assert.ok((dist0['POST /api/v1/me/box 200'] || 0) >= PLAYERS, 'D-162/--deep：开箱走服务端权威端点 POST /me/box');
+  assert.ok((dist0['POST /api/v1/me/warehouse/assemble 200'] || 0) >= PLAYERS, 'D-159：装配走 POST /me/warehouse/assemble');
+  assert.ok((dist0['POST /api/v1/me/warehouse/disassemble 200'] || 0) >= PLAYERS, 'D-159：拆卸走 POST /me/warehouse/disassemble');
+  // D-159：`PUT /me/warehouse` 退役为"只做形状校验" → 默认批量流程**不得**再依赖客户端镜像
+  assert.equal(dist0['PUT /api/v1/me/warehouse 200'], undefined, 'D-159：默认流程不得再提交客户端仓库镜像');
+  // D-162：HTTP 开箱没有 seed 入参（传了被静默忽略）→ 不得出现 bad_seed
+  assert.equal(report.metrics.errorCodes.bad_seed, undefined, 'D-162：HTTP 开箱无 seed 入参，不得出现 bad_seed');
 
   const pool = report.phases.pool;
   assert.equal(pool.registeredPlayers, PLAYERS);
@@ -101,10 +209,18 @@ test('LOAD-0 批量流程完整度：N 个真实玩家全部注册 + 配齐出�
     assert.ok(s.p50 <= s.p95, `${group}: P50 ${s.p50} ≤ P95 ${s.p95}`);
     assert.ok(s.p95 <= s.max, `${group}: P95 ${s.p95} ≤ max ${s.max}`);
   }
-  // 每人的 AI 程序内容互不相同（行为各不相同）
-  assert.equal(report.distribution.aiPrograms.distinct, PLAYERS, 'AI 程序应两两不同');
-  assert.equal(report.distribution.aiPrograms.equalToPlayers, true);
-  t.diagnostic(`[LOAD-0] 注册=${reg.ok} 配齐=${setup.ok} 装配=${setup.assemble.placed}处 池=${pool.archives}/快照${pool.usableSnapshots} 对局=${matches.totalMatches}（排位 ${matches.ranked.matches} + 快速 ${matches.quick.ok}） 吞吐=${matches.throughputPerSecond}/s`);
+  // D-159：AI 不再由测试逐玩家编造 —— starter 的 AI 由服务端按身份派生（`ranked.buildDefaultLoadout`，
+  //   3 预设族 × 子变体），故 `distinct` 不再等于玩家数。等价的强断言：
+  //   ① 每人出战 AI 逐字节等于服务端身份派生默认 AI（assertServerTruth 已逐人核，见 tr.aiMatches）；
+  //   ② 报告的去重数必须等于按真源独立复算的去重数（报告口径不得自说自话）；
+  //   ③ 实际确实出现 ≥2 种（否则"按身份派生"退化为常量）。
+  assert.equal(tr.aiMatches, PLAYERS, '每人出战 AI 必须逐字节等于服务端身份派生的默认 AI（D-159）');
+  assert.equal(report.distribution.aiPrograms.distinct, tr.distinctAi, '报告 AI 去重数必须等于真源独立复算值');
+  assert.ok(tr.distinctAi >= 2, `按身份派生的 AI 应至少出现 2 种（实得 ${tr.distinctAi}）`);
+  t.diagnostic(`[LOAD-0] 注册=${reg.ok} 配齐=${setup.ok} 真源引用=${tr.refs}处 AI去重=${tr.distinctAi}/${PLAYERS} `
+    + `池=${pool.archives}/快照${pool.usableSnapshots} 对局=${matches.totalMatches}`
+    + `（排位 ${matches.ranked.matches} + 快速 ${matches.quick.ok}） 深度往返=装配${setup.assemble.placed}/拆卸${setup.assemble.disassembled} `
+    + `吞吐=${matches.throughputPerSecond}/s`);
 });
 
 test('LOAD-1 ①journal 幂等：重复 apply 不重复记账 / 不推水位', async (t) => {
@@ -241,7 +357,7 @@ test('LOAD-4 ⑤回放 LRU 不越界（批量流程不产帧；配置上限 = se
   // store 侧真值（非测试自算）
   assert.equal(report.storeHandle.config.replayCacheSize, n.limit, 'store.config.replayCacheSize === 运行期 LRU 上限');
   assert.equal(report.storeHandle.config.replayCacheSize, svc.replayCacheSize);
-  // 本批量流程只跑 /ai/*、/ranked/run、/quick/run，**不调用 POST /battle** ⇒ 不产帧
+  // 本批量流程只跑 /me/*、/ranked/run、/quick/run，**不调用 POST /battle** ⇒ 不产帧
   assert.equal(n.addedByThisRun, 0, '本批量流程不得新增回放帧（不调用 POST /battle）');
   const games = report.integrity.counts.battleRecords;
   assert.ok(games > 0, '批量流程必须真的打了对局');
@@ -329,7 +445,7 @@ test('LOAD-5 ⑥每场对局双方均为真实注册玩家（无 bot 补位，�
   t.diagnostic(`[LOAD-5] 对局 ${endpoints / 2} 场 / ${endpoints} 端全部为真实注册玩家，isBot 档案 0 个`);
 });
 
-test('LOAD-6 ⑦无 5xx + 状态码分布自洽', async (t) => {
+test('LOAD-6 ⑦无 5xx + 状态码分布自洽（D-159/D-162 端点口径）', async (t) => {
   const report = await run();
   const check = checkOf(report, 'A7-no-5xx');
   assert.equal(check.ok, true, check.detail);
@@ -341,25 +457,121 @@ test('LOAD-6 ⑦无 5xx + 状态码分布自洽', async (t) => {
     const status = Number(key.slice(key.lastIndexOf(' ') + 1));
     assert.ok(status < 500, `状态码分布含 5xx：${key} × ${count}`);
     assert.ok(count > 0);
+    // 唯一允许的业务拒绝 = "池不足不注入 bot" 的 quick no_opponent 409（D-152）；其余非 200 一律是契约问题
+    if (status !== 200) {
+      assert.equal(status, 409, `只允许 409 业务拒绝（实得 ${key} × ${count}）`);
+    }
   }
-  // 关键端点必须全部 200（注册 / 开箱 / AI / 仓库镜像 / 配置槽 / 排行榜）
-  assert.equal(dist['POST /api/v1/auth/register 200'], PLAYERS);
-  assert.ok(dist['POST /api/v1/box 200'] >= PLAYERS, '开箱至少每人一次');
-  assert.ok(dist['POST /api/v1/box 200'] <= PLAYERS * 3, '开箱最多每人三次（掉落不足才补开）');
-  assert.equal(dist['PUT /api/v1/me/configs/slot1 200'], PLAYERS);
-  assert.equal(dist['POST /api/v1/ai/validate 200'], PLAYERS);
-  assert.equal(dist['POST /api/v1/ai/compile 200'], PLAYERS);
-  assert.equal(dist['PUT /api/v1/me/warehouse 200'], PLAYERS);
+  // 错误码白名单：迁移后批量流程只应出现 no_opponent
+  for (const code of Object.keys(m.errorCodes)) {
+    assert.equal(code, 'no_opponent', `出现未预期的业务错误码 ${code} × ${m.errorCodes[code]}`);
+  }
+  // 关键端点（D-159 迁移后的**真源读路径**）必须覆盖每个玩家
+  assert.equal(dist['POST /api/v1/auth/register 200'], PLAYERS, '注册全部 200');
+  assert.ok(dist['GET /api/v1/me 200'] >= PLAYERS, '每人至少一次 /me 摘要读取');
+  assert.ok(dist['GET /api/v1/me/configs 200'] >= PLAYERS, 'D-159：每人至少一次配置真源读取');
+  assert.ok(dist['GET /api/v1/me/warehouse 200'] >= PLAYERS, 'D-159：每人至少一次仓库真源读取');
   assert.equal(dist['GET /api/v1/leaderboard 200'], 1, '排行榜读一次（断言 ④ 的 HTTP 复核）');
+  // D-159：`PUT /me/warehouse` 退役为"只做形状校验" → 默认流程不得再依赖客户端镜像
+  assert.equal(dist['PUT /api/v1/me/warehouse 200'], undefined, 'D-159：默认流程不得再提交客户端仓库镜像');
+  // D-159：仓库真源恒存在 → 不得再出现 warehouse_missing（旧 D-130 的 404 码）
+  assert.equal(m.errorCodes.warehouse_missing, undefined, 'D-159：仓库真源恒存在，不得再出现 warehouse_missing');
+  // D-162：HTTP 开箱没有 seed 入参（传了被静默忽略）→ 不得出现 bad_seed
+  assert.equal(m.errorCodes.bad_seed, undefined, 'D-162：HTTP 开箱无 seed 入参，不得出现 bad_seed');
   assert.equal(m.errorCodes.loadout_invalid, undefined, '不得有 loadout_invalid（出战配置必须自洽可用）');
-  t.diagnostic(`[LOAD-6] 请求 ${m.requests} 次，5xx=0，传输失败=0，错误率 ${m.errorRate}`);
+  // `--deep`：服务端权威写端点（D-159）必须真的被压到且成功
+  assert.ok((dist['POST /api/v1/me/box 200'] || 0) >= PLAYERS, 'D-159/D-162：每人至少一次服务端权威开箱');
+  assert.ok((dist['POST /api/v1/me/warehouse/disassemble 200'] || 0) >= PLAYERS, 'D-159：每人至少一次拆卸');
+  assert.ok((dist['POST /api/v1/me/warehouse/assemble 200'] || 0) >= PLAYERS, 'D-159：每人至少一次装配（往返）');
+  // D-162：批量流程必须注入确定性开箱 seed（同 seed 可复现 → LOAD-6b 验证语义）
+  assert.ok(report.options.deterministicBoxes === true || Number.isInteger(report.options.boxSeed),
+    'D-162：批量流程必须注入 boxSeed（确定性序列）');
+  t.diagnostic(`[LOAD-6] 请求 ${m.requests} 次，5xx=0，传输失败=0，错误率 ${m.errorRate}；`
+    + `boxSeed=${report.options.boxSeed}（确定性=${report.options.deterministicBoxes}）`);
 });
 
-test('LOAD-7 引擎与分布：AI 程序互不相同 + 账务闭合 + 每人快照可实例化', async (t) => {
+/* ---------- 6b. D-162：开箱 seed 服务端独占 + start({boxSeed}) 确定性（新端点，独立小实例） ---------- */
+
+test("LOAD-6b D-162：HTTP 开箱无 seed 入参（传了被忽略）；start({boxSeed}) 提供可复现序列（同 seed 同批次）", async (t) => {
+  // 三个独立小实例（各自 dataDir 隔离）：前两个同 boxSeed → 必须产出**同一批**掉落内容；第三个不同 boxSeed。
+  const logger = createLogger({ level: 'error' });
+  const authConfig = { auth: { scrypt: { N: 1024, r: 8, p: 1 }, rateLimitPerMinute: 1000 } };
+  const started = [];
+  const boot = async (boxSeed) => {
+    const dataDir = load.makeTempDir();
+    const s = await serverMod.start({
+      logger, dataDir, port: 0, boxSeed, versions: { engine: serverMod.VERSION },
+      authConfig, rateLimitPerMinute: 1000,
+    });
+    started.push({ s, dataDir });
+    return s;
+  };
+  // 注册 + 开箱（`seed` 只在"必须被忽略"的用例里显式塞进 body —— D-162：接口没有该字段）
+  const registerAndBox = async (s, tag, body) => {
+    const reg = await load.httpRequest(s.port, 'POST', '/api/v1/auth/register', {
+      username: `d162_${tag}`, password: load.PASSWORD, nickname: `seed${tag}`,
+    });
+    assert.equal(reg.status, 200, `注册应 200：${JSON.stringify(reg.body).slice(0, 160)}`);
+    const token = reg.body.data.token;
+    const box = await load.httpRequest(s.port, 'POST', '/api/v1/me/box', body, { authorization: `Bearer ${token}` });
+    assert.equal(box.status, 200, `POST /me/box 应 200：${JSON.stringify(box.body).slice(0, 160)}`);
+    return box.body.data;
+  };
+  // 内容投影（去掉进程内分配的 uid，只比"内容级"）
+  const contentOf = (items) => items.map((it) => { const { uid, ...rest } = it; return rest; });
+  try {
+    const BASE = 1000;
+    const s1 = await boot(BASE);
+    const s2 = await boot(BASE);
+    const s3 = await boot(BASE + 1000);
+
+    // ① `start({boxSeed})` = 确定性序列：第 n 次调用 = boxSeed + n − 1（第 1 次 = boxSeed，第 2 次 = boxSeed+1）
+    const a1 = await registerAndBox(s1, 'a1', { times: 4, tier: 'common' });
+    const a2 = await registerAndBox(s1, 'a2', { times: 4, tier: 'common' });
+    assert.ok(Number.isInteger(a1.seed) && a1.seed >= 1 && a1.seed <= 0x7fffffff, `seed 必须服务端生成（实得 ${a1.seed}）`);
+    assert.equal(a1.seed, BASE, `D-162：第 1 次开箱 seed = boxSeed（实得 ${a1.seed}）`);
+    assert.equal(a2.seed, a1.seed + 1, `确定性序列必须逐次推进（${a1.seed} → ${a2.seed}）`);
+    assert.match(a1.grantId, /^bx_[0-9a-f]{16}$/, 'D-159：POST /me/box 必须入档并回带 grantId');
+
+    // ② 同 boxSeed 的第二个实例：seed 与**掉落内容**必须逐值一致（内容级；uid 由进程内计数器分配，故排除）
+    const b1 = await registerAndBox(s2, 'b1', { times: 4, tier: 'common' });
+    assert.equal(b1.seed, a1.seed, '同 boxSeed 的第 1 次开箱必须得到同一 seed');
+    assert.deepEqual(contentOf(b1.items), contentOf(a1.items), 'D-162：同 boxSeed 两次运行必须产出同一批掉落内容（uid 除外）');
+
+    // ③ 不同 boxSeed → 不同 seed；且 body 里的 `seed` 必须被**静默忽略**（D-162：不再有 bad_seed）
+    const c1 = await registerAndBox(s3, 'c1', { times: 4, tier: 'common', seed: 424242 });
+    assert.notEqual(c1.seed, 424242, 'D-162：HTTP 开箱不接受客户端 seed（传了必须被忽略）');
+    assert.notEqual(c1.seed, a1.seed, '不同 boxSeed 必须得到不同 seed');
+    assert.equal(c1.seed, BASE + 1000, '同一注入序列口径：第 1 次 = boxSeed');
+    // ④ 遗留无状态 `POST /box` 同样不接受 seed，并从**同一**确定性序列取下一个
+    const legacy = await load.httpRequest(s3.port, 'POST', '/api/v1/box', { times: 2, tier: 'common', seed: 424242 });
+    assert.equal(legacy.status, 200, `遗留 POST /box 应 200：${JSON.stringify(legacy.body).slice(0, 160)}`);
+    assert.notEqual(legacy.body.data.seed, 424242, 'D-162：遗留 /box 也不接受客户端 seed');
+    assert.equal(legacy.body.data.seed, c1.seed + 1, '遗留 /box 与 /me/box 共用同一确定性序列');
+    assert.equal(legacy.body.data.grantId, undefined, 'D-159：遗留 /box 不入档 → 无 grantId');
+    t.diagnostic(`[LOAD-6b] boxSeed=${BASE}：两次独立运行 seed=${a1.seed}、内容逐值一致（${a1.items.length} 件）；`
+      + `序列推进 ${a1.seed}→${a2.seed}；客户端 seed=424242 被忽略（实得 ${c1.seed}）；遗留 /box 共用序列（seed=${legacy.body.data.seed}）`);
+  } finally {
+    for (const { s, dataDir } of started) {
+      try { await s.close(); } finally { load.removeTempDir(dataDir); }
+    }
+  }
+});
+
+test('LOAD-7 引擎与分布：AI 由服务端身份派生 + 账务闭合 + 每人快照可实例化', async (t) => {
   const report = await run();
   const dist = report.distribution;
-  assert.equal(dist.aiPrograms.distinct, PLAYERS, '每个玩家的 AI 程序内容必须不同');
+  // D-159：starter 的 AI 由服务端按身份派生（3 预设族 × 子变体）→ 去重数不再等于玩家数
+  //   （旧断言 `distinct === PLAYERS` 依赖"测试逐玩家编造 AI"，该前提已随契约废除）。
+  //   等价的强断言：报告去重数 ≡ 真源独立复算值；每人 AI 逐字节等于服务端身份派生默认 AI；实际 ≥2 种。
+  const tr = await truth();
+  assert.equal(dist.aiPrograms.distinct, tr.distinctAi, '报告 AI 去重数必须等于按档案真源独立复算的去重数');
+  assert.ok(dist.aiPrograms.distinct >= 2 && dist.aiPrograms.distinct <= PLAYERS,
+    `按身份派生的 AI 去重数应落在 [2, ${PLAYERS}]（实得 ${dist.aiPrograms.distinct}）`);
+  assert.equal(tr.aiMatches, PLAYERS, '每人出战 AI 必须逐字节等于服务端身份派生的默认 AI（D-159）');
   assert.ok(Object.keys(dist.aiPrograms.presets).length >= 2, '预设应有多种（同一 seed 下多样性）');
+  // 报告 ↔ 真源交叉比对：装配引用总数必须一致（防止报告与档案各说各话）
+  assert.equal(dist.equippedPlugins.total, tr.refs, '报告装配引用总数必须等于真源复算值（D-159）');
   const counts = report.integrity.counts;
   // 积分轨道：只有快速对战改积分（D-133 双轨），排位一场都不计入 rating.games
   assert.ok(dist.ratingGamesTotal >= counts.quickMatches, '积分场次 ≥ 快速对战数（每场两端各计一次）');
@@ -382,5 +594,7 @@ test('LOAD-7 引擎与分布：AI 程序互不相同 + 账务闭合 + 每人快�
     const v = astApi.validate(snap.loadout.ai, archive.progress.tier);
     assert.equal(v.ok, true, `${pid} 快照 AI 必须通过校验`);
   }
-  t.diagnostic(`[LOAD-7] AI 去重 ${dist.aiPrograms.distinct}/${PLAYERS}；对局 ${counts.battleRecords}（排位 ${counts.rankedMatches} + 快速 ${counts.quickMatches}）；积分分布 ${JSON.stringify(dist.rating.bands)}`);
+  t.diagnostic(`[LOAD-7] AI 去重 ${dist.aiPrograms.distinct}/${PLAYERS}（服务端身份派生，逐人核对通过 ${tr.aiMatches}）；`
+    + `装配引用 ${tr.refs} 处；对局 ${counts.battleRecords}（排位 ${counts.rankedMatches} + 快速 ${counts.quickMatches}）；`
+    + `积分分布 ${JSON.stringify(dist.rating.bands)}`);
 });

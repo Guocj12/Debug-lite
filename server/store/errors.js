@@ -26,6 +26,19 @@ const STATUS_BY_CODE = Object.freeze({
   config_conflict: 409,
   loadout_invalid: 409,
   no_active_config: 409,
+  // D-159：服务端权威仓库 / D-160：出战完整性 / D-161：AI 库（契约 docs/interfaces.md §2.1）
+  warehouse_full: 409,               // 某分类已达上限（拒绝开箱；不写 journal）
+  cannot_activate_incomplete: 409,   // 设为出战时配置不完整（保存非出战槽时不校验）
+  ai_limit: 409,                     // AI 库已满（默认 100，与物品分别计数）
+  ai_in_use: 409,                    // 删除被出战配置引用的 AI
+  item_missing: 409,                 // 仓库内物品不存在（装配目标/插件）
+  slot_type_mismatch: 409,           // 插件类型与插槽不匹配（core/items 装配拒绝）
+  slot_occupied: 409,                // 插槽已占用
+  points_exceeded: 409,              // 角色插件点数不足
+  plugin_equipped: 409,              // 插件已装配别处
+  tier_locked: 409,                  // 段位门控拒绝（门控开启时）
+  slot_empty: 404,                   // 拆卸时槽为空（core/items 口径）
+  plugin_missing: 404,               // 拆卸时悬挂引用/插件不在仓库
 });
 
 const FATAL_CODES = new Set([

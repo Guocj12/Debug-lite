@@ -17,7 +17,7 @@ commands:
   log [--level <l>] [--channel ch=lv]  # 日志总控（GET/POST /api/v1/log-level）
   ai <validate|compile|battle> --file ai.json [--tier <t>] [--opponent <o>] [--seed <n>]
                                   # AI 程序校验/编译/对战（B16）
-  box [--seed <n>] [--tier <t>] [--times <k>]  # 开箱（B17）
+  box [--tier <t>] [--times <k>]               # 开箱（B17；D-162 起不接受 --seed：seed 由服务端生成）
   wh list --file wh.json                       # 本地仓库摘要（分桶 + 装配状态）
   wh assemble|disassemble --file wh.json --item <uid> --slot <i> [--plugin <uid>] [--tier <t>]
                                                # 装配/拆卸（B18，经 HTTP）
@@ -383,27 +383,22 @@ async function main(argv, options) {
         }
       }
     } else if (cmd === 'box') {
-      // box [--seed <n>] [--tier <t>] [--times <k>]
-      let seed = null;
+      // box [--tier <t>] [--times <k>]
+      // D-162：`seed` **不是接口参数**（随机性由服务端独占）→ 本命令不再接受 `--seed`（给了即参数错误，exit 2）
       let tier = null;
       let times = null;
       let valid = true;
       for (let i = 1; i < args.length; i++) {
         const a = args[i];
-        if (a === '--seed') seed = args[++i];
-        else if (a === '--tier') tier = args[++i];
+        if (a === '--tier') tier = args[++i];
         else if (a === '--times') times = args[++i];
         else { valid = false; }
       }
       if (!valid) {
-        console.error(`box 参数非法\n${USAGE}`);
+        console.error(`box 参数非法（本命令不接受 --seed：D-162 起 seed 由服务端生成）\n${USAGE}`);
         code = 2;
       } else {
         const body = {};
-        if (seed !== null) {
-          const n = Number(seed);
-          body.seed = Number.isInteger(n) && n >= 1 ? n : seed; // 非法 → 服务端 400 bad_seed
-        }
         if (tier !== null) body.tier = tier;
         if (times !== null) {
           const k = Number(times);

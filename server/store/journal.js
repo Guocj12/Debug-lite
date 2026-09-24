@@ -13,6 +13,7 @@ const path = require('node:path');
 const { nullLogger } = require('../../shared/log.js');
 const { StoreError } = require('./errors.js');
 const { deepClone } = require('./canonical.js');
+const { NON_COMPACTABLE } = require('./archive.js');
 const fsatomic = require('./fsatomic.js');
 
 const RECORD_VERSION = 1;
@@ -370,6 +371,14 @@ function createJournal(options) {
       if (seg.key >= cutoffKey) continue;
       if (seg.maxSeq > appliedSeq) continue; // 仍有未物化记录 → 保留该段
       const records = readSegmentRecords(seg.key);
+      // D-159/D-161：含仓库/AI 状态变更的段**保留不压缩**——这些记录承载的是状态量
+      //   （开箱发放 / 装配拆卸 / AI 库），无法由段内增量无损重建，必须留在 journal 真源里。
+      if (records.some((r) => r && NON_COMPACTABLE.includes(r.type))) {
+        log.info('store', 'store.journal.compact.skip',
+          `journal 段 ${seg.key} 含仓库/AI 变更（${records.length} 条），保留不压缩`,
+          { segment: seg.key, records: records.length, reason: 'non_compactable_types' });
+        continue;
+      }
       const perPlayer = aggregate ? aggregate(records) : {};
       const checkpoint = {
         type: 'checkpoint', v: RECORD_VERSION, seq: seg.maxSeq, at,

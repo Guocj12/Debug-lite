@@ -101,7 +101,14 @@ test('PS-2 业务状态变更都在 journal（D-134）；A 类派生标志（未
     const a = await registerPlayer(fx.auth, { username: 'Journal_A' });
     const b = await registerPlayer(fx.auth, { username: 'Journal_B' });
     await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: sampleLoadout(fx.account) });
-    await fx.account.createSlot({ playerId: a.playerId });
+    // D-159：注册即建满 3 槽 → 再建槽必撞 409 slot_limit（不落 journal 记录）
+    const over = await fx.account.createSlot({ playerId: a.playerId });
+    assert.equal(over.ok, false);
+    assert.equal(over.code, 'slot_limit');
+    // D-160：写满 slot2 后才能设为出战；空槽激活 → 409 cannot_activate_incomplete（同样不落记录）
+    await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    const actEmpty = await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot3' });
+    assert.equal(actEmpty.code, 'cannot_activate_incomplete');
     await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot2' });
     await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot1' });
     await fx.account.deleteSlot({ playerId: a.playerId, slotId: 'slot2' });
@@ -110,7 +117,16 @@ test('PS-2 业务状态变更都在 journal（D-134）；A 类派生标志（未
     const records = fx.store.readRecords({ includeCheckpoints: false });
     const count = (type) => records.filter((r) => r.type === type).length;
     assert.equal(count('account.created'), 2, '注册 2 条');
-    assert.equal(count('player.config.saved'), 5, '保存/新建/激活×2/删除 各 1 条');
+    // D-159/D-160：注册即 3 槽；本用例的配置类记录 = PUT slot1 + PUT slot2 + activate×2 + DELETE。
+    //   （旧口径 5 条含"新建槽复制出战配置"语义，D-160 起新建槽是空槽，且注册已占满 3 槽。）
+    //   被拒绝的请求（409 slot_limit / cannot_activate_incomplete）一律不落记录。
+    const cfgRecords = records.filter((r) => r.type === 'player.config.saved');
+    assert.equal(cfgRecords.length, 5, '保存×2 / 激活×2 / 删除 各 1 条：'
+      + JSON.stringify(cfgRecords.map((r) => ({ slotId: r.slotId, create: r.create, activate: r.activate, deleted: r.deleted }))));
+    assert.deepEqual(cfgRecords.map((r) => r.slotId), ['slot1', 'slot2', 'slot2', 'slot1', 'slot2']);
+    assert.deepEqual(cfgRecords.map((r) => !!r.create), [false, false, false, false, false], '无新建记录（3 槽已满，POST /me/configs 被 409 slot_limit 拦下）');
+    assert.deepEqual(cfgRecords.map((r) => !!r.activate), [false, false, true, true, false]);
+    assert.deepEqual(cfgRecords.map((r) => !!r.deleted), [false, false, false, false, true]);
     assert.equal(count('player.nickname.changed'), 1);
     assert.equal(count('battle.recorded'), 1);
     // seq 严格递增且连续覆盖
@@ -130,10 +146,13 @@ test('PS-2 业务状态变更都在 journal（D-134）；A 类派生标志（未
     await fx.account.markSeen({ playerId: a.playerId, uptoSeq: seqBefore });
     const wh = await fx.account.saveWarehouseMirror({ playerId: a.playerId, warehouse: { buckets: { role: [] } } });
     assert.equal(wh.ok, true);
+    assert.equal(wh.status, 200, 'D-159：PUT /me/warehouse 退役为只做形状校验（不再 409 loadout_invalid）');
     assert.equal(fx.store.maxSeq(), seqBefore, 'A 类派生写不写 journal');
     assert.equal((await fx.store.loadArchive(a.playerId)).record.appliedSeq, appliedBefore, '水位不推进');
+    // D-159：仓库真源在服务端，未通过镜像校验也**不降级**档案标志（注册 starter 即已校验）
     assert.equal((await fx.store.loadArchive(a.playerId)).flags.unverifiedLoadout, false,
-      '标志直接落在档案（A 类原子写）；因不在 journal，从 journal 全量重建后会回到默认值');
+      'D-159：服务端权威仓库 → 标志源自真源，不被客户端镜像改写（旧"镜像校验才清标志"已废除）');
+    assert.equal(wh.data.unverifiedLoadout, wh.data.verified !== true, '回执字段只描述本次提交的镜像（self-report）');
     assert.equal((await fx.account.getSummary(a.playerId)).data.record.unread.attack, 0, '未读游标同理（派生）');
   } finally {
     await fx.cleanup();

@@ -176,7 +176,7 @@ test('BR-5 adapter：缺失档案的记录 → missing（记 store.error）；�
   }
 });
 
-test('BR-6 adapter：出战槽无 loadout（快照正文缺失）→ 新建槽报 loadout_invalid', async () => {
+test('BR-6 adapter：出战槽无 loadout（快照正文缺失）→ 新建槽改走 D-160 空槽路径（不再复制 → 不再报错）', async () => {
   const dir = mkTmp();
   const store = createStore({ dataDir: dir, versions: VERSIONS, logger: nullLogger });
   try {
@@ -193,11 +193,18 @@ test('BR-6 adapter：出战槽无 loadout（快照正文缺失）→ 新建槽�
       slot: { slotId: 'slot1', snapshotHash: snap.hash, configHash: snap.configHash, versions: VERSIONS },
     });
     assert.equal(acc.configs.slots[0].loadout, null, '快照正文缺失 → loadout 缺失（结构仍在）');
-    await assert.rejects(() => store2.createConfigSlot({ playerId: acc.playerId, name: '复制' }),
-      (e) => e.code === 'loadout_invalid');
-    // 激活仍可行（快照 hash 引用有效，仅正文暂缺 → 由回放/实例化侧判 replay_expired / no_active_config）
-    const activated = await store2.activateConfigSlot({ playerId: acc.playerId, slotId: 'slot1' });
-    assert.equal(activated.archive.configs.activeSnapshotHash, snap.hash);
+    // D-160：新建槽**不再复制出战配置**（改为建空槽）→ 快照正文缺失不再是拒绝理由（旧 loadout_invalid 已废除）
+    const created = await store2.createConfigSlot({ playerId: acc.playerId, name: '第三套' });
+    assert.equal(created.snapshot, null, 'D-160：新建槽无快照');
+    assert.deepEqual(created.slot.loadout, { role: null, skills: [null, null, null], ai: null }, 'D-160：新建槽为空槽');
+    assert.equal(created.archive.configs.slots.length, 2);
+    assert.equal(created.archive.configs.activeSlotId, 'slot1', 'D-160：新建槽不改变出战');
+    // 出战槽 loadout 缺失（= 不完整）→ 不可激活（D-160：完整性校验推迟到 activate）
+    await assert.rejects(() => store2.activateConfigSlot({ playerId: acc.playerId, slotId: 'slot1' }),
+      (e) => e.code === 'cannot_activate_incomplete');
+    // 快照 hash 引用本身仍有效（正文暂缺 → 由回放/实例化侧判 replay_expired），档案不变量仍成立
+    const after = await store2.loadArchive(acc.playerId);
+    assert.equal(after.configs.activeSnapshotHash, snap.hash);
     await store2.close();
   } finally {
     await store.close();
@@ -294,13 +301,18 @@ test('BR-11 档案版本迁移：磁盘上的 v0 档案在读取时升级并原�
       },
     }), 'utf8');
     const archive = await store.loadArchive(pid);
-    assert.equal(archive.archiveVersion, 1, '读档时升级到当前版本');
+    assert.equal(archive.archiveVersion, 2, '读档时升级到当前版本（D-159：ARCHIVE_VERSION=2）');
     assert.equal(archive.rating.points, 33, '保留 v0 已有字段');
     assert.equal(archive.progress.tier, 'common', '补齐缺失段');
     assert.equal(archive.record.appliedSeq, 0);
+    // D-159/D-161：v0 → v2 连跳两级 → 补齐**空**仓库段与 AI 库段（老账号不发 starter）
+    assert.deepEqual(archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, starterIssued: false, grantIds: [] });
+    assert.deepEqual(archive.ai, { items: [] });
     assert.ok(log.has('store.migrate'));
     const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
-    assert.equal(onDisk.archiveVersion, 1, '升级后立即原子写回');
+    assert.equal(onDisk.archiveVersion, 2, '升级后立即原子写回');
+    assert.equal(onDisk.warehouse.starterIssued, false, '写回的空仓库同样带 starterIssued:false');
+    assert.deepEqual(onDisk.ai.items, []);
     assert.equal(store.index.get(pid).points, 33, '索引同步');
   } finally {
     await store.close();
@@ -327,22 +339,75 @@ test('BR-12 快照去重 + 版本戳不一致：保留首个并记 store.snapsho
   }
 });
 
-test('BR-13 激活缺快照的槽（仅检查点重建档案）→ no_active_config', async () => {
+test('BR-13 激活：不完整 loadout → cannot_activate_incomplete；完整但缺快照 → 自愈冻结（D-160）', async () => {
   const dir = mkTmp();
   const store = createStore({ dataDir: dir, versions: VERSIONS, logger: nullLogger });
+  let store2 = null;
   try {
     await store.open();
     const archMod = require('../../server/store/archive.js');
-    const shell = archMod.createArchiveShell('pl_cdcdcdcdcdcdcdcd', 1);
-    shell.publicId = 'u_cdcdcdcd';
+    const complete = {
+      role: { uid: 'r_13', kind: 'role', templateId: 'role_bal', quality: 'common' },
+      skills: [
+        { uid: 's_13a', kind: 'skill', templateId: 'skill_melee_whirl', quality: 'common' },
+        { uid: 's_13b', kind: 'skill', templateId: 'skill_straight_precise', quality: 'common' },
+        { uid: 's_13c', kind: 'skill', templateId: 'skill_melee_whirl', quality: 'common' },
+      ],
+      ai: { type: 'program', version: 2, body: { type: 'seq', statements: [] } },
+    };
+    assert.deepEqual(archMod.loadoutMissingOf(complete), [], '前置：该 loadout 完整（角色 + 恰 3 技能 + AI）');
+    // ① 不完整（loadout 为 null）→ 激活必须 409 cannot_activate_incomplete（旧的 no_active_config 已废除）。
+    //    该状态由"检查点重建"给出（rebuiltFromCheckpoint=true 时出战槽允许暂无快照，§6.7）。
+    const snap = store.freezeSnapshot(complete, VERSIONS);
+    const PID_INCOMPLETE = 'pl_cdcdcdcdcdcdcdcd';
+    const shell = archMod.createArchive({
+      playerId: PID_INCOMPLETE, publicId: 'u_cdcdcdcd', nickname: 'cp', at: 1,
+      slot: { slotId: 'slot1', snapshot: null, loadout: null },
+    });
     shell.flags.rebuiltFromCheckpoint = true;
-    shell.configs.slots.push(archMod.createSlot({ slotId: 'slot1', snapshot: null, loadout: null }));
-    shell.configs.activeSlotId = 'slot1';
-    shell.configs.activeSnapshotHash = null;
     await store.saveArchive(shell);
-    await assert.rejects(() => store.activateConfigSlot({ playerId: shell.playerId, slotId: 'slot1' }),
-      (e) => e.code === 'no_active_config');
+    await assert.rejects(() => store.activateConfigSlot({ playerId: PID_INCOMPLETE, slotId: 'slot1' }),
+      (e) => e.code === 'cannot_activate_incomplete' && e.status === 409);
+    // ② 完整 loadout + 缺快照 → 激活时**现场冻结**（自愈），不再报 no_active_config。
+    //    在磁盘上抹掉快照引用（loadout 正文保留）后重启适配器：仍处检查点重建态（不变量放宽）
+    //    → 可正常读入，再激活即触发自愈冻结。
+    const PID = 'pl_cececececececece';
+    const shell2 = archMod.createArchive({
+      playerId: PID, publicId: 'u_cececece', nickname: 'cp2', at: 1,
+      // 注意：createArchive 的 slot 入参是 createSlot 口径（snapshot 为 {hash,…} 对象）
+      slot: { slotId: 'slot1', snapshot: { hash: snap.hash, engineVersion: '3.0.0', dataVersion: 'b25', configHash: snap.configHash } },
+    });
+    shell2.configs.slots[0].loadout = archMod.createSlot({ loadout: complete }).loadout; // 配置正文（深拷贝）
+    shell2.flags.rebuiltFromCheckpoint = true;
+    await store.saveArchive(shell2);
+    await store.close();
+    const file = path.join(dir, 'players', PID.slice(3, 5), `${PID}.json`);
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(raw.flags.rebuiltFromCheckpoint, true, '前置：档案处于检查点重建态');
+    assert.deepEqual(raw.configs.slots[0].loadout, complete, '前置：完整 loadout 已落盘');
+    raw.configs.slots[0].snapshot = null;
+    raw.configs.activeSnapshotHash = null;
+    fs.writeFileSync(file, JSON.stringify(raw), 'utf8');
+    store2 = createStore({ dataDir: dir, versions: VERSIONS, logger: nullLogger });
+    await store2.open();
+    const cold = await store2.loadArchive(PID);
+    assert.ok(cold, '前置：新实例可读到该档案（检查点重建态允许出战槽无快照）');
+    assert.deepEqual(cold.configs.slots[0].loadout, complete, '前置：完整 loadout 已落盘');
+    assert.equal(cold.configs.activeSnapshotHash, null, '前置：出战槽确实无快照');
+    const activated = await store2.activateConfigSlot({ playerId: PID, slotId: 'slot1' });
+    assert.equal(activated.archive.configs.activeSlotId, 'slot1');
+    assert.match(activated.archive.configs.activeSnapshotHash, /^sha256:[0-9a-f]{64}$/, '自愈：激活时冻结出新快照');
+    assert.equal(activated.archive.configs.activeSnapshotHash, activated.snapshot.hash);
+    const reloaded = await store2.loadArchive(PID);
+    assert.equal(store2.snapshot.has(reloaded.configs.activeSnapshotHash), true, '快照已落盘（可回放/实例化）');
+    assert.deepEqual(store2.snapshot.get(reloaded.configs.activeSnapshotHash).loadout, complete);
+    // 再激活一次 → 已完整且有快照 → 幂等成功（不再改写快照内容）
+    const again = await store2.activateConfigSlot({ playerId: PID, slotId: 'slot1' });
+    assert.equal(again.archive.configs.activeSnapshotHash, activated.archive.configs.activeSnapshotHash);
+    await store2.close();
+    store2 = null;
   } finally {
+    if (store2) await store2.close();
     await store.close();
     rmTmp(dir);
   }

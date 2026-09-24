@@ -87,20 +87,28 @@ test('AU-3 注册→登录→token 校验→登出后旧 token 立即失效（T-
     assert.deepEqual(u.res.data.player.tier, 'common');
     assert.equal(u.res.data.player.points, 0, '积分从 0 起（D-133）');
     assert.equal(u.res.data.player.activeSlotId, 'slot1');
-    // 注册即默认配置（T-AC-1）：槽 + 冻结快照都真实落盘
+    // 注册即默认配置（T-AC-1）+ D-159：注册同时**建满 3 个槽**（slot1 完整出战；slot2/slot3 空槽）
     const cfg = await fx.account.listConfigs(u.playerId);
-    assert.equal(cfg.data.slots.length, 1);
+    assert.equal(cfg.data.slots.length, 3, 'D-159：注册即建满 3 槽（不再只有 1 个）');
+    assert.deepEqual(cfg.data.slots.map((s) => s.slotId), ['slot1', 'slot2', 'slot3']);
     assert.equal(cfg.data.slots[0].slotId, 'slot1');
     assert.equal(cfg.data.slots[0].isDefault, true);
     assert.equal(cfg.data.slots[0].name, '默认配置');
     assert.equal(cfg.data.activeSlotId, 'slot1');
     assert.equal(fx.store.snapshot.has(cfg.data.slots[0].snapshot.hash), true, '快照已冻结入库');
+    // 空槽（D-160）：无快照、5 个位置全空
+    for (const id of ['slot2', 'slot3']) {
+      const slot = cfg.data.slots.find((s) => s.slotId === id);
+      assert.equal(slot.isDefault, false);
+      assert.equal(slot.snapshot, null, `${id} 无快照（非出战槽允许不完整）`);
+      assert.deepEqual(slot.loadout, { role: null, skills: [null, null, null], ai: null });
+    }
     // token 校验
     const who = await fx.auth.authenticate(u.token);
     assert.equal(who.ok, true);
     assert.equal(who.data.player.playerId, u.playerId);
     assert.equal(who.data.publicId, u.publicId);
-    assert.deepEqual(who.data.player.slots.map((s) => s.slotId), ['slot1']);
+    assert.deepEqual(who.data.player.slots.map((s) => s.slotId), ['slot1', 'slot2', 'slot3']);
     // 登录（大小写不敏感）
     const lg = await fx.auth.login({ username: 'DEV_01', password: PASSWORD, ip: '9.9.9.9' });
     assert.equal(lg.ok, true);

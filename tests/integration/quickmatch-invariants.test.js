@@ -46,6 +46,9 @@ test('INV-1 快速对战积分守恒 + Elo 可复算 + cap/段位不变量 + 对
 
   const beforeAll = await ratingsOf(fx);
   const perMatch = [];
+  // 公式口径的对账量（供 ② 全局断言使用；D-133 汇 + §8.3 性质 4 下限保护）
+  let formulaDeltaSum = 0; // 按 ledger 公式逐侧复算的 Δ 之和（未受 clamp 影响）
+  let floorInjection = 0;  // 落盘 Δ − 公式 Δ 的累计差（只可能来自下限保护 clamp）
   for (let i = 0; i < 8; i++) {
     // 每场换一个发起者，并推进时间跨过 72h 去重窗口（保持每场都是"新鲜对手"）
     const me = players[i % players.length];
@@ -62,14 +65,41 @@ test('INV-1 快速对战积分守恒 + Elo 可复算 + cap/段位不变量 + 对
     const foeArchive = await fx.store.loadArchive(d.opponent.playerId);
     assert.equal(foeArchive.flags.isBot, false, '对手档案 flags.isBot=false');
     // ③ Elo 可复算（双方）
+    //   口径分界（D-133 + docs/systems/11-account-store.md §8.3「下限保护」性质 4）：
+    //   `ledger.ratingDelta` 回带**公式原始 Δ**（0 分玩家输球 = −16），而 `quickmatch` 回带的 `delta`
+    //   是**档案落盘值之差**（`pointsAfter − pointsBefore`），受 `结果积分 = clamp(R+Δ, 0, cap)` 裁剪
+    //   → 两者仅在**未触发下限裁剪**（`pointsBefore + 公式Δ ≥ 0`）时相等。故：
+    //   ① 先断言恒真的守恒式 `delta === pointsAfter − pointsBefore`（落盘 Δ 与前后差值一致）；
+    //   ② 再在未触发下限保护时断言与公式值逐值相等（公式复算断言**保留**，不放宽为"随便"）。
     const p1Result = d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw';
     const p2Result = p1Result === 'win' ? 'loss' : p1Result === 'loss' ? 'win' : 'draw';
     const e1 = ledger.ratingDelta({ points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore, result: p1Result, config: fx.RATING });
     const e2 = ledger.ratingDelta({ points: d.opponent.pointsBefore, opponentPoints: d.self.pointsBefore, result: p2Result, config: fx.RATING });
-    assert.equal(d.self.delta, e1.delta, `第 ${i + 1} 场：发起者 Δ 可复算`);
-    assert.equal(d.opponent.delta, e2.delta, `第 ${i + 1} 场：对手 Δ 可复算`);
+    assert.equal(d.self.delta, d.self.pointsAfter - d.self.pointsBefore, `第 ${i + 1} 场：发起者 Δ = 落盘前后差（守恒）`);
+    assert.equal(d.opponent.delta, d.opponent.pointsAfter - d.opponent.pointsBefore, `第 ${i + 1} 场：对手 Δ = 落盘前后差（守恒）`);
+    if (d.self.pointsBefore + e1.delta >= 0) {
+      assert.equal(d.self.delta, e1.delta, `第 ${i + 1} 场：发起者 Δ 可复算（未触发下限保护）`);
+    } else {
+      assert.equal(d.self.pointsAfter, 0, `第 ${i + 1} 场：发起者触发下限保护 → 积分夹到 0（§8.3 性质 4）`);
+      assert.equal(d.self.delta, d.self.pointsBefore === 0 ? 0 : -d.self.pointsBefore, `第 ${i + 1} 场：发起者落盘 Δ 恰为 −R_self`);
+    }
+    if (d.opponent.pointsBefore + e2.delta >= 0) {
+      assert.equal(d.opponent.delta, e2.delta, `第 ${i + 1} 场：对手 Δ 可复算（未触发下限保护）`);
+    } else {
+      assert.equal(d.opponent.pointsAfter, 0, `第 ${i + 1} 场：对手触发下限保护 → 积分夹到 0（§8.3 性质 4）`);
+      assert.equal(d.opponent.delta, d.opponent.pointsBefore === 0 ? 0 : -d.opponent.pointsBefore, `第 ${i + 1} 场：对手落盘 Δ 恰为 −R_self`);
+    }
     assert.equal(d.self.pointsAfter, e1.pointsAfter);
     assert.equal(d.opponent.pointsAfter, e2.pointsAfter);
+    // 公式/落盘逐侧对账（② 全局断言的分子）：公式 Δ 经 clamp(R+Δ,0,cap) 后才是落盘 Δ
+    formulaDeltaSum += e1.delta + e2.delta;
+    const applied1 = d.self.pointsAfter - d.self.pointsBefore;
+    const applied2 = d.opponent.pointsAfter - d.opponent.pointsBefore;
+    assert.equal(applied1, e1.pointsAfter - d.self.pointsBefore, `第 ${i + 1} 场：发起者落盘 Δ = clamp(R+Δ) − R`);
+    assert.equal(applied2, e2.pointsAfter - d.opponent.pointsBefore, `第 ${i + 1} 场：对手落盘 Δ = clamp(R+Δ) − R`);
+    assert.ok(applied1 >= e1.delta && applied2 >= e2.delta,
+      `第 ${i + 1} 场：下限保护只会把 Δ **上抬**（clamp(R+Δ,0,cap) ≥ R+Δ，§8.3 性质 4）`);
+    floorInjection += (applied1 - e1.delta) + (applied2 - e2.delta);
     // ① 对局粒度守恒：Σ前 + ΣΔ === Σ后
     const b = d.self.pointsBefore + d.opponent.pointsBefore;
     const dd = d.self.delta + d.opponent.delta;
@@ -89,17 +119,25 @@ test('INV-1 快速对战积分守恒 + Elo 可复算 + cap/段位不变量 + 对
   }
   assert.ok(perMatch.length >= 1, '至少完成一场快速对战');
 
-  // ② 全局粒度守恒：Σ前 + ΣΔ === Σ后；且 ΣΔ ≤ 0（非零和"汇"，D-133）
+  // ② 全局粒度守恒：Σ前 + ΣΔ === Σ后；且"分数汇"性质按 §8.3 性质 3/4 的**正确形式**复核：
+  //   · 公式层面 Δ 之和 ≤ 0（D-133 有意非零和 = 汇）；
+  //   · 落盘层面的任何**净抬升**必须**逐分**等于"下限保护"注入（0 分玩家输球被 clamp 到 0，§8.3 性质 4）。
+  //   修前此处直接断言 `全局 ΣΔ ≤ 0` —— 那是把两条性质混为一谈：只要有一场落在 0 分下限保护上，
+  //   落盘 Δ 就会被抬到 0（如 0→0 而非 0→−16），全局 ΣΔ 反而为正（实测本用例 8 场 ΣΔ=+93，
+  //   注入=+94、公式和=−1）。现在把"汇"与"下限保护注入"分开断言（更强：不允许出现来源不明的分数）。
   const afterAll = await ratingsOf(fx);
   let deltaSum = 0;
   for (const [playerId, before] of beforeAll) deltaSum += (afterAll.get(playerId) || 0) - before;
   assert.equal(sumOf(beforeAll) + deltaSum, sumOf(afterAll), '全局：Σ前 + ΣΔ === Σ后');
-  assert.ok(deltaSum <= 0, `全局 ΣΔ ≤ 0（分数汇；实际 ${deltaSum}）`);
+  assert.ok(formulaDeltaSum <= 0, `全局公式 ΣΔ ≤ 0（非零和"汇"，D-133 / §8.3 性质 3；实际 ${formulaDeltaSum}）`);
+  assert.ok(floorInjection >= 0, `下限保护注入非负（§8.3 性质 4；实际 ${floorInjection}）`);
+  assert.equal(deltaSum, formulaDeltaSum + floorInjection,
+    '全局落盘 ΣΔ === 公式 ΣΔ + 下限保护注入（逐分对账：不存在来源不明的分数抬升）');
   assert.ok([...afterAll.values()].every((p) => p >= 0 && p <= fx.RATING.cap), '全员积分在 [0,cap]');
   // 汇总数字（供交付报告引用）
   const sinks = perMatch.filter((m) => !m.zeroSum).length;
   assert.equal(sinks + perMatch.filter((m) => m.zeroSum).length, perMatch.length);
-  t.diagnostic(`[INV-1] 场次=${perMatch.length} Σ前=${sumOf(beforeAll)} ΣΔ=${deltaSum} Σ后=${sumOf(afterAll)} 非零和场次=${sinks}`);
+  t.diagnostic(`[INV-1] 场次=${perMatch.length} Σ前=${sumOf(beforeAll)} ΣΔ=${deltaSum}（公式 ${formulaDeltaSum} + 下限保护注入 ${floorInjection}）Σ后=${sumOf(afterAll)} 非零和场次=${sinks}`);
 });
 
 test('INV-2 排行榜索引与档案一致（重建后仍一致，§5.6/T-ST-5）', async (t) => {

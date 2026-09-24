@@ -60,6 +60,8 @@ function createSqliteAdapter(options) {
     'setNickname', 'setPool', 'saveConfigSlot', 'createConfigSlot', 'activateConfigSlot', 'deleteConfigSlot',
     'freezeSnapshot', 'append', 'applyRecord', 'settleBattle', 'records', 'defenseSummary', 'recover',
     'rebuildIndex', 'stats',
+    // D-159/D-161：服务端权威仓库 + AI 库（迁移时必须逐项等价实现）
+    'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'deleteAi',
   ]) {
     adapter[name] = notImpl;
   }

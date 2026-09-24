@@ -101,7 +101,16 @@ test('AV-3 抽池与实例化口径一致：不可实例化的候选在抽池阶
   const { warehouse, loadout } = pluginFixture();
   const me = h.makePlayerId(201);
   const foe = h.makePlayerId(202);
-  await fx.registerPlayer({ playerId: me }); // 发起者：默认配置（无引用）→ 不受镜像影响
+  // ⚠️ D-159：注册（无显式 loadout 且非 bot）即发 starter —— 新号的默认配置**带真实物品与插件引用**
+  //   （`slot1.loadout.role.slots[].pluginUid` 指向服务端仓库物品），所以"发起者不受镜像影响"这一前提
+  //   在 D-159 后不再成立。此处改为**显式无引用 loadout** 建档，保留原用例"发起者自身侧不需要仓库"的原意。
+  const meCreated = await fx.account.createPlayerArchive({
+    playerId: me, nickname: '无引用发起者', loadout: bareOf(loadout), tier: 'common', at: fx.clock(),
+  });
+  assert.equal(meCreated.ok, true, JSON.stringify(meCreated).slice(0, 200));
+  assert.equal(meCreated.data.starter.issued, false, '显式 loadout → 不发放 starter（D-159）');
+  assert.equal(rankedMod.needsWarehouse((await fx.store.loadArchive(me)).configs.slots[0].loadout), false,
+    '发起者配置确无装配引用 → 其可用性不受镜像影响');
   // 对手：带引用且**已校验**（快照自带镜像齐备）
   const foeCreated = await fx.account.createPlayerArchive({ playerId: foe, nickname: '装配置对手', loadout, warehouse, tier: 'common', at: fx.clock() });
   assert.equal(foeCreated.ok, true, JSON.stringify(foeCreated).slice(0, 200));
@@ -127,14 +136,17 @@ test('AV-3 抽池与实例化口径一致：不可实例化的候选在抽池阶
   assert.equal(r.code, 'no_opponent');
 
   // ③ 自身侧同轴：发起者带引用 + 镜像不覆盖 → **匹配前**即 409 loadout_invalid（可解释，不是含混的 no_opponent）
-  const self = h.makePlayerId(203);
-  const selfCreated = await fx.account.createPlayerArchive({ playerId: self, nickname: '装配发起者', loadout, warehouse, tier: 'common', at: fx.clock() });
-  assert.equal(selfCreated.ok, true);
-  fx.clock.advance(73 * 3600 * 1000);
-  const selfRun = await broken.run({ playerId: self, seed: 4 });
+  //   D-159：`registerPlayer` 的 starter 配置自带装配引用（服务端仓库），恰好是"带引用"的发起者；
+  //   此处再把镜像缝指向空仓（覆盖不了任何引用）→ 验证自身侧判定与抽池侧同轴。
+  const self = await fx.registerPlayer({ playerId: h.makePlayerId(203), nickname: '装配发起者' });
+  assert.equal(rankedMod.needsWarehouse((await fx.store.loadArchive(self.playerId)).configs.slots[0].loadout), true,
+    'D-159 starter 配置带装配引用（本用例的"带引用发起者"由此产生）');
+  const selfRun = await broken.run({ playerId: self.playerId, seed: 4 });
   assert.equal(selfRun.status, 409, JSON.stringify(selfRun).slice(0, 220));
   assert.equal(selfRun.code, 'loadout_invalid', '自身不可实例化 → 明确 loadout_invalid（含逐条明细）');
   assert.ok((selfRun.details || []).length > 0, '带 buildPanel 逐条原因');
+  assert.ok((selfRun.details || []).every((d) => typeof d.code === 'string' && typeof d.where === 'string'),
+    '逐条明细带 code/where（可解释，不是含混的 no_opponent）');
 });
 
 test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像不再遮蔽覆盖来源 → quick/run 200', async () => {
@@ -151,9 +163,35 @@ test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像�
     const playerId = reg.data.playerId;
     const { warehouse, loadout, refs } = pluginFixture();
     assert.ok(refs > 0);
-    // ① 先提交**空/子集**镜像（此时默认配置无引用 → 校验必过）
+    // ① 先提交**空/子集**镜像。D-159 起 PUT /me/warehouse 退役为"只做形状校验"：引用不覆盖出战配置
+    //   **不再 409**，改 200 + verified:false（服务端仓库才是真源）。
     const sub = await rt.account.saveWarehouseMirror({ playerId, warehouse: emptyWarehouse() });
     assert.equal(sub.ok, true, JSON.stringify(sub).slice(0, 200));
+    assert.equal(sub.data.verified, false, '空镜像覆盖不了引用 → verified:false（D-159 不再 409）');
+    assert.equal(sub.data.saved, true, '形状合法 → 仍然落缓存（遗留兼容路径）');
+    assert.equal(sub.data.unverifiedLoadout, true, '不覆盖 → 如实回带 unverified');
+    // 形状非法仍必须 400（保留原有防护，不因退役而放宽）
+    const badShape = await rt.account.saveWarehouseMirror({ playerId, warehouse: { buckets: { role: 'nope' } } });
+    assert.equal(badShape.ok, false);
+    assert.equal(badShape.code, 'bad_request', '形状非法 → bad_request（D-159 保留）');
+    // 正向路径（D-159 后仍成立）：显式无引用配置 + 形状合法镜像 → verified:true，镜像仍进进程内缓存
+    const positive = await rt.auth.register({ username: 'av4c', password: 'pw12345678' });
+    assert.equal(positive.ok, true);
+    const bareSave = await rt.account.saveConfig({
+      playerId: positive.data.playerId, slotId: 'slot1', loadout: bareOf(loadout),
+    });
+    assert.equal(bareSave.ok, true, JSON.stringify(bareSave).slice(0, 300));
+    const okMirror = await rt.account.saveWarehouseMirror({
+      playerId: positive.data.playerId, warehouse: { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } },
+    });
+    assert.equal(okMirror.ok, true, JSON.stringify(okMirror).slice(0, 200));
+    assert.equal(okMirror.data.verified, true, '无引用配置 → 任何形状合法镜像都覆盖 → verified:true');
+    assert.equal(okMirror.data.saved, true);
+    assert.equal(okMirror.data.unverifiedLoadout, false);
+    assert.equal(typeof okMirror.data.warehouseHash, 'string', '回带镜像内容 hash（可对账）');
+    const readBack = await rt.account.getWarehouseMirror(positive.data.playerId);
+    assert.equal(readBack.ok, true, '镜像仍保留在进程内缓存（PUT 只校验，不落盘）');
+    assert.deepEqual(readBack.data.warehouse, okMirror.data.warehouse, '回读镜像逐值一致');
     // ② 保存带引用的出战配置 + 全量镜像
     const save = await rt.account.saveConfig({ playerId, slotId: 'slot1', loadout, warehouse });
     assert.equal(save.ok, true, JSON.stringify(save).slice(0, 300));

@@ -469,6 +469,10 @@ function createJsonAdapter(options) {
     const record = ledger.buildAccountRecord({
       playerId, publicId, nickname: o.nickname, auth: o.auth, at, createdAt: at,
       tier: o.tier, points: o.points, slot: o.slot,
+      // D-159：注册即发 starter（服务端权威仓库正文 + 多槽：slot1 完整出战、slot2/3 空）
+      warehouse: o.warehouse,
+      slots: o.slots,
+      aiLibrary: o.aiLibrary,
       // isBot 便捷入口（§7.6 bot 账号：普通档案 + flags.isBot，被抽时 rating/tier 冻结）
       flags: o.flags === undefined && o.isBot ? { isBot: true } : o.flags,
     });
@@ -545,6 +549,8 @@ function createJsonAdapter(options) {
   }
 
   // 在写队列内部完成"冻结 → journal → apply"（PUT /me/configs/:slotId，§5.4）
+  // D-160：**非出战槽允许不完整** —— 不完整时冻结快照并把 loadout 正文随记录携带；
+  //   出战槽仍要求完整（角色 + 恰 3 技能 + AI），不完整 → loadout_invalid + 逐位置 details。
   async function saveConfigSlot(input) {
     const o = input || {};
     return queueFor(o.playerId, async () => {
@@ -557,13 +563,29 @@ function createJsonAdapter(options) {
           { path: 'baseUpdatedAt', code: 'config_conflict', message: `期望 ${slot.updatedAt}，收到 ${o.baseUpdatedAt}` },
         ]);
       }
-      const snapshot = freezeSnapshot(o.loadout, o.versions, { warehouse: o.warehouse });
-      const record = ledger.buildConfigRecord({
-        playerId: o.playerId, slotId: slot.slotId, name: o.name, at: nowFn(),
-        snapshotHash: snapshot.hash, configHash: snapshot.configHash,
-        activate: o.activate === true, warehouseVerified: o.warehouseVerified === true,
-        versions: { engine: versions.engine, data: versions.data },
-      });
+      const isActive = archive.configs.activeSlotId === slot.slotId;
+      const loadout = o.loadout === undefined || o.loadout === null ? archiveMod.emptyIncompleteLoadout() : o.loadout;
+      const missing = archiveMod.loadoutMissingOf(loadout);
+      let snapshot = null;
+      let record;
+      if (missing.length > 0) {
+        if (isActive) {
+          throw new StoreError('loadout_invalid', '出战配置必须完整（角色 + 恰 3 技能 + AI；允许插槽为空）', missingDetails(missing));
+        }
+        record = ledger.buildConfigRecord({
+          playerId: o.playerId, slotId: slot.slotId, name: o.name, at: nowFn(),
+          loadout, activate: false,
+          versions: { engine: versions.engine, data: versions.data },
+        });
+      } else {
+        snapshot = freezeSnapshot(loadout, o.versions, { warehouse: o.warehouse });
+        record = ledger.buildConfigRecord({
+          playerId: o.playerId, slotId: slot.slotId, name: o.name, at: nowFn(),
+          snapshotHash: snapshot.hash, configHash: snapshot.configHash,
+          activate: o.activate === true, warehouseVerified: o.warehouseVerified === true,
+          versions: { engine: versions.engine, data: versions.data },
+        });
+      }
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
       saveIndex();
@@ -583,26 +605,29 @@ function createJsonAdapter(options) {
     throw new StoreError('slot_limit', `配置槽已满（${maxSlots}）`);
   }
 
-  // 新建槽（POST /me/configs）：默认复制出战配置；注册后的默认槽由 createAccount 提供
+  // D-160 缺项 → details（唯一实现见 archive.loadoutMissingDetails；本层不重复文案）
+  function missingDetails(missing) {
+    return archiveMod.loadoutMissingDetails(missing);
+  }
+
+  // 新建槽（POST /me/configs）：D-160 起**默认建空槽**（不再复制出战配置；出战仍由 activate 决定）
   async function createConfigSlot(input) {
     const o = input || {};
     return queueFor(o.playerId, async () => {
       const archive = readArchiveRaw(o.playerId);
       if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
       archiveMod.checkSlotLimit(archive, serviceConfig);
-      const active = archiveMod.activeSlot(archive);
-      const source = o.loadout ? o.loadout : (active ? active.loadout : null);
-      if (!source) {
-        throw new StoreError('loadout_invalid', '新建配置槽需要 loadout，或先拥有一套出战配置', [
-          { path: 'loadout', code: 'loadout_invalid', message: '无可复制的出战配置' },
-        ]);
-      }
       const slotId = nextSlotId(archive);
-      const snapshot = freezeSnapshot(source, o.versions, { warehouse: o.warehouse });
+      const loadout = o.loadout === undefined || o.loadout === null ? archiveMod.emptyIncompleteLoadout() : o.loadout;
+      const missing = archiveMod.loadoutMissingOf(loadout);
+      let snapshot = null;
+      if (missing.length === 0) snapshot = freezeSnapshot(loadout, o.versions, { warehouse: o.warehouse });
       const record = ledger.buildConfigRecord({
         playerId: o.playerId, slotId, name: o.name === undefined ? slotId : o.name, at: nowFn(),
-        snapshotHash: snapshot.hash, configHash: snapshot.configHash,
-        create: true, activate: o.activate !== false, isDefault: false,
+        snapshotHash: snapshot ? snapshot.hash : undefined,
+        configHash: snapshot ? snapshot.configHash : undefined,
+        loadout: snapshot ? undefined : loadout,
+        create: true, activate: false, isDefault: false,
         warehouseVerified: o.warehouseVerified === true,
         versions: { engine: versions.engine, data: versions.data },
       });
@@ -614,6 +639,7 @@ function createJsonAdapter(options) {
     });
   }
 
+  // D-160：**设为出战**时才校验完整性（角色 + 恰 3 技能 + AI；允许插槽为空）
   async function activateConfigSlot(input) {
     const o = input || {};
     return queueFor(o.playerId, async () => {
@@ -621,20 +647,25 @@ function createJsonAdapter(options) {
       if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
       const slot = archiveMod.findSlot(archive, o.slotId);
       if (!slot) throw new StoreError('slot_not_found', `槽 ${o.slotId} 不存在`);
-      if (!slot.snapshot || !slot.snapshot.hash) {
-        throw new StoreError('no_active_config', `槽 ${o.slotId} 缺少已冻结快照`, [
-          { path: o.slotId, code: 'no_active_config', message: '快照缺失' },
-        ]);
+      const missing = archiveMod.loadoutMissingOf(slot.loadout);
+      if (missing.length > 0) {
+        throw new StoreError('cannot_activate_incomplete',
+          `配置 ${o.slotId} 不完整，无法设为出战（角色 + 恰 3 技能 + AI；允许插槽为空）`,
+          missingDetails(missing).map((d) => ({ ...d, code: 'cannot_activate_incomplete' })));
       }
+      // 自愈：完整但缺快照（如检查点重建后的档案）→ 现场冻结一次
+      let snapshot = slot.snapshot;
+      if (!snapshot || !snapshot.hash) snapshot = freezeSnapshot(slot.loadout, o.versions, {});
       const record = ledger.buildConfigRecord({
         playerId: o.playerId, slotId: slot.slotId, at: nowFn(),
-        snapshotHash: slot.snapshot.hash, configHash: slot.snapshot.configHash, activate: true,
+        snapshotHash: snapshot.hash, configHash: snapshot.configHash, activate: true,
         versions: { engine: versions.engine, data: versions.data },
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
       saveIndex();
-      return { archive: deepClone(readArchiveRaw(o.playerId)), slot: deepClone(slot) };
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), slot: deepClone(archiveMod.findSlot(updated, slot.slotId)), snapshot };
     });
   }
 
@@ -1024,6 +1055,178 @@ function createJsonAdapter(options) {
     };
   }
 
+  // ---------- D-159：服务端权威仓库（读真源 / 开箱发放 / 装配拆卸） ----------
+
+  function warehouseCaps() {
+    const cap = archiveMod.warehouseMaxPerBucketOf(serviceConfig);
+    const out = {};
+    for (const key of archiveMod.WAREHOUSE_BUCKETS) out[key] = cap;
+    return out;
+  }
+
+  function warehouseView(archive) {
+    return {
+      warehouse: archiveMod.normalizeWarehouse(archive && archive.warehouse),
+      usage: archiveMod.warehouseUsage(archive),
+      caps: warehouseCaps(),
+      counts: archiveMod.warehouseCounts(archive && archive.warehouse),
+      starterIssued: !!(archive && archive.warehouse && archive.warehouse.starterIssued === true),
+    };
+  }
+
+  async function getWarehouse(playerId) {
+    const archive = await loadArchive(playerId);
+    if (!archive) throw new StoreError('store_not_found', `档案 ${playerId} 不存在`);
+    return warehouseView(archive);
+  }
+
+  // 开箱发放：**上限前置校验**（超限 → warehouse_full，不写 journal）→ append(box.opened) → apply
+  async function grantBox(input) {
+    const o = input || {};
+    const items = Array.isArray(o.items) ? o.items : [];
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      const cap = archiveMod.warehouseMaxPerBucketOf(serviceConfig);
+      const counts = archiveMod.warehouseCounts(archive.warehouse);
+      const add = {};
+      for (const it of items) {
+        const bucket = it && it.kind === 'skillPlugin' ? 'skillPlugin'
+          : it && it.kind === 'rolePlugin' ? 'rolePlugin'
+            : it && it.kind === 'skill' ? 'skill' : 'role';
+        add[bucket] = (add[bucket] || 0) + 1;
+      }
+      const details = [];
+      for (const key of Object.keys(add)) {
+        if ((counts[key] || 0) + add[key] > cap) {
+          details.push({
+            path: `warehouse.buckets.${key}`, code: 'warehouse_full',
+            message: `${key} 已达上限 ${cap}（当前 ${counts[key] || 0}，本次 ${add[key]} 件）`,
+          });
+        }
+      }
+      if (details.length > 0) {
+        throw new StoreError('warehouse_full', '仓库已满，无法开箱（请先清理）', details);
+      }
+      const record = ledger.buildBoxRecord({
+        playerId: o.playerId, seed: o.seed, tier: o.tier, times: o.times, items, at: nowFn(),
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), grantId: appended.grantId, ...warehouseView(updated) };
+    });
+  }
+
+  // 装配/拆卸：**校验在 L6（server/account.js）用 core/items 纯函数前置完成**；本层只落增量记录，
+  //   使回放/恢复可确定性重演（记录体积恒定，不携带整仓）。
+  async function applyWarehouseChange(input) {
+    const o = input || {};
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      if (!archiveMod.findWarehouseItem(archive.warehouse, o.targetUid)) {
+        throw new StoreError('item_missing', `物品 ${o.targetUid} 不在仓库中`, [
+          { path: 'targetUid', code: 'item_missing', message: '物品不存在（可能已被清除）' },
+        ]);
+      }
+      const record = ledger.buildWarehouseRecord({
+        playerId: o.playerId, op: o.op, targetUid: o.targetUid, slotIndex: o.slotIndex,
+        pluginUid: o.pluginUid, at: nowFn(),
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), ...warehouseView(updated) };
+    });
+  }
+
+  // ---------- D-161：AI 库（与物品分别计数） ----------
+
+  function aiView(archive) {
+    return {
+      items: deepClone((archive && archive.ai && archive.ai.items) || []),
+      max: archiveMod.aiMaxPerPlayerOf(serviceConfig),
+    };
+  }
+
+  // 「被哪些配置引用」：按 loadout.aiId（出战与否都算；删除被**出战**配置引用者由上层拒绝）
+  function aiRefsOf(archive) {
+    const refs = new Map();
+    for (const slot of (archive && archive.configs && archive.configs.slots) || []) {
+      const aiId = slot && slot.loadout && slot.loadout.aiId;
+      if (typeof aiId !== 'string' || aiId === '') continue;
+      if (!refs.has(aiId)) refs.set(aiId, []);
+      refs.get(aiId).push(slot.slotId);
+    }
+    return refs;
+  }
+
+  async function listAi(playerId) {
+    const archive = await loadArchive(playerId);
+    if (!archive) throw new StoreError('store_not_found', `档案 ${playerId} 不存在`);
+    return { ...aiView(archive), usage: Object.fromEntries(aiRefsOf(archive)) };
+  }
+
+  async function createAi(input) {
+    const o = input || {};
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      const cap = archiveMod.aiMaxPerPlayerOf(serviceConfig);
+      const count = ((archive.ai && archive.ai.items) || []).length;
+      if (count >= cap) {
+        throw new StoreError('ai_limit', `AI 库已满（${cap} 条），请先删除`, [
+          { path: 'ai.items', code: 'ai_limit', message: `最多同时保存 ${cap} 条 AI` },
+        ]);
+      }
+      const aiId = typeof o.aiId === 'string' && o.aiId !== '' ? o.aiId : `ai_${archiveMod.randomHex(8)}`;
+      if (archiveMod.findAi(archive, aiId)) {
+        throw new StoreError('bad_request', `aiId 重复 ${aiId}`, [
+          { path: 'aiId', code: 'bad_request', message: 'aiId 已存在' },
+        ]);
+      }
+      const record = ledger.buildAiRecord({
+        playerId: o.playerId, op: 'create', aiId, name: o.name, program: o.program, at: nowFn(),
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), ai: deepClone(archiveMod.findAi(updated, aiId)) };
+    });
+  }
+
+  // 删除：被**出战配置**引用 → 409 ai_in_use（非出战配置的引用只作提示，不阻止删除）
+  async function deleteAi(input) {
+    const o = input || {};
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      const ai = archiveMod.findAi(archive, o.aiId);
+      if (!ai) {
+        throw new StoreError('store_not_found', `AI ${o.aiId} 不存在`, [
+          { path: 'aiId', code: 'store_not_found', message: 'AI 不存在' },
+        ]);
+      }
+      const refs = aiRefsOf(archive);
+      const slots = refs.get(o.aiId) || [];
+      if (slots.includes(archive.configs.activeSlotId)) {
+        throw new StoreError('ai_in_use', `AI ${o.aiId} 被出战配置引用，无法删除`, [
+          { path: 'aiId', code: 'ai_in_use', message: `被出战配置 ${archive.configs.activeSlotId} 引用` },
+        ]);
+      }
+      const record = ledger.buildAiRecord({ playerId: o.playerId, op: 'delete', aiId: o.aiId, at: nowFn() });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), aiId: o.aiId, referencedBy: slots, ...aiView(updated) };
+    });
+  }
+
   const adapter = {
     adapterName: ADAPTER_NAME,
     dataDir,
@@ -1090,6 +1293,14 @@ function createJsonAdapter(options) {
     activateConfigSlot,
     deleteConfigSlot,
     freezeSnapshot,
+    // D-159：服务端权威仓库（真源读取 / 开箱发放 / 装配拆卸）
+    getWarehouse,
+    grantBox,
+    applyWarehouseChange,
+    // D-161：AI 库
+    listAi,
+    createAi,
+    deleteAi,
     // journal
     append: (record) => journal.append(record),
     appendMany: (records) => journal.appendMany(records),

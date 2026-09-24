@@ -77,8 +77,18 @@ test('QU-6 缺口 1 端到端：重启进程（新 store 实例、进程内镜�
     // ② 重启进程：关服务（保留数据根）→ 同目录新实例（新 store、新 runtime，进程内镜像缓存必然为空）
     await s.close();
     s = await h.startServer({ dataDir: dir });
-    const anon = await h.request(s.port, 'GET', `/api/v1/me/warehouse`, undefined, h.authed(a.token));
-    assert.equal(anon.status, 404, '重启后进程内镜像确实已丢失（D-130：正文不落盘）');
+    // D-159：仓库改为**服务端权威**（`warehouse` 段进档案、随 journal 落盘）→ 重启后 `GET /me/warehouse`
+    //   是**真源**，不再是 D-130 的"进程内镜像（重启即丢）→ 404 warehouse_missing"。
+    //   旧断言（404 = 镜像不落盘）已被契约废除，改断言"真源跨重启仍在且四桶/用量齐全"（等价强度）。
+    const whAfter = await h.request(s.port, 'GET', `/api/v1/me/warehouse`, undefined, h.authed(a.token));
+    assert.equal(whAfter.status, 200, `重启后仓库真源必须仍在（D-159）：${whAfter.raw.slice(0, 200)}`);
+    assert.equal(whAfter.body.ok, true);
+    assert.ok(whAfter.body.data.buckets && typeof whAfter.body.data.buckets === 'object', '回带四桶真源');
+    assert.ok(Array.isArray(whAfter.body.data.buckets.role) && whAfter.body.data.buckets.role.length >= 1,
+      'starter 角色仍在服务端仓库（跨重启）');
+    assert.ok(whAfter.body.data.counts && whAfter.body.data.caps, '回带 counts/caps（前端用量口径）');
+    assert.equal(typeof whAfter.body.data.starterIssued, 'boolean', '回带 starterIssued');
+    assert.ok(whAfter.body.data.usage, '回带 usage（装配于配置几）');
     const snapAfter = await s.runtime.snapshotWarehouseOf(await h.playerIdByPublicId(s.store, a.publicId));
     assert.ok(snapAfter && snapAfter.buckets, '落地载体 = 快照自带的装配引用子集');
     // 面板逐值一致（这就是"插件词条真实生效"的实测口径）

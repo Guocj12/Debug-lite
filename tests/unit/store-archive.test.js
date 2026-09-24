@@ -31,9 +31,9 @@ function newArchive(playerId, opts) {
   });
 }
 
-test('ARC-1 createArchive：§5.2 字段全表 + 注册即有默认槽与快照 + 校验通过', () => {
+test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注册即有默认槽与快照 + 校验通过', () => {
   const a = newArchive();
-  assert.equal(a.archiveVersion, 1);
+  assert.equal(a.archiveVersion, 2, 'D-159：ARCHIVE_VERSION=2');
   assert.equal(a.playerId, PID1);
   assert.match(a.publicId, /^u_[0-9a-f]{8}$/);
   assert.equal(a.progress.tier, 'common');
@@ -47,9 +47,37 @@ test('ARC-1 createArchive：§5.2 字段全表 + 注册即有默认槽与快照 
   assert.equal(a.pool.inPool, true);
   assert.equal(a.record.appliedSeq, 0);
   assert.deepEqual(a.record.unread, { attack: 0, defense: 0, fromSeq: 0 });
+  // D-159：字段全表新增 warehouse（服务端权威四桶 + starterIssued + grantIds 幂等窗口）与 ai（AI 库）
+  for (const key of ['playerId', 'publicId', 'nickname', 'createdAt', 'lastLoginAt', 'lastSeenAt', 'auth',
+    'progress', 'rating', 'configs', 'pool', 'record', 'flags', 'warehouse', 'ai', 'updatedAt']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(a, key), `档案缺字段 ${key}`);
+  }
+  assert.deepEqual(a.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, starterIssued: false, grantIds: [] },
+    '未给仓库 → 空四桶（建号必带该段）');
+  assert.deepEqual(a.ai, { items: [] });
   assert.equal(arch.validateArchive(a, { config: DEFAULT_SERVICE_CONFIG }).ok, true);
   assert.equal(arch.assertArchiveInvariants(a, { config: DEFAULT_SERVICE_CONFIG }), a);
   assert.equal(arch.activeSlot(a).slotId, 'slot1');
+  // D-159：显式传仓库/AI 库 + 多槽（starter 路径的形状）
+  const withWh = arch.createArchive({
+    playerId: PID2, publicId: 'u_22222222', at: 1, nickname: 'n2',
+    warehouse: { buckets: { role: [{ uid: 'r1' }], skill: [{ uid: 's1' }], rolePlugin: [{ uid: 'p1' }], skillPlugin: [{ uid: 'q1' }] } },
+    starterIssued: true,
+    aiLibrary: [{ aiId: 'ai_1', name: '新手AI', program: { type: 'program' } }],
+    slots: [
+      // 注意：多槽输入的 snapshot 形状是 createSlot 的口径（{hash,…}），不是 journal 记录的 snapshotHash
+      { slotId: 'slot1', name: '默认配置', snapshot: { hash: SHA_A, engineVersion: '3.0.0', dataVersion: 'b25', configHash: 'sha256:c1' } },
+      { slotId: 'slot2', name: '配置2', loadout: arch.emptyIncompleteLoadout() },
+    ],
+  });
+  assert.equal(withWh.configs.slots.length, 2, 'D-159：注册可一次建多个槽');
+  assert.equal(withWh.configs.activeSlotId, 'slot1');
+  assert.equal(withWh.configs.slots[1].snapshot, null, 'D-160：非出战槽可无快照');
+  assert.equal(withWh.warehouse.starterIssued, true);
+  assert.equal(arch.warehouseCounts(withWh.warehouse).rolePlugin, 1);
+  assert.equal(withWh.ai.items.length, 1);
+  assert.equal(withWh.ai.items[0].name, '新手AI');
+  assert.equal(arch.validateArchive(withWh, { config: DEFAULT_SERVICE_CONFIG }).ok, true, '出战槽有快照 + 非出战槽无快照 → 不变量成立');
   // 非法 playerId
   assert.throws(() => arch.createArchive({ playerId: 'bogus' }), (e) => e.code === 'bad_request');
   // bot 档案
@@ -58,6 +86,8 @@ test('ARC-1 createArchive：§5.2 字段全表 + 注册即有默认槽与快照 
   assert.equal(bot.progress.tier, 'epic');
   assert.equal(bot.rating.points, 500);
   assert.equal(bot.configs.slots.length, 0);
+  assert.deepEqual(bot.warehouse.buckets, { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, 'bot 也带空仓库段');
+  assert.equal(bot.warehouse.starterIssued, false);
   // 工具
   assert.equal(arch.shardOf(PID1), '11', '分片取 pl_ 之后的前 2 个 hex（不是 "pl"）');
   assert.equal(arch.archiveRelPath(PID1), `players/11/${PID1}.json`);
@@ -77,6 +107,13 @@ test('ARC-1 createArchive：§5.2 字段全表 + 注册即有默认槽与快照 
   assert.equal(arch.defaultRecentLimit(DEFAULT_SERVICE_CONFIG), 100);
   assert.equal(arch.maxSlotsOf({ config: { maxSlots: 0 } }), 3, '非法配置回落默认');
   assert.equal(arch.defaultRecentLimit({}), 100);
+  // D-159/D-161：新段的上限常量与判据
+  assert.equal(arch.warehouseMaxPerBucketOf(DEFAULT_SERVICE_CONFIG), 500);
+  assert.equal(arch.aiMaxPerPlayerOf(DEFAULT_SERVICE_CONFIG), 100);
+  assert.deepEqual(arch.emptyWarehouse(), { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } });
+  assert.deepEqual(arch.emptyIncompleteLoadout(), { role: null, skills: [null, null, null], ai: null });
+  assert.equal(arch.isLoadoutComplete(arch.emptyIncompleteLoadout()), false);
+  assert.equal(arch.isLoadoutComplete({ role: {}, skills: [{}, {}, {}], ai: {} }), true);
 });
 
 test('ARC-2 validateArchive 各失败分支 + assertArchiveInvariants 抛 store_inconsistent', () => {
@@ -106,7 +143,12 @@ test('ARC-2 validateArchive 各失败分支 + assertArchiveInvariants 抛 store_
   assert.ok(arch.validateArchive(twoDefaults, cfg).errors.some((e) => e.message.includes('多个默认槽')));
   const noSnapshot = newArchive();
   noSnapshot.configs.slots[0].snapshot = null;
-  assert.ok(arch.validateArchive(noSnapshot, cfg).errors.some((e) => e.code === 'no_active_config'));
+  assert.ok(arch.validateArchive(noSnapshot, cfg).errors.some((e) => e.code === 'no_active_config'),
+    'D-159/D-160：**出战槽**仍必须有已冻结快照');
+  // D-160：非出战槽允许无快照（不变量放宽）
+  const nonActiveNoSnapshot = newArchive();
+  nonActiveNoSnapshot.configs.slots.push(arch.createSlot({ slotId: 'slot2', loadout: arch.emptyIncompleteLoadout(), snapshot: null }));
+  assert.equal(arch.validateArchive(nonActiveNoSnapshot, cfg).ok, true, 'D-160：非出战槽可无快照、可不完整');
   const badActive = newArchive();
   badActive.configs.activeSlotId = 'slot_gone';
   assert.ok(arch.validateArchive(badActive, cfg).errors.some((e) => e.code === 'no_active_config'));
@@ -136,6 +178,46 @@ test('ARC-2 validateArchive 各失败分支 + assertArchiveInvariants 抛 store_
   const slotNoId = newArchive();
   slotNoId.configs.slots.push({ name: 'x' });
   assert.ok(arch.validateArchive(slotNoId, cfg).errors.some((e) => e.message.includes('缺少 slotId')));
+  // D-159：服务端权威仓库段的不变量（四桶必须是数组 / uid 唯一 / 每桶上限 / grantIds 是数组）
+  const badWhBuckets = newArchive();
+  badWhBuckets.warehouse.buckets = 'nope';
+  assert.ok(arch.validateArchive(badWhBuckets, cfg).errors.some((e) => e.path === 'warehouse.buckets'));
+  const badWhBucket = newArchive();
+  badWhBucket.warehouse.buckets.role = 'nope';
+  assert.ok(arch.validateArchive(badWhBucket, cfg).errors.some((e) => e.path === 'warehouse.buckets.role'));
+  const badWhItem = newArchive();
+  badWhItem.warehouse.buckets.role.push({ noUid: true });
+  assert.ok(arch.validateArchive(badWhItem, cfg).errors.some((e) => e.message.includes('含非法物品')));
+  const dupWhUid = newArchive();
+  dupWhUid.warehouse.buckets.role.push({ uid: 'x1' });
+  dupWhUid.warehouse.buckets.skill.push({ uid: 'x1' });
+  assert.ok(arch.validateArchive(dupWhUid, cfg).errors.some((e) => e.message.includes('仓库 uid 重复')));
+  const fullWh = newArchive();
+  fullWh.warehouse.buckets.role = new Array(501).fill(null).map((_, i) => ({ uid: `r_${i}` }));
+  assert.ok(arch.validateArchive(fullWh, cfg).errors.some((e) => e.code === 'warehouse_full'));
+  const badGrants = newArchive();
+  badGrants.warehouse.grantIds = 'nope';
+  assert.ok(arch.validateArchive(badGrants, cfg).errors.some((e) => e.path === 'warehouse.grantIds'));
+  // D-161：AI 库段的不变量（items 必须是数组 / aiId 唯一 / 上限 100）
+  const badAi = newArchive();
+  badAi.ai.items = 'nope';
+  assert.ok(arch.validateArchive(badAi, cfg).errors.some((e) => e.path === 'ai.items'));
+  const badAiItem = newArchive();
+  badAiItem.ai.items.push({ noId: true });
+  assert.ok(arch.validateArchive(badAiItem, cfg).errors.some((e) => e.message.includes('ai.items 含非法条目')));
+  const dupAi = newArchive();
+  dupAi.ai.items.push({ aiId: 'ai_1' }, { aiId: 'ai_1' });
+  assert.ok(arch.validateArchive(dupAi, cfg).errors.some((e) => e.message.includes('aiId 重复')));
+  const fullAi = newArchive();
+  fullAi.ai.items = new Array(101).fill(null).map((_, i) => ({ aiId: `ai_${i}` }));
+  assert.ok(arch.validateArchive(fullAi, cfg).errors.some((e) => e.code === 'ai_limit'));
+  // D-159：warehouse / ai 段缺失 → store_inconsistent（字段全表必带）
+  const noWhSection = newArchive();
+  delete noWhSection.warehouse;
+  assert.ok(arch.validateArchive(noWhSection, cfg).errors.some((e) => e.path === 'warehouse'));
+  const noAiSection = newArchive();
+  delete noAiSection.ai;
+  assert.ok(arch.validateArchive(noAiSection, cfg).errors.some((e) => e.path === 'ai'));
   // 检查点重建档案：允许无槽（不变量放宽，§6.7 的"检查点精度"）
   const rebuilt = newArchive();
   rebuilt.configs.slots = [];
@@ -166,24 +248,48 @@ test('ARC-3 槽位纯操作：上限/可删性/激活同步', () => {
   assert.equal(arch.syncActiveSnapshot(a), null, '无槽 → activeSnapshotHash 为 null');
 });
 
-test('ARC-4 迁移：v0 → v1 补齐字段并记 store.migrate；更高版本拒绝启动', () => {
+test('ARC-4 迁移：v0 → v2 补齐字段（含空仓库/AI 库）并记 store.migrate；更高版本拒绝启动', () => {
   const events = [];
-  const logger = { info: (ch, ev, data) => events.push({ ch, ev, data }), warn: () => {}, debug: () => {}, trace: () => {}, error: () => {}, log: () => {} };
+  const logger = { info: (ch, ev, msg, data) => events.push({ ch, ev, msg, data }), warn: () => {}, debug: () => {}, trace: () => {}, error: () => {}, log: () => {} };
   const v0 = { playerId: PID1, nickname: 'legacy', rating: { points: 77 } };
   const res = arch.migrateArchive(v0, { logger });
   assert.equal(res.migrated, true);
   assert.equal(res.from, 0);
-  assert.equal(res.to, 1);
-  assert.equal(res.archive.archiveVersion, 1);
+  // D-159：ARCHIVE_VERSION=2 → v0 需连跳两级（v0→v1→v2）
+  assert.equal(res.to, 2);
+  assert.equal(res.archive.archiveVersion, 2);
   assert.equal(res.archive.rating.points, 77, '保留 v0 已有字段');
   assert.equal(res.archive.progress.tier, 'common', '补齐缺失字段');
+  // D-159：迁移只补**空**仓库（老账号**不**补发 starter）；D-161：补空 AI 库
+  assert.deepEqual(res.archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, starterIssued: false, grantIds: [] });
+  assert.deepEqual(res.archive.ai, { items: [] });
   assert.equal(events[0].ev, 'store.migrate');
   assert.equal(events[0].ch, 'store');
+  assert.equal(events[0].data.playerId, PID1);
+  assert.equal(events[0].data.from, 0);
+  assert.equal(events[0].data.to, 2);
+  assert.equal(events[0].msg, '档案迁移 0 → 2');
+  // v1 存量档案（已有 archiveVersion=1）→ 只补 v1→v2：老账号保持空仓、不发 starter
+  const v1 = {
+    playerId: PID1, publicId: 'u_11111111', nickname: 'legacy1', auth: null,
+    progress: { tier: 'common', peakTier: 'common' }, rating: { points: 5, peakPoints: 5 },
+    configs: { slots: [], activeSlotId: null, activeSnapshotHash: null },
+    pool: { inPool: true }, record: { appliedSeq: 0, recent: [], stats: {} },
+    flags: { rebuiltFromCheckpoint: true }, archiveVersion: 1,
+  };
+  const res1 = arch.migrateArchive(v1, { logger });
+  assert.equal(res1.migrated, true);
+  assert.equal(res1.from, 1);
+  assert.equal(res1.to, 2);
+  assert.equal(res1.archive.warehouse.starterIssued, false, 'D-159：v1 存量档案迁移不补发 starter');
+  assert.deepEqual(arch.warehouseCounts(res1.archive.warehouse), { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0 });
+  assert.deepEqual(res1.archive.ai.items, []);
   const same = arch.migrateArchive(newArchive(), { logger });
   assert.equal(same.migrated, false);
-  assert.throws(() => arch.migrateArchive({ ...newArchive(), archiveVersion: 2 }, { logger }),
+  assert.throws(() => arch.migrateArchive({ ...newArchive(), archiveVersion: 3 }, { logger }),
     (e) => e.code === 'store_version_unsupported' && e.fatal === true);
   assert.equal(typeof arch.MIGRATIONS[1], 'function');
+  assert.equal(typeof arch.MIGRATIONS[2], 'function');
   assert.deepEqual(arch.applyDefaults({ a: 1, o: { x: 1 } }, { a: 2, o: { y: 2 }, b: 3 }), { a: 2, o: { x: 1, y: 2 }, b: 3 });
 });
 

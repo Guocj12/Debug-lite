@@ -12,15 +12,34 @@ const archiveMod = require('../../server/store/archive.js');
 const h = require('../helpers/ranked.js');
 
 // 双向结算复算：双方 Δ / 结算后积分 / [0,cap] 边界 / 非零和标记 全部按公式独立验证
+// ⚠️ 口径分界（D-133 + docs/systems/11-account-store.md §8.3「下限保护」）：
+//   `ledger.ratingDelta` 回带的是**公式原始 Δ**（可为 −16 等负值）；而 `quickmatch` 响应里的 `delta`
+//   是**档案落盘值之差**（`pointsAfter − pointsBefore`），受 `结果积分 = clamp(R+Δ, 0, cap)` 裁剪。
+//   两者只在**未触发裁剪**时相等：例如 0 分玩家输球 → 公式 Δ=−16、落盘 Δ=0（下限保护）。
+//   故本函数先断言恒真的守恒式 `delta === pointsAfter − pointsBefore`，再在未触发下限裁剪时断言公式值。
 function assertEloRecomputable(data, cfg, label) {
   const { self, opponent } = data;
   const p1Result = data.winner === 'win' ? 'win' : data.winner === 'loss' ? 'loss' : 'draw';
   const p2Result = p1Result === 'win' ? 'loss' : p1Result === 'loss' ? 'win' : 'draw';
   const e1 = ledger.ratingDelta({ points: self.pointsBefore, opponentPoints: opponent.pointsBefore, result: p1Result, config: cfg });
   const e2 = ledger.ratingDelta({ points: opponent.pointsBefore, opponentPoints: self.pointsBefore, result: p2Result, config: cfg });
-  assert.equal(self.delta, e1.delta, `${label}: 发起者 Δ 可复算`);
+  // ① 守恒（恒真）：落盘 Δ 必须逐值等于 `pointsAfter − pointsBefore`（无论是否被 clamp）
+  assert.equal(self.delta, self.pointsAfter - self.pointsBefore, `${label}: 发起者 Δ = 落盘前后差（守恒）`);
+  assert.equal(opponent.delta, opponent.pointsAfter - opponent.pointsBefore, `${label}: 对手 Δ = 落盘前后差（守恒）`);
+  // ② 公式复算：仅在**未触发下限保护**（`pointsBefore + 公式Δ ≥ 0`）时 Δ 才与公式值逐值相等（§8.3 性质 4）
+  if (self.pointsBefore + e1.delta >= 0) {
+    assert.equal(self.delta, e1.delta, `${label}: 发起者 Δ 可复算（未触发下限保护）`);
+  } else {
+    assert.equal(self.pointsAfter, 0, `${label}: 触发下限保护 → 积分被夹到 0（§8.3 性质 4）`);
+    assert.equal(self.delta, self.pointsBefore === 0 ? 0 : -self.pointsBefore, `${label}: 触发下限保护 → 落盘 Δ 恰为 −R_self`);
+  }
+  if (opponent.pointsBefore + e2.delta >= 0) {
+    assert.equal(opponent.delta, e2.delta, `${label}: 对手 Δ 可复算（未触发下限保护）`);
+  } else {
+    assert.equal(opponent.pointsAfter, 0, `${label}: 对手触发下限保护 → 积分被夹到 0（§8.3 性质 4）`);
+    assert.equal(opponent.delta, opponent.pointsBefore === 0 ? 0 : -opponent.pointsBefore, `${label}: 对手触发下限保护 → 落盘 Δ 恰为 −R_self`);
+  }
   assert.equal(self.pointsAfter, e1.pointsAfter, `${label}: 发起者积分 = clamp(R+Δ)`);
-  assert.equal(opponent.delta, e2.delta, `${label}: 对手 Δ 可复算`);
   assert.equal(opponent.pointsAfter, e2.pointsAfter, `${label}: 对手积分 = clamp(R+Δ)`);
   assert.ok(self.pointsAfter >= 0 && self.pointsAfter <= cfg.cap, `${label}: 发起者积分在 [0,cap]`);
   assert.ok(opponent.pointsAfter >= 0 && opponent.pointsAfter <= cfg.cap, `${label}: 对手积分在 [0,cap]`);
@@ -367,6 +386,23 @@ function pluginWarehouseFixture() {
   return { warehouse: wh, loadout: { role, skills, ai: rankedMod.buildDefaultLoadout().ai }, refs };
 }
 
+/** D-159 契约变更：注册（无显式 loadout 且非 bot）即发 starter —— **默认对手也带装配引用**，
+ *  其引用只存在于**服务端仓库**里，本用例的注入镜像（`warehouse`）覆盖不了。
+ *  故"无镜像"缝必须**逐玩家**给：夹具玩家 → 按各用例口径（真实镜像 / null），
+ *  其余玩家（starter 默认配置）→ 服务端仓库（等价真实运行时的 ⓪ 级来源），否则连正常对局也会
+ *  被判 `skipped.notInstantiable` → 409 no_opponent（本组用例最初的变红主因）。 */
+function foeWarehouseOf(store) {
+  const cache = new Map();
+  return async (playerId) => {
+    if (cache.has(playerId)) return cache.get(playerId);
+    let wh = null;
+    const view = await store.getWarehouse(playerId);
+    wh = view && view.warehouse ? view.warehouse : null;
+    cache.set(playerId, wh);
+    return wh;
+  };
+}
+
 test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无镜像退化可打 / 未校验如实 missing_warehouse', async (t) => {
   const fx = await h.openFixture({ logger: h.makeLogger() });
   t.after(() => fx.cleanup());
@@ -377,33 +413,44 @@ test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无�
     playerId: me, nickname: '装配玩家', loadout, warehouse, tier: 'common', at: fx.clock(),
   });
   assert.equal(created.ok, true, `装配配置应能建档（带 warehouse 校验）：${JSON.stringify(created).slice(0, 200)}`);
-  await fx.registerPlayer({ playerId: h.makePlayerId(500) }); // 对手（默认配置，无引用；避开夹具自增 seq）
+  const foe = await fx.registerPlayer({ playerId: h.makePlayerId(500) }); // 对手：D-159 默认（starter）配置，带引用
+  const foeWarehouse = await foeWarehouseOf(fx.store);
+  const rankedMod = require('../../server/ranked.js');
+  assert.equal(rankedMod.needsWarehouse((await fx.store.loadArchive(foe.playerId)).configs.slots[0].loadout), true,
+    'D-159：默认对手配置带装配引用（其正文在服务端仓库里）');
   assert.equal((await fx.store.loadArchive(me)).flags.unverifiedLoadout, false, '带 warehouse 建档 → 已校验');
 
   // ① 镜像可用 → 正常对局（插件词条生效）
-  const q1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => warehouse });
+  const q1 = qm.createQuickMatch({
+    store: fx.store, logger: fx.logger,
+    loadWarehouse: async (pid) => (pid === me ? warehouse : foeWarehouse(pid)),
+  });
   const r1 = await q1.run({ playerId: me, seed: 11 });
   assert.equal(r1.status, 200, `有镜像必须能打：${JSON.stringify(r1).slice(0, 220)}`);
   assert.equal(r1.data.duplicate, false);
   // ①b 排位同样能打（缺陷 B 报告的另一半：修前 409 loadout_invalid / missing_warehouse）
-  const rankedMod = require('../../server/ranked.js');
   fx.clock.advance(73 * 3600 * 1000);
-  const ranked1 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => warehouse })
-    .runRankedBattle({ store: fx.store, playerId: me, seed: 21 });
+  const ranked1 = await rankedMod.withLogger(fx.logger, {
+    loadWarehouse: async (pid) => (pid === me ? warehouse : foeWarehouse(pid)),
+  }).runRankedBattle({ store: fx.store, playerId: me, seed: 21 });
   assert.equal(ranked1.status, 200, `排位有镜像必须能打：${JSON.stringify(ranked1).slice(0, 220)}`);
   assert.ok(ranked1.data.matches >= 1, `排位至少 1 场：${JSON.stringify(ranked1.data).slice(0, 160)}`);
   assert.equal(ranked1.data.invalids, 0, '不得出现"抽中却实例化失败"的 invalid 场');
 
   // ② 已校验但镜像不在本进程（D-130 不落盘/重启后）→ 基准面板退化对局（不再 409），并记 warn
-  const q2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: async () => null });
+  const q2 = qm.createQuickMatch({
+    store: fx.store, logger: fx.logger,
+    loadWarehouse: async (pid) => (pid === me ? null : foeWarehouse(pid)),
+  });
   fx.clock.advance(73 * 3600 * 1000);
   const r2 = await q2.run({ playerId: me, seed: 12 });
   assert.equal(r2.status, 200, `已校验 + 无镜像应退化可打（修前 409 no_opponent）：${JSON.stringify(r2).slice(0, 220)}`);
   assert.ok(fx.logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.reason === 'warehouse_mirror_degraded'),
     '退化对局必须留下可观测 warn（store.snapshot.missing / warehouse_mirror_degraded）');
   fx.clock.advance(73 * 3600 * 1000);
-  const ranked2 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => null })
-    .runRankedBattle({ store: fx.store, playerId: me, seed: 22 });
+  const ranked2 = await rankedMod.withLogger(fx.logger, {
+    loadWarehouse: async (pid) => (pid === me ? null : foeWarehouse(pid)),
+  }).runRankedBattle({ store: fx.store, playerId: me, seed: 22 });
   assert.equal(ranked2.status, 200, `排位退化路径同样可打：${JSON.stringify(ranked2).slice(0, 220)}`);
   assert.equal(ranked2.data.invalids, 0);
 
@@ -418,8 +465,9 @@ test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无�
   assert.equal(r3.status, 409, JSON.stringify(r3).slice(0, 220));
   assert.equal(r3.code, 'loadout_invalid');
   assert.ok((r3.details || []).some((d) => d.code === 'missing_warehouse'), '未校验 → 如实 missing_warehouse');
-  const ranked3 = await rankedMod.withLogger(fx.logger, { loadWarehouse: async () => null })
-    .runRankedBattle({ store: fx.store, playerId: me, seed: 23 });
+  const ranked3 = await rankedMod.withLogger(fx.logger, {
+    loadWarehouse: async (pid) => (pid === me ? null : foeWarehouse(pid)),
+  }).runRankedBattle({ store: fx.store, playerId: me, seed: 23 });
   assert.equal(ranked3.status, 409, JSON.stringify(ranked3).slice(0, 220));
   assert.equal(ranked3.code, 'loadout_invalid');
   assert.ok((ranked3.details || []).some((d) => d.code === 'missing_warehouse'), '排位同样如实报（不放宽）');

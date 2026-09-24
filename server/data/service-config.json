@@ -22,5 +22,7 @@
   "journal": { "fsyncMode": "batch", "compactAfterDays": 30, "bufferBytes": 1048576 },
   "snapshot": { "retentionDays": 90 },
   "replayCacheSize": 64,
-  "pool": { "ttlDays": 0, "opponentCooldownHours": 24 }
+  "pool": { "ttlDays": 0, "opponentCooldownHours": 24 },
+  "warehouse": { "maxPerBucket": 500 },
+  "ai": { "maxPerPlayer": 100 }
 }

@@ -21,8 +21,11 @@ const { StoreError, STATUS_BY_CODE } = require('./store/errors.js');
 const { deepClone, contentHash } = require('./store/canonical.js');
 const archiveMod = require('./store/archive.js');
 const loadoutMod = require('./loadout.js');
+const starterMod = require('./starter.js');
+const itemsMod = require('./core/items.js');
 
 const DEFAULT_SLOT_NAME = '默认配置';                 // §5.3 注册下发槽的展示名
+const AI_NAME_MAX = 24;                               // AI 库条目名长度上限（本地校验常量，同 RECORDS_LIMIT_MAX 口径）
 const DEFAULT_TIER_FOR_VALIDATION = 'mythic';         // 与 server/loadout.js 的缺省口径一致（门控关闭时无影响）
 const MIRROR_CACHE_MAX = 200;                         // 仓库镜像缓存条数（非权威、不落盘，见 saveWarehouseMirror）
 const RECORDS_LIMIT_DEFAULT = 20;
@@ -230,19 +233,56 @@ function createAccount(options) {
     while (mirrors.size > MIRROR_CACHE_MAX) mirrors.delete(mirrors.keys().next().value);
   }
 
+  // D-159：仓库为服务端权威 → 出战配置的引用校验**优先用服务端真源**（客户端不再需要提交镜像）。
+  //   显式传入的 warehouse（遗留路径 / 测试缝）仍然被接受并优先使用。
+  async function warehouseForValidation(playerId, provided) {
+    if (provided !== undefined && provided !== null) return provided;
+    try {
+      const view = await store.getWarehouse(playerId);
+      return view && view.warehouse ? view.warehouse : null;
+    } catch (err) {
+      log.warn('store', 'store.read',
+        `读取服务端仓库失败（引用校验降级为无仓库）：${err && err.message ? err.message : err}`,
+        { op: 'warehouseForValidation', playerId });
+      return null;
+    }
+  }
+
   /* ---------- 注册事务（§5.3：注册即默认配置 + 必有出战） ---------- */
 
-  // 冻结默认快照 → journal `account.created`（含 slot）→ apply 档案。auth.register 调用本方法。
+  // 冻结默认快照 → journal `account.created`（含 starter 仓库 + 三个槽）→ apply 档案。auth.register 调用本方法。
+  // D-159（用户 2026-09-22 拍板）：注册即发 starter（服务端权威仓库 + 已装配配置写进 slot1），
+  //   并**建满 3 个槽**（slot1 完整出战；slot2/slot3 空槽，无快照 —— D-160 非出战槽允许不完整）。
+  //   显式传入 loadout（如管理端 bot 注入）时**不发放 starter**，退回旧的单槽路径。
   async function createPlayerArchive(input) {
     const o = input || {};
     try {
-      const loadout = o.loadout === undefined || o.loadout === null ? buildDefaultLoadout() : o.loadout;
-      const v = validateLoadoutOf(loadout, { warehouse: o.warehouse, tier: o.tier });
+      const explicit = o.loadout !== undefined && o.loadout !== null;
+      const useStarter = !explicit && o.isBot !== true;
+      let starter = null;
+      let loadout;
+      if (useStarter) {
+        starter = starterMod.buildStarter({ publicId: o.publicId, playerId: o.playerId, logger: log });
+        if (!starter || !starter.ok) return fail('store_internal', '新手套装生成失败（starter 不可用）');
+        loadout = starter.loadout;
+      } else {
+        loadout = explicit ? o.loadout : buildDefaultLoadout();
+      }
+      const warehouse = starter ? starter.warehouse : o.warehouse;
+      const v = validateLoadoutOf(loadout, { warehouse, tier: o.tier });
       if (!v.ok) return fail('loadout_invalid', '默认出战配置不合法（服务端构造异常）', v.errors);
       // 缺口 1：带 warehouse 校验通过时，把该镜像中**本配置引用到的插件项**随快照一起冻结
-      const snapshot = store.freezeSnapshot(loadout, versions, { warehouse: o.warehouse });
+      const snapshot = store.freezeSnapshot(loadout, versions, { warehouse });
       if (!snapshot || !snapshot.hash) return fail('store_internal', '默认出战配置冻结失败（快照库不可用）');
       const slotId = archiveMod.slotIdOf(store.config || {}, 1);
+      const slotSpec = {
+        slotId,
+        name: o.slotName === undefined ? DEFAULT_SLOT_NAME : o.slotName,
+        snapshotHash: snapshot.hash,
+        configHash: snapshot.configHash,
+        versions,
+        warehouseVerified: v.warehouseVerified,
+      };
       const archive = await store.createAccount({
         playerId: o.playerId,
         publicId: o.publicId,
@@ -253,28 +293,41 @@ function createAccount(options) {
         points: o.points,
         flags: o.flags,
         isBot: o.isBot,
-        slot: {
-          slotId,
-          name: o.slotName === undefined ? DEFAULT_SLOT_NAME : o.slotName,
-          snapshotHash: snapshot.hash,
-          configHash: snapshot.configHash,
-          versions,
-          warehouseVerified: v.warehouseVerified,
-        },
+        slot: starter ? undefined : slotSpec,
+        // D-159/D-160：starter 路径建满 3 槽（空槽只带 loadout 正文，不带快照）
+        slots: starter ? [
+          slotSpec,
+          { slotId: archiveMod.slotIdOf(store.config || {}, 2), name: '配置2', loadout: archiveMod.emptyIncompleteLoadout() },
+          { slotId: archiveMod.slotIdOf(store.config || {}, 3), name: '配置3', loadout: archiveMod.emptyIncompleteLoadout() },
+        ] : undefined,
+        warehouse: starter ? starter.warehouse : undefined,
+        aiLibrary: starter ? starter.aiLibrary : undefined,
       });
       if (!archive) return fail('store_write_failed', '注册档案落盘失败');
       const active = archiveMod.activeSlot(archive);
-      logWrite('createPlayerArchive', { playerId: archive.playerId, slotId: active ? active.slotId : null, snapshotHash: snapshot.hash });
+      logWrite('createPlayerArchive', {
+        playerId: archive.playerId, slotId: active ? active.slotId : null, snapshotHash: snapshot.hash,
+        starter: !!starter, starterSeed: starter ? starter.seed : null,
+      });
       return ok({
         archive,
         snapshot: snapshotView(snapshot),
         slot: active ? configView(active) : null,
+        slots: archive.configs.slots.map(slotBrief),
         playerId: archive.playerId,
         publicId: archive.publicId,
         nickname: archive.nickname,
         tier: archive.progress.tier,
         points: archive.rating.points,
         activeSlotId: archive.configs.activeSlotId,
+        starter: starter ? {
+          issued: true,
+          seed: starter.seed,
+          counts: starter.stats.counts,
+          roleSlotCount: starter.stats.roleSlotCount,
+          plugins: starter.stats.plugins.map((p) => ({ id: p.id, targetUid: p.targetUid, slotIndex: p.slotIndex })),
+          aiId: starter.stats.aiId,
+        } : { issued: false },
       });
     } catch (err) {
       return toFailure(err, log, 'createPlayerArchive');
@@ -313,44 +366,42 @@ function createAccount(options) {
 
   /* ---------- 配置槽（§5.3 / D-131） ---------- */
 
-  // POST /me/configs：新建槽（默认复制出战配置；默认**不切换出战**——切换是 activate 的职责）
+  // POST /me/configs：新建槽（**D-160 起默认建空槽**，不再复制出战配置；出战仍由 activate 决定）
   async function createSlot(input) {
     const o = input || {};
     try {
       const archive = await requireArchive(o.playerId);
-      let source = null;
+      let loadout = null;
       let warehouseVerified = false;
       if (o.loadout !== undefined && o.loadout !== null) {
-        const v = validateLoadoutOf(o.loadout, { warehouse: o.warehouse, tier: tierFor(archive, o) });
-        if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
-        source = o.loadout;
-        warehouseVerified = v.warehouseVerified;
-      } else {
-        const active = archiveMod.activeSlot(archive);
-        if (!active) return fail('no_active_config', '没有可复制的出战配置（不变量破损）');
-        source = active.loadout;
-        if (o.warehouse !== undefined && o.warehouse !== null) {
-          const v = validateLoadoutOf(source, { warehouse: o.warehouse, tier: tierFor(archive, o) });
-          if (!v.ok) return fail('loadout_invalid', '复制的出战配置与仓库镜像不一致', v.errors);
-          warehouseVerified = v.warehouseVerified;
+        const missing = archiveMod.loadoutMissingOf(o.loadout);
+        if (missing.length > 0) {
+          return fail('loadout_invalid', '新槽可留空（不传 loadout 即建空槽）；要写入的内容必须完整',
+            archiveMod.loadoutMissingDetails(missing));
         }
+        const v = validateLoadoutOf(o.loadout, {
+          warehouse: await warehouseForValidation(o.playerId, o.warehouse), tier: tierFor(archive, o),
+        });
+        if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
+        loadout = o.loadout;
+        warehouseVerified = v.warehouseVerified;
       }
       const res = await store.createConfigSlot({
         playerId: o.playerId,
-        loadout: source,
+        loadout: loadout === null ? undefined : loadout,
         name: o.name,
-        activate: o.activate === true,
+        activate: false,
         versions,
         warehouseVerified,
         warehouse: o.warehouse, // 缺口 1：随快照冻结本配置引用到的插件项
       });
-      logWrite('createSlot', { playerId: o.playerId, slotId: res.slot.slotId });
+      logWrite('createSlot', { playerId: o.playerId, slotId: res.slot.slotId, empty: res.snapshot === null });
       return ok({
         slotId: res.slot.slotId,
         slot: configView(res.slot),
         slots: res.archive.configs.slots.map(slotBrief),
         activeSlotId: res.archive.configs.activeSlotId,
-        snapshot: snapshotView(res.snapshot),
+        snapshot: res.snapshot ? snapshotView(res.snapshot) : null,
       });
     } catch (err) {
       return toFailure(err, log, 'createSlot');
@@ -358,17 +409,32 @@ function createAccount(options) {
   }
 
   // PUT /me/configs/:slotId：校验 → 冻结快照 → 落盘（乐观锁 baseUpdatedAt 冲突 → config_conflict）
+  // D-160：**非出战槽允许不完整**（角色/技能/AI 可缺，插槽可空）——此时不冻结快照、loadout 正文随记录落盘；
+  //   出战槽仍要求完整（不完整 → loadout_invalid + 逐位置 details）。
   async function saveConfig(input) {
     const o = input || {};
     try {
       if (!o.loadout || typeof o.loadout !== 'object' || Array.isArray(o.loadout)) {
-        return fail('bad_request', '缺少 loadout（必须提供完整出战配置）', [detailOf('bad_request', 'loadout 必须是对象', 'loadout')]);
+        return fail('bad_request', '缺少 loadout（必须是对象 {role, skills[3], ai}）', [detailOf('bad_request', 'loadout 必须是对象', 'loadout')]);
       }
       const archive = await requireArchive(o.playerId);
       const slot = archiveMod.findSlot(archive, o.slotId);
       if (!slot) return fail('slot_not_found', `槽 ${o.slotId} 不存在`);
-      const v = validateLoadoutOf(o.loadout, { warehouse: o.warehouse, tier: tierFor(archive, o) });
-      if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
+      const isActive = archive.configs.activeSlotId === slot.slotId;
+      const missing = archiveMod.loadoutMissingOf(o.loadout);
+      let warehouseVerified = false;
+      if (missing.length > 0) {
+        if (isActive) {
+          return fail('loadout_invalid', '出战配置必须完整（角色 + 恰 3 技能 + AI；允许插槽为空）',
+            archiveMod.loadoutMissingDetails(missing));
+        }
+      } else {
+        const v = validateLoadoutOf(o.loadout, {
+          warehouse: await warehouseForValidation(o.playerId, o.warehouse), tier: tierFor(archive, o),
+        });
+        if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
+        warehouseVerified = v.warehouseVerified;
+      }
       const res = await store.saveConfigSlot({
         playerId: o.playerId,
         slotId: slot.slotId,
@@ -377,10 +443,13 @@ function createAccount(options) {
         baseUpdatedAt: o.baseUpdatedAt,
         activate: o.activate === true,
         versions,
-        warehouseVerified: v.warehouseVerified,
+        warehouseVerified,
         warehouse: o.warehouse, // 缺口 1：随快照冻结本配置引用到的插件项（重启/淘汰后不再依赖进程内镜像）
       });
-      logWrite('saveConfig', { playerId: o.playerId, slotId: slot.slotId, snapshotHash: res.snapshot.hash });
+      logWrite('saveConfig', {
+        playerId: o.playerId, slotId: slot.slotId,
+        snapshotHash: res.snapshot ? res.snapshot.hash : null, incomplete: missing.length > 0,
+      });
       return ok({
         slotId: res.slot.slotId,
         slot: configView(res.slot),
@@ -388,7 +457,9 @@ function createAccount(options) {
         slots: res.archive.configs.slots.map(slotBrief),
         activeSlotId: res.archive.configs.activeSlotId,
         activeSnapshotHash: res.archive.configs.activeSnapshotHash,
-        snapshot: snapshotView(res.snapshot),
+        snapshot: res.snapshot ? snapshotView(res.snapshot) : null,
+        complete: missing.length === 0,
+        missing,
         unverifiedLoadout: !!res.archive.flags.unverifiedLoadout,
       });
     } catch (err) {
@@ -434,11 +505,168 @@ function createAccount(options) {
     }
   }
 
-  /* ---------- 仓库镜像（D-130：客户端权威，服务端只做引用校验） ---------- */
+  /* ---------- D-159：服务端权威仓库（真源读取 + 装配/拆卸） ---------- */
 
-  // PUT /me/warehouse：形状校验 + 用镜像复查当前出战配置的引用完整性
-  // 持久化副作用：仅在引用校验通过时清除 flags.unverifiedLoadout（§5.2）。
-  // 镜像正文**不落盘**（D-130：仓库不在服务端账本内）——只保留进程内缓存供 GET /me/warehouse 回读。
+  // GET /me/warehouse：**真源**（四桶 + usage「装配于配置几」+ caps + counts）
+  async function getWarehouse(playerId) {
+    try {
+      const view = await store.getWarehouse(playerId);
+      log.trace('store', 'store.read', 'account.getWarehouse', { playerId });
+      return ok({
+        buckets: view.warehouse.buckets,
+        usage: view.usage,
+        caps: view.caps,
+        counts: view.counts,
+        starterIssued: view.starterIssued,
+      });
+    } catch (err) {
+      return toFailure(err, log, 'getWarehouse');
+    }
+  }
+
+  // 装配拒绝码 → 玩家可读文案（服务端原文进 details 供诊断；前端仍应做类型预过滤，R-5）
+  function pluginRejectMessageOf(res) {
+    const map = {
+      slot_type_mismatch: '插件类型与插槽不匹配（只能装同类型插件）',
+      slot_occupied: '该插槽已装配插件，请先拆卸',
+      points_exceeded: '角色插件点数不足',
+      plugin_equipped: '该插件已装配在其他位置',
+      item_missing: '目标物品或插件不在仓库中',
+      tier_locked: '物品解锁段位高于当前段位',
+    };
+    return map[res.code] || res.message || res.code;
+  }
+
+  // POST /me/warehouse/assemble：core/items 纯函数校验（单点真源）→ 落增量记录（journal 可重演）
+  async function assemblePlugin(input) {
+    const o = input || {};
+    try {
+      const archive = await requireArchive(o.playerId);
+      const view = await store.getWarehouse(o.playerId);
+      const res = itemsMod.assemble(view.warehouse, {
+        targetUid: o.targetUid, pluginUid: o.pluginUid, slotIndex: o.slotIndex, tier: tierFor(archive, o),
+      });
+      if (!res.ok) {
+        return fail(res.code, pluginRejectMessageOf(res), [
+          { path: 'slotIndex', code: res.code, message: res.message || res.code },
+        ]);
+      }
+      const applied = await store.applyWarehouseChange({
+        playerId: o.playerId, op: 'assemble',
+        targetUid: o.targetUid, slotIndex: o.slotIndex, pluginUid: o.pluginUid,
+      });
+      logWrite('assemblePlugin', {
+        playerId: o.playerId, targetUid: o.targetUid, pluginUid: o.pluginUid, slotIndex: o.slotIndex,
+      });
+      return ok({
+        warehouse: applied.warehouse, usage: applied.usage, counts: applied.counts, caps: applied.caps,
+      });
+    } catch (err) {
+      return toFailure(err, log, 'assemblePlugin');
+    }
+  }
+
+  // POST /me/warehouse/disassemble：空槽/悬挂引用 → 404 slot_empty / plugin_missing（core 口径）
+  async function disassemblePlugin(input) {
+    const o = input || {};
+    try {
+      await requireArchive(o.playerId);
+      const view = await store.getWarehouse(o.playerId);
+      const res = itemsMod.disassemble(view.warehouse, { targetUid: o.targetUid, slotIndex: o.slotIndex });
+      if (!res.ok) {
+        return fail(res.code, pluginRejectMessageOf(res), [
+          { path: 'slotIndex', code: res.code, message: res.message || res.code },
+        ]);
+      }
+      const applied = await store.applyWarehouseChange({
+        playerId: o.playerId, op: 'disassemble', targetUid: o.targetUid, slotIndex: o.slotIndex,
+      });
+      logWrite('disassemblePlugin', { playerId: o.playerId, targetUid: o.targetUid, slotIndex: o.slotIndex });
+      return ok({
+        warehouse: applied.warehouse, usage: applied.usage, counts: applied.counts, caps: applied.caps,
+      });
+    } catch (err) {
+      return toFailure(err, log, 'disassemblePlugin');
+    }
+  }
+
+  /* ---------- D-161：AI 库（本批仅后端；前端只用 list） ---------- */
+
+  function aiBrief(ai) {
+    return {
+      aiId: ai.aiId,
+      name: ai.name,
+      program: deepClone(ai.program),
+      createdAt: ai.createdAt === undefined ? null : ai.createdAt,
+      updatedAt: ai.updatedAt === undefined ? null : ai.updatedAt,
+    };
+  }
+
+  // GET /me/ai：库内条目 + 上限 + 被哪些配置引用（usage: aiId → [slotId]）
+  async function listAi(playerId) {
+    try {
+      const view = await store.listAi(playerId);
+      log.trace('store', 'store.read', 'account.listAi', { playerId });
+      return ok({
+        items: (view.items || []).map(aiBrief),
+        count: (view.items || []).length,
+        max: view.max,
+        usage: view.usage || {},
+      });
+    } catch (err) {
+      return toFailure(err, log, 'listAi');
+    }
+  }
+
+  // POST /me/ai：命名保存（上限 100 → 409 ai_limit）。
+  //   注：**本批只做结构检查**（program 必须是对象且 type=program）；完整 AST 校验由 F5 编辑器在保存前
+  //   调 `POST /ai/validate` 完成（见分册 §13 K-7）。
+  async function createAi(input) {
+    const o = input || {};
+    try {
+      const name = typeof o.name === 'string' ? o.name.trim() : '';
+      if (name === '' || name.length > AI_NAME_MAX) {
+        return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, [
+          detailOf('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, 'name'),
+        ]);
+      }
+      const program = o.program;
+      if (!program || typeof program !== 'object' || Array.isArray(program) || program.type !== 'program') {
+        return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', [
+          detailOf('bad_request', 'program 必须是 {type:"program", version, body}', 'program'),
+        ]);
+      }
+      await requireArchive(o.playerId);
+      const res = await store.createAi({ playerId: o.playerId, name, program });
+      logWrite('createAi', { playerId: o.playerId, aiId: res.ai.aiId });
+      const view = await store.listAi(o.playerId);
+      return ok({ aiId: res.ai.aiId, ai: aiBrief(res.ai), count: view.items.length, max: view.max });
+    } catch (err) {
+      return toFailure(err, log, 'createAi');
+    }
+  }
+
+  // DELETE /me/ai/:aiId：被**出战配置**引用 → 409 ai_in_use（非出战配置的引用只作提示）
+  async function deleteAi(input) {
+    const o = input || {};
+    try {
+      await requireArchive(o.playerId);
+      const res = await store.deleteAi({ playerId: o.playerId, aiId: o.aiId });
+      logWrite('deleteAi', { playerId: o.playerId, aiId: o.aiId, referencedBy: res.referencedBy });
+      return ok({ deleted: o.aiId, referencedBy: res.referencedBy || [], count: (res.items || []).length, max: res.max });
+    } catch (err) {
+      return toFailure(err, log, 'deleteAi');
+    }
+  }
+
+  /* ---------- 仓库镜像（D-130 遗留 / D-159 起已退役：服务端有真源） ---------- */
+
+  // PUT /me/warehouse：**遗留兼容路径**。D-159 起仓库为服务端权威（`GET /me/warehouse` = 真源），
+  //   本端点不再作为引用校验的判据，也不再拒绝请求：
+  //   · 形状非法 → 400（保留原有防护）；
+  //   · 引用不覆盖出战配置 → 200 + `verified:false` + warn（**旧客户端仍可继续**，见分册 K-3；
+  //     修前为 409 loadout_invalid —— 那会让"服务端仓库已含真源、客户端镜像陈旧"的老流程直接卡死）。
+  //   镜像正文仍只进进程内缓存（不落盘），仅作为 `loadWarehouse` 的兜底来源之一。
   async function saveWarehouseMirror(input) {
     const o = input || {};
     try {
@@ -449,8 +677,13 @@ function createAccount(options) {
       let verified = false;
       if (active && active.loadout) {
         const v = validateLoadoutOf(active.loadout, { warehouse: o.warehouse, tier: tierFor(archive, o) });
-        if (!v.ok) return fail('loadout_invalid', '仓库镜像与当前出战配置不一致（引用校验失败）', v.errors);
-        verified = true;
+        if (!v.ok) {
+          log.warn('store', 'store.write',
+            `仓库镜像不覆盖出战配置引用（D-159 起不再拒绝，仅记 verified:false）：${(v.errors[0] || {}).message || ''}`,
+            { playerId: o.playerId, op: 'saveWarehouseMirror', details: v.errors.slice(0, 3) });
+        } else {
+          verified = true;
+        }
       }
       const hash = contentHash(o.warehouse);
       mirrorSet(o.playerId, { warehouse: deepClone(o.warehouse), hash, savedAt: nowFn() });
@@ -477,11 +710,17 @@ function createAccount(options) {
         applied = true;
       }
       logWrite('saveWarehouseMirror', { playerId: o.playerId, verified, warehouseHash: hash });
+      // ⚠️ 字段语义分叉（B29 遗留，D-159 后必须说清）：
+      //   · `unverifiedLoadout` = **本次提交的镜像**是否覆盖出战配置引用（回执局部量，`!verified`）；
+      //   · `archiveUnverifiedLoadout` = **档案真源**的标志位（`GET /me` 的 `flags.unverifiedLoadout` 同源）。
+      //   D-159 起真源优先：镜像不覆盖**不再**把档案标志置 true，故两者可能一个 true 一个 false ——
+      //   旧客户端若只看 `unverifiedLoadout` 会误判"配置未校验"，故**显式回带档案口径**（新增字段，不改旧字段）。
       return ok({
         saved: true,
         verified,
         warehouseHash: hash,
         unverifiedLoadout: !verified,
+        archiveUnverifiedLoadout: !!archive.flags.unverifiedLoadout,
         applied,
         snapshotWarehouseRefreshed,
         buckets: bucketCounts(o.warehouse),
@@ -492,13 +731,14 @@ function createAccount(options) {
     }
   }
 
-  // GET /me/warehouse：回读最近一次提交的镜像（进程内缓存；重启后为空 → warehouse_missing）
+  // GET /me/warehouse-mirror 语义（**遗留**）：回读最近一次提交的进程内镜像；重启后为空 → warehouse_missing
+  //   ⚠️ D-159 起仓库真源是 `GET /me/warehouse`（服务端权威）；本方法只服务退役中的镜像路径。
   async function getWarehouseMirror(playerId) {
     try {
       const archive = await requireArchive(playerId);
       const entry = mirrors.get(playerId);
       if (!entry) {
-        return fail('warehouse_missing', '本进程内没有该玩家的仓库镜像（仓库由客户端权威持有，D-130）');
+        return fail('warehouse_missing', '本进程内没有该玩家的仓库镜像（D-159 起仓库真源为 GET /me/warehouse，本镜像端点已退役）');
       }
       return ok({
         warehouse: deepClone(entry.warehouse),
@@ -636,7 +876,15 @@ function createAccount(options) {
     saveConfig,
     activateConfig,
     deleteSlot,
-    // 仓库镜像
+    // D-159：服务端权威仓库（真源 + 装配/拆卸）
+    getWarehouse,
+    assemblePlugin,
+    disassemblePlugin,
+    // D-161：AI 库
+    listAi,
+    createAi,
+    deleteAi,
+    // 仓库镜像（D-130 遗留：只做引用校验）
     saveWarehouseMirror,
     getWarehouseMirror,
     // 战绩
