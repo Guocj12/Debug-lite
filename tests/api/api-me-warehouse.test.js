@@ -4,7 +4,8 @@
  * 契约：docs/frontend/03-hub-warehouse-loadout.md §1/§5.2/§6/§9.1；docs/interfaces.md §2（/me/warehouse* 行）
  * 覆盖：
  *   UWH-1 真源形状（buckets/usage/caps/counts/starterIssued）+ 401 负例
- *   UWH-2 usage「装配于配置几」：出战配置引用的角色/技能/插件都被标记，且同物品可多配置引用
+ *   UWH-2 usage「装配于配置几」：出战配置引用的角色/技能/插件都被标记；**同物品被第二份配置引用 → 409 item_in_use**
+ *         （D-163 用户 2026-09-25 裁定：一件物品同时只能被一份配置引用；旧"允许共享"语义已废除）
  *   UWH-3 assemble 正例（按槽类型匹配）→ 仓库与 usage 同步；disassemble 正例
  *   UWH-4 装配拒绝码：类型不符 409 slot_type_mismatch（文案可读）、空槽拆卸 404 slot_empty
  *   UWH-5 每桶上限 500：接近上限时超限 → 409 warehouse_full（不写 journal，计数不变）
@@ -41,6 +42,9 @@ const FIX_ROLE = 'uwh_fix_role';
 const FIX_PLUGIN_MATCH = 'uwh_fix_plugin_atk';
 const FIX_PLUGIN_MISMATCH = 'uwh_fix_plugin_def';
 const FIX_SKILL = 'uwh_fix_skill';
+// D-163（一件物品同时只能被一份配置引用）：UWH-7 要用**独立**的一整套（角色 + 3 技能 + AI）写第二份配置，
+//   故夹具补齐 3 个技能（不含插件 → 插槽可空，D-160 允许）。
+const FIX_SKILL_IDS = [FIX_SKILL, 'uwh_fix_skill2', 'uwh_fix_skill3'];
 async function injectAssemblable(s, playerId) {
   await s.store.updateArchive(playerId, (a) => {
     a.warehouse.buckets.role.push({
@@ -63,9 +67,25 @@ async function injectAssemblable(s, playerId) {
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
     });
+    // 第 2/3 个夹具技能：模板各不相同（同一份配置内 uid 必须两两不同，模板可重复但没必要）
+    a.warehouse.buckets.skill.push({
+      uid: FIX_SKILL_IDS[1], kind: 'skill', templateId: 'skill_straight_precise', name: '夹具技能2', quality: 'common',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1.1, cost: { hp: 0, mp: 8, sp: 0 }, cooldown: 3, bulletLevel: 3 },
+      unlockTier: 'common',
+    });
+    a.warehouse.buckets.skill.push({
+      uid: FIX_SKILL_IDS[2], kind: 'skill', templateId: 'skill_dash_bash', name: '夹具技能3', quality: 'common',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1.2, cost: { hp: 0, mp: 10, sp: 0 }, cooldown: 4, bulletLevel: 2 },
+      unlockTier: 'common',
+    });
     return null;
   });
-  return { roleUid: FIX_ROLE, freeSlotIndex: 0, matchUid: FIX_PLUGIN_MATCH, mismatchUid: FIX_PLUGIN_MISMATCH };
+  return {
+    roleUid: FIX_ROLE, freeSlotIndex: 0, matchUid: FIX_PLUGIN_MATCH, mismatchUid: FIX_PLUGIN_MISMATCH,
+    skillUids: FIX_SKILL_IDS,
+  };
 }
 
 test('UWH-1 GET /me/warehouse 为真源（starter 已入档 + caps + usage）+ 401 负例', async () => {
@@ -91,7 +111,7 @@ test('UWH-1 GET /me/warehouse 为真源（starter 已入档 + caps + usage）+ 4
   });
 });
 
-test('UWH-2 usage：出战配置引用的物品与插件都被标记为 slot1（同物品可被多配置引用）', async () => {
+test('UWH-2 usage：出战配置引用的物品与插件都被标记为 slot1；同物品被第二份配置引用 → 409 item_in_use', async () => {
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uwh2');
     const cfg = await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(p.token));
@@ -108,11 +128,22 @@ test('UWH-2 usage：出战配置引用的物品与插件都被标记为 slot1（
     assert.ok(refs.length >= 2, 'starter 应至少装了角色插件与技能插件各 1');
     for (const uid of refs) assert.deepEqual(usage[uid].slotIds, ['slot1'], `插件 ${uid} 标记 slot1`);
 
-    // 同一物品被第二个配置引用 → usage 列出两个槽
+    // D-163（用户 2026-09-25 裁定：一件物品同时只能被一份配置引用）：把 slot1 的物品写进 slot2 → 409 item_in_use。
+    //   修前此处是 200 且 usage 列出两个槽（"同物品可被多配置引用"）——该语义已被用户裁定废除。
     const r = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', { loadout: ld }, h.authed(p.token));
-    assert.equal(r.status, 200, r.raw);
+    assert.equal(r.status, 409, `同物品跨配置引用必须被拒（实际 ${r.raw}）`);
+    assert.equal(r.body.error.code, 'item_in_use');
+    const det = r.body.error.details.find((d) => d.path === ld.role.uid);
+    assert.ok(det, `details 必须点名冲突物品 ${ld.role.uid}（实际 ${JSON.stringify(r.body.error.details)}）`);
+    assert.match(det.message, /slot1/, '文案指出"已被配置 slot1 使用"');
+    assert.match(det.message, /一件物品同时只能装配到一份配置/, '文案引用用户裁定（D-163）');
+
+    // 拒绝后 usage 不变：每个 uid 至多一条记录（一件物品只属于一份配置）
     const wh2 = await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token));
-    assert.deepEqual(wh2.body.data.usage[ld.role.uid].slotIds.sort(), ['slot1', 'slot2'], '同一物品被两个配置引用 → 两条记录');
+    assert.deepEqual(wh2.body.data.usage[ld.role.uid].slotIds, ['slot1'], '被拒的写入不得改变 usage');
+    const slot2 = (await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(p.token)))
+      .body.data.slots.find((x) => x.slotId === 'slot2');
+    assert.equal(slot2.loadout.role, null, '被拒的写入不得落盘（slot2 仍为空槽）');
   });
 });
 
@@ -274,12 +305,17 @@ test('UWH-7 闭环回归：开箱→装配（equipped 同步）→出战配置�
     assert.equal(plugAfter.equipped, true, 'D-159 回归：服务端装配必须把插件 equipped 置为 true');
 
     // ③ 用"装配后的角色物品"构造出战配置 → 必须保存成功（修前：插件未装配 → 409 loadout_invalid）
+    //    D-163（一件物品同时只能被一份配置引用）：slot2 必须用**另一套**物品（夹具角色 + 3 个夹具技能），
+    //    不能借用 slot1 的技能（借用 → 409 item_in_use）；AI 程序不参与独占判定，沿用 slot1 的。
     const ld0 = (await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, h.authed(me.token))).body.data.slots[0].loadout;
     const roleAssembled = asm.body.data.warehouse.buckets.role.find((r) => r.uid === pick.roleUid);
+    const fixSkills = fix.skillUids.map((uid) => asm.body.data.warehouse.buckets.skill.find((x) => x.uid === uid));
+    assert.ok(fixSkills.every(Boolean), '夹具技能已入档（前置）');
     const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', {
-      loadout: { ...ld0, role: roleAssembled },
+      loadout: { role: roleAssembled, skills: fixSkills, ai: ld0.ai },
     }, h.authed(me.token));
     assert.equal(save.status, 200, `引用"服务端新装配插件"的配置必须可保存（实际 ${save.raw}）`);
+    assert.equal(save.body.data.complete, true, '第二套配置必须完整（activate 的前提）');
     const act = await h.request(s.port, 'POST', '/api/v1/me/configs/slot2/activate', undefined, h.authed(me.token));
     assert.equal(act.status, 200, act.raw);
 

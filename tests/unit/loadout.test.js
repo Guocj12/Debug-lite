@@ -269,16 +269,21 @@ test('P2-3 回归：AI 错误截断标记', () => {
 // P1-1 回归（审查 docs/reviews/B20.md）：未知模板/品质 → 校验拒绝（面板聚合路径不再 500）
 test('P1-1 回归：未知技能模板/品质 → loadout_invalid（不抛）', () => {
   const f1 = fixture();
+  // D-163：物品身份/数值一律按 uid 从**仓库**取回（客户端正文被丢弃）→ 要让"未知模板"真的进入校验，
+  //   必须把未知模板写进**仓库里那一件**（只改 loadout 正文已不再被校验，旧写法会静默通过）。
   f1.loadout.skills[0].templateId = 'nope_not_a_template';
+  f1.warehouse.buckets.skill[0].templateId = 'nope_not_a_template';
   const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
   assert.equal(v1.ok, false, '未知技能模板拒绝');
   assert.ok(v1.errors.some((e) => e.where === 'skills[0]' && e.message.includes('未知技能模板')), JSON.stringify(v1.errors));
   const f2 = fixture();
   f2.loadout.skills[1].quality = 'platinum';
+  f2.warehouse.buckets.skill[1].quality = 'platinum';
   const v2 = loadout.validateLoadout(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
   assert.equal(v2.ok, false, '未知品质拒绝');
   const f3 = fixture();
   f3.loadout.role.templateId = 'ghost_role';
+  f3.warehouse.buckets.role[0].templateId = 'ghost_role';
   const v3 = loadout.validateLoadout(f3.loadout, { warehouse: f3.warehouse, tier: 'mythic' });
   assert.equal(v3.ok, false, '未知角色模板拒绝');
   // 面板同样拒绝（不再 500）
@@ -290,16 +295,23 @@ test('P1-1 回归：未知技能模板/品质 → loadout_invalid（不抛）', 
 // B20 P2 落实回归：类别错配/缺 tier 插件拒绝；junkField 透传；非声明维不变
 test('B20 P2 回归：技能槽类别错配与缺 tier 插件拒绝；junkField 透传；非声明维度不变', () => {
   const f1 = fixture();
+  // D-163：插件引用按 uid 从仓库解析，但"哪个槽引用哪个插件"取自 loadout 正文（resolveItems 不覆盖 slots）。
+  //   为避免同时触发 T-PB-8 双引用（pa 已被角色的 atk 槽占用），先把角色那一侧的 pa 摘掉，
+  //   只留"技能槽引用 rolePlugin"这一处 → 命中的是类别错配分支而非双引用分支。
+  f1.loadout.role.slots[0].pluginUid = null;
+  f1.warehouse.buckets.role[0].slots[0].pluginUid = null;
   f1.loadout.skills[0].slots = [{ type: 'basic', pluginUid: 'pa' }]; // rolePlugin 装技能槽
   const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
   assert.equal(v1.ok, false, '类别错配拒绝');
+  assert.ok(v1.errors.some((e) => e.message.includes('类别与槽位不匹配')), JSON.stringify(v1.errors));
   const f2 = fixture();
   f2.warehouse.buckets.skillPlugin[0].tier = undefined; // qx 缺 tier
   const v2 = loadout.validateLoadout(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
   assert.equal(v2.ok, false, '技能插件缺 tier 拒绝');
-  // 非白名单字段透传（P2-②）
+  // 非白名单字段透传（P2-②）：D-163 起正文数值被丢弃 → "自定义字段"必须挂在**仓库里那一件**上才有效
   const f3 = fixture();
   f3.loadout.skills[0].params.junkField = 'keep-me';
+  f3.warehouse.buckets.skill[0].params.junkField = 'keep-me';
   const p = loadout.buildPanel(f3.loadout, { warehouse: f3.warehouse, tier: 'mythic' });
   assert.equal(p.ok, true);
   assert.equal(p.panel.skills[0].params.junkField, 'keep-me', '非标准字段保留');

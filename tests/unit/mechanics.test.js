@@ -171,9 +171,18 @@ test('loadout.buildPanel 投影必须保留 specials/castEffects/affixes 与插�
   const P_CRIT = { uid: 'spCrit', kind: 'skillPlugin', id: 'sp_crit', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'crit_chance', params: { v: 0.1 } }] };
   const P_BUFF = { uid: 'spBuff', kind: 'skillPlugin', id: 'sp_buff', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'cast_buff', params: { v: 2, duration: 2 } }] };
   const P_STUN = { uid: 'spStun', kind: 'skillPlugin', id: 'sp_stun', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'stun', params: { v: 1 } }] };
-  const warehouse = { buckets: { role: [role], skill: [], rolePlugin: [P_REGEN], skillPlugin: [P_CRIT, P_BUFF, P_STUN] } };
-  const loadout = { role, skills: [mkSkill(0, 'spCrit'), mkSkill(1, 'spStun'), mkSkill(2, null)], plugins: [P_REGEN, P_CRIT, P_STUN], ai: AI };
-  const r = loadoutApi.buildPanel(loadout, { warehouse, tier: 'mythic' });
+  // D-163：`buildPanel` 也按 uid 从仓库解析物品（身份/数值一律取仓库副本）→ 桩仓库必须**完整**
+  //   （角色 + 恰 3 个技能都在桶里），否则报 `物品不在仓库: sk0`。又因面板读的是"仓库里那一份"，
+  //   每次要换技能插槽时，仓库里的技能必须与 loadout 引用同形（故用工厂同时产出两者）。
+  const mkFixture = (skill0Plugin, skill1Plugin) => {
+    const skillItems = [mkSkill(0, skill0Plugin), mkSkill(1, skill1Plugin), mkSkill(2, null)];
+    return {
+      warehouse: { buckets: { role: [role], skill: skillItems, rolePlugin: [P_REGEN], skillPlugin: [P_CRIT, P_BUFF, P_STUN] } },
+      loadout: { role, skills: skillItems, plugins: [P_REGEN, P_CRIT, P_STUN], ai: AI },
+    };
+  };
+  const f1 = mkFixture('spCrit', 'spStun');
+  const r = loadoutApi.buildPanel(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
   assert.equal(r.ok, true, JSON.stringify(r.errors));
   const p0 = r.panel.skills[0].params;
   assert.equal(p0.specials && p0.specials.critChance, 0.1, 'crit_chance 必须穿过面板投影（经 /battle 才会生效）');
@@ -181,10 +190,8 @@ test('loadout.buildPanel 投影必须保留 specials/castEffects/affixes 与插�
   assert.equal(r.panel.role.regen.hp, 1, '角色插件 hp_regen 必须叠加进 panel.regen.hp');
   assert.equal(r.panel.role.regen.sp, 2, '模板 regen 保留');
   // 第二组：cast_buff + stun 必须穿过投影到达技能实例
-  const r2 = loadoutApi.buildPanel(
-    { role, skills: [mkSkill(0, 'spBuff'), mkSkill(1, 'spStun'), mkSkill(2, null)], plugins: [P_REGEN, P_BUFF, P_STUN], ai: AI },
-    { warehouse, tier: 'mythic' },
-  );
+  const f2 = mkFixture('spBuff', 'spStun');
+  const r2 = loadoutApi.buildPanel(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
   const p0b = r2.panel.skills[0].params;
   assert.equal(p0b.castEffects.length, 1, 'cast_buff → castEffects 穿过投影');
   assert.equal(p0b.castEffects[0].stat, 'atk');

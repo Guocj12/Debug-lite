@@ -114,7 +114,10 @@ test('P1 回归（HTTP）：skills 缺失 409 非 500；装配引用缺 warehous
 test('B20 P1-1 回归（HTTP）：未知技能模板 → 双端点 409 非 500；/panel 聚合值 1.38/16 显式断言', async () => {
   await withServer(null, async ({ port }) => {
     const f = JSON.parse(JSON.stringify(LOADOUT));
+    // D-163：/panel 会先按 uid 从**仓库**取回物品副本（客户端正文的 templateId 一律丢弃）→ 要让
+    //   "未知技能模板"真的到达聚合路径，必须连同仓库副本一起改（与上面 'ghost' 用例同口径）。
     f.loadout.skills[2].templateId = 'nope_not_a_template';
+    f.warehouse.buckets.skill[2].templateId = 'nope_not_a_template';
     const r1 = await request(port, 'POST', '/api/v1/loadout', { loadout: f.loadout, warehouse: f.warehouse });
     assert.equal(r1.status, 409, r1.raw);
     assert.equal(r1.body.error.code, 'loadout_invalid');

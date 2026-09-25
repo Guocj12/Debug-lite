@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const authMod = require('../../server/auth.js');
-const { openFixture, registerPlayer, sampleLoadout, quickRecord, makeLogger } = require('../helpers/account.js');
+const { openFixture, registerPlayer, quickRecord, makeLogger } = require('../helpers/account.js');
 
 async function facts(fx, playerId) {
   const archive = await fx.store.loadArchive(playerId);
@@ -19,6 +19,50 @@ async function facts(fx, playerId) {
 
 async function settle(fx, a, b, overrides) {
   return fx.store.settleBattle(quickRecord(await facts(fx, a.playerId), await facts(fx, b.playerId), overrides));
+}
+
+/* ---------- D-163 夹具：出战配置引用的物品必须**真实存在于本人仓库** ----------
+ * 旧写法 `sampleLoadout(fx.account)` 取自 ranked 的 bot 夹具（uid = bot_role / bot_skill1…）——
+ * 这些物品从来不在任何玩家仓库里；D-163 起 `loadout.resolveItems` 按 uid 从**服务端权威仓库**
+ * 取回物品身份与数值（客户端正文一律丢弃），未知 uid → 409「物品不在仓库: <uid>」。
+ * 又因 D-163 跨配置独占（一件物品同时只能属于一份配置），两份配置要用两套互不相交的夹具。
+ * （形状与 tests/unit/warehouse-invariants.test.js 的 fixtureWarehouse() 同形。）
+ */
+const FIX_SKILL_TEMPLATES = ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'];
+
+function fixtureItems(set) {
+  const tag = `ap_fix${set}`;
+  return {
+    role: {
+      uid: `${tag}_role`, kind: 'role', templateId: 'role_bal', name: `夹具角色${set}`, quality: 'common',
+      slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+      stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+      pluginPoints: 3, unlockTier: 'common',
+    },
+    skills: FIX_SKILL_TEMPLATES.map((templateId, i) => ({
+      uid: `${tag}_skill${i}`, kind: 'skill', templateId, name: `夹具技能${set}-${i}`, quality: 'common',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1 + i / 10, cost: { hp: 0, mp: 8 + i, sp: 0 }, cooldown: 3 - i, bulletLevel: 2 + i },
+      unlockTier: 'common',
+    })),
+  };
+}
+
+// 注入该玩家的服务端权威仓库（D-163：这是"这件物品存在"的唯一真源）
+async function injectFixture(fx, playerId, set) {
+  const items = fixtureItems(set);
+  await fx.store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push(items.role);
+    for (const sk of items.skills) a.warehouse.buckets.skill.push(sk);
+    return null;
+  });
+  return items;
+}
+
+function fixtureLoadout(fx, items) {
+  return JSON.parse(JSON.stringify({
+    role: items.role, skills: items.skills.slice(), ai: fx.account.defaultLoadout().ai,
+  }));
 }
 
 // 收集"全部玩家视图"用于重启前后逐值比较
@@ -42,9 +86,15 @@ test('PS-1 重启一致：重新装配适配器后 summary/configs/records/defen
   try {
     const a = await registerPlayer(fx1.auth, { username: 'Persist_A', nickname: '持久' });
     const b = await registerPlayer(fx1.auth, { username: 'Persist_B' });
-    await fx1.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: sampleLoadout(fx1.account) });
+    // D-163：落盘正文的物品必须来自本人仓库，且一件物品同时只能属于一份配置 → slot1/slot2 各用一套夹具
+    const fix1 = await injectFixture(fx1, a.playerId, 1);
+    const fix2 = await injectFixture(fx1, a.playerId, 2);
+    assert.equal((await fx1.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: fixtureLoadout(fx1, fix1) })).ok, true,
+      'D-163：夹具物品已入档 → 出战配置可保存');
+    // D-159：注册即建满 3 槽 → createSlot 必撞 409 slot_limit；第二份配置写进**已存在的空槽** slot2
     await fx1.account.createSlot({ playerId: a.playerId, name: '二号' });
-    await fx1.account.activateConfig({ playerId: a.playerId, slotId: 'slot2' });
+    assert.equal((await fx1.account.saveConfig({ playerId: a.playerId, slotId: 'slot2', loadout: fixtureLoadout(fx1, fix2) })).ok, true);
+    assert.equal((await fx1.account.activateConfig({ playerId: a.playerId, slotId: 'slot2' })).ok, true, '完整配置可设为出战');
     const r1 = await settle(fx1, a, b, { seed: 31 });
     const r2 = await settle(fx1, a, b, { seed: 32, winner: 'p2', p1Result: 'loss', p2Result: 'win' });
     await fx1.account.markSeen({ playerId: b.playerId, uptoSeq: r2.record.seq });
@@ -100,13 +150,19 @@ test('PS-2 业务状态变更都在 journal（D-134）；A 类派生标志（未
   try {
     const a = await registerPlayer(fx.auth, { username: 'Journal_A' });
     const b = await registerPlayer(fx.auth, { username: 'Journal_B' });
-    await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: sampleLoadout(fx.account) });
+    // D-163：物品身份按 uid 从服务端权威仓库解析，且**一件物品同时只能被一份配置引用**（跨配置独占）
+    //   → slot1/slot2 各用一套互不相交的夹具（旧写法两次 sampleLoadout 复用同一批 bot uid：现在会被拒）
+    const fix1 = await injectFixture(fx, a.playerId, 1);
+    const fix2 = await injectFixture(fx, a.playerId, 2);
+    const save1 = await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot1', loadout: fixtureLoadout(fx, fix1) });
+    assert.equal(save1.ok, true, 'D-163：夹具已入档 → slot1 保存必须成功（被拒会让下面的 journal 记录数少一条）');
     // D-159：注册即建满 3 槽 → 再建槽必撞 409 slot_limit（不落 journal 记录）
     const over = await fx.account.createSlot({ playerId: a.playerId });
     assert.equal(over.ok, false);
     assert.equal(over.code, 'slot_limit');
     // D-160：写满 slot2 后才能设为出战；空槽激活 → 409 cannot_activate_incomplete（同样不落记录）
-    await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    const save2 = await fx.account.saveConfig({ playerId: a.playerId, slotId: 'slot2', loadout: fixtureLoadout(fx, fix2) });
+    assert.equal(save2.ok, true, 'D-163：两套夹具互不相交 → slot2 保存不撞跨配置独占');
     const actEmpty = await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot3' });
     assert.equal(actEmpty.code, 'cannot_activate_incomplete');
     await fx.account.activateConfig({ playerId: a.playerId, slotId: 'slot2' });

@@ -17,6 +17,21 @@ const PROG = { type: 'program', version: 2, body: { type: 'seq', statements: [{ 
 const PROG2 = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'action', name: 'skill:skill2' }] } };
 const CD0 = { cooldown: 1, cost: { hp: 0, mp: 0, sp: 0 } };
 
+// D-163：配置里的物品身份/数值一律取自**服务端权威仓库** → LD.loadout 的 r1/s1..s3（以及 pa/pb/qx）
+//   必须先真的在档（修前靠 PUT 请求随带的 `warehouse` 镜像顶替权威仓库；该降级已废除）。
+//   `tweak` 用于按用例改**仓库副本**（客户端正文的 params/slots 也会被丢弃，改了客户端不起作用）。
+async function injectFixture(s, playerId, tweak) {
+  await s.store.updateArchive(playerId, (a) => {
+    for (const [bucket, list] of Object.entries(LD.warehouse.buckets)) {
+      for (const it of list) a.warehouse.buckets[bucket].push(JSON.parse(JSON.stringify(it)));
+    }
+    if (typeof tweak === 'function') {
+      for (const bucket of Object.keys(a.warehouse.buckets)) for (const it of a.warehouse.buckets[bucket]) tweak(it);
+    }
+    return null;
+  });
+}
+
 test('AIS-1 缺省 baseline 零回归：无 skills/loadout → 62/62 unknown_skill（既有语义不变）', async () => {
   await h.withServer(null, async (s) => {
     const r = await h.request(s.port, 'POST', '/api/v1/ai/battle', { program: PROG, seed: 20260919, opponent: 'kiter' });
@@ -87,6 +102,13 @@ test('AIS-4 loadout 入参：走面板聚合单一实现（role 生效）+ 调�
 test('AIS-5 调用方真实档案：带 token 且未显式给 skills → 用该玩家出战配置（skillSource=archive）', async () => {
   await h.withServer(null, async (s) => {
     const a = await h.register(s.port, h.uniqueName('aib'));
+    // D-163：LD 的物品先入服务端权威仓库，PUT 才能解析出物品身份（客户端正文的数值/slots 一律丢弃）。
+    //   本用例要让 skill1"每 tick 都放得出"（cd=1/cost=0），因此**必须把这些改动写进仓库副本**，
+    //   仅改请求正文（旧写法）在 D-163 下会被丢弃 → 实测 56 个 ineffective。
+    await injectFixture(s, await h.playerIdByPublicId(s.store, a.publicId), (it) => {
+      if (it.kind === 'role' || it.kind === 'skill') it.slots = [];
+      if (it.uid === 's1') it.params = Object.assign({}, it.params, CD0);
+    });
     const ld = JSON.parse(JSON.stringify(LD.loadout));
     ld.role.slots = []; ld.skills.forEach((x) => { x.slots = []; });
     ld.skills[0].params = Object.assign({}, ld.skills[0].params, CD0);

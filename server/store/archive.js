@@ -73,6 +73,45 @@ function findWarehouseItem(warehouse, uid) {
   return null;
 }
 
+// D-163（2026-09-25 热修）：发放路径的 uid 必须**四桶唯一**。
+//   物品 uid 由 core 的**模块级**计数器生成（`item_<seq>`，进程级）——进程重启后计数器归零，于是同一
+//   玩家"重启前领的物品"与"重启后领的物品"会撞 uid；而 apply 分支对撞 uid 的发放只能丢弃
+//   （实测：真重启后开箱 12 件，响应/journal 记 12 件、档案只落 2 件，且**零日志**）。
+//   本函数在**写 journal 记录之前**把撞车的 uid 重映射为仓库内空闲的 `item_<n>`（n 从"现有最大编号+1"
+//   起，同一批次内也逐个避开）→ "响应 = journal 记录 = 档案"三者一致；重放按记录里的 uid 落档，仍确定。
+//   返回 {items（新数组，不改入参）, remapped:[{from,to}]}。
+function allocateGrantUids(warehouse, items) {
+  const list = Array.isArray(items) ? items : [];
+  const used = new Set();
+  for (const bucket of WAREHOUSE_BUCKETS) {
+    const arr = (warehouse && warehouse.buckets && warehouse.buckets[bucket]) || [];
+    for (const it of Array.isArray(arr) ? arr : []) {
+      if (it && typeof it.uid === 'string' && it.uid !== '') used.add(it.uid);
+    }
+  }
+  let next = 1;
+  const bump = (uid) => {
+    const m = /^item_(\d+)$/.exec(typeof uid === 'string' ? uid : '');
+    if (m) next = Math.max(next, Number(m[1]) + 1);
+  };
+  for (const uid of used) bump(uid);
+  for (const it of list) bump(it && it.uid); // 同一批次内已用编号也要避开
+  const out = [];
+  const remapped = [];
+  for (const it of list) {
+    if (!it || typeof it !== 'object') { out.push(it); continue; }
+    const uid = typeof it.uid === 'string' ? it.uid : '';
+    if (uid !== '' && !used.has(uid)) { used.add(uid); out.push(it); continue; }
+    let fresh = `item_${next}`;
+    while (used.has(fresh)) { next += 1; fresh = `item_${next}`; }
+    next += 1;
+    used.add(fresh);
+    remapped.push({ from: uid === '' ? null : uid, to: fresh });
+    out.push(Object.assign({}, it, { uid: fresh }));
+  }
+  return { items: out, remapped };
+}
+
 // 「该物品装配于哪个出战配置」派生视图（§5.2 的 data.usage）：
 //   同一物品可被多个配置引用（服务端不禁止）→ 每个 uid 列出全部 slotId。
 function warehouseUsage(archive) {
@@ -1052,7 +1091,15 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
             : it.kind === 'skill' ? 'skill' : 'role';
         const list = archive.warehouse.buckets[bucket];
         if (!Array.isArray(list)) continue;
-        if (findWarehouseItem(archive.warehouse, it.uid)) continue; // uid 四桶唯一
+        if (findWarehouseItem(archive.warehouse, it.uid)) {
+          // D-163 热修：uid 撞车在**发放路径**已被 `allocateGrantUids` 消解；能走到这里说明是
+          //   "档案与 journal 不一致"或历史遗留记录 —— 绝不能静默丢（修前就是静默 `continue`）。
+          dropped.push({ uid: it.uid, kind: it.kind, bucket });
+          ctx.logger.error('store', 'store.warehouse.uid_collision',
+            `开箱发放 uid 与档案已有物品冲突，已丢弃该件（journal 记为发放、档案未落）——需人工核对`,
+            { playerId, uid: it.uid, bucket, grantId: record.grantId || null, droppedCount: dropped.length });
+          continue;
+        }
         if (list.length >= cap) {
           dropped.push({ uid: it.uid, kind: it.kind, bucket });
           ctx.logger.error('store', 'store.warehouse.full',
@@ -1441,6 +1488,7 @@ module.exports = {
   warehouseMaxPerBucketOf,
   warehouseUsage,
   warehouseExcerpt,
+  allocateGrantUids,
   excerptCoversRefs,
   loadoutRefs,
   createArchive,

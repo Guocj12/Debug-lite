@@ -140,8 +140,11 @@ async function withHarness(fn) {
 
 /* ---------- 确定性夹具（starter 的插件已装在原插槽上，不能保证还有空位） ---------- */
 
+// D-163（2026-09-25 用户裁定：一件物品同时只能被一份配置引用）：配置2 必须用**它自己**那一套物品 ——
+//   slot1 是 starter 出战配置，它引用的角色/技能已被"占用"，配置2 再引用同一件会被 409 item_in_use 拦下。
+//   故夹具备 1 个角色 + 3 个技能（全是注入的独立 uid，与 starter 的物品互不相同）。
 const FIX = {
-  role: 'fce_role', skill: 'fce_skill',
+  role: 'fce_role', skills: ['fce_skill0', 'fce_skill1', 'fce_skill2'],
   atkPlugin: 'fce_plugin_atk', atkPlugin2: 'fce_plugin_atk2', defPlugin: 'fce_plugin_def',
   skillPlugin: 'fce_plugin_basic', skillPluginOther: 'fce_plugin_special',
 };
@@ -156,7 +159,19 @@ async function injectFixture(s, playerId) {
       unlockTier: 'common', pluginPoints: 3,
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX.skill, kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能', quality: 'rare',
+      uid: FIX.skills[0], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能1', quality: 'rare',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+      unlockTier: 'common',
+    });
+    a.warehouse.buckets.skill.push({
+      uid: FIX.skills[1], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能2', quality: 'rare',
+      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+      unlockTier: 'common',
+    });
+    a.warehouse.buckets.skill.push({
+      uid: FIX.skills[2], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能3', quality: 'rare',
       slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
@@ -199,16 +214,21 @@ const buttonTags = (html) => [...html.matchAll(/<button[^>]*>[^<]*<\/button>/g)]
 const tagsWith = (html, fragment) => buttonTags(html).filter((t) => t.includes(fragment));
 const labelsOf = (html) => buttonTags(html).map((t) => t.replace(/^.*>/, '').replace(/<\/button>$/, ''));
 
-// 把一个位置填成"可用的物品"（角色/技能都从仓库里挑；确定性夹具优先）
+// 把一个位置填成"可用的物品"（角色/技能都从**注入夹具**里挑 —— 确定性且不与 slot1 的 starter 物品撞车）。
+// D-163（2026-09-25 用户裁定：一件物品同时只能被一份配置引用）：不能退化成"仓库里第一个角色/技能"，
+//   那正是 starter 已出战引用过的物品，保存时会被服务端 409 item_in_use 拦下。
 async function fillSlot(h, slotId, opts) {
   const whEnv = h.state().warehouse.envelope;
   const o = opts || {};
+  const roleUid = o.roleUid || FIX.role;
+  const skillUids = o.skillUids || FIX.skills;
   const roles = format.bucketItems(whEnv, 'role');
   const skills = format.bucketItems(whEnv, 'skill');
-  const roleUid = o.roleUid || (roles.find((i) => i.uid === FIX.role) || roles[0]).uid;
+  assert.ok(roles.some((i) => i.uid === roleUid), `仓库里应有注入夹具角色 ${roleUid}`);
   await h.run('slot-set', { slot: slotId, pos: 'role', uid: roleUid });
   for (let k = 0; k < 3; k += 1) {
-    const uid = o.skillUids && o.skillUids[k] ? o.skillUids[k] : (skills[k] || skills[0]).uid;
+    const uid = skillUids[k];
+    assert.ok(skills.some((i) => i.uid === uid), `仓库里应有注入夹具技能 ${uid}`);
     await h.run('slot-set', { slot: slotId, pos: 'skill' + k, uid });
   }
   const aiItems = format.aiCandidatesOf(h.state().configs.ai);
@@ -295,6 +315,12 @@ test('CF-2 候选弹窗：slot-pick（同分类 + 空）/ plugin-pick（全部�
     assert.equal(tagsWith(pickHtml, 'data-action="slot-set"').length, roles.length + 1, '候选 = 同分类全部 + 1 个「空」');
     assert.equal(tagsWith(pickHtml, 'data-action="slot-set" data-slot="slot2" data-pos="role" data-empty="1"').length, 1,
       '非出战配置必须提供「空」选项');
+    // ①b D-163：starter 的角色已被 **slot1** 引用 → 在 slot2 的角色候选里必须标灰 + 写明原因
+    const roleVm = format.viewModel(h.state());
+    const usedRow = roleVm.modal.rows.find((r) => r.buttons[0].uid === whEnv.data.buckets.role[0].uid);
+    assert.ok(usedRow && usedRow.buttons[0].disabled === true, '已被他配置引用的角色候选必须标灰');
+    assert.match(usedRow.text, /^已被配置\S*使用（一件物品同时只能装配到一份配置）$/,
+      `标灰必须写明 D-163 的原因：${JSON.stringify(usedRow.text)}`);
 
     // ② 选中夹具角色（本地草稿）→ 该角色有 2 个插槽（atk / def）
     await h.run('slot-set', { slot: 'slot2', pos: 'role', uid: FIX.role });
@@ -310,11 +336,34 @@ test('CF-2 候选弹窗：slot-pick（同分类 + 空）/ plugin-pick（全部�
     const setTags = tagsWith(pluginHtml, 'data-action="plugin-set"');
     assert.equal(setTags.length, rolePlugins.length, '插件候选必须**全部列出**（不隐藏不匹配项）');
     const mismatch = rolePlugins.filter((p) => p.slot !== 'atk');
-    const match = rolePlugins.filter((p) => p.slot === 'atk');
     assert.ok(mismatch.length > 0, '夹具应含类型不匹配的插件');
-    assert.equal(setTags.filter((t) => t.includes('disabled')).length, mismatch.length, '不匹配的候选必须标灰（disabled）');
-    assert.equal(setTags.filter((t) => !t.includes('disabled')).length, match.length, '匹配的候选必须可点');
+    // D-163：除"类型不符"外，**已装配**（装在仓库某件物品的槽上）的候选也要标灰 ——
+    //   前端不读 `equipped` 字段，而是从已登记的 `slots[].pluginUid` 推导（与 format.pluginEquippedOf 同口径）。
+    const equippedUids = new Set();
+    for (const bucket of ['role', 'skill']) {
+      for (const it of format.bucketItems(h.state().warehouse.envelope, bucket)) {
+        for (const s of (it.slots || [])) if (s && s.pluginUid) equippedUids.add(s.pluginUid);
+      }
+    }
+    const expectDisabled = rolePlugins.filter((p) => p.slot !== 'atk' || equippedUids.has(p.uid));
+    assert.ok(equippedUids.size > 0, 'starter/夹具应含已装配插件（用于覆盖 D-163 的标灰规则）');
+    assert.equal(setTags.filter((t) => t.includes('disabled')).length, expectDisabled.length,
+      `标灰集合 = 类型不符 ∪ 已装配（D-163）；实际 disabled=${setTags.filter((t) => t.includes('disabled')).length}，`
+      + `期望 ${expectDisabled.length}（类型不符 ${mismatch.length} + 已装配 ${equippedUids.size} 去重后）`);
+    assert.equal(setTags.filter((t) => !t.includes('disabled')).length, rolePlugins.length - expectDisabled.length,
+      '其余候选可点');
     assert.ok(pluginHtml.includes('此槽只能装 atk'), '标灰的候选必须写明原因（此槽只能装 <type>）');
+    // D-163：**任何**被标灰的候选都必须带一条非空原因（不允许"默默变灰"）；原因可能是类型不符、
+    //   `已被装配（请先拆卸）`、`已被配置N使用…` 或 `本配置已在其它位置使用…`
+    const pluginVm = format.viewModel(h.state());
+    const greyedRows = pluginVm.modal.rows.filter((r) => r.buttons[0].disabled === true);
+    assert.equal(greyedRows.length, expectDisabled.length, '标灰行数应与期望一致');
+    for (const row of greyedRows) {
+      assert.ok(typeof row.text === 'string' && row.text !== '', `标灰的候选必须写明原因：${JSON.stringify(row)}`);
+    }
+    assert.ok(greyedRows.some((r) => /^此槽只能装 atk$/.test(r.text)), '类型不符的行必须给类型原因');
+    assert.ok(greyedRows.every((r) => /^此槽只能装 atk$|^已被装配（请先拆卸）$|^已被配置\S*使用（一件物品同时只能装配到一份配置）$|^本配置已在其它位置使用（一件物品只能占一个位置）$/.test(r.text)),
+      `标灰原因必须来自已登记的四种之一：${JSON.stringify(greyedRows.map((r) => r.text))}`);
     assert.ok(pluginHtml.includes('目标槽类型：atk'), '应显示目标槽类型');
     assert.equal(tagsWith(pluginHtml, 'data-action="plugin-clear"').length, 1, '插件弹窗必须有「清空此槽」');
 
@@ -365,7 +414,7 @@ test('CF-3 两步顺序：装配 → 草稿用响应里的更新物品 → 保�
     assert.equal(format.capOf(h.state().warehouse.envelope, 'role'), 500, '装配响应回带的 caps 已并回');
 
     // ③ 填满 5 个位置 → 保存 → 服务端配置里的引用**真的**变了
-    await fillSlot(h, 'slot2', { roleUid: FIX.role, skillUids: [FIX.skill] });
+    await fillSlot(h, 'slot2', { roleUid: FIX.role, skillUids: FIX.skills });
     const saveBefore = h.counter.n;
     await h.run('config-save');
     assert.equal(h.notice(), '已保存', `保存应成功（非出战槽允许不完整，此处已完整）：${h.notice()}`);

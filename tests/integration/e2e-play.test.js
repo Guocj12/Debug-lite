@@ -130,6 +130,34 @@ function bucketOfItem(it) {
   return 'role';
 }
 
+// D-163（2026-09-25 用户裁定：一件物品同时只能被一份配置引用）：
+//   非 slot1 的配置**不得**再复用 slot1（starter 出战配置）的角色/技能 —— 复用会被服务端
+//   `409 item_in_use`（"物品 <uid> 已被配置 slot1 使用…"）拦下。这里按真实仓库的形状注入一套
+//   **独立 uid** 的备用物品（角色 1 + 技能 3；插槽留空、不带装配引用），供 slot2/slot3 各自使用。
+//   注入方式与前端夹具 `injectFixture` 同法：`store.updateArchive` 直改**服务端权威仓库**；
+//   配置正文只用来指出 uid（数值/模板/品质一律由 `resolveItems` 取自仓库那份）。
+async function injectSpareLoadoutItems(s, playerId, tag) {
+  const view = await s.store.getWarehouse(playerId);
+  const srcRole = (view.warehouse.buckets.role || [])[0];
+  const srcSkills = (view.warehouse.buckets.skill || []).slice(0, 3);
+  assert.ok(srcRole && srcSkills.length === 3, 'starter 必须含 1 角色 + 3 技能（备用物品的模板来源）');
+  const role = cloneJson(srcRole);
+  role.uid = `${tag}_role`;
+  for (const slot of role.slots || []) slot.pluginUid = null; // 备用物品不携带装配引用（故也无需备用插件）
+  const skills = srcSkills.map((sk) => {
+    const copy = cloneJson(sk);
+    copy.uid = `${tag}_${sk.uid.replace(/^item_/, 'skill')}`;
+    for (const slot of copy.slots || []) slot.pluginUid = null;
+    return copy;
+  });
+  await s.store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push(role);
+    for (const sk of skills) a.warehouse.buckets.skill.push(sk);
+    return null;
+  });
+  return { role, skills };
+}
+
 // 进程内回放注册表（`server/battle.js` 的模块级 Map）在**同一 node 进程**内跨测试文件共享：
 // 本文件第 4 个用例会打 70 场遗留对战（为验证帧 LRU 上限），若结束后不清场，会污染同进程
 // 其它用例对"帧注册表 ≤ replayCacheSize"的断言（实测会把 `load-integrity.test.js` 的 LOAD-4 顶红）。
@@ -485,6 +513,12 @@ test('E2E-3 配置槽/面板/AI：3 槽 + slot_limit + cannot_activate_incomplet
   const authA = h.authed(F.A.token);
   const authB = h.authed(F.B.token);
 
+  // D-163（2026-09-25 用户裁定：一件物品同时只能被一份配置引用）：slot2/slot3 需要**各自**的物品 ——
+  //   旧写法把 slot1（starter 出战配置）的 role/skills 原样写进 slot3/slot2，现被服务端 409 item_in_use 拦下
+  //   （实测："物品 item_0 已被配置 slot1 使用…"）。故各注入一套独立备用物品（1 角色 + 3 技能）。
+  const spare3 = await injectSpareLoadoutItems(s, F.A.playerId, 'e2e_spare3');
+  const spare2 = await injectSpareLoadoutItems(s, F.A.playerId, 'e2e_spare2');
+
   // D-159/D-160：出战配置来自注册下发的 starter（真实、完整、已装配、已出战）。
   //   PUT 不带 warehouse → 引用校验走**服务端真源**（这正是 D-159 的语义变更点）。
   const save = await s.request('PUT', '/api/v1/me/configs/slot1', { loadout: F.ldA }, authA);
@@ -513,7 +547,7 @@ test('E2E-3 配置槽/面板/AI：3 槽 + slot_limit + cannot_activate_incomplet
     '缺项必须逐位置回带（D-160）');
   assert.equal(inc2.body.data.snapshot, null, '不完整配置不冻结快照（D-160）');
   const incPartial = await s.request('PUT', '/api/v1/me/configs/slot3',
-    { loadout: { role: F.ldA.role, skills: F.ldA.skills, ai: null } }, authA);
+    { loadout: { role: spare3.role, skills: spare3.skills, ai: null } }, authA);
   assert.equal(incPartial.status, 200, incPartial.raw);
   assert.equal(incPartial.body.data.complete, false);
   assert.deepEqual(incPartial.body.data.missing, ['ai'], '逐位置缺项：只剩 ai（D-160）');
@@ -530,9 +564,13 @@ test('E2E-3 配置槽/面板/AI：3 槽 + slot_limit + cannot_activate_incomplet
   assert.equal(act2Bad.status, 409, '不完整配置不得设为出战（D-160）');
   assert.equal(act2Bad.body.error.code, 'cannot_activate_incomplete');
   assert.ok(act2Bad.body.error.details.some((d) => d.path === 'role'), 'details 逐位置（D-160）');
-  // 补全 slot2（用同一个 starter 配置 + 另一个 AI 程序）→ activate 200（完整但缺快照会自愈冻结）
-  const ldA2 = cloneJson(F.ldA);
-  ldA2.ai = h.programOf([h.action('move_left')]);
+  // 补全 slot2（D-163：用**它自己**那套备用物品 + 另一个 AI 程序；不能再借 slot1 的 starter 物品，
+  //   否则 409 item_in_use）→ activate 200（完整但缺快照会自愈冻结）
+  const ldA2 = {
+    role: cloneJson(spare2.role),
+    skills: spare2.skills.map((sk) => cloneJson(sk)),
+    ai: h.programOf([h.action('move_left')]),
+  };
   const full2 = await s.request('PUT', '/api/v1/me/configs/slot2', { loadout: ldA2 }, authA);
   assert.equal(full2.status, 200, full2.raw);
   assert.equal(full2.body.data.complete, true);
@@ -563,13 +601,23 @@ test('E2E-3 配置槽/面板/AI：3 槽 + slot_limit + cannot_activate_incomplet
   assert.equal(local.ok, true, JSON.stringify(local.errors));
   assert.deepEqual(pan.body.data.panel, local.panel, 'POST /panel 必须与 buildPanel 逐值一致');
   for (const k of ['hp', 'atk', 'def', 'sp', 'mp']) assert.ok(pan.body.data.panel.role.stats[k] >= 1, `五维 ${k} 应 ≥1`);
-  // 插件词条必须真的生效：与"剥掉全部装配引用"的**同一配置**相比，面板必须不同（旧用例"带引用 ≡ 单测"）
-  const bare = cloneJson(F.ldA);
-  for (const x of bare.role.slots || []) x.pluginUid = null;
-  for (const sk of bare.skills || []) for (const x of sk.slots || []) x.pluginUid = null;
-  const localBare = loadoutApi.buildPanel(bare, { warehouse: F.whA, tier: MODE });
+  // 插件词条必须真的生效：与"剥掉全部装配引用"的**同一套物品**相比，面板必须不同（旧用例"带引用 ≡ 单测"）。
+  // D-163（2026-09-25 用户裁定：一件物品同时只能被一份配置引用）：面板物品一律取自**服务端权威仓库**，
+  //   故"把客户端正文里的 pluginUid 抹掉"已不再构成对照 —— resolveItems 会按 uid 换回仓库里那份**带引用**
+  //   的物品（实测：抹掉正文 refs 后两侧 panel 逐值相同）。对照必须用仓库里**真正没有装配引用**的同模物品：
+  //   注入的备用套 = starter 物品的克隆（同 templateId/quality/stats），只把插槽清空 ⇒ 面板差异只可能来自插件词条。
+  const whNow = (await s.request('GET', '/api/v1/me/warehouse', undefined, authA)).body.data;
+  const localRefs = loadoutApi.buildPanel(F.ldA, { warehouse: whNow, tier: MODE });
+  assert.equal(localRefs.ok, true, JSON.stringify(localRefs.errors));
+  const bare = { role: spare3.role, skills: spare3.skills, ai: F.ldA.ai };
+  const localBare = loadoutApi.buildPanel(bare, { warehouse: whNow, tier: MODE });
   assert.equal(localBare.ok, true, JSON.stringify(localBare.errors));
-  assert.notDeepEqual(local.panel, localBare.panel, '装配引用必须真的改变面板（插件词条聚合生效）');
+  assert.notDeepEqual(localRefs.panel, localBare.panel, '装配引用必须真的改变面板（插件词条聚合生效）');
+  // 上面这条整面板比较会因**技能条目的 uid 不同**（对照是另一件同模物品）而恒真，故再钉一条只覆盖
+  // 插件词条作用面的断言（角色面板 stats/regen/special/点数 + 技能聚合参数），它不依赖任何 uid：
+  const affected = (p) => ({ role: p.role, skills: p.skills.map((sk) => sk.params) });
+  assert.notDeepEqual(affected(localRefs.panel), affected(localBare.panel),
+    '装配引用必须真的改变面板数值（插件词条聚合生效，不因 uid 差异而恒真）');
   // T-PB-9：带引用但不给仓库 → 409 loadout_invalid（missing_warehouse），引用校验不得空转
   const panNoWh = await s.request('POST', '/api/v1/panel', { loadout: F.ldA, tier: MODE });
   assert.equal(panNoWh.status, 409, '带装配引用但无仓库 → 409（T-PB-9）');

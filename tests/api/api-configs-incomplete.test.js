@@ -29,6 +29,41 @@ async function configs(s, p) {
 
 const EMPTY_LOADOUT = { role: null, skills: [null, null, null], ai: null };
 
+// D-163（用户 2026-09-25 裁定：**一件物品同时只能被一份配置引用**）——slot2/slot3 不能复用 slot1（starter）
+//   的物品，因此给玩家注入一套**独立 uid** 的备用物品，并从服务端权威仓库回读：
+//   落盘的 loadout 正文恒为"仓库里那一份"的副本（D-163 起客户端正文的 stats/templateId 一律丢弃），
+//   断言与回读件逐值比较才能反映真实落盘内容。
+const SPARE = { role: 'uci_spare_role', skills: ['uci_spare_sk0', 'uci_spare_sk1', 'uci_spare_sk2'] };
+// 从权威仓库回读备用物品（落盘正文 = 仓库副本 → 逐值断言必须拿仓库那一份做基准）；兼作"注入已持久"的前置检查。
+async function readSpare(s, p) {
+  const wh = await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token));
+  assert.equal(wh.status, 200, wh.raw);
+  const role = wh.body.data.buckets.role.find((x) => x.uid === SPARE.role);
+  const skills = SPARE.skills.map((uid) => wh.body.data.buckets.skill.find((x) => x.uid === uid));
+  assert.ok(role && skills.every(Boolean), '备用物品必须已入档（前置断言）');
+  return { role, skills };
+}
+async function injectSpare(s, p) {
+  await s.store.updateArchive(p.playerId, (a) => {
+    a.warehouse.buckets.role.push({
+      uid: SPARE.role, kind: 'role', templateId: 'role_bal', name: '备用角色', quality: 'common',
+      slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+      stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+      unlockTier: 'common', pluginPoints: 3,
+    });
+    for (const uid of SPARE.skills) {
+      a.warehouse.buckets.skill.push({
+        uid, kind: 'skill', templateId: 'skill_melee_whirl', name: `备用技能 ${uid}`, quality: 'common',
+        slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+        params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+        unlockTier: 'common',
+      });
+    }
+    return null;
+  });
+  return readSpare(s, p);
+}
+
 test('UCI-1 注册即建满 3 槽：slot1 完整出战 + slot2/3 空槽（无快照）', async () => {
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uci1');
@@ -56,38 +91,46 @@ test('UCI-1 注册即建满 3 槽：slot1 完整出战 + slot2/3 空槽（无快
 
 test('UCI-2 非出战槽可写不完整配置：200 + complete:false + missing + snapshot:null，且重启后仍在', async () => {
   const s1 = await h.startServer();
-  let dataDir = null;
+  const dataDir = s1.dataDir;
+  let s2 = null;
+  let p = null;
   try {
-    dataDir = s1.dataDir;
-    const p = await freshPlayer(s1, 'uci2');
-    const ld = (await configs(s1, p)).slots[0].loadout;
-    // 只有角色 + 1 个技能 + 无 AI
-    const partial = { role: ld.role, skills: [ld.skills[0], null, null], ai: null };
-    const r = await h.request(s1.port, 'PUT', '/api/v1/me/configs/slot2', { loadout: partial }, h.authed(p.token));
-    assert.equal(r.status, 200, `非出战槽允许不完整（实际 ${r.raw}）`);
-    assert.equal(r.body.data.complete, false);
-    assert.deepEqual(r.body.data.missing, ['skills[1]', 'skills[2]', 'ai']);
-    assert.equal(r.body.data.snapshot, null, '不完整配置不冻结快照（K-2 建议）');
-    assert.equal(r.body.data.activeSlotId, 'slot1', '写非出战槽不改变出战配置');
+    // 阶段①：写不完整配置。**无条件**在 finally 关服（修前只在成功路径 close，UCI-2 一红就泄漏 HTTP
+    //   服务器 → 整个 npm test 挂住不退出）；此处 close 而非 cleanup，因为阶段②要用同一数据根重启。
+    try {
+      p = await freshPlayer(s1, 'uci2');
+      // D-163：slot2 不能复用 slot1 的物品（同物品跨配置引用 → 409 item_in_use）→ 用独立备用物品。
+      const spare = await injectSpare(s1, p);
+      // 只有角色 + 1 个技能 + 无 AI
+      const partial = { role: spare.role, skills: [spare.skills[0], null, null], ai: null };
+      const r = await h.request(s1.port, 'PUT', '/api/v1/me/configs/slot2', { loadout: partial }, h.authed(p.token));
+      assert.equal(r.status, 200, `非出战槽允许不完整（实际 ${r.raw}）`);
+      assert.equal(r.body.data.complete, false);
+      assert.deepEqual(r.body.data.missing, ['skills[1]', 'skills[2]', 'ai']);
+      assert.equal(r.body.data.snapshot, null, '不完整配置不冻结快照（K-2 建议）');
+      assert.equal(r.body.data.activeSlotId, 'slot1', '写非出战槽不改变出战配置');
 
-    // 状态行/槽 brief 也要反映"非出战"
-    const listed = r.body.data.slots.find((x) => x.slotId === 'slot2');
-    assert.equal(listed.isDefault, false);
-    await s1.close();
+      // 状态行/槽 brief 也要反映"非出战"
+      const listed = r.body.data.slots.find((x) => x.slotId === 'slot2');
+      assert.equal(listed.isDefault, false);
+    } finally {
+      await s1.close();
+    }
 
     // 重启（同一数据根）：不完整配置必须持久（走 journal 的 loadout 正文，而不是客户端内存）
-    const s2 = await h.startServer({ dataDir });
-    try {
-      const d = await configs(s2, p);
-      const slot2 = d.slots.find((x) => x.slotId === 'slot2');
-      assert.deepEqual(slot2.loadout, partial, '重启后不完整配置逐值仍在');
-      assert.equal(slot2.snapshot, null);
-      assert.equal(d.slots.find((x) => x.slotId === 'slot3').loadout.role, null, '未动过的槽仍为空');
-    } finally {
-      await s2.cleanup();
-    }
+    s2 = await h.startServer({ dataDir });
+    const spare = await readSpare(s2, p); // 同一数据根 → 注入的备用物品跨重启仍在（不强加第二次注入）
+    const partial = { role: spare.role, skills: [spare.skills[0], null, null], ai: null };
+    const d = await configs(s2, p);
+    const slot2 = d.slots.find((x) => x.slotId === 'slot2');
+    // D-163：落盘正文是**权威仓库副本**解析后的形状 —— resolveItems 恒定补出 `aiId`（缺省 null）。
+    assert.deepEqual(slot2.loadout, { ...partial, aiId: null }, '重启后不完整配置逐值仍在');
+    assert.equal(slot2.snapshot, null);
+    assert.equal(d.slots.find((x) => x.slotId === 'slot3').loadout.role, null, '未动过的槽仍为空');
   } finally {
-    if (dataDir === null) await s1.cleanup();
+    // 阶段②起服失败/断言失败同样不泄漏；s2 缺席时直接清掉数据根（s1 已在阶段①关闭）。
+    if (s2) await s2.cleanup();
+    else h.removeTempDir(dataDir);
   }
 });
 
@@ -125,8 +168,11 @@ test('UCI-4 activate 不完整 → 409 cannot_activate_incomplete（不是 500�
     assert.equal(d.activeSlotId, 'slot1', '失败后出战配置不变');
 
     // 只补上角色仍不够（还缺 3 技能与 AI）→ 依旧拒绝，且 details 只剩确实缺的位置
-    const ld = d.slots[0].loadout;
-    await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', { loadout: { ...EMPTY_LOADOUT, role: ld.role } }, h.authed(p.token));
+    // D-163（用户 2026-09-25 裁定：一件物品同时只能被一份配置引用）：不能借 slot1 的角色（→ 409 item_in_use），
+    //   改用独立备用角色；本用例只关心"补上的位置不再报缺失"，物品是否与 slot1 相同无关紧要。
+    const spare = await injectSpare(s, p);
+    const put = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', { loadout: { ...EMPTY_LOADOUT, role: spare.role } }, h.authed(p.token));
+    assert.equal(put.status, 200, `补角色（非出战槽允许不完整）：${put.raw}`);
     const again = await h.request(s.port, 'POST', '/api/v1/me/configs/slot2/activate', undefined, h.authed(p.token));
     assert.equal(again.status, 409);
     assert.equal(again.body.error.code, 'cannot_activate_incomplete');
@@ -138,7 +184,10 @@ test('UCI-5 写完整配置 → 200（有快照）→ activate 200 且 activeSlo
   await h.withServer(null, async (s) => {
     const p = await freshPlayer(s, 'uci5');
     const ld = (await configs(s, p)).slots[0].loadout;
-    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot3', { loadout: ld }, h.authed(p.token));
+    // D-163（一件物品同时只能被一份配置引用）：slot3 用独立备用物品 + slot1 的 AI 程序（AI 不参与独占判定）
+    const spare = await injectSpare(s, p);
+    const full = { role: spare.role, skills: spare.skills, ai: ld.ai };
+    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot3', { loadout: full }, h.authed(p.token));
     assert.equal(save.status, 200, save.raw);
     assert.equal(save.body.data.complete, true);
     assert.deepEqual(save.body.data.missing, []);

@@ -332,7 +332,14 @@ function runPlay(argv, options) {
   // [6] 打一场：对手 = server/ranked.js 的内置 bot（不新增服务端接口）
   const bot = ranked.buildBotLoadout();
   out(`[6/6] 战斗：seed=${seed}  我方 p1（预设 ${preset}/${PRESET_LABEL[preset]}） vs p2 内置 bot（${bot.role.templateId}/${bot.role.quality}，直线逼近、无插件）`);
-  const r = battle.runBattle({ p1: loadout, p2: bot, warehouse: wh2, seed, tier });
+  // D-163：loadout 的物品必须能按 uid 从**该侧**仓库解析到（面板/战斗共用 resolveItems）。
+  //   bot 的物品（`bot_role`/`bot_skill1..`）不存在于玩家侧仓库 wh2 里 → 必须逐侧给仓库：
+  //   p1 用玩家仓库，p2 用 `syntheticVerifiedWarehouse(bot)`（由 bot loadout 自身构造的已校验仓库）。
+  const r = battle.runBattle({
+    p1: loadout, p2: bot,
+    warehouse: { p1: wh2, p2: ranked.syntheticVerifiedWarehouse(bot) },
+    seed, tier,
+  });
   if (r.status !== 200) {
     out(`        对战被拒绝：${r.status} ${r.code} ${r.message || ''}`);
     if (r.details) for (const e of r.details) out(`        ✘ ${e.where}: ${e.code} ${e.message}`);

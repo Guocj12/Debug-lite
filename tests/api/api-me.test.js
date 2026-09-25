@@ -21,6 +21,18 @@ async function twoPlayers(s) {
   return { a, b, aId, bId };
 }
 
+// D-163：loadout 的物品身份/数值一律解析自**服务端权威仓库** —— LD.loadout 用到的 r1/s1..s3/pa/pb/qx
+//   必须先真的在档（修前靠 PUT 请求里随带的 `warehouse` 镜像顶替权威仓库；该"客户端镜像即真源"的降级已废除）。
+//   直接把 fixture 的仓库正文注入档案仓库（uid 与 starter 的 item_* 不冲突）。
+async function injectFixture(s, playerId) {
+  await s.store.updateArchive(playerId, (a) => {
+    for (const [bucket, list] of Object.entries(LD.warehouse.buckets)) {
+      for (const it of list) a.warehouse.buckets[bucket].push(JSON.parse(JSON.stringify(it)));
+    }
+    return null;
+  });
+}
+
 // 手工结算一场（双方真实档案；走 journal → apply，与 quickmatch 同口径）
 async function settleQuick(s, aId, bId, seed) {
   const aSlot = await h.activeSlotOf(s.store, aId);
@@ -74,8 +86,10 @@ test('ME-1 GET /me：档案摘要字段 + 401 负例', async () => {
 
 test('ME-2 配置槽：GET 列表（注册即 3 槽）/ POST 建空槽 + 409 slot_limit / PUT 保存 + config_conflict + 仅出战槽要求完整 / activate / DELETE 保护', async () => {
   await h.withServer(null, async (s) => {
-    const { a } = await twoPlayers(s);
+    const { a, aId } = await twoPlayers(s);
     const auth = h.authed(a.token);
+    // D-163：LD 的物品必须先在**服务端权威仓库**（PUT 不再接收客户端 warehouse 镜像做解析来源）
+    await injectFixture(s, aId);
     // D-159：注册即建满 3 槽（slot1 完整出战 + slot2/slot3 空槽）
     const list0 = await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, auth);
     assert.equal(list0.status, 200);
@@ -120,7 +134,12 @@ test('ME-2 配置槽：GET 列表（注册即 3 槽）/ POST 建空槽 + 409 slo
     assert.equal(nonActive.body.data.complete, false);
     assert.deepEqual(nonActive.body.data.missing, ['skills[2]']);
     assert.equal(nonActive.body.data.snapshot, null, '不完整 → 不冻结快照');
-    assert.equal(nonActive.body.data.slot.loadout.skills.length, 2, '不完整正文照常落盘');
+    // D-163：落盘正文经 resolveItems 规范化 —— 技能位恒为**恰 3 个**（客户端少给的第 3 位补 null），
+    //   而不是照抄客户端的 2 元素数组；"不完整正文照常落盘"仍成立（已给的两件逐值保留）。
+    assert.equal(nonActive.body.data.slot.loadout.skills.length, 3, 'D-163：技能位规范化为恰 3 个（缺位为 null）');
+    assert.deepEqual(nonActive.body.data.slot.loadout.skills.slice(0, 2).map((x) => x && x.uid),
+      badLd.skills.map((x) => x.uid), '客户端给的两件技能逐值落盘（身份取自仓库）');
+    assert.equal(nonActive.body.data.slot.loadout.skills[2], null, '缺的第 3 位为 null');
     // 但此时 activate 必须 409 cannot_activate_incomplete（完整性校验推迟到激活，D-160）
     const actInc = await h.request(s.port, 'POST', `/api/v1/me/configs/${slot2}/activate`, {}, auth);
     assert.equal(actInc.status, 409, actInc.raw);

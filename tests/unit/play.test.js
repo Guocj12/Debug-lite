@@ -88,7 +88,9 @@ test('PLAY-3 预设技能动作名在真实玩家对象上可解析（skill1..3 
   const skills = mkSkills();
   const role = mkRole();
   const ld = { role, skills, ai: play.buildPreset('steady', skills.map((s, i) => ({ action: `skill:skill${i + 1}`, type: s.type || SKILLS[[0, 2, 6][i]].type }))) };
-  const wh = { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } };
+  // D-163：物品身份/数值一律解析自服务端权威仓库 → 桩仓库必须**含本配置的角色与 3 个技能**
+  //   （只放插件不够；缺物品会如实报 `物品不在仓库: <uid>`）。
+  const wh = { buckets: { role: [role], skill: skills, rolePlugin: [], skillPlugin: [] } };
   const bp = battle.buildPlayer('p1', ld, wh, 'mythic');
   assert.equal(bp.ok, true, JSON.stringify(bp.errors));
   assert.deepEqual(Object.keys(bp.player.skills).sort(), ['skill1', 'skill2', 'skill3'], 'battle.js 以出战槽位为 p.skills 键');

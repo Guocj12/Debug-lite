@@ -40,6 +40,69 @@ async function activeOf(fx, playerId) {
   return res.data;
 }
 
+/* ---------- D-163 夹具：出战配置引用的物品必须**真实存在于本人仓库** ----------
+ * 背景：旧写法 `sampleLoadout(fx.account)` 取自 `ranked.buildDefaultLoadout()` 的 bot 夹具
+ *   （uid = bot_role / bot_skill1…）——这些物品从来不在任何玩家仓库里。D-163 起
+ *   `loadout.resolveItems` 按 uid 从**服务端权威仓库**取回物品身份与数值（客户端正文一律丢弃），
+ *   未知 uid → `loadout_invalid`「物品不在仓库: <uid>」。故夹具物品必须**先入档**。
+ * 另：D-163 跨配置独占（一件物品同时只能被一份配置引用）→ 需要两套互不相交的夹具时用 set 序号区分。
+ * 物品形状与 tests/unit/warehouse-invariants.test.js 的 fixtureWarehouse() 同形（模板/品质取自数据表）。
+ */
+const FIX_SKILL_TEMPLATES = ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'];
+
+function fixtureItems(set) {
+  const tag = `acc_fix${set}`;
+  const skillPluginUid = `${tag}_sp`;
+  const role = {
+    uid: `${tag}_role`, kind: 'role', templateId: 'role_bal', name: `夹具角色${set}`, quality: 'common',
+    slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+    stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+    pluginPoints: 3, unlockTier: 'common',
+  };
+  const skills = FIX_SKILL_TEMPLATES.map((templateId, i) => ({
+    uid: `${tag}_skill${i}`, kind: 'skill', templateId, name: `夹具技能${set}-${i}`, quality: 'common',
+    slotCount: 1, slots: [{ type: 'basic', pluginUid: i === 0 ? skillPluginUid : null }],
+    // skills[0].params.cooldown = 3 —— ACC-4 的"客户端改写正文不影响已冻结快照"断言依赖该仓库基准值
+    params: { multiplier: 1 + i / 10, cost: { hp: 0, mp: 8 + i, sp: 0 }, cooldown: 3 - i, bulletLevel: 2 + i },
+    unlockTier: 'common',
+  }));
+  const skillPlugin = {
+    uid: skillPluginUid, kind: 'skillPlugin', id: 'sp_mult', name: '倍率提升', slot: 'basic',
+    quality: 'common', tier: 2, affixes: [], costDeltaByTier: { mp: [2, 4, 6] }, equipped: true, unlockTier: 'common',
+  };
+  return { role, skills, skillPlugin };
+}
+
+// 把夹具物品注入该玩家的**服务端权威仓库**（D-163：这是"这件物品存在"的唯一真源）
+async function injectFixture(fx, playerId, set) {
+  const items = fixtureItems(set);
+  await fx.store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push(items.role);
+    for (const sk of items.skills) a.warehouse.buckets.skill.push(sk);
+    a.warehouse.buckets.skillPlugin.push(items.skillPlugin);
+    return null;
+  });
+  return items;
+}
+
+// 以夹具物品构造一份完整合法的出战配置（每次调用返回新对象，互不别名）
+function fixtureLoadout(fx, items, mutate) {
+  const ld = { role: items.role, skills: items.skills.slice(), ai: fx.account.defaultLoadout().ai };
+  if (typeof mutate === 'function') mutate(ld);
+  return JSON.parse(JSON.stringify(ld));
+}
+
+// 把一份既有仓库正文（如 tests/fixtures/loadout-ok.json 的 warehouse）整仓注入玩家档案仓库
+async function injectWarehouse(fx, playerId, warehouse) {
+  await fx.store.updateArchive(playerId, (a) => {
+    for (const key of Object.keys(warehouse.buckets)) {
+      const list = warehouse.buckets[key];
+      if (Array.isArray(list)) for (const it of list) a.warehouse.buckets[key].push(JSON.parse(JSON.stringify(it)));
+    }
+    return null;
+  });
+}
+
 test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；未知档案 404；非法 playerId 400', async () => {
   const fx = await openFixture({});
   try {
@@ -110,7 +173,9 @@ test('ACC-2 配置槽：注册即 3 槽（D-159）、第 4 个 409 slot_limit、
     assert.equal(actEmpty.status, 409);
     assert.ok(actEmpty.details.length > 0, 'details 逐位置列出缺项');
     // 写入完整配置后激活：唯一出战，且 activeSnapshotHash 跟随
-    const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    //   D-163：配置引用的物品必须来自本人仓库 → 先注入夹具（跨配置独占 ⇒ 与 slot1 的 starter 物品不重叠）
+    const fix = await injectFixture(fx, u.playerId, 1);
+    const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: fixtureLoadout(fx, fix) });
     assert.equal(saved.ok, true, JSON.stringify(saved.details));
     const act = await fx.account.activateConfig({ playerId: u.playerId, slotId: 'slot2' });
     assert.equal(act.ok, true);
@@ -133,7 +198,9 @@ test('ACC-3 删除保护：默认槽 / 出战槽 → 409 slot_locked；切换后
   try {
     const u = await registerPlayer(fx.auth, { username: 'Del_1' });
     // D-159：注册即 3 槽；先让非默认槽 slot2 成为出战槽（空槽不可激活 → 先写完整配置）
-    const fill = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: sampleLoadout(fx.account) });
+    //   D-163：写进 slot2 的物品必须在本人仓库里（与 slot1 的 starter 物品不同 → 不触发跨配置独占）
+    const fix = await injectFixture(fx, u.playerId, 1);
+    const fill = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot2', loadout: fixtureLoadout(fx, fix) });
     assert.equal(fill.ok, true, JSON.stringify(fill.details));
     const delDefault = await fx.account.deleteSlot({ playerId: u.playerId, slotId: 'slot1' });
     assert.equal(delDefault.code, 'slot_locked');
@@ -164,7 +231,10 @@ test('ACC-4 快照冻结（T-AC-4）：保存后改客户端对象不影响已�
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Snap_1' });
-    const ld = sampleLoadout(fx.account);
+    // D-163：物品身份/数值一律取自仓库 → 先注入两套互不相交的夹具（第二套用于"引用了另一件物品"的对照）
+    const fix1 = await injectFixture(fx, u.playerId, 1);
+    const fix2 = await injectFixture(fx, u.playerId, 2);
+    const ld = fixtureLoadout(fx, fix1);
     const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld });
     assert.equal(saved.ok, true);
     const hash1 = saved.data.snapshot.hash;
@@ -182,9 +252,11 @@ test('ACC-4 快照冻结（T-AC-4）：保存后改客户端对象不影响已�
     assert.equal(snap.engineVersion, '3.0.0');
     assert.equal(snap.dataVersion, 'b25');
     // 同内容重复保存 → 同 hash（内容寻址幂等）；不同内容 → 不同 hash
-    const sameAgain = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: sampleLoadout(fx.account) });
+    const sameAgain = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: fixtureLoadout(fx, fix1) });
     assert.equal(sameAgain.data.snapshot.hash, hash1, '同内容 → 同快照 hash');
-    const other = sampleLoadout(fx.account, (l) => { l.skills[1].params = Object.assign({}, l.skills[1].params, { cooldown: 9 }); });
+    // D-163：客户端正文（含 params）一律被仓库副本覆盖 → "不同内容"只能来自**引用仓库里的另一件物品**；
+    //   这里把 skills[1] 换成第二套夹具的技能（同一槽重存 → 不触发跨配置独占）。
+    const other = fixtureLoadout(fx, fix1, (l) => { l.skills[1] = fix2.skills[0]; });
     const saved2 = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: other });
     assert.notEqual(saved2.data.snapshot.hash, hash1, '不同内容 → 不同快照 hash');
     assert.equal(saved2.data.activeSnapshotHash, saved2.data.snapshot.hash);
@@ -207,7 +279,9 @@ test('ACC-5 乐观锁：baseUpdatedAt 不匹配 → 409 config_conflict（T-AC-5
   const fx = await openFixture({});
   try {
     const u = await registerPlayer(fx.auth, { username: 'Lock_2' });
-    const ld = sampleLoadout(fx.account);
+    // D-163：物品必须来自本人仓库 → 注入夹具（同一份配置在**同一个槽**反复重存，不触发跨配置独占）
+    const fix = await injectFixture(fx, u.playerId, 1);
+    const ld = fixtureLoadout(fx, fix);
     const first = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: ld });
     assert.equal(first.ok, true);
     const stamp = first.data.slotUpdatedAt;
@@ -264,12 +338,21 @@ test('ACC-6 loadout 校验：非法 → 409 loadout_invalid（带 details.path�
     const badSlotCreate = await fx.account.createSlot({ playerId: u.playerId, loadout: { role: null, skills: [], ai: null } });
     assert.equal(badSlotCreate.code, 'loadout_invalid');
     assert.equal(badSlotCreate.status, 409);
-    // D-159：引用校验改用**服务端权威仓库**（不再是 missing_warehouse；真源里没有该插件 → 悬挂引用）
-    const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
+    // D-163：引用校验用**服务端权威仓库**。要让本用例真正覆盖"悬挂引用"分支，脏引用必须落在**仓库副本**上
+    //   （写在客户端正文里会被 resolveItems 丢弃 → 只会撞"物品不在仓库: <uid>"，覆盖不到目标分支）。
+    const fixDangling = await injectFixture(fx, u.playerId, 4);
+    await fx.store.updateArchive(u.playerId, (a) => {
+      const sk = a.warehouse.buckets.skill.find((x) => x.uid === fixDangling.skills[0].uid);
+      sk.slots[0].pluginUid = 'plg1'; // 仓库里不存在该插件 → 悬挂引用
+      return null;
+    });
+    const withRef = fixtureLoadout(fx, fixDangling);
     const noWh = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef });
     assert.equal(noWh.code, 'loadout_invalid');
     assert.equal(noWh.status, 409);
     assert.ok(noWh.details.some((d) => d.code === 'loadout_invalid'));
+    assert.ok(noWh.details.some((d) => /悬挂引用/.test(d.message)),
+      `必须报"悬挂引用"（这才是本用例要覆盖的分支）：${JSON.stringify(noWh.details)}`);
     assert.ok(!noWh.details.some((d) => d.code === 'missing_warehouse'), 'D-159：不再因"未提交镜像"拒绝');
   } finally {
     await fx.cleanup();
@@ -296,9 +379,11 @@ test('ACC-7 仓库镜像：形状校验 400；与出战配置一致才 verified�
       assert.equal(res.status, 400);
       assert.ok(res.details[0].path.startsWith('warehouse'));
     }
-    // 带装配引用的配置：D-159 起引用校验优先用服务端仓库；显式 warehouse 仍被接受（测试缝）
-    const wh = { buckets: { skillPlugin: [{ uid: 'plg1', kind: 'skillPlugin', equipped: true, tier: 2, unlockTier: 'common' }], role: [], skill: [] } };
-    const withRef = sampleLoadout(fx.account, (l) => { l.skills[0].slots = [{ pluginUid: 'plg1' }]; });
+    // 带装配引用的配置：D-163 起**物品身份/数值与引用全部取自服务端仓库**（客户端正文与镜像都不再作数），
+    //   故夹具物品（含"已被引用的技能插件"）必须先入档；客户端镜像 `wh` 仅用于快照摘录。
+    const fix = await injectFixture(fx, u.playerId, 1);
+    const wh = { buckets: { skillPlugin: [fix.skillPlugin], role: [], skill: [] } };
+    const withRef = fixtureLoadout(fx, fix); // 仓库里的 skills[0] 自带对该技能插件的装配引用
     const saved = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: withRef, warehouse: wh });
     assert.equal(saved.ok, true, JSON.stringify(saved.details));
     assert.equal(saved.data.unverifiedLoadout, false, '提交仓库镜像 → verifiedAgainstWarehouse');
@@ -503,6 +588,9 @@ test('ACC-D1 缺口 1：校验通过时把"该配置引用到的插件项"随快
   t.after(() => fx.cleanup());
   const u = await registerPlayer(fx.auth, { username: 'P1Wh_1', nickname: '装配' });
 
+  // D-163：物品身份/数值按 uid 从**服务端权威仓库**取回（`warehouse` 入参只作降级/摘录来源）
+  //   → LD 的那套物品必须先真实入档，否则保存直接 409「物品不在仓库: r1」。
+  await injectWarehouse(fx, u.playerId, LD.warehouse);
   // 保存带装配引用的配置（LD.loadout 引用 pa/pb/qx；装配校验必须带镜像）
   const save = await fx.account.saveConfig({
     playerId: u.playerId, slotId: 'slot1', loadout: LD.loadout, warehouse: LD.warehouse,
@@ -528,7 +616,13 @@ test('ACC-D1 缺口 1：校验通过时把"该配置引用到的插件项"随快
   assert.equal(snap.hash, hash, '内容寻址键不变（摘录不参与 hash）');
 
   // ② 面板可重建：与真镜像逐值一致；与"退化（no-op 占位插件）"面板不同 → 词条真实生效
-  const fromExcerpt = loadoutMod.buildPanel(LD.loadout, { warehouse: snap.warehouse, tier: 'mythic' });
+  //   D-163：`buildPanel(loadout, {warehouse})` 也按 uid 从仓库解析物品（纵深防御）→ 摘录只含**插件**，
+  //   重建面板时须把快照正文里的角色/技能并入仓库（= syntheticVerifiedWarehouse 的角色/技能部分），
+  //   插件仍用摘录里的真品（否则会退化成 no-op 面板，本断言就失去意义）。
+  const excerptWarehouse = {
+    buckets: Object.assign({}, rankedMod.syntheticVerifiedWarehouse(snap.loadout).buckets, snap.warehouse.buckets),
+  };
+  const fromExcerpt = loadoutMod.buildPanel(LD.loadout, { warehouse: excerptWarehouse, tier: 'mythic' });
   const fromReal = loadoutMod.buildPanel(LD.loadout, { warehouse: LD.warehouse, tier: 'mythic' });
   assert.equal(fromExcerpt.ok, true);
   assert.deepEqual(fromExcerpt.panel, fromReal.panel, '摘录重建的面板与真镜像逐值一致');
@@ -570,10 +664,14 @@ test('ACC-D2 缺口 1 兼容：无摘录的旧快照（无新字段）不报错�
     // 旧形状快照：freezeSnapshot 不带 warehouse → 正文无该字段
     const legacy = fx.store.freezeSnapshot(LD.loadout);
     assert.equal(legacy.warehouse, undefined, '无镜像 → 快照形状与旧版一致（不落该字段）');
+    // D-163：先把 LD 的物品真实入档（保存正文 = 按 uid 从权威仓库解析出的副本）
+    await injectWarehouse(fx, u.playerId, LD.warehouse);
     // 同 loadout 再冻结**不会**丢已有摘录（无新字段 → 不改写）
     const save = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: LD.loadout, warehouse: LD.warehouse });
     assert.equal(save.ok, true);
-    const again = fx.store.freezeSnapshot(LD.loadout);
+    // D-163：落盘正文多一个 `aiId: null`（resolveItems 规范化的产物）→ 内容寻址键与裸 LD.loadout 不同，
+    //   故此处冻结**落盘的那份正文**（同 hash）才能验证"再冻结不带 warehouse 仍保留既有摘录"。
+    const again = fx.store.freezeSnapshot(save.data.slot.loadout);
     assert.ok(again.warehouse, '同 hash 再冻结（不带 warehouse）保留既有摘录');
     // 旧快照 + 未校验 → 生产路径必须如实 409（绝不放宽）
     const res = await fx.account.saveConfig({ playerId: u.playerId, slotId: 'slot1', loadout: { role: null, skills: [], ai: null } });

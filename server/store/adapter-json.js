@@ -1108,14 +1108,28 @@ function createJsonAdapter(options) {
       if (details.length > 0) {
         throw new StoreError('warehouse_full', '仓库已满，无法开箱（请先清理）', details);
       }
+      // D-163 热修：uid 由 core 的**进程级**计数器生成，进程重启后归零 → 跨重启发放会与旧物品撞 uid
+      //   （修前撞车件被 apply 层静默丢弃：实测真重启后开箱 12 件只落 2 件、零日志）。
+      //   这里在写记录之前重映射成仓库内空闲 uid → 响应（由 handler 用返回的 items 构造）= journal = 档案。
+      const alloc = archiveMod.allocateGrantUids(archive.warehouse, items);
+      if (alloc.remapped.length > 0) {
+        log.warn('store', 'store.warehouse.uid_collision', `开箱发放 uid 冲突已重映射 ${alloc.remapped.length} 件`, {
+          playerId: o.playerId,
+          remapped: alloc.remapped.slice(0, 8),
+          reason: 'uid_allocated_at_grant',
+        });
+      }
       const record = ledger.buildBoxRecord({
-        playerId: o.playerId, seed: o.seed, tier: o.tier, times: o.times, items, at: nowFn(),
+        playerId: o.playerId, seed: o.seed, tier: o.tier, times: o.times, items: alloc.items, at: nowFn(),
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
       saveIndex();
       const updated = readArchiveRaw(o.playerId);
-      return { archive: deepClone(updated), grantId: appended.grantId, ...warehouseView(updated) };
+      return {
+        archive: deepClone(updated), grantId: appended.grantId, items: alloc.items,
+        ...warehouseView(updated),
+      };
     });
   }
 

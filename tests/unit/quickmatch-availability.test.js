@@ -73,6 +73,32 @@ function bareOf(loadout) {
   return copy;
 }
 
+// D-163：**无引用配置必须由仓库里"插槽为空"的物品构成**——客户端把 slots[].pluginUid 置 null 已不再生效
+//   （resolveItems 取回的是仓库那份物品，其 slots 里的 pluginUid 原样带出）。故直接注入 1 角色 + 3 技能
+//   （slotCount=0，无任何装配引用），再让配置引用它们。
+async function injectBareSet(store, playerId, tag) {
+  const roleUid = `bare_role_${tag}`;
+  const skillUids = [1, 2, 3].map((i) => `bare_skill_${tag}_${i}`);
+  await store.updateArchive(playerId, (a) => {
+    a.warehouse.buckets.role.push({
+      uid: roleUid, kind: 'role', templateId: 'role_bal', name: '无槽角色（夹具）', quality: 'common',
+      slotCount: 0, slots: [], stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 },
+      regen: { mp: 1, sp: 2 }, pluginPoints: 0, unlockTier: 'common',
+    });
+    ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'].forEach((tid, i) => {
+      a.warehouse.buckets.skill.push({
+        uid: skillUids[i], kind: 'skill', templateId: tid, name: `无槽技能${i + 1}（夹具）`, quality: 'common',
+        slotCount: 0, slots: [], params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+        unlockTier: 'common',
+      });
+    });
+    return null;
+  });
+  const wh = (await store.getWarehouse(playerId)).warehouse;
+  const find = (uid) => wh.buckets.role.find((x) => x.uid === uid) || wh.buckets.skill.find((x) => x.uid === uid);
+  return { role: find(roleUid), skills: skillUids.map(find) };
+}
+
 test('AV-1 纯函数：warehouseCovers / warehouseMissingRefs（无引用恒覆盖；缺引用逐项列出）', () => {
   const { warehouse, loadout, refs } = pluginFixture();
   assert.ok(refs > 0, `夹具必须带装配引用（实得 ${refs}）`);
@@ -175,10 +201,14 @@ test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像�
     assert.equal(badShape.ok, false);
     assert.equal(badShape.code, 'bad_request', '形状非法 → bad_request（D-159 保留）');
     // 正向路径（D-159 后仍成立）：显式无引用配置 + 形状合法镜像 → verified:true，镜像仍进进程内缓存
+    //   D-163：出战配置的物品必须来自**本人服务端仓库**，且"无引用"必须由**仓库里插槽为空的物品**构成
+    //   （客户端把 pluginUid 置 null 已不生效）→ 先注入一套无槽物品，再引用它们。
     const positive = await rt.auth.register({ username: 'av4c', password: 'pw12345678' });
     assert.equal(positive.ok, true);
+    const bareSet = await injectBareSet(rt.store, positive.data.playerId, 'av4c');
     const bareSave = await rt.account.saveConfig({
-      playerId: positive.data.playerId, slotId: 'slot1', loadout: bareOf(loadout),
+      playerId: positive.data.playerId, slotId: 'slot1',
+      loadout: { role: bareSet.role, skills: bareSet.skills, ai: loadout.ai },
     });
     assert.equal(bareSave.ok, true, JSON.stringify(bareSave).slice(0, 300));
     const okMirror = await rt.account.saveWarehouseMirror({
@@ -193,20 +223,49 @@ test('AV-4 端到端复现（修前 409 no_opponent）：陈旧账号级镜像�
     assert.equal(readBack.ok, true, '镜像仍保留在进程内缓存（PUT 只校验，不落盘）');
     assert.deepEqual(readBack.data.warehouse, okMirror.data.warehouse, '回读镜像逐值一致');
     // ② 保存带引用的出战配置 + 全量镜像
+    //   D-163：resolveItems 只认**服务端权威仓库** → 先把夹具仓库的物品注入 av4a 的档案仓库
+    //   （夹具物品此前只作为客户端镜像存在；不注入则 saveConfig 会如实 409 `物品不在仓库`）。
+    await rt.store.updateArchive(playerId, (a) => {
+      for (const kind of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
+        for (const it of warehouse.buckets[kind] || []) a.warehouse.buckets[kind].push(JSON.parse(JSON.stringify(it)));
+      }
+      return null;
+    });
     const save = await rt.account.saveConfig({ playerId, slotId: 'slot1', loadout, warehouse });
     assert.equal(save.ok, true, JSON.stringify(save).slice(0, 300));
     const foe = await rt.auth.register({ username: 'av4b', password: 'pw12345678' });
     assert.equal(foe.ok, true);
-    // ③ 服务端必须取到**覆盖**配置引用的镜像（修前：账号级空镜像遮蔽 → 不覆盖）
+    // ③ 服务端必须取到**覆盖**配置引用的仓库（修前：账号级空镜像遮蔽 → 不覆盖）
     const wh = await rt.loadWarehouse(playerId);
     assert.ok(wh, 'loadWarehouse 不得返回 null（有覆盖来源）');
     assert.equal(rankedMod.warehouseCovers(loadout, wh), true, '取到的镜像必须覆盖全部引用');
-    assert.ok(logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.reason === 'warehouse_mirror_incomplete'),
-      '跳过不覆盖来源必须留 warn（warehouse_mirror_incomplete）');
+    // D-163/D-159：真源（档案仓库）本就覆盖 → ⓪ 号来源命中即返回，陈旧账号级空镜像**根本不被咨询**
+    //   （"跳过不覆盖来源"的 warn 只属于兜底路径，见 ⑤ —— 那里仍然钉住该观测点）。
+    assert.equal((await rt.account.getWarehouseMirror(playerId)).data.warehouse.buckets.role.length, 0,
+      '陈旧账号级空镜像仍在进程内缓存（本用例的"遮蔽源"），但没有被采用');
     // ④ 快速对战必须成立（修前 409 no_opponent）
     const q = await rt.quick.run({ playerId, seed: 7 });
     assert.equal(q.status, 200, `陈旧镜像不得再导致抽得到打不了：${JSON.stringify(q).slice(0, 300)}`);
     assert.ok(q.data.battleId.startsWith('b_'));
+    // ⑤ D-163 兜底 + 可观测性（真源**不覆盖**时；现实来源 = 档案被事后清理/迁移不完整）：
+    //   覆盖的账号级镜像必须兜底，且被跳过的来源必须留 warn `warehouse_mirror_incomplete`。
+    const mirrorSave = await rt.account.saveWarehouseMirror({ playerId, warehouse });
+    assert.equal(mirrorSave.ok, true, JSON.stringify(mirrorSave).slice(0, 200));
+    const fixtureUids = new Set();
+    for (const kind of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
+      for (const it of warehouse.buckets[kind] || []) fixtureUids.add(it.uid);
+    }
+    await rt.store.updateArchive(playerId, (a) => {
+      for (const kind of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
+        a.warehouse.buckets[kind] = a.warehouse.buckets[kind].filter((it) => !fixtureUids.has(it.uid));
+      }
+      return null;
+    });
+    const fallback = await rt.loadWarehouse(playerId);
+    assert.ok(fallback && rankedMod.warehouseCovers(loadout, fallback), '真源不覆盖 → 覆盖的账号级镜像兜底');
+    assert.ok(fallback.buckets.role.length > 0, '兜底镜像含角色（D-163 起插件子集不足以保证可实例化）');
+    assert.ok(logger.records.some((x) => x.event === 'store.snapshot.missing' && x.data && x.data.reason === 'warehouse_mirror_incomplete'),
+      '跳过不覆盖来源必须留 warn（warehouse_mirror_incomplete）');
   } finally {
     if (rt && rt.store) await rt.store.close();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });

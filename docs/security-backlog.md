@@ -12,7 +12,7 @@
 | 项 | 值 |
 |---|---|
 | 文档性质 | 安全与防作弊问题登记册（record-only） |
-| 更新日期 | **2026-09-22**（① `D-159` 落地后的处置回填：**SEC-07 → 已处置**（仓库改服务端权威）；② 新增 **SEC-31**（`DL_ADMIN_USERS` 按用户名匹配 → 抢注即管理员，record-only）。上一轮 2026-09-19 处置回填见下方复核提示） |
+| 更新日期 | **2026-09-25**（① **SEC-07 更正**：`D-159` 并未覆盖 `/me/configs` 的物品数值路径（实测可提交任意 `stats`/捏造 uid 并出战）→ 已由 **`D-163`** 关闭；② 新增 **SEC-32**（开箱发放 uid 冲突 → 静默丢件，已修）；③ 2026-09-22 轮：`D-159` 落地后的处置回填 **SEC-07**、新增 **SEC-31**（`DL_ADMIN_USERS` 抢注式提权，record-only）） |
 | 版本基线 | Debug-Lite v3.0.0，后端 P0–P5（34 批）+ **P7/B27–B33（7 批）均已收口**（2026-09-19）+ **F3 后端契约 ①（`D-159`…`D-162`，非编号批次）已落地**（2026-09-22；P6 前端提交②/③ 未开始） |
 | 适用范围 | `server/**`（HTTP 层 `server/index.js`、编排层 `battle.js`/`box.js`/`loadout.js`/`ranked.js`/`runner.js`、**身份与档案层 `auth.js`/`account.js`/`quickmatch.js`/`admin.js`**、**存储层 `server/store/*`**、AI 运行时 `server/ai/**`）、`shared/log.js`、仓库工程配置（`package.json`、`node_modules`、CI） |
 | 不在范围 | 产品级数值平衡；前端 UI 缺陷（旧 `docs/frontend-spec.md` 已于 2026-09-20 删除，P6 前端待重新设计） |
@@ -130,7 +130,8 @@
 - **建议处置方向**：**唯一根治路径是服务端权威账本**（`11-account-store.md` §15.1 "阶段 2" 已列 4 步：服务端权威 `POST /box` 落档、装配/拆卸/面板改为服务端函数、`service-config.json` 加**理论上限校验**（按段位允许品质上限 + 品质属性区间 + 插件点数反推五维上限，越界拒绝）、客户端首次登录导入并标 `importedAt` 视为不可信）。过渡期可先做：服务端按 `tier` **重新推导**品质/属性区间并与提交值比对（不落账也能拦住"atk=1099999"）；`pool` 改服务端抽取，不接受客户端提供；`wins` 从服务端结算结果读取而非入参。**（2026-09-22 注：第 1/2 步已由 `D-159` 兑现；余下"理论上限校验"与"`wins` 服务端读数"仍未做，见下方残余。）**
 - **优先级**：**高**
 - **状态**：**已处置（2026-09-22，`D-159`）**——处置证据：① **仓库/物品/装配/开箱改服务端权威**：档案新增 `warehouse` 段（四桶 `role`/`skill`/`rolePlugin`/`skillPlugin`，**每桶上限 500**，上限入 `server/data/service-config.json` 并由 `server/data/schema.js` 的 `SERVICE_CONFIG_FROZEN` 冻结）与 `ai` 段（AI 库，上限 100）；真源 = `server/store/adapter-json.js` 的 `getWarehouse`/`grantBox`/`applyWarehouseChange`（`archive.warehouse`，随物化档案 + journal 落 `DL_DATA_DIR`）。② **装配改走服务端端点并落 journal**：`POST /api/v1/me/warehouse/assemble|disassemble`（体只含 `{targetUid,pluginUid,slotIndex}` / `{targetUid,slotIndex}`，**不再接受整仓**）→ 校验由 `server/core/items.js` 纯函数**单点完成**（`item_missing`/`slot_type_mismatch`/`slot_occupied`/`points_exceeded`/`plugin_equipped` 409、`slot_empty`/`plugin_missing` 404）→ 落 journal 增量记录 `warehouse.assemble`/`warehouse.disassemble`。③ **`GET /api/v1/me/warehouse` 为真源**（`{buckets,usage,caps,counts,starterIssued}`；旧契约的"未提交镜像 → 404 `warehouse_missing`"**作废**），`PUT /me/warehouse` **退役**为"只校验形状"（引用不覆盖出战配置不再 409，改 200 + `verified:false`）。④ **开箱物品入档**：`POST /api/v1/me/box` 服务端权威（`box.opened` 记录 + `grantId` 幂等环形窗口 256；任一桶超限 → 409 `warehouse_full` 且不入档），**seed 由服务端独占**（`D-162`，接口无 `seed` 入参）。⑤ **注册即发 starter**（`server/starter.js`）并把装配结果写入服务端仓库与 `slot1`；**老账号保持空仓**（`migrateV1toV2` 只补空仓库，`ARCHIVE_VERSION` 1→2）。⑥ **回归用例**：`tests/unit/starter.test.js` + `tests/api/api-me-warehouse.test.js` + `tests/api/api-me-box.test.js` + `tests/api/api-configs-incomplete.test.js`（共 24 条后端新用例）+ `tests/contract/store-contract.test.js` 适配器方法清单 +6。
-  **残余（仍未处置）**：① **"改两行 JS 携带任意属性出战配置"这一具体作弊面已关闭**，但 **"段位与积分仍不具备竞技可信度"的既有结论不变**——`POST /ranked/promote` 的 `wins` 仍是客户端入参、`POST /ranked/run` 的遗留路径仍接受客户端 `pool`（见 SEC-09），未改走服务端结算读数的端点仍可被构造输入影响；② `11-account-store §15.1` 的"理论上限校验"（按段位允许品质上限 + 属性区间 + 插件点数反推五维上限）**未实现**；③ 产品取舍说明见本册末尾"特别提醒"第 1 条。
+  **⚠️ 2026-09-25 更正（`D-163` 热修）**：上一条"已处置"**当时其实不成立** —— 独立复核实测 `PUT /api/v1/me/configs/slot2` 提交一件 `stats={hp:100000,atk:99999,def:99999}` 的"角色"（甚至 uid 完全不在仓库）→ **200**；`POST …/activate` → **200**；服务端留存与出战快照里就是这些数值；而 `quickmatch.js`/`ranked.js` 用的正是 `snapshot.loadout`（`battle.buildPlayer` 直接读 `role.stats`）→ **真实对局可被打穿**。根因：`validateLoadout` 只校验 `kind`/`templateId`/`quality` 与**插件**引用（且该引用校验带 `errors.length === 0` 前置条件，凡不完整配置**整段跳过**），从不校验模板物品是否属于该玩家、也不校验数值；L6 又把客户端正文原样落盘进快照。**`D-163` 已真正关闭该路径**：保存/创建/激活一律按 uid 从**服务端仓库**解析物品（客户端数值一律丢弃、未知 uid → 409 `loadout_invalid` `物品不在仓库`），`loadout.buildPanel` 在拿到仓库时同样先解析（纵深防御：历史遗留的被篡改快照也不能把数值带进战斗），且 HTTP 配置路由**不再采纳客户端 `warehouse` 镜像**（修前 `warehouseForValidation` 优先返回客户端镜像 ⇒ 只要同时提交一个"自带 buff 物品"的镜像就能让解析从假镜像取数）。回归：`tests/api/*`、`tests/unit/*`、`tests/frontend/config-editor-flow.test.js`。
+  **残余（仍未处置）**：① ~~"改两行 JS 携带任意属性出战配置"这一具体作弊面已关闭~~（**2026-09-25 复核：`/me/configs` 路径确已关闭**；但 `POST /loadout` 与 `POST /panel` 是**无状态展示**端点，仍按客户端提交的 loadout + 镜像返回面板 —— 不落账、不影响对局，若将来被用于记账/判定必须先堵此口），但 **"段位与积分仍不具备竞技可信度"的既有结论不变**——`POST /ranked/promote` 的 `wins` 仍是客户端入参、`POST /ranked/run` 的遗留路径仍接受客户端 `pool`（见 SEC-09），未改走服务端结算读数的端点仍可被构造输入影响；② `11-account-store §15.1` 的"理论上限校验"（按段位允许品质上限 + 属性区间 + 插件点数反推五维上限）**未实现**；③ 产品取舍说明见本册末尾"特别提醒"第 1 条。
 
 ### SEC-08 `tier` 缺省值与校验口径在端点间不一致，易被误用为"提权开关"
 
@@ -393,6 +394,17 @@
 - **优先级**：**中**（当前默认部署为 `127.0.0.1` 单机、且 `DL_ADMIN_USERS` 默认空 → 不开即无风险；**一旦对外部署或运维启用该白名单，升为高**，与 SEC-20 的"是否对外"绑定）
 - **状态**：**待处理（用户 2026-09-22 裁定接受风险并登记，record-only）**
 
+### SEC-32 开箱发放的 uid 冲突导致**静默丢件**（经济完整性；uid 计数器是进程级的）
+
+- **现状证据**（2026-09-25 独立复核，两进程真实重启实测）
+  - 物品 uid 由 `server/core/items.js` 的**模块级**计数器生成（`let uidSeq = 0` → `item_${uidSeq++}`）；进程重启后计数器**归零**，而 uid 的身份域是"**每个仓库内唯一**" ⇒ 同一玩家"重启前领的物品"与"重启后领的物品"会撞 uid。
+  - 撞车件的处置在 `server/store/archive.js` 的 `box.opened` apply 分支：`if (findWarehouseItem(archive.warehouse, it.uid)) continue;` —— **静默丢弃**（既不写 `dropped`、也不记日志），而 journal 记录与 HTTP 响应仍按"N 件"计数。
+  - 实测（`dataDir` 固定、两个 node 进程）：A 进程注册 + 开箱 12（全落）→ A 关闭 → **B 进程**重新登录并开箱 12 → 响应/journal 记 12 件，**档案只新增 2 件，10 件静默消失，与仓库相关的日志事件 = 0**；前端文案却是"物品已直接入服务端仓库"。
+- **风险**：① 玩家**无声丢装备**（且提示说已入仓）→ 经济系统与玩家信任受损；② journal 与档案**永久漂移**且**不可审计**（`grantIds` 的 `dropped` 字段只覆盖"桶满"分支）；③ 撞 uid 的两件物品在档案里"同 uid"，`findItem` 只认第一件 ⇒ 第二件永久不可达（装/拆/引用都可能落到错的那件上）。
+- **处置**：**已修（2026-09-25，`D-163`⑥）**——① 发放路径在**写 journal 之前**调用 `archive.allocateGrantUids`，把撞车 uid 重映射为仓库内空闲 uid（`item_<现有最大编号+1>` 起、同批次内逐个避开）⇒ **响应 = journal = 档案**（重放仍按记录落档，保持确定性）；② 闸门处丢弃改为 `error` 日志（`store.warehouse.uid_collision`）+ `dropped`/`droppedUids` 入 `grantIds` 环形条目，差额**可审计**；③ 回归：`tests/unit/store-warehouse-recovery.test.js`/`tests/api/api-me-box.test.js` 与本条实测脚本（两进程重启）。
+- **优先级**：**高**（默认部署即会触发：任何一次服务重启后的开箱）
+- **状态**：**已处置（2026-09-25，`D-163`）**（残余：修复前已落档的历史档案里可能仍存在"同 uid 两件"，`findItem` 只认第一件——建议后续在档案自检里加一条"四桶 uid 唯一"的不变量断言，超出本次范围）
+
 ---
 
 ## 优先级汇总表
@@ -405,7 +417,7 @@
 | SEC-04 | AI 提交无信誉约束、无按账号配额（CPU 消耗攻击面） | A | 中 | 待处理 |
 | SEC-05 | 无请求/连接超时，慢速请求可长期占用 socket | A | 中 | 待处理 |
 | SEC-06 | `OPTIONS` / 预检完全未处理，跨源调用行为取决于浏览器 | A | 中 | **已处置（2026-09-19）**（`DL_CORS_ORIGIN` 白名单 + `OPTIONS` 204 + 精确头；未配置时不发头=同源口径） |
-| SEC-07 | 客户端权威的经济系统可被伪造（品质上限取请求体、仓库/出战整包提交） | B | 高 | **已处置（2026-09-22，`D-159`）**（仓库/物品/装配/开箱改服务端权威；装配走 `/me/warehouse/assemble\|disassemble` 并落 journal；`GET /me/warehouse` 为真源。**残余：段位/积分仍不具竞技可信度**、`wins`/`pool` 入参与"理论上限校验"未做） |
+| SEC-07 | 客户端权威的经济系统可被伪造（品质上限取请求体、仓库/出战整包提交） | B | 高 | **已处置（2026-09-22，`D-159`）→ 2026-09-25 更正：`D-159` 并未覆盖 `/me/configs` 的物品数值路径**（实测可提交任意 `stats`、甚至仓库里不存在的 uid 并出战，真实对局可被打穿）；**已由 `D-163` 关闭**（保存/激活按 uid 从服务端仓库解析物品、不采纳客户端镜像；`buildPanel` 有仓库时同样先解析）。**残余：段位/积分仍不具竞技可信度**、`wins`/`pool` 入参与"理论上限校验"未做、`POST /loadout`/`/panel` 无状态端点仍按客户端提交返回展示面板 |
 | SEC-08 | `tier` 缺省值与校验口径在端点间不一致 | B | 中 | 待处理 |
 | SEC-09 | 排位对手池由客户端提供，可自选/自造对手 | B | 高 | 待处理 |
 | SEC-10 | 幂等/重放面：seed 可自选，结算可择优 | B | 中 | 待处理 |
@@ -430,7 +442,8 @@
 | SEC-29 | 日志含原始 `req.url`/`query`，日志注入与取证污染 | F | 低 | 待处理 |
 | SEC-30 | 回放注册表进程内状态，随重启丢失（设计取舍，非缺陷） | F | 低 | **已部分处置（2026-09-19）**（归档 `b_` 回放不落帧、按需重算 → 不随重启丢失；遗留 `r<seq>` 仍进程内） |
 | SEC-31 | `DL_ADMIN_USERS` 按**用户名**匹配（大小写不敏感）→ 谁先注册该用户名谁就成为管理员 | F | 中（对外部署或启用白名单时 → 高） | **待处理（用户 2026-09-22 裁定接受风险并登记，record-only）**（建议：白名单只收 `publicId`/`playerId`，或启动时校验白名单用户名必须已注册） |
-| | **合计** | | **高 7 / 中 17 / 低 7 = 31**（2026-09-22 新增 SEC-31：中 +1；2026-09-16 曾更正原写 6/16/8 与正文不符） | **已处置 6（SEC-03 / SEC-06 / SEC-07 / SEC-17 / SEC-22 / SEC-26）/ 已部分处置 8（SEC-01 / SEC-02 / SEC-11 / SEC-13 / SEC-19 / SEC-25 / SEC-27 / SEC-30）/ 待处理 17**（2026-09-22 更新） |
+| SEC-32 | 开箱发放 uid 冲突 → **静默丢件**（uid 计数器进程级、重启归零；撞车件被 `continue` 丢弃、零日志，响应却称已入仓；journal 与档案永久漂移） | B | 高 | **已处置（2026-09-25，`D-163`⑥）**：发放前重映射 uid（响应 = journal = 档案）+ 闸门丢弃改 `error` 日志与 `grantIds.dropped` 审计 |
+| | **合计** | | **高 8 / 中 17 / 低 7 = 32**（2026-09-25 新增 SEC-32：高 +1；2026-09-22 新增 SEC-31：中 +1；2026-09-16 曾更正原写 6/16/8 与正文不符） | **已处置 7（SEC-03 / SEC-06 / SEC-07 / SEC-17 / SEC-22 / SEC-26 / SEC-32）/ 已部分处置 8（SEC-01 / SEC-02 / SEC-11 / SEC-13 / SEC-19 / SEC-25 / SEC-27 / SEC-30）/ 待处理 17**（2026-09-25 更新；其中 **SEC-07 的"已处置"在 2026-09-25 被更正为"`D-159` 未覆盖 `/me/configs`，改由 `D-163` 关闭"**） |
 
 > **状态口径（**D-153**）**：本册**只登记不修复**——不派发任务、不改门禁；但**被顺手修掉的条目必须回填"现状证据 + 状态"**（标为**已处置**/**已部分处置**，附日期与 `文件:行`/测试证据）。
 > 截至 **2026-09-22**：**已处置 6 条**——SEC-03（HTTP 层 LRU 64 + 淘汰 → `410 replay_expired`）、SEC-06（`DL_CORS_ORIGIN` 白名单 + `OPTIONS` 204）、**SEC-07（`D-159`：仓库/物品/装配/开箱改服务端权威，`GET /me/warehouse` 为真源，装配走服务端端点并落 journal——"改两行 JS 携带任意属性出战配置"的作弊面关闭；残余"段位/积分仍不具竞技可信度"）**、SEC-17（运行时 + 校验期双白名单）、SEC-22（五个 `DL_*` 已接线，残余 `DL_LOG_CHANNELS`）、SEC-26（`/admin/:op` + token 双门控 + 审计）；**已部分处置 8 条**——SEC-01（鉴权中间件 + `DL_LEGACY_STATELESS`；残余 `/log-level` 与遗留端点）、SEC-02（全局限速；仍缺昂贵端点并发闸门）、SEC-11（413 已修；未 drain/预检）、SEC-13（CORS；安全头仍缺）、SEC-19（CI + 钩子；门禁自身可改写）、SEC-25（seq 来源/恢复/并发已实现；Windows 目录 fsync 与崩溃矩阵）、SEC-27 与 SEC-30（归档 `b_` 已鉴权且不随重启丢失；遗留 `r<seq>` 仍可枚举/进程内）。**其余 17 条仍为待处理**（含 2026-09-22 新增的 **SEC-31**，用户已裁定接受风险、只登记）。

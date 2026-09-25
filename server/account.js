@@ -233,19 +233,97 @@ function createAccount(options) {
     while (mirrors.size > MIRROR_CACHE_MAX) mirrors.delete(mirrors.keys().next().value);
   }
 
-  // D-159：仓库为服务端权威 → 出战配置的引用校验**优先用服务端真源**（客户端不再需要提交镜像）。
-  //   显式传入的 warehouse（遗留路径 / 测试缝）仍然被接受并优先使用。
+  // D-159：仓库为服务端权威 → 出战配置的引用校验**用服务端真源**。
+  // D-163 热修（关键）：修前本函数**优先返回客户端提交的 `provided` 镜像** —— 而 resolveItems 正是用它
+  //   解析物品身份/数值 ⇒ 作弊者只要在 PUT 配置时**同时提交一个"自带 buff 物品"的 warehouse 镜像**，
+  //   解析就会从假镜像取数，"服务端权威"形同虚设。现在：服务端真源优先；仅当服务端存储不可用时才降级用
+  //   客户端镜像（记 warn），彻底无仓库时返回 null（引用校验会如实报 missing_warehouse）。
   async function warehouseForValidation(playerId, provided) {
-    if (provided !== undefined && provided !== null) return provided;
     try {
       const view = await store.getWarehouse(playerId);
-      return view && view.warehouse ? view.warehouse : null;
+      const server = view && view.warehouse ? view.warehouse : null;
+      if (server) return server;
     } catch (err) {
       log.warn('store', 'store.read',
-        `读取服务端仓库失败（引用校验降级为无仓库）：${err && err.message ? err.message : err}`,
+        `读取服务端仓库失败（引用校验降级）：${err && err.message ? err.message : err}`,
         { op: 'warehouseForValidation', playerId });
-      return null;
     }
+    if (provided !== undefined && provided !== null) {
+      log.warn('store', 'store.read', '服务端仓库不可用 → 降级用客户端提交的镜像做引用校验（不可作为权威）', {
+        op: 'warehouseForValidation', playerId, reason: 'client_mirror_fallback',
+      });
+      return provided;
+    }
+    return null;
+  }
+
+  // D-163：客户端正文与仓库副本的"指纹"比对（只比身份/数值类字段，键序固定 → 不受 JSON 键序影响），
+  //   不一致即记 warn —— 篡改尝试在日志里可见（正常路径两者逐字段相同）。
+  function itemFingerprint(it) {
+    if (!it || typeof it !== 'object') return '';
+    return JSON.stringify({
+      uid: it.uid, kind: it.kind, templateId: it.templateId, quality: it.quality,
+      stats: it.stats || null, regen: it.regen || null, params: it.params || null,
+      pluginPoints: it.pluginPoints === undefined ? null : it.pluginPoints,
+      slots: (Array.isArray(it.slots) ? it.slots : []).map((s) => (s ? `${s.type}|${s.pluginUid === undefined ? '' : s.pluginUid}` : '')),
+    });
+  }
+
+  function logDiscardedBodies(playerId, clientLoadout, resolvedLoadout, warehouse) {
+    const pairs = [['role', clientLoadout && clientLoadout.role, resolvedLoadout && resolvedLoadout.role]];
+    for (let i = 0; i < 3; i += 1) {
+      pairs.push([`skills[${i}]`,
+        clientLoadout && Array.isArray(clientLoadout.skills) ? clientLoadout.skills[i] : null,
+        resolvedLoadout && Array.isArray(resolvedLoadout.skills) ? resolvedLoadout.skills[i] : null]);
+    }
+    for (const [where, sent, actual] of pairs) {
+      if (!sent || !actual) continue;
+      if (itemFingerprint(sent) === itemFingerprint(actual)) continue;
+      log.warn('api', 'api.reject', `出战配置正文与仓库不一致，已按仓库真值落盘（${where} ${actual.uid}）`, {
+        op: 'resolveLoadout', playerId, where, uid: actual.uid, reason: 'client_item_body_ignored',
+        warehouseProvided: warehouse !== null && warehouse !== undefined,
+      });
+    }
+  }
+
+  // D-163（2026-09-25 热修）：把 loadout 的**物品**解析成服务端权威仓库里的那一件。
+  //   客户端正文只用于指出 uid；数值/模板/品质一律取仓库副本（未知 uid / 类别不符 → 报错）。
+  //   修前实测缺陷：可直接 PUT stats.hp=999999 的角色（甚至仓库里不存在的 uid）并 activate，
+  //   快照冻结该正文 → quickmatch/ranked 用 snapshot.loadout 开打 → 作弊面成立。
+  async function resolveLoadoutOf(playerId, loadout, providedWarehouse) {
+    const warehouse = await warehouseForValidation(playerId, providedWarehouse);
+    const res = loadoutMod.resolveItems(loadout, warehouse);
+    if (res.ok === true) logDiscardedBodies(playerId, loadout, res.loadout, warehouse);
+    return {
+      warehouse,
+      ok: res.ok === true,
+      details: (res.errors || []).map((e) => detailOf(e.code, e.message, e.where)),
+      loadout: res.loadout,
+    };
+  }
+
+  // D-163：**一件物品同时只能被一份配置引用**（跨配置独占；仓库层已保证"一个槽只装一处"）。
+  //   用户 2026-09-25 裁定：禁止跨配置共享（修前 usage 允许同一 uid 出现在 1/2/3 三份配置里）。
+  //   判定用 archive.warehouseUsage（单一真源）→ 该 uid 的 slotIds 去掉**本槽**后还有别的即冲突。
+  function exclusivityDetails(archive, slotId, loadout) {
+    const usage = archiveMod.warehouseUsage(archive);
+    const out = [];
+    for (const uid of loadoutMod.referencedUidsOf(loadout)) {
+      const entry = usage[uid];
+      const others = (entry && Array.isArray(entry.slotIds) ? entry.slotIds : []).filter((id) => id !== slotId);
+      if (others.length > 0) {
+        out.push(detailOf('item_in_use',
+          `物品 ${uid} 已被配置 ${others.join('、')} 使用：一件物品同时只能装配到一份配置（请先在那边替换或拆卸）`, uid));
+      }
+    }
+    return out;
+  }
+
+  // D-160 的非出战槽"允许不完整"= 只容忍**缺失类**错误；引用类错误（悬挂引用/未装配/类别不符/
+  //   未知模板…）在任何情况下都必须拒绝。判定不写死文案：直接用 loadoutMissingDetails 的 {path,message} 抵消。
+  function hardErrorsOf(validationErrors, missing) {
+    const tolerated = new Set(archiveMod.loadoutMissingDetails(missing).map((d) => `${d.path}|${d.message}`));
+    return (validationErrors || []).filter((d) => !tolerated.has(`${d.path}|${d.message}`));
   }
 
   /* ---------- 注册事务（§5.3：注册即默认配置 + 必有出战） ---------- */
@@ -379,17 +457,21 @@ function createAccount(options) {
       let loadout = null;
       let warehouseVerified = false;
       if (o.loadout !== undefined && o.loadout !== null) {
-        const missing = archiveMod.loadoutMissingOf(o.loadout);
+        // D-163：先按 uid 从权威仓库解析（身份/数值），再判结构；落盘的永远是**解析后**的正文
+        const r = await resolveLoadoutOf(o.playerId, o.loadout, o.warehouse);
+        if (!r.ok) return fail('loadout_invalid', '出战配置含无效物品引用（物品必须来自本人仓库）', r.details);
+        const missing = archiveMod.loadoutMissingOf(r.loadout);
         if (missing.length > 0) {
           return fail('loadout_invalid', '新槽可留空（不传 loadout 即建空槽）；要写入的内容必须完整',
             archiveMod.loadoutMissingDetails(missing));
         }
-        const v = validateLoadoutOf(o.loadout, {
-          warehouse: await warehouseForValidation(o.playerId, o.warehouse), tier: tierFor(archive, o),
-        });
-        if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
-        loadout = o.loadout;
-        warehouseVerified = v.warehouseVerified;
+        const v = validateLoadoutOf(r.loadout, { warehouse: r.warehouse, tier: tierFor(archive, o) });
+        const hard = hardErrorsOf(v.errors, missing);
+        if (hard.length > 0) return fail('loadout_invalid', '出战配置不合法', hard);
+        const dup = exclusivityDetails(archive, null, r.loadout);
+        if (dup.length > 0) return fail('item_in_use', '物品已被其它配置使用', dup);
+        loadout = r.loadout;
+        warehouseVerified = r.warehouse !== null;
       }
       const res = await store.createConfigSlot({
         playerId: o.playerId,
@@ -426,16 +508,26 @@ function createAccount(options) {
       const slot = archiveMod.findSlot(archive, o.slotId);
       if (!slot) return fail('slot_not_found', `槽 ${o.slotId} 不存在`);
       const isActive = archive.configs.activeSlotId === slot.slotId;
-      const missing = archiveMod.loadoutMissingOf(o.loadout);
+      // D-163：① 物品身份/数值一律解析自权威仓库；② 跨配置独占；③ 只容忍"缺失类"错误
+      const r = await resolveLoadoutOf(o.playerId, o.loadout, o.warehouse);
+      if (!r.ok) return fail('loadout_invalid', '出战配置含无效物品引用（物品必须来自本人仓库）', r.details);
+      const resolvedLoadout = r.loadout;
+      const dup = exclusivityDetails(archive, slot.slotId, resolvedLoadout);
+      if (dup.length > 0) return fail('item_in_use', '物品已被其它配置使用', dup);
+      const missing = archiveMod.loadoutMissingOf(resolvedLoadout);
       let warehouseVerified = false;
       if (missing.length > 0) {
         if (isActive) {
           return fail('loadout_invalid', '出战配置必须完整（角色 + 恰 3 技能 + AI；允许插槽为空）',
             archiveMod.loadoutMissingDetails(missing));
         }
+        // 非出战槽：结构上允许不完整，但**引用类**错误仍必须拒绝（修前整段校验被跳过 → 悬挂插件引用可落盘）
+        const vInc = validateLoadoutOf(resolvedLoadout, { warehouse: r.warehouse, tier: tierFor(archive, o) });
+        const hardInc = hardErrorsOf(vInc.errors, missing);
+        if (hardInc.length > 0) return fail('loadout_invalid', '出战配置不合法', hardInc);
       } else {
-        const v = validateLoadoutOf(o.loadout, {
-          warehouse: await warehouseForValidation(o.playerId, o.warehouse), tier: tierFor(archive, o),
+        const v = validateLoadoutOf(resolvedLoadout, {
+          warehouse: r.warehouse, tier: tierFor(archive, o),
         });
         if (!v.ok) return fail('loadout_invalid', '出战配置不合法', v.errors);
         warehouseVerified = v.warehouseVerified;
@@ -443,7 +535,7 @@ function createAccount(options) {
       const res = await store.saveConfigSlot({
         playerId: o.playerId,
         slotId: slot.slotId,
-        loadout: o.loadout,
+        loadout: resolvedLoadout, // D-163：落盘/冻结的是**解析自权威仓库**的正文（客户端数值一律丢弃）
         name: o.name,
         baseUpdatedAt: o.baseUpdatedAt,
         activate: o.activate === true,
@@ -477,7 +569,11 @@ function createAccount(options) {
     const o = input || {};
     try {
       const archive = await requireArchive(o.playerId);
-      if (!archiveMod.findSlot(archive, o.slotId)) return fail('slot_not_found', `槽 ${o.slotId} 不存在`);
+      const slot = archiveMod.findSlot(archive, o.slotId);
+      if (!slot) return fail('slot_not_found', `槽 ${o.slotId} 不存在`);
+      // D-163：出战前再判一次跨配置独占（历史数据可能是在独占规则生效前存下的）
+      const dup = exclusivityDetails(archive, slot.slotId, slot.loadout);
+      if (dup.length > 0) return fail('item_in_use', '物品已被其它配置使用', dup);
       const res = await store.activateConfigSlot({ playerId: o.playerId, slotId: o.slotId });
       logWrite('activateConfig', { playerId: o.playerId, slotId: o.slotId, snapshotHash: res.archive.configs.activeSnapshotHash });
       return ok({

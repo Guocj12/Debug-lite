@@ -13,6 +13,17 @@ const battleApi = require('../../server/battle.js');
 const loadoutApi = require('../../server/loadout.js');
 const LD = require('../fixtures/loadout-ok.json');
 
+// D-163：配置里的物品身份/数值一律取自**服务端权威仓库** → LD.loadout 用到的 r1/s1..s3/pa/pb/qx
+//   必须先真的在档（修前靠 PUT 请求随带的 `warehouse` 镜像顶替权威仓库；该降级已废除）。
+async function injectFixture(s, playerId) {
+  await s.store.updateArchive(playerId, (a) => {
+    for (const [bucket, list] of Object.entries(LD.warehouse.buckets)) {
+      for (const it of list) a.warehouse.buckets[bucket].push(JSON.parse(JSON.stringify(it)));
+    }
+    return null;
+  });
+}
+
 test('QU-1 POST /quick/run：抽真实档案对手 + 双向 Elo 落盘 + 回放引用 + 排行榜联动', async () => {
   await h.withServer(null, async (s) => {
     const a = await h.register(s.port, h.uniqueName('qa'));
@@ -63,7 +74,10 @@ test('QU-6 缺口 1 端到端：重启进程（新 store 实例、进程内镜�
     const a = await h.register(s.port, h.uniqueName('dwa'));
     const b = await h.register(s.port, h.uniqueName('dwb'));
     const c = await h.register(s.port, h.uniqueName('dwc')); // 第二名对手：24h 去重窗口内 quick 已抽走 B
-    // ① 注册 → 装配配置保存（LD.loadout 引用 pa/pb/qx）+ PUT /me/warehouse
+    // ① 注册 → 注入 fixture 物品到**服务端权威仓库** → 装配配置保存（LD.loadout 引用 pa/pb/qx）
+    //    D-163：PUT /me/configs 不再接收客户端 `warehouse` 镜像做解析来源（请求里带着它也无害，但不起作用）。
+    const playerId = await h.playerIdByPublicId(s.store, a.publicId);
+    await injectFixture(s, playerId);
     const putWh = await h.request(s.port, 'PUT', '/api/v1/me/warehouse', { warehouse: LD.warehouse }, h.authed(a.token));
     assert.equal(putWh.status, 200, putWh.raw);
     const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot1', { loadout: LD.loadout, warehouse: LD.warehouse }, h.authed(a.token));
@@ -89,11 +103,16 @@ test('QU-6 缺口 1 端到端：重启进程（新 store 实例、进程内镜�
     assert.ok(whAfter.body.data.counts && whAfter.body.data.caps, '回带 counts/caps（前端用量口径）');
     assert.equal(typeof whAfter.body.data.starterIssued, 'boolean', '回带 starterIssued');
     assert.ok(whAfter.body.data.usage, '回带 usage（装配于配置几）');
-    const snapAfter = await s.runtime.snapshotWarehouseOf(await h.playerIdByPublicId(s.store, a.publicId));
-    assert.ok(snapAfter && snapAfter.buckets, '落地载体 = 快照自带的装配引用子集');
+    // D-163：配置保存不再把客户端镜像写进快照 → "落地载体"改为**服务端权威仓库本身**
+    //   （随 journal 落盘、跨重启仍在）。这比旧的"快照自带引用子集"更强：不再依赖调用方随请求交镜像。
+    const snapAfter = await s.runtime.loadWarehouse(playerId);
+    assert.ok(snapAfter && snapAfter.buckets, '落地载体 = 服务端权威仓库（D-163 起不再依赖客户端镜像/快照子集）');
+    assert.ok((snapAfter.buckets.rolePlugin || []).some((p) => p.uid === 'pa')
+      && (snapAfter.buckets.skillPlugin || []).some((p) => p.uid === 'qx'),
+    '权威仓库带上 LD 引用的插件（pa/pb/qx）');
     // 面板逐值一致（这就是"插件词条真实生效"的实测口径）
     const panelAfter = loadoutApi.buildPanel(LD.loadout, { warehouse: snapAfter, tier: 'mythic' });
-    assert.deepEqual(panelAfter.panel, panelBefore.panel, '重启后从快照重建的面板与重启前逐值一致');
+    assert.deepEqual(panelAfter.panel, panelBefore.panel, '重启后从权威仓库重建的面板与重启前逐值一致');
     const rtOk = battleApi.buildPlayer('p1', LD.loadout, snapAfter, 'mythic');
     assert.equal(rtOk.ok, true);
     assert.deepEqual(rtOk.player, battleApi.buildPlayer('p1', LD.loadout, LD.warehouse, 'mythic').player,
@@ -114,7 +133,7 @@ test('QU-6 缺口 1 端到端：重启进程（新 store 实例、进程内镜�
       drawn += def.body.data.drawnCount;
     }
     assert.equal(drawn, 1 + ranked.body.data.matches, 'quick + ranked 的场次都被真实对手接下（非退化空跑）');
-    t.diagnostic(`[缺口1] 单快照 ${snapshotBytes}B（含装配引用子集）；重启后 quick+ranked 均 200，对手防守 ${drawn} 场`);
+    t.diagnostic(`[缺口1] 快照 ${snapshotBytes}B + 权威仓库（D-163 起载体为档案仓库，非快照镜像）；重启后 quick+ranked 均 200，对手防守 ${drawn} 场`);
   } finally {
     await s.close();
     h.removeTempDir(dir);

@@ -17,6 +17,19 @@ const LD = require('../fixtures/loadout-ok.json');
 
 const TIER = 'mythic';
 
+// D-163：配置里的物品身份/数值一律取自**服务端权威仓库** → LD.loadout 用到的 r1/s1..s3/pa/pb/qx
+//   必须先真的在档（修前靠 PUT 请求随带的 `warehouse` 镜像顶替权威仓库做校验/解析；该降级已废除）。
+async function injectFixture(s, publicId) {
+  const playerId = await h.playerIdByPublicId(s.store, publicId);
+  await s.store.updateArchive(playerId, (ar) => {
+    for (const [bucket, list] of Object.entries(LD.warehouse.buckets)) {
+      for (const it of list) ar.warehouse.buckets[bucket].push(JSON.parse(JSON.stringify(it)));
+    }
+    return null;
+  });
+  return playerId;
+}
+
 /* 帧比对的确定性口径（D-159 暴露的引擎口径，见交付报告「疑似真缺陷」）：
  *   `server/core/effects.js` 的 effect `uid` 来自**进程级自增** `uidSeq`，并被写进 aiTrace 的 trace 文案
  *   （`eff_12: atk 10 -> 12`）→ 同一场对局在**同一进程内两次重算**必然得到不同的 uid 文本
@@ -279,8 +292,9 @@ test('RP-8 缺口 2：含装配引用的对局，帧缓存清空后归档回放�
   await h.withServer(null, async (s) => {
     const a = await h.register(s.port, h.uniqueName('p2a'));
     const b = await h.register(s.port, h.uniqueName('p2b'));
-    // A 装配 LD 的插件引用（pa/pb/qx）：保存时随快照落"装配引用子集"（缺口 1）
-    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot1', { loadout: LD.loadout, warehouse: LD.warehouse }, h.authed(a.token));
+    // D-163：A 要用 LD 的 pa/pb/qx，物品必须先入**服务端权威仓库**（PUT 不再接收客户端 warehouse 镜像）
+    const aId = await injectFixture(s, a.publicId);
+    const save = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot1', { loadout: LD.loadout }, h.authed(a.token));
     assert.equal(save.status, 200, save.raw);
     const data = await quickBattle(s, a, b);
     // 修前：归档重算只把 loadout 交给 runBattle（无逐侧 warehouse）→ 含引用的一侧 missing_warehouse → 410
@@ -301,15 +315,15 @@ test('RP-8 缺口 2：含装配引用的对局，帧缓存清空后归档回放�
       '清缓存后按需重算帧与首次除进程级 effect uid 数值外逐字节一致');
     assert.equal(canonEff(recomputed.body.data.frames), canonEff(first.body.data.frames),
       'effect 的数量/顺序/引用关系不得漂移');
-    // 逐侧镜像来自各自快照（缺口 1 落盘）——旧签名单仓库无法表达两侧不同的镜像
+    // 逐侧仓库的真源：D-163 起 HTTP 配置保存**不再**把客户端 `warehouse` 镜像内联进快照
+    //   （防止"自带 buff 的假镜像"顶替权威仓库）→ 回放重算走 `rt.loadWarehouse`，其首选来源是
+    //   各自档案里的**服务端权威仓库**（随 journal 落盘）。旧断言（快照镜像恰等于引用集）随该热修废除，
+    //   改为更强的真源断言：每侧权威仓库覆盖本侧引用、被引用插件 equipped=true、且两侧互不串仓。
     const rec = await s.store.findBattleRecord(data.battleId);
     const snap1 = await s.store.snapshot.get(rec.p1.snapshotHash);
     const snap2 = await s.store.snapshot.get(rec.p2.snapshotHash);
-    assert.ok(snap1.warehouse, 'p1 快照自带装配引用子集');
-    // D-159：注册即发放并**已装配** starter → p2 的默认出战配置快照**同样**自带其装配引用子集。
-    //   旧断言 `snap2.warehouse === undefined`（"p2 默认配置无引用 → 快照不带镜像"）随 D-159 废除；
-    //   改为等价更强的**逐侧**断言：镜像恰等于该侧 loadout 实际引用的插件集合（含 equipped=true），
-    //   且两侧互不串仓 —— 比原断言"某一侧恰好为空"更能证明逐侧镜像语义。
+    assert.ok(snap1 && snap1.loadout && snap2 && snap2.loadout, '快照仍携带 loadout（按需重算的输入）');
+    assert.equal(snap1.warehouse, undefined, 'D-163：HTTP 保存的快照不再内联客户端提交的镜像（真源 = 档案仓库）');
     const refUidsOf = (loadout) => {
       const out = [];
       for (const item of [loadout.role].concat(loadout.skills || [])) {
@@ -317,17 +331,30 @@ test('RP-8 缺口 2：含装配引用的对局，帧缓存清空后归档回放�
       }
       return out.sort();
     };
-    const mirrorUidsOf = (wh) => Object.values(wh.buckets).flat().map((x) => x.uid).sort();
-    assert.ok(snap2.warehouse, 'p2（starter 默认配置）快照自带其装配引用子集（D-159）');
-    assert.deepEqual(mirrorUidsOf(snap1.warehouse), refUidsOf(snap1.loadout), 'p1 镜像恰为其 loadout 引用的插件（LD 的 pa/pb/qx）');
-    assert.deepEqual(mirrorUidsOf(snap2.warehouse), refUidsOf(snap2.loadout), 'p2 镜像恰为其 starter loadout 引用的插件');
-    const mirrorU1 = mirrorUidsOf(snap1.warehouse);
-    const mirrorU2 = mirrorUidsOf(snap2.warehouse);
-    assert.ok(mirrorU1.length > 0 && mirrorU2.length > 0, '两侧镜像都非空（D-159 后默认配置也带真实引用）');
-    assert.equal(mirrorU1.some((uid) => mirrorU2.includes(uid)), false, '两侧镜像互不串仓（逐侧签名，缺口 1）');
-    for (const wh of [snap1.warehouse, snap2.warehouse]) {
+    const uidsOf = (wh) => Object.values(wh.buckets).flat().map((x) => x.uid).sort();
+    const refA = refUidsOf(snap1.loadout);
+    const refB = refUidsOf(snap2.loadout);
+    // D-159：starter 侧的快照镜像由**服务端内部**的 starter 仓库冻结（不是客户端提交的正文）→ 仍保留，
+    //   且恰为其 loadout 实际引用的插件集合（旧断言保留；D-163 只废除了"客户端镜像充当权威"的那条路径）。
+    assert.ok(snap2.warehouse, 'starter 快照自带服务端生成的装配引用子集（D-159）');
+    assert.deepEqual(uidsOf(snap2.warehouse), refB, 'p2 快照镜像恰为其 starter loadout 引用的插件');
+    const whA = await s.runtime.loadWarehouse(aId);
+    const whB = await s.runtime.loadWarehouse(await h.playerIdByPublicId(s.store, b.publicId));
+    assert.ok(whA && whB && whA.buckets && whB.buckets, '双方权威仓库都覆盖各自配置引用（否则 loadWarehouse 退化落 null）');
+    assert.ok(refA.length > 0 && refB.length > 0, '两侧都含装配引用（D-159 后默认配置也带真实引用）');
+    assert.ok(refA.includes('pa') && refA.includes('pb') && refA.includes('qx'), `A 侧引用 LD 的 pa/pb/qx（实际 ${refA}）`);
+    for (const ref of refA) assert.ok(uidsOf(whA).includes(ref), `A 的权威仓库覆盖引用 ${ref}`);
+    for (const ref of refB) assert.ok(uidsOf(whB).includes(ref), `B 的权威仓库覆盖引用 ${ref}`);
+    for (const ref of refA) assert.equal(refB.includes(ref), false, `两侧引用集不重叠（${ref}）`);
+    for (const ref of refA) assert.equal(uidsOf(whB).includes(ref), false, `B 的仓库不含 A 的物品 ${ref}（逐侧互不串仓）`);
+    // 被引用的插件必须 equipped=true（loadout 第二道引用检查），且必须在**本侧**仓库里
+    for (const [wh, refs] of [[whA, refA], [whB, refB]]) {
       const plugins = (wh.buckets.rolePlugin || []).concat(wh.buckets.skillPlugin || []);
-      assert.ok(plugins.every((p) => p.equipped === true), '镜像里的被引用插件均标记 equipped=true（loadout 第二道引用检查）');
+      for (const ref of refs) {
+        const p = plugins.find((x) => x.uid === ref);
+        assert.ok(p, `权威仓库含被引用插件 ${ref}`);
+        assert.equal(p.equipped, true, `被引用插件 ${ref} 标记 equipped=true（loadout 第二道引用检查）`);
+      }
     }
     assert.ok(s.logger.records.some((x) => x.event === 'store.read' && x.data.kind === 'archive'), '重算路径记 store.read(archive)');
   });

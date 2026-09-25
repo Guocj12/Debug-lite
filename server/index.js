@@ -1299,7 +1299,7 @@ function createHandler(logger, extraRoutes, runtime) {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
         const r = await respond(await rt.account.createSlot({
-          playerId: ctx.player.playerId, loadout: body.loadout, warehouse: body.warehouse,
+          playerId: ctx.player.playerId, loadout: body.loadout,
           name: body.name, activate: body.activate,
         }));
         if (r.status === 200 && body.warehouse) rt.rememberWarehouse(ctx.player.playerId, body.warehouse);
@@ -1335,7 +1335,9 @@ function createHandler(logger, extraRoutes, runtime) {
           return {
             status: 200,
             payload: okEnvelope({
-              seed: r.data.seed, tier: r.data.tier, times: r.data.times, items: r.data.items,
+              seed: r.data.seed, tier: r.data.tier, times: r.data.times,
+              // D-163：用**落档后**的 items（发放路径可能重映射过 uid）—— 保证响应 = journal = 档案
+              items: Array.isArray(granted.items) ? granted.items : r.data.items,
               counts: granted.counts, caps: granted.caps, grantId: granted.grantId,
             }, logger),
           };
@@ -1569,11 +1571,12 @@ function createHandler(logger, extraRoutes, runtime) {
             const body = bodyOf(c);
             if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
             const r = await respond(await rt.account.saveConfig({
-              playerId: c.player.playerId, slotId, loadout: body.loadout, warehouse: body.warehouse,
+              // D-163 热修：**不透传客户端提交的 warehouse 镜像** —— 仓库是服务端权威（D-159），
+              //   物品身份/数值由 account 层按 uid 从服务端真源解析；把客户端镜像当校验/解析来源
+              //   等于把"服务端权威"交回给客户端（实测：同时 PUT 一个自带 buff 物品的镜像即可绕过）。
+              playerId: c.player.playerId, slotId, loadout: body.loadout,
               name: body.name, baseUpdatedAt: body.baseUpdatedAt, activate: body.activate,
             }));
-            // 缺陷 B：保存配置请求携带的仓库镜像 → 登记（校验已通过才登记，避免存入未校验镜像）
-            if (r.status === 200 && body.warehouse) rt.rememberWarehouse(c.player.playerId, body.warehouse);
             return r;
           },
         }, ctx);

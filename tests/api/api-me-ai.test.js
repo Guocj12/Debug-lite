@@ -26,6 +26,35 @@ async function slot1Loadout(s, p) {
   return cfg.body.data.slots.find((x) => x.slotId === 'slot1').loadout;
 }
 
+// D-163（用户 2026-09-25 裁定：一件物品同时只能被一份配置引用）——slot2 不能复用 slot1 的物品
+//   （复用 → 409 item_in_use），故给玩家注入一套独立 uid 的完整备用物品（角色 + 3 技能，插槽可空）。
+const SPARE = { role: 'uai_spare_role', skills: ['uai_spare_sk0', 'uai_spare_sk1', 'uai_spare_sk2'] };
+async function injectSpare(s, p) {
+  await s.store.updateArchive(p.playerId, (a) => {
+    a.warehouse.buckets.role.push({
+      uid: SPARE.role, kind: 'role', templateId: 'role_bal', name: '备用角色', quality: 'common',
+      slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+      stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 }, regen: { mp: 1, sp: 2 },
+      unlockTier: 'common', pluginPoints: 3,
+    });
+    for (const uid of SPARE.skills) {
+      a.warehouse.buckets.skill.push({
+        uid, kind: 'skill', templateId: 'skill_melee_whirl', name: `备用技能 ${uid}`, quality: 'common',
+        slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+        params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
+        unlockTier: 'common',
+      });
+    }
+    return null;
+  });
+  const wh = await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token));
+  assert.equal(wh.status, 200, wh.raw);
+  const role = wh.body.data.buckets.role.find((x) => x.uid === SPARE.role);
+  const skills = SPARE.skills.map((uid) => wh.body.data.buckets.skill.find((x) => x.uid === uid));
+  assert.ok(role && skills.every(Boolean), '备用物品必须已入档（前置断言）');
+  return { role, skills };
+}
+
 test('UAI-1 GET /me/ai：starter 默认 AI + max + usage + 401 负例', async () => {
   await h.withServer(null, async (s) => {
     const unauth = await h.request(s.port, 'GET', '/api/v1/me/ai');
@@ -135,12 +164,15 @@ test('UAI-5 DELETE 被出战配置引用 → 409 ai_in_use；被**非出战**配
     assert.ok(blocked.body.error.details.some((d) => /slot1/.test(d.message)), 'details 指出被哪个配置引用');
 
     // ② 切成非出战配置引用 → 允许删除（只提示 referencedBy）
+    //    D-163（一件物品同时只能被一份配置引用）：slot2 用独立备用物品（不能复用 slot1 的 → item_in_use）
+    const spare = await injectSpare(s, p);
     const b = await h.request(s.port, 'POST', '/api/v1/me/ai', { name: 'B', program: ld.ai }, h.authed(p.token));
     const aiB = b.body.data.aiId;
     const save2 = await h.request(s.port, 'PUT', '/api/v1/me/configs/slot2', {
-      loadout: { ...ld, aiId: aiB },
+      loadout: { role: spare.role, skills: spare.skills, ai: ld.ai, aiId: aiB },
     }, h.authed(p.token));
     assert.equal(save2.status, 200, save2.raw);
+    assert.equal(save2.body.data.complete, true, '第二套配置完整（与①同为真实配置，只是非出战）');
     const del = await h.request(s.port, 'DELETE', `/api/v1/me/ai/${aiB}`, undefined, h.authed(p.token));
     assert.equal(del.status, 200, `非出战配置的引用不阻止删除（实际 ${del.raw}）`);
     assert.deepEqual(del.body.data.referencedBy, ['slot2'], '回带引用它的槽（供前端提示）');

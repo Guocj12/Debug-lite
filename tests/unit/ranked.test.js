@@ -34,6 +34,38 @@ function withStoreLookup(registry, store) {
   return lookup;
 }
 
+/* ---------- D-163：变体物品必须真的存在于仓库 ---------- */
+// D-163（2026-09-25）起，loadout 的**物品身份与数值一律解析自服务端权威仓库**（loadout.resolveItems）：
+//   客户端正文里的 `stats` 改写与"凭空换 uid"都不再生效——uid 不在仓库 → `物品不在仓库: <uid>`（该场 invalid）。
+//   helpers/ranked.js 的 `waitOnly/mutateLoadout(…, tag)` 只改正文（`skills[0].uid = u_<tag>`），
+//   故无 store 的兼容路径（runStateless/battleOne）会整场 invalid。本文件的"变体"用例保留**原夹具形态**
+//   （每个对手 uid 唯一、脆弱方 hp=1/atk=0），只把对应物品真的补进**那一份单仓库**（该路径双方共用它）。
+function warehouseWith(baseWh, items) {
+  const wh = JSON.parse(JSON.stringify(baseWh));
+  for (const it of items) {
+    if (!Array.isArray(wh.buckets[it.kind])) wh.buckets[it.kind] = [];
+    wh.buckets[it.kind].push(JSON.parse(JSON.stringify(it)));
+  }
+  return wh;
+}
+
+// tags → `u_<tag>` 技能物品（= mutateLoadout 打的 tag 所指向的 skills[0] 变体）连同原仓库一起注入
+function variantsWarehouse(tags) {
+  const tpl = LD.warehouse.buckets.skill.find((x) => x.uid === LD.loadout.skills[0].uid) || LD.loadout.skills[0];
+  return warehouseWith(LD.warehouse, tags.map((t) => Object.assign({}, tpl, { uid: `u_${t}` })));
+}
+
+// "真实脆弱物品"（不是客户端改数值）：hp=1/atk=0 的角色物品本体，注入仓库后由 loadout 引用其 uid。
+//   （面板 I-8f 会把 <1 的数值抬到 1 → 实测 hp=1/atk=1，仍是"挨一下即死"的脆弱方。）
+function fragileRoleItem(uid) {
+  return {
+    uid: uid || 'r_fragile', kind: 'role', templateId: 'role_bal', name: '脆弱（测试）', quality: 'common',
+    slotCount: 1, slots: [{ type: 'atk', pluginUid: null }],
+    stats: { hp: 1, atk: 0, def: 0, sp: 60, mp: 40 },
+    regen: { mp: 1, sp: 2 }, pluginPoints: 3, unlockTier: 'common',
+  };
+}
+
 /* ---------- (a) 池不足 → shortfall，不再 bot 补齐 ---------- */
 
 test('T-RK-1a 池空（pool:[]，无 store）→ 一场不打：matches=0、shortfall=requested', () => {
@@ -71,12 +103,14 @@ test('T-RK-1b 池不足（3 个真实档案 / 请求 10）→ 只打 3 场，sho
 });
 
 test('T-RK-1c 池充足（12 个真实档案）→ 打满 10 场、shortfall=0、批次内不重复', () => {
-  const pool = Array.from({ length: 12 }, (_, i) => {
-    const x = h.waitOnly(ld(), `w${i}`);
+  const tags = Array.from({ length: 12 }, (_, i) => `w${i}`);
+  const pool = tags.map((t, i) => {
+    const x = h.waitOnly(ld(), t);
     x.playerId = h.makePlayerId(i + 100);
     return x;
   });
-  const r = ranked.runRankedBattle({ loadout: ld(), warehouse: LD.warehouse, pool, seed: 7, tier: 'mythic' });
+  // D-163：12 个对手的 `u_w<i>` 技能物品必须真的在仓库里（否则每场都 invalid，见文件头注记）
+  const r = ranked.runRankedBattle({ loadout: ld(), warehouse: variantsWarehouse(tags), pool, seed: 7, tier: 'mythic' });
   assert.equal(r.data.requested, 10);
   assert.equal(r.data.matches, 10);
   assert.equal(r.data.shortfall, 0);
@@ -239,9 +273,11 @@ test('T-RK-4b 去重窗口：全部候选都在 72h 内 → 一场不打（short
 
 test('平局不计胜：wait-only 双方真实档案 10 场全平 → wins 0、draws 10、不晋升', () => {
   const mine = h.waitOnly(ld(), 'me');
-  const pool = Array.from({ length: 10 }, (_, i) => h.waitOnly(ld(), `b${i}`));
+  const tags = Array.from({ length: 10 }, (_, i) => `b${i}`);
+  const pool = tags.map((t) => h.waitOnly(ld(), t));
   pool.forEach((x, i) => { x.playerId = h.makePlayerId(i + 200); });
-  const r = ranked.runRankedBattle({ loadout: mine, warehouse: LD.warehouse, pool, seed: 5, tier: 'mythic' });
+  // D-163：双方（含我方 `u_me`）的 tag 变体物品一并注入那一份单仓库
+  const r = ranked.runRankedBattle({ loadout: mine, warehouse: variantsWarehouse(['me'].concat(tags)), pool, seed: 5, tier: 'mythic' });
   assert.equal(r.status, 200);
   assert.equal(r.data.wins + r.data.draws + r.data.losses, 10);
   assert.ok(r.data.results.every((m) => m.winner === 'draw'), '全平局（wait-only 双方无敌对伤害）');
@@ -249,13 +285,19 @@ test('平局不计胜：wait-only 双方真实档案 10 场全平 → wins 0、d
 });
 
 test('输场分支：脆弱我方（hp=1/atk=0）对真实对手档案 → 真输场（losses>0）', () => {
-  const weak = h.fragile(ld(), 'weak');
-  const pool = Array.from({ length: 3 }, (_, i) => {
-    const x = h.waitOnly(ld(), `c${i}`);
+  // D-163：脆弱必须是**仓库里的真物品**（客户端改数值会被 resolveItems 丢弃）——
+  //   注入 hp=1/atk=0 的角色物品，loadout 引用它；对手的 tag 变体同样注入同一份单仓库。
+  const weakRole = fragileRoleItem('r_fragile');
+  const weak = { role: weakRole, skills: ld().skills, ai: ld().ai };
+  const tags = Array.from({ length: 3 }, (_, i) => `c${i}`);
+  const pool = tags.map((t, i) => {
+    const x = h.waitOnly(ld(), t);
     x.playerId = h.makePlayerId(i + 300);
     return x;
   });
-  const r = ranked.runRankedBattle({ loadout: weak, warehouse: LD.warehouse, pool, seed: 99, tier: 'mythic' });
+  const r = ranked.runRankedBattle({
+    loadout: weak, warehouse: warehouseWith(variantsWarehouse(tags), [weakRole]), pool, seed: 99, tier: 'mythic',
+  });
   assert.equal(r.status, 200);
   assert.ok(r.data.losses > 0, `脆弱我方应有真输场（实际 losses=${r.data.losses}）`);
   assert.equal(r.data.wins + r.data.draws + r.data.losses + r.data.invalids, 3, '四项闭合于实际场次');

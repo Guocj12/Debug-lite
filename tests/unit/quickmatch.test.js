@@ -473,7 +473,7 @@ test('BUG-B 装配插件的出战配置三态：有镜像可打 / 已校验无�
   assert.ok((ranked3.details || []).some((d) => d.code === 'missing_warehouse'), '排位同样如实报（不放宽）');
 });
 
-test('P1-D1 缺口 1 端到端（重启 / 淘汰）：快照自带镜像使插件词条真实生效；旧快照退化不报错；未校验仍 409', async (t) => {
+test('P1-D1 缺口 1 端到端（重启 / 淘汰）：重启后服务端权威仓库使插件词条真实生效；旧快照退化不报错；未校验仍 409', async (t) => {
   let fx = await h.openFixture({ logger: h.makeLogger() });
   t.after(() => fx.cleanup());
   const battleApi = require('../../server/battle.js');
@@ -498,24 +498,36 @@ test('P1-D1 缺口 1 端到端（重启 / 淘汰）：快照自带镜像使插�
   assert.deepEqual(snapAfter.warehouse, snapBefore.warehouse, '重启后镜像逐值一致');
 
   // ① 面板逐值一致（这就是"插件词条真实生效"的实测口径）
-  const withSnapshot = battleApi.buildPlayer('p1', loadout, snapAfter.warehouse, 'common');
+  //   D-163：物品身份/数值一律取自**服务端权威仓库** → 重启后的真源 = 档案里的仓库（`store.getWarehouse`），
+  //   而快照自带的 `warehouse` 只是**装配引用子集**（archive.warehouseExcerpt：只有插件、没有角色/技能），
+  //   已不足以单独实例化（旧口径把它当镜像用 → 现在 resolveItems 会如实报"物品不在仓库"）。
+  const authAfter = (await fx.store.getWarehouse(me)).warehouse;
+  const afterRestart = battleApi.buildPlayer('p1', loadout, authAfter, 'common');
   const withRealMirror = battleApi.buildPlayer('p1', loadout, warehouse, 'common');
-  assert.equal(withSnapshot.ok, true);
-  assert.deepEqual(withSnapshot.player, withRealMirror.player, '重启前后玩家运行时（五维/regen/special/技能参数）逐值一致');
+  assert.equal(afterRestart.ok, true, JSON.stringify(afterRestart.errors));
+  assert.deepEqual(afterRestart.player, withRealMirror.player, '重启前后玩家运行时（五维/regen/special/技能参数）逐值一致');
+  const snapOnly = battleApi.buildPlayer('p1', loadout, snapAfter.warehouse, 'common');
+  assert.equal(snapOnly.ok, false, 'D-163：快照自带的插件子集缺角色/技能，不得再被当作可用镜像');
+  assert.ok(snapOnly.errors.some((e) => /物品不在仓库/.test(e.message)),
+    `缺角色/技能应如实报"物品不在仓库"：${JSON.stringify(snapOnly.errors).slice(0, 200)}`);
   const degradedPanel = battleApi.buildPlayer('p1', loadout, rankedMod.syntheticVerifiedWarehouse(loadout), 'common');
   assert.equal(degradedPanel.ok, true);
-  assert.notDeepEqual(degradedPanel.player, withSnapshot.player, '退化（无词条）面板与真实面板不同 → 词条确实生效');
+  assert.notDeepEqual(degradedPanel.player, afterRestart.player, '退化（无词条）面板与真实面板不同 → 词条确实生效');
   const snapBytes = Buffer.byteLength(JSON.stringify(snapAfter.warehouse));
   const whBytes = Buffer.byteLength(JSON.stringify(warehouse));
   t.diagnostic(`[缺口1·真实仓库] 装配引用子集 ${snapBytes}B / 整仓 ${whBytes}B（占比 ${(snapBytes / whBytes * 100).toFixed(2)}%）；引用 ${refs} 处`);
 
-  // ② 重启后 quick / ranked 均可打，且判定使用快照镜像（等价 rt.loadWarehouse 的③级来源）
-  const fromSnapshot = async (playerId) => (playerId === me ? snapAfter.warehouse : null);
-  const q1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: fromSnapshot });
+  // ② 重启后 quick / ranked 均可打，且判定使用**服务端权威仓库**（重启后它仍在档案里，不依赖进程内缓存）
+  const fromArchive = async (playerId) => {
+    if (playerId !== me) return null;
+    const view = await fx.store.getWarehouse(playerId);
+    return view && view.warehouse ? view.warehouse : null;
+  };
+  const q1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, loadWarehouse: fromArchive });
   const r1 = await q1.run({ playerId: me, seed: 41 });
   assert.equal(r1.status, 200, `重启后 quick 必须能打：${JSON.stringify(r1).slice(0, 220)}`);
   fx.clock.advance(73 * 3600 * 1000);
-  const rk1 = await rankedMod.withLogger(fx.logger, { loadWarehouse: fromSnapshot })
+  const rk1 = await rankedMod.withLogger(fx.logger, { loadWarehouse: fromArchive })
     .runRankedBattle({ store: fx.store, playerId: me, seed: 42 });
   assert.equal(rk1.status, 200, `重启后 ranked 必须能打：${JSON.stringify(rk1).slice(0, 220)}`);
   assert.equal(rk1.data.invalids, 0);

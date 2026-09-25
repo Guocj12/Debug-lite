@@ -5,6 +5,7 @@
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > `docs/interfaces.md` > `docs/tasks.md`。
 > **阅读约定（2026-09-19 起）**：正文中凡标 **✅ 现状** 的，是已实测可用能力；凡标 **⏳ 计划中** 的，是设计已定但**代码 0 行**，不得按可用能力使用。**P7（B27–B33：服务端档案 / 鉴权 / 排位改造 / 快速对战 / 回放鉴权）已于 2026-09-19 收口，本文中凡旧标注「计划中（P7/B27–B33）」的段落均已按实测改为「现状」**；唯一保留的 ⏳ 是**遗留无状态端点在生产关闭**（`DL_LEGACY_STATELESS=0`）与 SQLite 适配器（§11.4）。
 > **F3 后端契约（2026-09-22，`D-159`…`D-162`）**：**仓库/物品/装配改为服务端权威**（推翻 `D-130` 的"仓库由客户端 localStorage 持有"）、配置完整性校验时机改为「保存宽松 / 出战严格」、新增 AI 库后端、开箱随机性收归服务端。**本次未新增批次号**（F3 不是编号批次，见 `docs/frontend/00-rules.md` FR-6）；正文改动处逐处标注 `D-159`…`D-162`。
+> **D-163 热修（2026-09-25）**：出战配置的物品**按 uid 从服务端仓库解析**（客户端数值一律丢弃、未知 uid → 409 `物品不在仓库`）、同一份配置内全 uid 唯一、**一件物品同时只能属于一份配置**（409 `item_in_use`）、HTTP 配置路由不再采纳客户端 `warehouse` 镜像、开箱发放的撞车 uid 重映射（响应 = journal = 档案）+ 丢弃可审计。**收口实测**：`npm test` = **1058 通过 / 0 失败**（两轮）；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（digest `a1c5b11c0092`）；`npm run e2e` = **22/22（exit 0）**；`npm run play` = **exit 0**；`load-test --players 20 --deep` = **ok=true（7/7 完整性断言）**；`check-docs` = PASS（批次仍 41）/ `check-arch` = PASS（40 文件）。
 
 ---
 
@@ -18,7 +19,7 @@
 | 默认监听 | `http://127.0.0.1:3000` |
 | 目录 | `server/`（HTTP 层 `index.js` + 编排层 `runner.js`/`box.js`/`loadout.js`/`battle.js`/`ranked.js` + **P7 身份与档案层 `auth.js`/`account.js`/`quickmatch.js`/`admin.js`** + **存储层 `store/`（唯一允许 `node:fs`）** + `core/` 确定性内核 + `ai/` 解释器 + `data/` 只读数据表）；运行时数据在 `DL_DATA_DIR`（默认 `<repo>/runtime`，非 `server/`） |
 
-**进程模型（✅ 现状，2026-09-22 复核）**：**单进程 + 服务端权威档案与仓库**（D-129 + **D-159**）。段位/积分/配置槽/战绩/未读游标/会话落盘于运行时数据根 `DL_DATA_DIR`（默认 `<repo>/runtime`）；**仓库与物品也由服务端权威**（**D-159 推翻 D-130 的"仓库/物品/装配由客户端 localStorage 持有"**）——档案新增 `warehouse` 段（四桶 `role`/`skill`/`rolePlugin`/`skillPlugin`，**每桶上限 500**）与 `ai` 段（AI 库，上限 100），`GET /api/v1/me/warehouse` 是**唯一真源**，装配/拆卸走服务端端点（`/me/warehouse/assemble|disassemble`）并落 journal 增量记录；服务端另存**出战快照副本**（供他人匹配与回放重算），快照自带的"装配引用子集"（`warehouseExcerpt`，缺口 1 时代产物）**保留但不再是必需来源**。`server/store/*`（唯一允许 `node:fs` 的目录）、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 均已实现并接线；`runtime/` 目录已存在（运行时生成，已 `.gitignore`）。旧的"所有玩家状态只存在于请求/响应中、无持久化"**无状态语义只保留在遗留路径**（`DL_LEGACY_STATELESS=1`，见 §2/§3）；回放帧另有进程内 LRU（默认 64）+ 归档按需重算（§6.2）。
+**进程模型（✅ 现状，2026-09-22 复核）**：**单进程 + 服务端权威档案与仓库**（D-129 + **D-159**）。段位/积分/配置槽/战绩/未读游标/会话落盘于运行时数据根 `DL_DATA_DIR`（默认 `<repo>/runtime`）；**仓库与物品也由服务端权威**（**D-159 推翻 D-130 的"仓库/物品/装配由客户端 localStorage 持有"**）——档案新增 `warehouse` 段（四桶 `role`/`skill`/`rolePlugin`/`skillPlugin`，**每桶上限 500**）与 `ai` 段（AI 库，上限 100），`GET /api/v1/me/warehouse` 是**唯一真源**，装配/拆卸走服务端端点（`/me/warehouse/assemble|disassemble`）并落 journal 增量记录；服务端另存**出战快照副本**（供他人匹配与回放重算），快照自带的"装配引用子集"（`warehouseExcerpt`，缺口 1 时代产物）**保留但不再是必需来源**，且 **D-163 起 HTTP 保存路径不再写入**（只有服务端内部传仓库的注册 starter 路径会带）。`server/store/*`（唯一允许 `node:fs` 的目录）、`server/auth.js`、`server/account.js`、`server/quickmatch.js`、`server/admin.js` 均已实现并接线；`runtime/` 目录已存在（运行时生成，已 `.gitignore`）。旧的"所有玩家状态只存在于请求/响应中、无持久化"**无状态语义只保留在遗留路径**（`DL_LEGACY_STATELESS=1`，见 §2/§3）；回放帧另有进程内 LRU（默认 64）+ 归档按需重算（§6.2）。
 
 - **注册即发 starter（✅ 现状 2026-09-22，D-159）**：`POST /auth/register` 建号时由新文件 `server/starter.js` 生成新手套装——种子 = `sha256('starter|publicId|playerId')` 前 8 hex（**同身份内容级可复现**：模板/品质/数值/槽类型/插件/槽下标逐值相同；物品 `uid` 由 `core/items` 的进程内计数器分配，**不参与内容级比较**）；生成 1 角色（`role_bal`，`common`，**必带 ≥1 插槽**）+ 3 技能（`skill_melee_whirl`/`skill_straight_precise`，**重掷至至少 1 个技能有槽**，上限 20 次）+ 1~2 角色插件 + 1 技能插件，**全部按实际槽类型筛池并已装配**；写入**服务端仓库**，配置写进 `slot1`（默认配置、出战、并登记库内默认 AI `name='新手AI'`，其 `aiId` 写入 `slot1.loadout.aiId`）；**同时建满 3 个槽**（`slot2`/`slot3` 为空槽、无快照）。新号 `flags.unverifiedLoadout=false`。**老账号保持空仓**——`migrateV1toV2` 只补**空**仓库（不补发 starter），需删号重注册才拿到新手套装。
 - **落盘开关口径（实测）**：`start()` **缺省不落盘**——只有传了 `dataDir`/`enableStore:true`/环境变量 `DL_DATA_DIR` 才打开 store；`npm start`（= `main()`）显式 `enableStore: true`，`dataDir` 缺省解析为 `<repo>/runtime`。测试经 `DL_DATA_DIR` 指向临时目录（`tests/helpers/store.js`）。
@@ -91,8 +92,8 @@
 | GET | `/api/v1/me` | 档案摘要（段位/积分/未读/槽位） | 401 | B29 |
 | GET | `/api/v1/me/configs` | 3 套配置全文 | 401 | B29 |
 | POST | `/api/v1/me/configs` | 新建槽（**D-160 起建空槽**，不再复制出战配置） | 401；409 `slot_limit` | B29 / **D-160** |
-| PUT | `/api/v1/me/configs/:slotId` | 保存配置（**D-160**：非出战槽允许不完整 → 200 `snapshot:null`/`complete:false`/`missing:[…]`；出战槽要求完整 → 否则 409 `loadout_invalid` 逐位置 details） | 401；400；409 `loadout_invalid`/`config_conflict` | B29 / **D-160** |
-| POST | `/api/v1/me/configs/:slotId/activate` | 设为出战配置（**D-160**：此时才校验完整性 → 不完整 409 `cannot_activate_incomplete`；完整但缺快照会**自愈冻结**，不再 `no_active_config`） | 401；404 `slot_not_found`；409 `cannot_activate_incomplete`/`loadout_invalid` | B29 / **D-160** |
+| PUT | `/api/v1/me/configs/:slotId` | 保存配置（**D-160**：非出战槽允许不完整 → 200 `snapshot:null`/`complete:false`/`missing:[…]`；出战槽要求完整 → 否则 409 `loadout_invalid` 逐位置 details。**D-163**：物品按 uid 从**服务端仓库**解析（客户端数值丢弃、未知 uid → `物品不在仓库`）、同配置内 uid 唯一、**一件物品只属于一份配置**；请求里的 `warehouse` 镜像不再被采纳） | 401；400；409 `loadout_invalid`/`config_conflict`/`item_in_use` | B29 / **D-160 + D-163** |
+| POST | `/api/v1/me/configs/:slotId/activate` | 设为出战配置（**D-160**：此时才校验完整性 → 不完整 409 `cannot_activate_incomplete`；完整但缺快照会**自愈冻结**，不再 `no_active_config`。**D-163**：再判一次跨配置独占 → 409 `item_in_use`） | 401；404 `slot_not_found`；409 `cannot_activate_incomplete`/`loadout_invalid`/`item_in_use` | B29 / **D-160 + D-163** |
 | DELETE | `/api/v1/me/configs/:slotId` | 删除槽（默认/出战槽禁止） | 401；409 `slot_locked` | B29 |
 | PUT | `/api/v1/me/nickname` | 改昵称（`nicknameMax` 夹到 ≤16） | 400 `bad_request`；401 | B29 |
 | PUT | `/api/v1/me/warehouse` | **D-159 退役**为"只校验形状"的遗留镜像：形状非法仍 400；引用不覆盖出战配置**不再 409**，改 200 + `verified:false`；正文只进进程内缓存、不落盘 | 400 `bad_request`；401 | B29 / **D-159** |
@@ -112,15 +113,17 @@
 
 | 方法 | 路径 | 用途 | 主要错误码 | 依据 |
 |---|---|---|---|---|
-| GET | `/api/v1/me/warehouse` | **仓库真源**：`{buckets, usage, caps, counts, starterIssued}`（`usage[uid].slotIds[]` = 该物品被哪些**出战配置**引用，**同一物品可被多套配置引用**） | 401 | `D-159` |
+| GET | `/api/v1/me/warehouse` | **仓库真源**：`{buckets, usage, caps, counts, starterIssued}`（`usage[uid].slotIds[]` = 该物品被**哪一份**出战配置引用；**D-163 起至多一项**——一件物品同时只能属于一份配置） | 401 | `D-159`/`D-163` |
 | POST | `/api/v1/me/warehouse/assemble` | 装配（**服务端态**：体 `{targetUid, pluginUid, slotIndex}`，**不再传整仓**）；校验由 `core/items` 纯函数**单点完成**，落 journal 增量记录 `warehouse.assemble` | 401；409 `slot_type_mismatch`/`slot_occupied`/`points_exceeded`/`plugin_equipped`/`item_missing`/`tier_locked` | `D-159` |
 | POST | `/api/v1/me/warehouse/disassemble` | 拆卸（体 `{targetUid, slotIndex}`）；落 journal 增量记录 `warehouse.disassemble` | 401；404 `slot_empty`/`plugin_missing` | `D-159` |
-| POST | `/api/v1/me/box` | **服务端权威开箱**：体 `{tier?, times?}` → 物品**直接入档**，回带 `{seed, tier, times, items, counts, caps, grantId}`；任一桶超限 → 409 `warehouse_full` 且**不入档**（上限前置校验，不写 journal）；**无 `seed` 入参**（客户端传了**静默忽略**，不再有 `bad_seed`） | 400 `bad_times`；401；409 `tier_locked`/`warehouse_full` | `D-159`/`D-162` |
+| POST | `/api/v1/me/box` | **服务端权威开箱**：体 `{tier?, times?}` → 物品**直接入档**，回带 `{seed, tier, times, items, counts, caps, grantId}`；任一桶超限 → 409 `warehouse_full` 且**不入档**（上限前置校验，不写 journal）；**无 `seed` 入参**（客户端传了**静默忽略**，不再有 `bad_seed`）；**D-163**：发放 uid 若与该仓库已有物品撞车，写记录前重映射（响应 = journal = 档案） | 400 `bad_times`；401；409 `tier_locked`/`warehouse_full` | `D-159`/`D-162`/`D-163` |
 | GET | `/api/v1/me/ai` | **AI 库列表**：`{items:[{aiId,name,program,createdAt,updatedAt}], count, max:100, usage}`（`usage: aiId → [slotId]`） | 401 | `D-161` |
 | POST | `/api/v1/me/ai` | 命名保存 AI：体 `{name, program}`（名称 1~24 字符；`program.type='program'`）→ 200 `{aiId, ai, count, max}`；**上限 100 与物品分别计数** | 400 `bad_request`；401；409 `ai_limit` | `D-161` |
 | DELETE | `/api/v1/me/ai/:aiId` | 删除库内 AI → 200 `{deleted, referencedBy, count, max}`；**被「出战配置」引用 → 409 `ai_in_use`**（非出战配置的引用只在 `referencedBy` 里提示，不阻止删除） | 401；409 `ai_in_use` | `D-161` |
 
-> **术语澄清（`D-159`）**：`usage` 只统计**出战配置**（`configs.activeSlotId` 那一套）的引用；`counts` 是四桶件数（等价于 `buckets.*.length`）；`caps` 是四桶各自上限（均 `500`，来自 `service-config.json`）。
+> **术语澄清（`D-159` / `D-163`）**：`usage` 统计**全部配置**对物品的引用（`slotIds`；D-163 起**至多一项**——一件物品同时只能属于一份配置）；`counts` 是四桶件数（等价于 `buckets.*.length`）；`caps` 是四桶各自上限（均 `500`，来自 `service-config.json`）。
+> **配置保存/激活的物品解析（`D-163`，2026-09-25 热修）**：`PUT/POST /me/configs*` 与 `activate` 一律按 `uid` 从**服务端仓库**取回物品（客户端正文里的 `stats`/`templateId`/`quality`/`params` **丢弃**；uid 不在仓库 → 409 `loadout_invalid` `物品不在仓库: <uid>`）；同一份配置内 角色/3 技能/全部插件引用的 uid 必须唯一；一件物品**只能属于一份配置**（撞车 → 409 **`item_in_use`**）。请求里携带的 `warehouse` 镜像**不再被采纳**（修前它是解析来源 ⇒ 客户端自带 buff 物品即可绕过"服务端权威"）。非出战槽仍可不完整，但只容忍"缺失类"错误，引用类错误一律拒绝。
+> **开箱发放的 uid 分配（`D-163`）**：物品 uid 由 `core/items.js` 的**进程级**计数器生成，进程重启后归零 ⇒ 跨重启发放可能与该仓库已有物品撞 uid。`store.grantBox` 在**写 journal 之前**把撞车 uid 重映射为仓库内空闲 uid（`archive.allocateGrantUids`），因此响应 `items[].uid` = journal 记录 = 档案；闸门处若仍撞车，记 `error` 日志（`store.warehouse.uid_collision`）并把差额写进 `grantIds.dropped`（可审计），**不再静默丢弃**。
 > **`grantId`（`D-162`）**：`POST /me/box` 回带的 `grantId = bx_<sha256[0..16]>`；幂等靠档案内 `warehouse.grantIds` 环形窗口 **256**——重复提交同一 `grantId` 不会重复入档。
 
 ## 4. 统一信封与错误码
@@ -184,6 +187,7 @@ HTTP 状态语义（**✅ 现状，P7-4 已扩展并实测**）：`400` 参数/�
 | `ai_limit` | 409 | **D-161**：AI 库已满（默认 100，**与物品分别计数**） | `server/store/adapter-json.js` |
 | `ai_in_use` | 409 | **D-161**：删除被**出战配置**引用的 AI（非出战配置的引用只在 `referencedBy` 提示） | `server/store/adapter-json.js` |
 | `item_missing` / `slot_type_mismatch` / `slot_occupied` / `points_exceeded` / `plugin_equipped` | 409 | **D-159**：服务端权威装配的五类拒绝（不存在 / 类型不符或槽位不可用 / 槽已占用 / 角色插件点数不足 / 插件已装配别处），由 `core/items` 纯函数单点判定 | `server/core/items.js`（→ `server/account.js`） |
+| `item_in_use` | 409 | **D-163**：该物品已被**另一份配置**引用（一件物品同时只能装配到一份配置）；`details[].path` = 物品 uid，`message` 写明占用它的 slotId | `server/account.js`（`exclusivityDetails`，判据 = `archive.warehouseUsage`） |
 | `slot_empty` / `plugin_missing` | 404 | **D-159**：拆卸时空槽 / 悬挂引用 | `server/core/items.js`（→ `server/account.js`） |
 | `no_opponent` | 409 | **快速对战**匹配不到对手（候选不足/窗口用尽；排位池不足用 `shortfall` 字段） | `server/quickmatch.js` |
 | `username_taken` | 409 | 用户名已存在（大小写不敏感） | `server/auth.js` |
@@ -300,7 +304,7 @@ POST { "level": "trace", "channels": { "bullets": "trace" } } → 200（先全�
 - **账号/会话/鉴权**：`server/index.js` 有 Bearer 鉴权中间件；`/auth/*`、`/me*`、`/quick/*`、`/leaderboard`、`/admin/*` 路由均已注册（§3.2）。未鉴权/越权 → 401/403。
 - **运行时目录**：`DL_DATA_DIR`（默认 `<repo>/runtime`）存放 `index.json`/`sessions.json`/`players/`/`snapshots/`/`journal/`/`lock`（§9.1）。
 - **服务端权威**：账号、配置槽（≤3，唯一出战）、段位、积分、战绩、未读游标、回放引用落盘于 `DL_DATA_DIR`。
-- **服务端权威（D-159 起新增）**：**仓库、物品、装配、开箱**也落盘于 `DL_DATA_DIR`——档案含 `warehouse` 段（四桶 `role`/`skill`/`rolePlugin`/`skillPlugin`，**每桶上限 500**，上限值来自 `service-config.json` 的 `warehouse.maxPerBucket`）与 `ai` 段（AI 库，上限 `ai.maxPerPlayer=100`）；`GET /api/v1/me/warehouse` 是**唯一真源**，装配/拆卸走 `/me/warehouse/assemble|disassemble`（**服务端态**：只传 `targetUid`/`pluginUid`/`slotIndex`），开箱走 `POST /me/box`（物品直接入档）。**D-159 推翻 D-130 的"仓库/物品/装配由客户端 localStorage 持有"**。服务端另存**出战快照副本**（供他人匹配与回放重算），快照正文**额外携带该配置实际引用到的插件项**（装配引用子集，**有界、非整仓**；`server/store/archive.js` 的 `warehouseExcerpt`）——该子集**保留但不再是必需来源**（缺口 1 时代产物；`loadWarehouse` 首选服务端仓库，不覆盖才回落账号级镜像/进程内缓存/快照自带子集）。
+- **服务端权威（D-159 起新增）**：**仓库、物品、装配、开箱**也落盘于 `DL_DATA_DIR`——档案含 `warehouse` 段（四桶 `role`/`skill`/`rolePlugin`/`skillPlugin`，**每桶上限 500**，上限值来自 `service-config.json` 的 `warehouse.maxPerBucket`）与 `ai` 段（AI 库，上限 `ai.maxPerPlayer=100`）；`GET /api/v1/me/warehouse` 是**唯一真源**，装配/拆卸走 `/me/warehouse/assemble|disassemble`（**服务端态**：只传 `targetUid`/`pluginUid`/`slotIndex`），开箱走 `POST /me/box`（物品直接入档）。**D-159 推翻 D-130 的"仓库/物品/装配由客户端 localStorage 持有"**。服务端另存**出战快照副本**（供他人匹配与回放重算）；快照正文里那个"该配置实际引用到的插件项"的可选字段（装配引用子集，有界、非整仓；`server/store/archive.js` 的 `warehouseExcerpt`）**D-163 起在 HTTP 保存路径上不再写入**（配置路由不再把客户端 `warehouse` 传下去，只传解析自服务端仓库的正文）——只有**服务端内部传仓库**的路径（如注册 starter）才会带上；该字段在任何路径上都**不再是必需来源**（`loadWarehouse` 首选服务端仓库，不覆盖才回落账号级镜像/进程内缓存/它）。
 - **档案版本与迁移（D-159）**：`ARCHIVE_VERSION` **1 → 2**；`migrateV1toV2` 为存量档案补**空**仓库（**老账号保持空仓**，需删号重注册才拿到新手套装）。
 - **跨玩家一致性**：一场对局涉及双方档案；先 append `journal`（一次落盘即视为对局成立）再 apply 到双方档案，崩溃可重放修复（D-134）。**每档案 `appliedSeq` ≠ 全局 `index.seq`**（只有走 journal 的写推进前者；`touchLastSeen`/未读游标等纯 A 类写不动水位）。
 - **段位/积分双轨**：段位来自排位批次（D-122，x=6）；积分来自快速对战（D-133 非对称 Elo，从 0 起、上限 3000）。二者互不推导。
@@ -315,7 +319,7 @@ POST { "level": "trace", "channels": { "bullets": "trace" } } → 200（先全�
 - **开箱随机性（D-162 修订 T-AP-5）**：**客户端不能指定 seed**——`POST /box` 与 `POST /me/box` 都**没有 `seed` 入参**，传了**静默忽略**（不再有 `bad_seed`）；seed 一律服务端生成并回带。HTTP 侧的确定性由**实例级注入缝 `start({boxSeed})`** 提供（第 n 次 = `boxSeed + n − 1`）；进程内 `server/box.js` 的 `openBoxes({seed})` **保留**（离线 `npm run play`/`demo`/核心单测不受影响）。CLI `box` **移除 `--seed`**（给了即参数错误 exit 2）。
 - 物品 `uid` 语义（B17 登记）：进程内单调唯一（服务重启后重新计数），**不参与内容级比较**。
 - **遗留无状态端点**：`box`/`warehouse*`/`loadout`/`panel`/`ai/*`/`battle` 默认保留（`DL_LEGACY_STATELESS=1`）；置 `0` 时这些端点返回 `410 deprecated`（`ranked/run|promote` 无 token 时改为 `401`）。**注（D-159/D-162）**：`POST /box` 与 `POST /warehouse/assemble|disassemble` 属遗留口径（**不入档**），前端只用服务端权威路径 `/me/box` 与 `/me/warehouse/*`。
-- **作弊面结论（D-159 后仍未变）**：**段位与积分仍不具备竞技可信度**（仓库虽已收归服务端，`wins`/`pool` 等入参路径与遗留端点仍在）；`11-account-store §15.1` 的"客户端权威仓库 → 改两行 JS 即可携带任意属性出战配置"这一具体作弊面**已关闭**（登记册 SEC-07 状态已回填为「已处置（2026-09-22，D-159）」）。
+- **作弊面结论（`D-163` 后更正）**：**段位与积分仍不具备竞技可信度**（`wins`/`pool` 等入参路径与遗留无状态端点仍在）；`11-account-store §15.1` 的"客户端权威仓库 → 改两行 JS 即可携带任意属性出战配置"这一具体作弊面，**`2026-09-22` 的"已随 `D-159` 关闭"其实不成立** —— 2026-09-25 实测：`PUT /me/configs/:slotId` 仍接受客户端提交的 `stats`（`hp=100000/atk=99999`）甚至**仓库里不存在的 uid**，`activate` 后快照冻结该正文，而 `quick/ranked` 用的正是 `snapshot.loadout`（`battle.buildPlayer` 直接读 `role.stats`）⇒ **真实对局可被打穿**。**`D-163` 已关闭该路径**（保存/激活按 uid 从服务端仓库解析、不采纳客户端镜像、`buildPanel` 有仓库时同样先解析）；登记册 `SEC-07` 已同步更正，另新增 `SEC-32`（开箱 uid 冲突静默丢件，已修）。**残余**：`POST /loadout` 与 `POST /panel` 是**无状态展示**端点，仍按客户端提交的 loadout + 镜像返回面板（不落账、不影响对局）。
 
 ## 7. CLI（唯一"操作台"，只走 HTTP）
 

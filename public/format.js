@@ -894,6 +894,92 @@
     };
   }
 
+  // ==== D-163（2026-09-25 热修）：候选可用性 —— 把"点了必然 409"的选项**标灰并写明原因** ====
+  //   服务端规则（用户 2026-09-25 裁定）：
+  //     ① 同一件物品同时只能被**一份配置**引用 → 被他配置引用的物品不可选（409 item_in_use）；
+  //     ② 同一份配置内一件物品只能占**一个位置** → 本配置已在别处用过的物品不可选（409 loadout_invalid）；
+  //     ③ 已装配的插件不能再装（409 plugin_equipped / slot_occupied）。
+  //   修前这三种情况都照常渲染成可点按钮 → 玩家点下去必然吃 409（"被标记为已装配的物品无法被继续装配"）。
+  function loadoutUidsOf(loadout) {
+    var out = [];
+    var push = function (uid) {
+      var s = str(uid);
+      if (s !== null && out.indexOf(s) === -1) out.push(s);
+    };
+    var ld = loadout && typeof loadout === 'object' ? loadout : null;
+    if (ld === null) return out;
+    var role = ld.role && typeof ld.role === 'object' ? ld.role : null;
+    if (role !== null) {
+      push(role.uid);
+      var rs = arrayOf(pick(role, 'slots'));
+      for (var a = 0; a < rs.length; a += 1) push(pick(rs[a], 'pluginUid'));
+    }
+    var skills = skillsOf3(ld);
+    for (var i = 0; i < SKILL_SLOTS; i += 1) {
+      var sk = skills[i];
+      if (!sk || typeof sk !== 'object') continue;
+      push(sk.uid);
+      var ss = arrayOf(pick(sk, 'slots'));
+      for (var b = 0; b < ss.length; b += 1) push(pick(ss[b], 'pluginUid'));
+    }
+    return out;
+  }
+
+  // 该物品被**哪些别的配置**引用（不含 exceptSlotId）→ ['slot2','slot3'] 或 []
+  function otherConfigsOf(state, exceptSlotId, uid) {
+    var out = [];
+    var env = state && state.configs ? state.configs.data : null;
+    if (env === null || uid === null) return out;
+    var slots = arrayOf(pick(env, 'data.slots'));
+    for (var i = 0; i < slots.length; i += 1) {
+      var slotId = str(pick(slots[i], 'slotId'));
+      if (slotId === null || slotId === exceptSlotId) continue;
+      if (loadoutUidsOf(pick(slots[i], 'loadout')).indexOf(uid) !== -1) out.push(slotId);
+    }
+    return out;
+  }
+
+  // 该 uid 是否已被**本份草稿的其它位置**用掉（exceptPos = 正在挑选的位置）
+  function usedElsewhereInDraft(state, slotId, exceptPos, uid) {
+    if (uid === null) return false;
+    var ld = draftLoadoutOf(state, slotId);
+    var role = itemAt(ld, POS_ROLE);
+    if (exceptPos !== POS_ROLE && role !== null && str(pick(role, 'uid')) === uid) return true;
+    for (var i = 0; i < SKILL_SLOTS; i += 1) {
+      var pos = 'skill' + i;
+      if (pos === exceptPos) continue;
+      var sk = itemAt(ld, pos);
+      if (sk !== null && str(pick(sk, 'uid')) === uid) return true;
+    }
+    return false;
+  }
+
+  // 该插件是否已装在仓库某件物品的槽上（= 服务端的 `equipped=true`；此处不读 equipped 字段，
+  //   而是从已登记的 `slots[].pluginUid` 推导，避免为 UI 扩大字段契约）
+  function pluginEquippedOf(state, uid) {
+    if (uid === null) return false;
+    var env = state && state.warehouse ? state.warehouse.envelope : null;
+    if (env === null) return false;
+    for (var k = 0; k < 2; k += 1) {
+      var items = bucketItems(env, k === 0 ? 'role' : 'skill');
+      for (var i = 0; i < items.length; i += 1) {
+        var slots = arrayOf(pick(items[i], 'slots'));
+        for (var j = 0; j < slots.length; j += 1) {
+          if (str(pick(slots[j], 'pluginUid')) === uid) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 候选不可选的原因文案（'' = 可选）
+  function candidateBlockReasonOf(state, slotId, pos, uid) {
+    var others = otherConfigsOf(state, slotId, uid);
+    if (others.length > 0) return '已被配置' + others.join('、') + '使用（一件物品同时只能装配到一份配置）';
+    if (usedElsewhereInDraft(state, slotId, pos, uid)) return '本配置已在其它位置使用（一件物品只能占一个位置）';
+    return '';
+  }
+
   // 弹窗 B-1：选择角色/技能模板（仓库同分类物品 + `空`；**出战中的配置不提供 `空`** —— B-5）
   function slotPickModal(state, modal, busy) {
     var slotId = str(modal.slotId) === null ? 'slot1' : str(modal.slotId);
@@ -907,11 +993,13 @@
     else {
       var items = bucketItems(env, bucket);
       for (var i = 0; i < items.length; i += 1) {
+        var uid = str(pick(items[i], 'uid'));
+        var blocked = candidateBlockReasonOf(state, slotId, pos, uid, {});
         rows.push({
-          text: '',
+          text: blocked,
           buttons: [{
-            action: 'slot-set', label: itemTitle(items[i]), kind: 'button', disabled: busy,
-            slot: slotId, pos: pos, uid: str(pick(items[i], 'uid')),
+            action: 'slot-set', label: itemTitle(items[i]), kind: 'button', disabled: busy || blocked !== '',
+            slot: slotId, pos: pos, uid: uid,
           }],
         });
       }
@@ -925,7 +1013,8 @@
     }
     return {
       title: '选择' + posLabelOf(pos),
-      hint: '候选来自服务端仓库的' + (pos === POS_ROLE ? '角色' : '技能') + '分类；选中即替换草稿',
+      hint: '候选来自服务端仓库的' + (pos === POS_ROLE ? '角色' : '技能') + '分类；选中即替换草稿。'
+        + '已被其它配置引用、或本配置已在别处使用的候选会标灰并写明原因（D-163）',
       lines: lines,
       rows: rows,
       buttons: [closeButton(busy)],
@@ -950,17 +1039,21 @@
     var reason = '此槽只能装 ' + type;
     var rows = pluginCandidatesOf(state, pos).map(function (candidate) {
       var match = candidate.slot === type;
+      // 不可选原因按优先级取第一条：类型不符（B-8）→ 已被他配置引用 / 本配置已用 / 已被装配（D-163）
+      var why = !match ? reason
+        : (candidateBlockReasonOf(state, slotId, pos, candidate.uid)
+          || (pluginEquippedOf(state, candidate.uid) ? '已被装配（请先拆卸）' : ''));
       return {
-        text: match ? '' : reason,
+        text: why,
         buttons: [{
           action: 'plugin-set', label: candidate.label, kind: 'button',
-          disabled: busy || !match, slot: slotId, pos: pos, idx: String(idx), uid: candidate.uid,
+          disabled: busy || why !== '', slot: slotId, pos: pos, idx: String(idx), uid: candidate.uid,
         }],
       };
     });
     return {
       title: '选择插件（' + posLabelOf(pos) + ' 插槽' + (idx + 1) + '：' + type + '）',
-      hint: '类型不匹配的候选已标灰并写明原因（' + reason + '）',
+      hint: '类型不匹配的候选已标灰并写明原因（' + reason + '）；已被装配或已被其它配置使用的候选同样标灰（D-163）',
       lines: ['目标槽类型：' + type],
       rows: rows,
       buttons: [

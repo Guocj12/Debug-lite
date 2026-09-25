@@ -34,9 +34,11 @@
  *   本脚本对每场对局涉及的每个 publicId 都回查 `store.index` → `playerId` → 档案 + 出战快照作为证据
  *   （末尾"无 bot 证据"清单逐条打印）。
  *
- * ✅ 装配引用端到端（**D-159 服务端权威口径**）：第 5 步用 `POST /me/box` 开箱（物品入服务端仓库）+
+ * ✅ 装配引用端到端（**D-159 服务端权威口径；D-163 修订**）：第 5 步用 `POST /me/box` 开箱（物品入服务端仓库）+
  *   `POST /me/warehouse/assemble` 装配（只传 targetUid/pluginUid/slotIndex，不传整仓；服务端落档 `equipped=true`）；
- *   第 6 步保存出战配置时把**真源**一并提交，使快照随正文持久化"引用到的插件项"（缺口 1 的镜像片段）。
+ *   第 6 步保存出战配置**不再提交客户端镜像**——物品按 uid 从服务端仓库解析（D-163），且**同一件物品只能属于一份配置**
+ *   （脚本因此先验证"重复引用 → 409 item_in_use"，再为 slot2 注入并使用另一套物品）；
+ *   快照**不再内联**"引用到的插件项"（缺口 1 的镜像片段，HTTP 保存路径已不再写入），唯一真源 = 服务端仓库。
  *   第 7 步 `POST /panel` 用真源聚合并与单测 `buildPanel` 逐值比对（另有"去掉 warehouse 必 missing_warehouse"的反证）；
  *   第 11/14/19/22 步用**含装配插件的配置真的打完对局**（含 D-159-R1：保存时不带 warehouse 也能回放重算）。
  *   本脚本**不再**有任何"为绕过缺陷而剥离引用"的适配；客户端也不再是仓库权威（D-130 已被 D-159 推翻）。
@@ -315,13 +317,23 @@ async function openAndAssemble(port, token, tag, wantRole, wantSkill) {
 // 出战配置里的**真实装配引用**条数（回收 D1 适配后的核心验收量）：
 //   >0 即证明本脚本没有再把 pluginUid 清空/剥离 —— 第 6/7/11/14/22 步跑的是"含装配插件的配置"。
 function pluginRefsOf(ld) {
-  const inSlots = (slots) => (Array.isArray(slots) ? slots : []).filter((s) => s && s.pluginUid).length;
-  const role = ld && ld.role ? inSlots(ld.role.slots) : 0;
-  const skills = (ld && Array.isArray(ld.skills) ? ld.skills : []).reduce((n, sk) => n + inSlots(sk && sk.slots), 0);
-  return role + skills;
+  return pluginRefUidsOf(ld).length;
 }
 
-// 快照正文里**持久化下来的仓库镜像片段**（缺口 1）含多少个插件项
+// 出战配置里被引用的**插件 uid 列表**（D-163：这些 uid 必须在服务端权威仓库里能找到且 equipped=true）
+function pluginRefUidsOf(ld) {
+  const out = [];
+  const collect = (slots) => {
+    for (const s of (Array.isArray(slots) ? slots : [])) {
+      if (s && typeof s.pluginUid === 'string' && s.pluginUid !== '') out.push(s.pluginUid);
+    }
+  };
+  if (ld && ld.role) collect(ld.role.slots);
+  for (const sk of (ld && Array.isArray(ld.skills) ? ld.skills : [])) collect(sk && sk.slots);
+  return out;
+}
+
+// 快照正文里**持久化下来的仓库镜像片段**（缺口 1 的时代产物；D-163 起 HTTP 保存不再写入）含多少个插件项
 function warehouseItemsOf(snap) {
   const bk = (snap && snap.warehouse && snap.warehouse.buckets) || {};
   return ((bk.rolePlugin || []).length) + ((bk.skillPlugin || []).length);
@@ -334,39 +346,52 @@ async function activeSnapshotOf(store, playerId) {
   return { slot, snap: await store.snapshot.get(slot.snapshot.hash) };
 }
 
-/* 含装配引用的出战方**机器核验**（旧 D1 缺陷的回归钉；第 11/14/21/22 步共用同一个判定，杜绝"各写一套"）。
+// D-163：核验用的仓库正文必须是**服务端权威真源**（`GET /me/warehouse` 的 `{buckets,usage,…}`），
+//   而不是流程早期抓下来的事实快照（可能已陈旧，且不含物品的 `equipped` 状态）。
+async function liveWarehouseOf(port, token) {
+  const r = await request(port, 'GET', '/api/v1/me/warehouse', undefined, authed(token));
+  return r && r.body && r.body.ok === true ? r.body.data : null;
+}
+
+/* 含装配引用的出战方**机器核验**（D-163 口径：物品一律来自**服务端权威仓库**；第 11/14/21/22 步共用同一判定）
  *   ① 快照正文确含真实装配引用（refs>0）—— 证明 e2e 没有靠剥离 pluginUid 换绿；
- *   ② 快照标记 `verifiedAgainstWarehouse=true` 且正文持久化了仓库镜像片段（缺口 1 的落地证据）；
- *   ③ 面板一致性：用**快照持久化片段**算出的面板 ≡ 用**完整真镜像**算出的面板（逐值一致）；
- *   ④ 反证：同一配置去掉 warehouse 必 `missing_warehouse` —— 证明引用是真的、校验没有空转。
- * `fullWarehouse` 为必填：**必须**持有该玩家的完整仓库正文，否则第 ③ 条会退化成空断言。
- * 返回 { refs, whItems, stats } 供打印。
+ *   ② 每个被引用的插件都能在**权威仓库**里解析到且 `equipped===true`（D-163 的装配不变量）；
+ *   ③ 面板一致性：用**权威仓库**必须能算出面板；**同一配置去掉仓库**必须如实 `missing_warehouse`
+ *      （反证引用是真的、校验没空转）；
+ *   ④ 快照标记 `verifiedAgainstWarehouse=true`（保存时确实经服务端仓库校验过）；
+ *   ⑤ D-163：HTTP 保存的快照**不再内联**仓库镜像片段（`snapshot.warehouse === undefined`），
+ *      唯一真源 = 服务端仓库（`rt.loadWarehouse`）。
+ * `fullWarehouse` 为必填：**必须**持有该玩家的完整仓库正文（`GET /me/warehouse` 的 buckets），否则③会空转。
+ * 返回 { refs, whItems, stats }（`whItems` = 从权威仓库解析并确认已装配的引用项数）供打印。
  */
 async function verifyPluginSide(store, label, playerId, fullWarehouse, tier) {
   expect(fullWarehouse && typeof fullWarehouse === 'object',
-    `${label}：核验含装配引用的一侧必须提供完整仓库镜像（否则面板一致性断言会空转）`);
+    `${label}：核验含装配引用的一侧必须提供完整仓库正文（否则一致性断言会空转）`);
   const side = await activeSnapshotOf(store, playerId);
   const refs = pluginRefsOf(side.snap.loadout);
   expect(refs > 0,
     `${label} 的出战快照必须含真实装配引用（实测 ${refs} 处）——不得靠剥离 pluginUid 换绿`, j(side.slot.snapshot));
   expect(side.slot.snapshot.verifiedAgainstWarehouse === true,
-    `${label} 保存配置时带了 warehouse → 快照应标记 verifiedAgainstWarehouse=true（缺口 1 的判定依据）`, j(side.slot.snapshot));
-  const whItems = warehouseItemsOf(side.snap);
-  expect(whItems > 0,
-    `${label} 的冻结快照应随正文持久化仓库镜像片段（缺口 1：重启后插件词条仍生效），实测 ${whItems} 项`,
+    `${label} 保存配置时经服务端仓库校验 → 快照应标记 verifiedAgainstWarehouse=true`, j(side.slot.snapshot));
+  const refUids = pluginRefUidsOf(side.snap.loadout);
+  const resolved = refUids.filter((uid) => {
+    const it = findItem(fullWarehouse, uid);
+    return !!(it && it.equipped === true);
+  });
+  expect(resolved.length === refUids.length,
+    `${label}：快照引用的 ${refUids.length} 个插件必须全部能在服务端权威仓库解析到且 equipped=true（实测 ${resolved.length}）`,
+    j(refUids.filter((u) => resolved.indexOf(u) === -1)));
+  expect(side.snap.warehouse === undefined,
+    `${label}：D-163 起 HTTP 保存的快照不再内联仓库镜像片段（唯一真源 = 服务端仓库）`,
     j(Object.keys(side.snap.warehouse || {})));
-  const viaExcerpt = loadoutApi.buildPanel(side.snap.loadout, { warehouse: side.snap.warehouse, tier });
-  expect(viaExcerpt.ok === true,
-    `${label} 用持久化镜像片段必须能算出面板（缺口 1 的"足够重建"判定）`, j(viaExcerpt.errors));
-  const viaFull = loadoutApi.buildPanel(side.snap.loadout, { warehouse: fullWarehouse, tier });
-  expect(viaFull.ok === true, `${label} 用完整仓库镜像必须能算出面板`, j(viaFull.errors));
-  expect(j(viaExcerpt.panel) === j(viaFull.panel),
-    `${label} 的面板必须与"含完整真镜像时"逐值一致`,
-    `${short(j(viaExcerpt.panel), 300)} VS ${short(j(viaFull.panel), 300)}`);
+  const viaAuth = loadoutApi.buildPanel(side.snap.loadout, { warehouse: fullWarehouse, tier });
+  expect(viaAuth.ok === true, `${label} 用服务端权威仓库必须能算出面板`, j(viaAuth.errors));
   const noWh = loadoutApi.buildPanel(side.snap.loadout, { warehouse: null, tier });
-  expect(noWh.ok === false && noWh.errors.some((e) => e.code === 'missing_warehouse'),
-    `${label} 反证：去掉 warehouse 必报 missing_warehouse → 该配置确实含装配引用（校验未空转）`, j(noWh.errors));
-  return { refs, whItems, stats: viaFull.panel.role.stats };
+  expect(noWh.ok === false && (noWh.errors || []).some((e) => e.code === 'missing_warehouse'),
+    `${label} 同一配置去掉仓库必须如实 missing_warehouse（反证引用为真、校验未空转）`, j(noWh.errors));
+  const whItems = resolved.length;
+  expect(whItems > 0, `${label} 至少要有 1 个引用能从权威仓库解析出来（否则配置是装饰）`, j(refUids));
+  return { refs, whItems, stats: viaAuth.panel.role.stats };
 }
 
 // 确定性对局剧本（只改**客户端权威**的物品字段，§15.1 混合权威）：把一方的 hp 压到 1 且双方都"一直向右"
@@ -384,6 +409,17 @@ function scriptedLoadout(warehouse, fragile) {
   }));
   if (fragile) ld.role.stats = { hp: 1, atk: 12, def: 0, sp: 60, mp: 40 };
   return ld;
+}
+
+// D-163：跨配置独占 —— 第二份配置必须用**另一套**物品（同一件物品同时只能属于一份配置）。
+//   按偏移量取第 N 套（roles[N] + skills[N*3 .. N*3+2]）；不足则返回 null（调用方如实报错）。
+function scriptedLoadoutAt(warehouse, offset) {
+  const roles = (warehouse && warehouse.buckets && warehouse.buckets.role) || [];
+  const skills = (warehouse && warehouse.buckets && warehouse.buckets.skill) || [];
+  const role = roles[offset];
+  const picked = skills.slice(offset * 3, offset * 3 + 3);
+  if (!role || picked.length < 3) return null;
+  return JSON.parse(JSON.stringify({ role, skills: picked, ai: HOLD_RIGHT }));
 }
 
 /* ---------- 主流程 ---------- */
@@ -659,8 +695,42 @@ async function main() {
         '保存出战配置应冻结新快照且 complete:true/missing:[]', short(save.raw, 300));
       const saveB = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: ldB, warehouse: state.facts.asmB.warehouse }, authed(state.facts.B.token));
       expect(saveB.status === 200, `PUT /me/configs/slot1（B）应 200，实得 ${saveB.status}`, saveB.raw);
-      // 把同一份完整配置写进 slot2 → 激活 200（唯一出战 + activeSnapshotHash 同步）
-      const saveOn2 = await request(port, 'PUT', '/api/v1/me/configs/slot2', { loadout: ldA, warehouse: state.facts.asmA.warehouse }, A);
+      // D-163：**一件物品同时只能被一份配置引用** —— 把 ldA 原样再写进 slot2 必须被拒（可读文案 + 逐 uid）
+      const dupTry = await request(port, 'PUT', '/api/v1/me/configs/slot2', { loadout: ldA }, A);
+      expect(dupTry.status === 409 && dupTry.body.error.code === 'item_in_use',
+        `D-163：把已在 slot1 使用的物品再写进 slot2 应 409 item_in_use，实得 ${dupTry.status} ${j(dupTry.body.error)}`, dupTry.raw);
+      expect(Array.isArray(dupTry.body.error.details) && dupTry.body.error.details.length > 0
+        && dupTry.body.error.details.every((d) => typeof d.path === 'string' && /已被配置/.test(d.message)),
+        'D-163：item_in_use 必须逐 uid 给出 details（并写明占用它的配置）', short(dupTry.raw, 200));
+      // 独占规则下：slot2 用**另一套**物品。开箱产物未必凑得出第二套（实测 roles=6 / skills=4），
+      //   故按 D-163 的"物品必须真实存在于服务端仓库"口径**注入一套备用品**（与 tests/unit/* 的夹具同法），
+      //   再只通过 PUT 端点把它写成配置。
+      const spareSrc = {
+        role: state.facts.asmA.warehouse.buckets.role[0],
+        skills: state.facts.asmA.warehouse.buckets.skill.slice(0, 3),
+      };
+      const spare = { roleUid: 'e2e_spare_role', skillUids: ['e2e_spare_skill0', 'e2e_spare_skill1', 'e2e_spare_skill2'] };
+      await s.store.updateArchive(state.facts.A.playerId, (archive) => {
+        const cloneInto = (bucket, src, uid) => {
+          if (archive.warehouse.buckets[bucket].some((x) => x.uid === uid)) return;
+          archive.warehouse.buckets[bucket].push(Object.assign({}, JSON.parse(JSON.stringify(src)), {
+            uid,
+            slots: (src.slots || []).map((sl) => ({ type: sl.type, pluginUid: null })), // 备用件不带装配引用
+          }));
+        };
+        cloneInto('role', spareSrc.role, spare.roleUid);
+        spareSrc.skills.forEach((sk, i) => cloneInto('skill', sk, spare.skillUids[i]));
+        return null;
+      });
+      const whAfter = (await request(port, 'GET', '/api/v1/me/warehouse', undefined, A)).body.data;
+      const ldA2 = JSON.parse(JSON.stringify({
+        role: findItem(whAfter, spare.roleUid),
+        skills: spare.skillUids.map((u) => findItem(whAfter, u)),
+        ai: HOLD_RIGHT,
+      }));
+      expect(ldA2.role !== null && ldA2.skills.every((x) => x !== null),
+        'D-163：备用物品应已入服务端仓库（配置只能引用仓库里真实存在的物品）', short(j(spare), 200));
+      const saveOn2 = await request(port, 'PUT', '/api/v1/me/configs/slot2', { loadout: ldA2 }, A);
       expect(saveOn2.status === 200 && typeof saveOn2.body.data.snapshot.hash === 'string',
         `slot2 写入完整配置应 200 并冻结快照，实得 ${saveOn2.status}`, saveOn2.raw);
       const act = await request(port, 'POST', '/api/v1/me/configs/slot2/activate', {}, A);
@@ -777,10 +847,31 @@ async function main() {
 
     /* ---- [11/22] 有对手 → 双方真实玩家 ---- */
     await step(11, 'POST /quick/run 有对手 → 双方 playerId 都是真实注册玩家（对手 ID 在注册表内）', async () => {
-      // 剧本：把 A 压到 1hp（客户端权威的物品字段，§15.1）→ A 必败；同时让 Elo 双向 Δ 非零
-      const fragileA = scriptedLoadout(state.facts.asmA.warehouse, true);
-      const saveFragile = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: fragileA, warehouse: state.facts.asmA.warehouse }, authed(state.facts.A.token));
-      expect(saveFragile.status === 200, `剧本配置（A 1hp）应保存成功，实得 ${saveFragile.status}`, saveFragile.raw);
+      // 剧本：让 A 必败。D-163 起**客户端改数值会被丢弃**（物品一律按 uid 从服务端仓库解析）⇒
+      //   "脆弱一方"必须真的在仓库里：注入一件 hp=1/atk=0 的角色物品（无插件），再用它构造配置。
+      const spareRole = state.facts.asmA.warehouse.buckets.role[1] || state.facts.asmA.warehouse.buckets.role[0];
+      const fragileUid = `${spareRole.uid}_fragile`;
+      await s.store.updateArchive(state.facts.A.playerId, (archive) => {
+        if (!archive.warehouse.buckets.role.some((x) => x.uid === fragileUid)) {
+          archive.warehouse.buckets.role.push(Object.assign({}, JSON.parse(JSON.stringify(spareRole)), {
+            uid: fragileUid, name: '脆弱角色（e2e 夹具）',
+            stats: { hp: 1, atk: 0, def: 0, sp: 60, mp: 40 },
+            slots: (spareRole.slots || []).map((sl) => ({ type: sl.type, pluginUid: null })),
+          }));
+        }
+        return null;
+      });
+      const fragileWh = (await request(port, 'GET', '/api/v1/me/warehouse', undefined, authed(state.facts.A.token))).body.data;
+      const fragileRole = findItem(fragileWh, fragileUid);
+      const fragileA = JSON.parse(JSON.stringify({
+        role: fragileRole,
+        skills: state.facts.asmA.warehouse.buckets.skill.slice(0, 3),
+        ai: HOLD_RIGHT,
+      }));
+      expect(fragileRole !== null && fragileRole.stats.hp === 1,
+        `应能从服务端仓库读到脆弱角色（hp=1）；实得 ${fragileRole ? j(fragileRole.stats) : 'null'}`, short(j({ fragileUid }), 200));
+      const saveFragile = await request(port, 'PUT', '/api/v1/me/configs/slot1', { loadout: fragileA }, authed(state.facts.A.token));
+      expect(saveFragile.status === 200, `剧本配置（A 1hp，仓库真值）应保存成功，实得 ${saveFragile.status}`, saveFragile.raw);
       state.facts.ldA = fragileA;
 
       const pointsBefore = s.store.index.playerIds().reduce((a, id) => a + s.store.index.get(id).points, 0);
@@ -805,12 +896,13 @@ async function main() {
        * 判定链由 `verifyPluginSide` 统一实现（引用为真 + 缺口 1 持久化 + 面板 ≡ 真镜像 + 去 warehouse 反证）。
        */
       const selfSide = await verifyPluginSide(s.store, '发起者 B（本场 p1，确定性进入战斗）',
-        state.facts.B.playerId, state.facts.asmB.warehouse, MODE);
+        state.facts.B.playerId, await liveWarehouseOf(port, state.facts.B.token), MODE);
       const foeIdA = await playerIdByPublicId(s.store, d.opponent.publicId);
       const foeIsA = d.opponent.publicId === state.facts.A.publicId;
       // 对手侧：抽中 A（夹具里唯一另一个持装配引用的玩家）→ 同样做全链核验；抽中默认配置玩家 → 如实记录
       const foeSide = foeIsA
-        ? await verifyPluginSide(s.store, `对手 A（本场 p2，publicId=${state.facts.A.publicId}）`, foeIdA, state.facts.asmA.warehouse, MODE)
+        ? await verifyPluginSide(s.store, `对手 A（本场 p2，publicId=${state.facts.A.publicId}）`, foeIdA,
+          await liveWarehouseOf(port, state.facts.A.token), MODE)
         : null;
       const foeSnap = foeIsA ? null : (await activeSnapshotOf(s.store, foeIdA)).snap;
       const foeNote = foeSide
@@ -878,7 +970,7 @@ async function main() {
       //   故这里做一次**确定性**的"含装配引用的一侧确实出战"核验（不依赖任何抽池结果）：
       //   若本批次 matches>0 而 A 的快照不含装配引用，那"含插件能出战"就没有被验证过。
       const rankedSide = await verifyPluginSide(s.store, '排位发起者 A（本批次每场 p1）',
-        state.facts.A.playerId, state.facts.asmA.warehouse, MODE);
+        state.facts.A.playerId, await liveWarehouseOf(port, state.facts.A.token), MODE);
       const r = await request(port, 'POST', '/api/v1/ranked/run', { seed: 11 }, authed(state.facts.A.token));
       expect(r.status === 200, `排位应 200，实得 ${r.status}`, r.raw);
       const d = r.body.data;
@@ -1196,7 +1288,7 @@ async function main() {
       state.facts.quickBattles.push(d.battleId);
       // 发起者固定 = A（其第 21 步刚恢复的配置含真实装配引用）→ 又一次**确定性**的"含插件能出战"核验
       const eloSide = await verifyPluginSide(s.store, '第 22 步发起者 A（本场 p1）',
-        state.facts.A.playerId, state.facts.asmA.warehouse, MODE);
+        state.facts.A.playerId, await liveWarehouseOf(port, state.facts.A.token), MODE);
       expect(Number.isInteger(d.ticks) && d.ticks > 0,
         `含装配引用的 A 出战必须真的跑起来：ticks=${d.ticks}`, j(d));
       await assertReal(s.store, [state.facts.A.publicId, d.opponent.publicId], 'quick/run#2');

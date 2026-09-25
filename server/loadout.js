@@ -37,6 +37,101 @@ function findItem(wh, uid) {
   return null;
 }
 
+function cloneItem(it) {
+  return JSON.parse(JSON.stringify(it));
+}
+
+// D-163（2026-09-25 热修）：loadout 的**物品身份与数值一律取自服务端权威仓库**。
+//   客户端正文只用来指出"要哪一件"（uid）；取回的是仓库里那份物品的副本，客户端给的 stats/templateId/
+//   quality/params 一律丢弃。uid 不在仓库 → 错误（"物品不在仓库: <uid>"）。
+//   修前的真实缺陷（已实测复现）：validateLoadout 只校验 kind/templateId/quality 与**插件**引用，
+//   从不校验角色/技能物品是否属于该玩家、也不校验数值 ⇒ 客户端可 PUT 一件 stats.hp=999999 的角色
+//   （甚至仓库里根本不存在的 uid），activate 后快照冻结该正文，而 quickmatch/ranked 用的正是
+//   `snapshot.loadout`（battle.buildPlayer 直接读 role.stats）→ 战斗被"打穿"。
+//   同时把"同配置内全 uid 去重"放在这里：角色/技能/插件都不得重复占位（修前只查插件双处引用，
+//   一件**无插件**的技能物品可以占满 3 个技能位，连出战槽都 200）。
+function resolveItems(loadout, warehouse) {
+  const ld = loadout !== null && typeof loadout === 'object' && !Array.isArray(loadout) ? loadout : null;
+  if (!ld || !warehouse) return { ok: true, errors: [], loadout: ld };
+  const errors = [];
+  const out = {
+    role: null,
+    skills: [null, null, null],
+    ai: ld.ai === undefined ? null : ld.ai,
+    aiId: ld.aiId === undefined ? null : ld.aiId,
+  };
+  const takeFrom = (raw, where, wantKind) => {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+      errors.push({ where, code: 'loadout_invalid', message: `${where} 必须是物品对象` });
+      return null;
+    }
+    const uid = raw.uid;
+    if (typeof uid !== 'string' || uid === '') {
+      errors.push({ where, code: 'loadout_invalid', message: `${where} 缺少 uid（物品身份必须来自服务端仓库）` });
+      return null;
+    }
+    const it = findItem(warehouse, uid);
+    if (!it) {
+      errors.push({ where, code: 'loadout_invalid', message: `物品不在仓库: ${uid}` });
+      return null;
+    }
+    if (it.kind !== wantKind) {
+      errors.push({ where, code: 'loadout_invalid', message: `${where} 的物品类别不是 ${wantKind}: ${uid}` });
+      return null;
+    }
+    return cloneItem(it);
+  };
+  out.role = takeFrom(ld.role, 'role', 'role');
+  const skillsIn = Array.isArray(ld.skills) ? ld.skills : [];
+  // 技能位置必须恰 3 个：多出来的不许"静默截断"（截断会掩盖客户端异常，且第 4 个技能会进快照正文）
+  if (Array.isArray(ld.skills) && skillsIn.length > 3) {
+    errors.push({ where: 'skills', code: 'loadout_invalid', message: `技能必须恰 3 个（实际 ${skillsIn.length}）` });
+  }
+  for (let i = 0; i < 3; i += 1) out.skills[i] = takeFrom(skillsIn[i], `skills[${i}]`, 'skill');
+
+  // 同一份配置内：角色 / 3 个技能 / 全部插件引用必须两两不同（插件保持既有 T-PB-8 文案）
+  const seen = new Set();
+  const mark = (uid, where, isPlugin) => {
+    if (typeof uid !== 'string' || uid === '') return;
+    if (seen.has(uid)) {
+      errors.push(isPlugin
+        ? { where, code: 'loadout_invalid', message: `同一插件被双处引用: ${uid}（T-PB-8）` }
+        : { where, code: 'loadout_invalid', message: `同一物品被多处引用: ${uid}（一件物品同时只能占一个位置）` });
+      return;
+    }
+    seen.add(uid);
+  };
+  const markSlots = (item, where) => {
+    if (!item) return;
+    const slots = Array.isArray(item.slots) ? item.slots : [];
+    slots.forEach((s, j) => mark(s && s.pluginUid, `${where}.slots[${j}]`, true));
+  };
+  mark(out.role && out.role.uid, 'role', false);
+  markSlots(out.role, 'role');
+  for (let i = 0; i < 3; i += 1) {
+    mark(out.skills[i] && out.skills[i].uid, `skills[${i}]`, false);
+    markSlots(out.skills[i], `skills[${i}]`);
+  }
+  return { ok: errors.length === 0, errors, loadout: out };
+}
+
+// 一份 loadout 引用到的**全部物品 uid**（角色 + 3 技能 + 全部插件）——用于跨配置独占判定（D-163）
+function referencedUidsOf(loadout) {
+  const out = new Set();
+  const ld = loadout && typeof loadout === 'object' ? loadout : null;
+  if (!ld) return out;
+  const add = (uid) => { if (typeof uid === 'string' && uid !== '') out.add(uid); };
+  add(ld.role && ld.role.uid);
+  for (const s of Array.isArray(ld.role && ld.role.slots) ? ld.role.slots : []) add(s && s.pluginUid);
+  for (const sk of Array.isArray(ld.skills) ? ld.skills : []) {
+    add(sk && sk.uid);
+    for (const s of Array.isArray(sk && sk.slots) ? sk.slots : []) add(s && s.pluginUid);
+  }
+  return out;
+}
+
+
 // 校验（I-12a/b/d/e + T-PB-9）：{ok, errors:[{where, code, message}]}
 // opts.items：items.js 实例注入缝（缺省 = 模块单例）——段位门控开关由该实例承载
 //   （unlock.json `gating.enabled`，用户决策 2026-09-16 默认关闭；测试可传 items.withGating(true) 复核旧行为）。
@@ -82,7 +177,10 @@ function validateLoadout(loadout, opts) {
   });
   if (refs.length > 0 && !wh) {
     errors.push({ where: 'warehouse', code: 'missing_warehouse', message: '出战配置含装配引用，需要 warehouse 校验引用完整性（T-PB-9）' });
-  } else if (wh && errors.length === 0 && refs.length > 0) {
+  } else if (wh && refs.length > 0) {
+    // D-163 热修：**去掉** `errors.length === 0` 前置条件 —— 修前只要 loadout 还有别的错误（典型：
+    //   非出战槽允许的"技能位置缺失"），整个引用校验就被跳过 ⇒ 不完整的配置可以带**悬挂/未装配**的
+    //   插件引用落盘（已实测：捏造 pluginUid 的非出战槽 PUT 返回 200）。
     const seen = new Set();
     for (const ref of refs) {
       if (seen.has(ref.uid)) {
@@ -119,10 +217,14 @@ function validateLoadout(loadout, opts) {
 // 2026-09-16 合并（用户拍板 A）：角色面板聚合改由 **items.buildRolePanel 单一实现**完成
 //   （与 roles.getFinalStats 同源）——五维 + special + regen 一次算清，regen 不再两侧各加一次。
 function buildPanel(loadout, opts) {
-  const v = validateLoadout(loadout, opts);
+  // D-163 热修（纵深防御）：有仓库时**先把物品解析成仓库里那份**再算面板 —— 这样即便碰上一份
+  //   历史遗留的、被篡改过数值的快照，战斗数值也仍以服务端仓库为准（而不是快照正文）。
+  const resolved = resolveItems(loadout, (opts && opts.warehouse) || null);
+  if (!resolved.ok) return { ok: false, errors: resolved.errors };
+  const v = validateLoadout(resolved.loadout, opts);
   if (!v.ok) return { ok: false, errors: v.errors };
   const wh = (opts && opts.warehouse) || null;
-  const role = loadout.role;
+  const role = resolved.loadout.role;
   const rPlugins = [];
   for (const s of role.slots || []) {
     if (!s || !s.pluginUid) continue;
@@ -140,7 +242,7 @@ function buildPanel(loadout, opts) {
         pluginPoints: rp.pluginPoints,
         quality: rp.quality,
       },
-      skills: loadout.skills.map((sk) => {
+      skills: resolved.loadout.skills.map((sk) => {
         // B20：技能插件词条聚合——消耗补偿（D-113：costDeltaBase×tier）/减耗 ceil（S-3）/倍率·冷却·射程等
         const plugins = [];
         for (const s of sk.slots || []) {
@@ -185,6 +287,8 @@ function withGating(enabled) {
     gatingEnabled: itemsApi.gatingEnabled,
     validateLoadout: (ld, opts) => validateLoadout(ld, bind(opts)),
     buildPanel: (ld, opts) => buildPanel(ld, bind(opts)),
+    resolveItems,
+    referencedUidsOf,
     findItem,
     withGating,
   };
@@ -192,6 +296,8 @@ function withGating(enabled) {
 
 module.exports = {
   EMPTY_LOADOUT, validateLoadout, buildPanel, findItem,
+  // D-163 热修新增：权威仓库解析（身份/数值）+ 引用 uid 集合（跨配置独占判定）
+  resolveItems, referencedUidsOf,
   // 缺省门控取值（= unlock.json gating.enabled，经 items 单例透传；门禁/文档可读）
   gatingEnabled: items.gatingEnabled,
   withGating,

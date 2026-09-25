@@ -225,7 +225,17 @@ function syntheticVerifiedWarehouse(loadout) {
   const ld = loadout || {};
   pushRefs(ld.role && ld.role.slots, 'rolePlugin', 'rolePlugin');
   for (const sk of Array.isArray(ld.skills) ? ld.skills : []) pushRefs(sk && sk.slots, 'skillPlugin', 'skillPlugin');
-  return buckets.rolePlugin.length + buckets.skillPlugin.length > 0 ? { buckets } : null;
+  // D-163 热修：**角色与技能物品也必须在这份"已校验仓库"里** —— loadout.resolveItems 会按 uid 从仓库
+  //   取回物品（身份/数值以仓库为准），只放插件的旧口径会让降级路径（抽池/实例化、bot 对局）报
+  //   "物品不在仓库" 而整体不可打。这里把 loadout 正文里的模板物品按原样放进去（它们本就来自服务端仓库）。
+  const putTemplate = (item, bucket) => {
+    if (!item || typeof item !== 'object' || typeof item.uid !== 'string' || item.uid === '') return;
+    buckets[bucket].push(JSON.parse(JSON.stringify(item)));
+  };
+  putTemplate(ld.role, 'role');
+  for (const sk of Array.isArray(ld.skills) ? ld.skills : []) putTemplate(sk, 'skill');
+  const total = buckets.role.length + buckets.skill.length + buckets.rolePlugin.length + buckets.skillPlugin.length;
+  return total > 0 ? { buckets } : null;
 }
 
 /* ---------- D1-residual：可用性**单一判定**（抽池与实例化共用，docs/systems/10-ranked.md §4.3 注记） ----------
