@@ -25,8 +25,11 @@ test('T-EN-9/diff 字段齐备：players/bullets/bases/events/aiTrace + 1px 位�
   const r = b.runFull({ actions: { aiTrace: buf, p1: (s) => { buf.push({ tick: s.tick, owner: 'p1', seq: 1 }); return 'move_right'; }, p2: () => 'move_left' }, eventsBuf });
   assert.ok(r.diffs.length >= 1);
   const allEvents = [];
+  // D-167：引擎 `diff` 仍然逐 tick 携带 `events`（日志真源在引擎/L4，供 CLI/demo/审计与管理员调试接口用）；
+  //   只有**对外帧**（server/battle.js 的 toFrames）才会剥掉它。故本用例直接审计引擎 diff（日志契约不变），
+  //   另一半（对外帧不含 events）见 tests/cli/cli-replay.test.js 与 tests/api/api-battle.test.js。
   for (const d of r.diffs) {
-    for (const k of ['tick', 'players', 'bullets', 'bases', 'events', 'aiTrace', 'collision', 'bulletHits', 'verdict']) {
+    for (const k of ['tick', 'players', 'bullets', 'bases', 'events', 'aiTrace', 'collision', 'baseHits', 'bulletHits', 'damages', 'verdict']) {
       assert.ok(k in d, `diff 缺字段 ${k}`);
     }
     for (const owner of ['p1', 'p2']) {
@@ -40,6 +43,15 @@ test('T-EN-9/diff 字段齐备：players/bullets/bases/events/aiTrace + 1px 位�
     }
     assert.ok(Array.isArray(d.bullets), 'bullets 数组');
     assert.ok(d.bases && typeof d.bases === 'object' && 'hp' in d.bases.p1 && 'hp' in d.bases.p2, 'bases 按 p1/p2 分侧（含 hp/def）');
+    // D-167 新增字段必须在引擎 diff 里齐备（对外帧与调试帧共用同一份数据）
+    for (const o of ['p1', 'p2']) {
+      const pl = d.players[o];
+      for (const k of ['maxHp', 'maxMp', 'maxSp', 'atk', 'def']) assert.ok(Number.isFinite(pl[k]), `${o}.${k} 应为有限值`);
+      assert.ok(pl.action && typeof pl.action.kind === 'string', `${o}.action.kind 齐备`);
+      assert.ok(Array.isArray(pl.effects), `${o}.effects 为数组`);
+    }
+    assert.ok(Array.isArray(d.baseHits), 'baseHits 数组（D-167：双方同 tick 各撞基地不再丢一条）');
+    assert.ok(Array.isArray(d.damages), 'damages 数组');
   }
   // 链事件齐备（§4.3 契约不再空心化）：碰撞链路 + tick 完成
   assert.ok(allEvents.includes('collision.resolve'), '引擎链事件（collision.resolve）');

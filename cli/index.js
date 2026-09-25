@@ -217,17 +217,16 @@ async function cmdRankedPromote(baseUrl, args, opts) {
 }
 
 
-/* ---- replay 伤害标注（B23 可读性增强；用户 2026-09-19 勾选项 2）----
- * 素材来源：帧 events[] 里 damage.calc 的 data（attacker/target/dmg/crit/critM/backstab/backM/hitUid）。
- * 关联规则：hitUid 与帧 bulletHits[].uid 一一对应；hitUid 为空（碰撞/附加真实伤害）单独归入「伤害[]」段。
+/* ---- replay 伤害标注（B23 可读性增强；用户 2026-09-19 勾选项 2）
+ * 素材来源（D-167 起）：帧 `diff.damages[]` 的 `{attacker,target,amount,atX,kind,srcUid,crit,critM,backstab,backM}`
+ *   ——**不再读 `diff.events`**（日志已从对外帧剥离，见 interfaces.md §4.3 与 D-167）。
+ * 关联规则：`srcUid` 与帧 `bulletHits[].uid` 一一对应；`srcUid === null`（碰撞/撞基地/超时）单独归入「伤害[]」段。
  * 只读帧数据，不 require core/ai（L14：CLI 只走 HTTP/本地文件）。
  */
-function damageByHit(events) {
+function damageByHit(damages) {
   const map = new Map();
-  for (const e of events || []) {
-    if (e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.hitUid) {
-      map.set(e.data.hitUid, e.data);
-    }
+  for (const dm of damages || []) {
+    if (dm && typeof dm.srcUid === 'string' && dm.srcUid !== '') map.set(dm.srcUid, dm);
   }
   return map;
 }
@@ -237,16 +236,16 @@ function damageTag(dm) {
   const marks = [];
   if (dm.crit) marks.push(`暴击×${dm.critM}`);
   if (dm.backstab) marks.push(`背击×${dm.backM}`);
-  return `${dm.dmg}${marks.length > 0 ? ` (${marks.join(' ')})` : ''}`;
+  return `${dm.amount}${marks.length > 0 ? ` (${marks.join(' ')})` : ''}`;
 }
 
-// 逐 tick 文本行：px 位置/碰撞 + 命中（uid->目标@坐标->伤害）+ 无弹幕归属的伤害（碰撞/附加真伤）
+// 逐 tick 文本行：px 位置/碰撞 + 命中（uid->目标@坐标->伤害）+ 无弹幕归属的伤害（碰撞/撞基地/超时）
 function replayLine(f) {
   const d = f.diff;
   const p = (o) => `${o} ${d.players[o].fromX}->${d.players[o].toX} hp=${d.players[o].hp} mp=${d.players[o].mp} sp=${d.players[o].sp}`;
   const coll = d.collision ? ` | 碰撞@${d.collision.contactX}` : '';
-  const evs = Array.isArray(d.events) ? d.events : [];
-  const dmgByUid = damageByHit(evs);
+  const damages = Array.isArray(d.damages) ? d.damages : [];
+  const dmgByUid = damageByHit(damages);
   const hits = d.bulletHits && d.bulletHits.length
     ? ` | 命中[${d.bulletHits.map((h) => {
       const base = `${h.uid}->${h.target}@${h.atX}`;
@@ -254,12 +253,8 @@ function replayLine(f) {
       return dm ? `${base}->${dm.attacker}->${dm.target} ${damageTag(dm)}` : base;
     }).join(' ')}]`
     : '';
-  const loose = [];
-  for (const e of evs) {
-    if (!e || e.channel !== 'damage' || e.event !== 'damage.calc' || !e.data) continue; // 非伤害事件/畸形项跳过
-    if (!e.data.hitUid) loose.push(e.data); // 碰撞/附加真实伤害（无弹幕 uid）
-  }
-  const extra = loose.length ? ` | 伤害[${loose.map((dm) => `${dm.attacker}->${dm.target} ${damageTag(dm)}`).join(' ')}]` : '';
+  const loose = damages.filter((dm) => dm && (dm.srcUid === null || dm.srcUid === undefined));
+  const extra = loose.length ? ` | 伤害[${loose.map((dm) => `${dm.attacker === null ? dm.kind : dm.attacker}->${dm.target} ${damageTag(dm)}`).join(' ')}]` : '';
   return `tick ${f.tick}: ${p('p1')} | ${p('p2')}${coll}${hits}${extra}`;
 }
 
@@ -632,9 +627,14 @@ async function main(argv, options) {
                   const d = frame.diff;
                   console.log(replayLine(frame));
                   if (d.verdict) console.log(`verdict: winner=${d.verdict.winner} phase=${d.verdict.phase}`);
-                  const evs = Array.isArray(d.events) ? d.events : [];
-                  console.log(`events (${evs.length}):`);
-                  for (const e of evs.slice(-12)) console.log(`  [${e.cid}] ${e.channel}.${e.event} ${e.msg || ''}`);
+                  // D-167：对外帧不再携带引擎日志（events）；此处改为回显该 tick 的结构化伤害与弹幕结局
+                  const dmg = Array.isArray(d.damages) ? d.damages : [];
+                  console.log(`damages (${dmg.length}):`);
+                  for (const dm of dmg) console.log(`  ${dm.kind} ${dm.attacker === null ? '-' : dm.attacker}->${dm.target} ${damageTag(dm)}${dm.atX === null ? '' : '@' + dm.atX}`);
+                  if (Array.isArray(d.bullets) && d.bullets.length) {
+                    console.log(`bullets (${d.bullets.length}):`);
+                    for (const b of d.bullets) console.log(`  ${b.uid} ${b.spawnX}->${b.endX} outcome=${b.outcome}${b.hitTarget ? ' ->' + b.hitTarget : ''}${b.collideWith ? ' vs ' + b.collideWith : ''}`);
+                  }
                   code = 0;
                 }
               } else {

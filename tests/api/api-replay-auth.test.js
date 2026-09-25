@@ -209,82 +209,88 @@ test('RP-5 帧 LRU 上限 64（D-135）：第 65 场起淘汰最旧 → 410 repl
   });
 });
 
-test('RP-7 归档回放 aiTrace 按请求者 side 裁剪（P1-1/§9.4）：默认 self / ?trace=all 需管理员令牌 / 未知值 400', async () => {
+test('RP-7 归档回放的 aiTrace 策略（D-167）：双方 trace 永远都在；frames=debug 需管理员且额外带引擎日志', async () => {
   const ADMIN = 'trace-admin-token';
   await h.withServer(null, async (s) => {
-    const a = await h.register(s.port, h.uniqueName('tra'));
-    const b = await h.register(s.port, h.uniqueName('trb'));
+    // D-167：本用例断言"帧内容"（含 damages/trace）→ 身份必须固定，否则 starter 与默认 AI 预设随
+    //   随机 publicId 变化，战斗内容（是否交战/掉血）会变 → 断言 flaky（与 P2-5 的去 flaky 口径一致）。
+    const a = await h.register(s.port, h.uniqueName('tra'), undefined, { publicId: 'u_tra00001', playerId: 'pl_tra000000000001' });
+    const b = await h.register(s.port, h.uniqueName('trb'), undefined, { publicId: 'u_trb00001', playerId: 'pl_trb000000000002' });
     const data = await quickBattle(s, a, b);
+    // ⚠ 顺序敏感：outsider 必须在**匹配之后**注册，否则它会进候选池 → `quickBattle` 的"唯一候选应是 B"断言 flaky
+    const outsider = await h.register(s.port, h.uniqueName('trc'), undefined, { publicId: 'u_trc00001', playerId: 'pl_trc000000000003' });
     const url = `/api/v1/replay/${data.battleId}`;
     const traceOf = (body) => body.data.frames.flatMap((f) => f.diff.aiTrace);
     const ownersOf = (body) => [...new Set(traceOf(body).map((x) => x.owner))];
     // `store.read`(kind=archive) 只在**重算**路径记录 → 用它证明某次请求走的是缓存路径（P1-1 两条路径都要覆盖）
     const archiveReads = () => s.logger.records.filter((x) => x.event === 'store.read' && x.data && x.data.kind === 'archive').length;
 
-    // ① p1 视角（默认 = self）：重算路径（首次请求必然无帧缓存）
+    // ① p1 视角（重算路径）：D-167 起**双方** trace 都在（不再按 side 裁剪）
     const v1 = await h.request(s.port, 'GET', url, undefined, h.authed(a.token));
     assert.equal(v1.status, 200, v1.raw);
-    const t1 = traceOf(v1.body);
-    assert.ok(t1.length > 0, 'p1 视角仍返回**自己**的 trace（不是空数组）');
-    assert.deepEqual(ownersOf(v1.body), ['p1'], `p1 视角 aiTrace 全为 p1（实得 ${ownersOf(v1.body).join(',')}）`);
-    assert.ok(v1.body.data.frames.every((f) => Array.isArray(f.diff.aiTrace)), '每帧仍带 aiTrace 数组（只裁剪内容，不丢字段）');
-    assert.ok(v1.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p1')), '逐帧无 p2 泄漏');
+    assert.ok(traceOf(v1.body).length > 0, 'trace 非空');
+    assert.deepEqual([...ownersOf(v1.body)].sort(), ['p1', 'p2'], `D-167：双方 trace 都在（实得 ${ownersOf(v1.body).join(',')}）`);
+    assert.ok(v1.body.data.frames.every((f) => Array.isArray(f.diff.aiTrace)), '每帧带 aiTrace 数组');
+    assert.ok(!('events' in v1.body.data.frames[0].diff), 'D-167：默认（render）帧不含引擎日志');
 
-    // ② 同一请求再次命中**进程内帧缓存**路径：同样裁剪（P1-1 要求两条路径一致）
+    // ② 命中**进程内帧缓存**路径：同样带双方 trace（两条路径一致）
     const frameId = s.runtime.replayMeta.get(data.battleId).frameId;
     assert.ok(frameId, '首次请求已登记帧缓存（走缓存路径的前提）');
     const readsBefore = archiveReads();
     const v1c = await h.request(s.port, 'GET', url, undefined, h.authed(a.token));
     assert.equal(v1c.status, 200);
     assert.equal(archiveReads(), readsBefore, '第二次请求未走重算 → 确实命中缓存路径（P1-1 覆盖两路径）');
-    assert.deepEqual(ownersOf(v1c.body), ['p1'], '缓存命中路径同样裁剪到 p1');
-    assert.ok(v1c.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p1')), '缓存路径逐帧无 p2 泄漏');
+    assert.deepEqual([...ownersOf(v1c.body)].sort(), ['p1', 'p2'], '缓存命中路径同样带双方 trace');
 
-    // ③ p2 视角：只拿 p2 自己的
+    // ③ p2 视角：同样双方（D-167 的核心变更）
     const v2 = await h.request(s.port, 'GET', url, undefined, h.authed(b.token));
     assert.equal(v2.status, 200, v2.raw);
-    const t2 = traceOf(v2.body);
-    assert.ok(t2.length > 0);
-    assert.deepEqual(ownersOf(v2.body), ['p2'], 'p2 视角 aiTrace 全为 p2');
-    assert.ok(v2.body.data.frames.every((f) => f.diff.aiTrace.every((x) => x.owner === 'p2')), '逐帧无 p1 泄漏');
+    assert.deepEqual([...ownersOf(v2.body)].sort(), ['p1', 'p2'], 'p2 视角同样拿到双方 trace');
 
-    // ④ 管理员 ?trace=all：两侧都给（裁剪只是过滤，帧集合不变）
-    //    注意：`trace=all` 只是解除 trace 裁剪；回放本身的**参与者鉴权**不变（§9.4/D-135）
-    //    → 管理员须同时以参与者身份登录 + 携带 x-admin-token
-    const vAll = await h.request(s.port, 'GET', `${url}?trace=all`, undefined, { ...h.authed(a.token), 'x-admin-token': ADMIN });
-    assert.equal(vAll.status, 200, vAll.raw);
-    const tAll = traceOf(vAll.body);
-    assert.deepEqual([...ownersOf(vAll.body)].sort(), ['p1', 'p2'], '?trace=all 返回双方 trace');
-    assert.ok(tAll.every((x) => x.owner === 'p1' || x.owner === 'p2'), '不出现第三类 owner');
-    assert.ok(tAll.some((x) => x.owner === 'p1') && tAll.some((x) => x.owner === 'p2'), '双方都非空');
+    // ④ 非参与者（无 debug）→ 403 不变（参与者鉴权仍由 record 判定）
+    const other = await h.request(s.port, 'GET', url, undefined, h.authed(outsider.token));
+    assert.equal(other.status, 403, other.raw);
+    assert.equal(other.body.error.code, 'replay_forbidden');
 
-    // ⑤ 无管理员令牌（玩家 token 不算）→ 403 forbidden；错误令牌同理
-    const noTok = await h.request(s.port, 'GET', `${url}?trace=all`, undefined, h.authed(a.token));
+    // ⑤ frames=debug：无/错管理员令牌 → 403；正确令牌 → 200、**含引擎日志 events**、且可越过参与者鉴权（非参与者也放行）
+    const noTok = await h.request(s.port, 'GET', `${url}?frames=debug`, undefined, h.authed(a.token));
     assert.equal(noTok.status, 403, noTok.raw);
     assert.equal(noTok.body.error.code, 'forbidden');
-    const badTok = await h.request(s.port, 'GET', `${url}?trace=all`, undefined, { 'x-admin-token': 'nope' });
+    const badTok = await h.request(s.port, 'GET', `${url}?frames=debug`, undefined, { 'x-admin-token': 'nope' });
     assert.equal(badTok.status, 403);
-    assert.ok(s.logger.records.some((x) => x.event === 'api.reject' && x.data.code === 'forbidden'), '越权 trace=all 记 api.reject');
+    const dbg = await h.request(s.port, 'GET', `${url}?frames=debug`, undefined, { ...h.authed(outsider.token), 'x-admin-token': ADMIN });
+    assert.equal(dbg.status, 200, dbg.raw);
+    assert.ok(Array.isArray(dbg.body.data.frames[0].diff.events), 'debug 帧必须带 events（引擎日志真源）');
+    assert.ok(dbg.body.data.frames[0].diff.events.length > 0, 'events 非空（每 tick 有 tick.begin/step/end）');
+    assert.deepEqual([...ownersOf(dbg.body)].sort(), ['p1', 'p2'], 'debug 帧同样带双方 trace');
+    assert.ok(s.logger.records.some((x) => x.event === 'store.abuse.suspect' && x.data && x.data.debug === true),
+      '管理员读取非参与对局必须记审计 warn');
+    // 调试帧逐帧 cid/tick 归属仍然正确（沿用 B22 P1-1 契约）
+    for (const f of dbg.body.data.frames) {
+      for (const e of f.diff.events) {
+        assert.equal(e.tick, f.tick, '事件归属自己的 tick');
+        assert.ok(typeof e.cid === 'string' && e.cid.startsWith(`t${f.tick}:`), '事件带 cid');
+      }
+    }
 
-    // ⑥ 未知 trace 值 → 400 bad_request（不是静默按 self 处理）
-    const badVal = await h.request(s.port, 'GET', `${url}?trace=nope`, undefined, h.authed(a.token));
+    // ⑥ 非法 frames 值 → 400；已废弃的 ?trace=* 被忽略（200，且不裁剪）
+    const badVal = await h.request(s.port, 'GET', `${url}?frames=nope`, undefined, h.authed(a.token));
     assert.equal(badVal.status, 400, badVal.raw);
     assert.equal(badVal.body.error.code, 'bad_request');
-    // 显式 ?trace=self 与默认一致（只比裁剪结果：owner 集合 + 每帧 owner 序列）
-    const selfExplicit = await h.request(s.port, 'GET', `${url}?trace=self`, undefined, h.authed(a.token));
-    assert.deepEqual(ownersOf(selfExplicit.body), ['p1']);
-    assert.deepEqual(
-      selfExplicit.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
-      v1c.body.data.frames.map((f) => f.diff.aiTrace.map((x) => x.owner)),
-      '显式 ?trace=self 与默认 self 的裁剪结果一致',
-    );
+    const legacyParam = await h.request(s.port, 'GET', `${url}?trace=nope`, undefined, h.authed(a.token));
+    assert.equal(legacyParam.status, 200, 'trace 参数已废弃 → 忽略');
+    assert.deepEqual([...ownersOf(legacyParam.body)].sort(), ['p1', 'p2']);
+    const selfParam = await h.request(s.port, 'GET', `${url}?trace=self`, undefined, h.authed(a.token));
+    assert.equal(selfParam.status, 200);
+    assert.deepEqual([...ownersOf(selfParam.body)].sort(), ['p1', 'p2'], 'trace=self 不再裁剪');
 
-    // ⑦ 遗留 r<seq> 回放零回归（无参与者身份 → 不裁剪；双方 AI 由调用方自备）
+    // ⑦ 遗留 r<seq> 回放零回归（同样带双方 trace）
     const legacy = await h.request(s.port, 'POST', '/api/v1/battle', { p1: LD.loadout, p2: LD.loadout, warehouse: LD.warehouse, seed: 4242, tier: TIER });
     assert.equal(legacy.status, 200, legacy.raw);
     const lr = await h.request(s.port, 'GET', `/api/v1/replay/${legacy.body.data.id}`);
     assert.equal(lr.status, 200, lr.raw);
     assert.ok(lr.body.data.frames.length > 0);
+    assert.deepEqual([...ownersOf(lr.body)].sort(), ['p1', 'p2']);
   }, { server: { adminToken: ADMIN } });
 });
 

@@ -269,6 +269,16 @@
 
 ---
 
+### 14.5 战斗回放帧契约（2026-09-25 追加，D-167）
+
+> 用户 2026-09-25 就"匹配后要拿到完整战斗过程供前端表现"给出的口径：**回放帧 = 画面数据 + 双方 AI 轨迹，不含日志**；**帧瘦身**（实测日志占 76–84%）；**匹配响应内联全量帧**；日志改由**管理员调试接口**提供；**aiTrace 永远双方都给**（前端只画自己一侧）。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-167** | ⚠️ **回放帧契约重构：画面数据自足 + 双方 aiTrace + 日志出帧 + 匹配内联全量帧**：<br>① **引擎 `diff` 扩充（画面自足）**：`players.<side>` 补 `maxHp/maxMp/maxSp/atk/def`、`defending/dodging/fullDodge`、`action{kind,dir?,sid?,cells?}`（**本 tick 实际提交的行动**，`kind ∈ move/dodge/forced_move/cast/displacement/defend/turn/wait`）、`effects[]`（buff 摘要，与 AI 快照同形状）；`bases.<side>` 补 `maxHp`；**新增 `baseHits[]`**（玩家撞基地，**修掉"同 tick 双方各撞基地只结算一侧"的旧缺陷**）与 **`damages[]`**（`{target,amount,atX,kind,srcUid,attacker,crit,critM,backstab,backM,dodged}`，`kind ∈ bullet/collision/base/overtime`）；`bullets[]` 由"仅生成记录"升级为**完整生命周期**（`spawnX/endX/outcome:'hit'\|'collide'\|'expire'/hitTarget/collideWith/collideWinner/collided/expired`，含 `v/len`）。<br>② **对外帧剥掉 `events`**（引擎日志流仍在引擎/L4 内部保留，供 demo/CLI/审计）：实测日志占整场 **76–84%**（每 tick 14 条 `tick.step` 等），与"表现战斗过程"无关；帧体量由 92–219 KB/场降至 **10–21 KB/场**（10 场约 0.1–0.2 MB，而旧口径约 2 MB）。<br>③ **`aiTrace` 永远返回双方**（**推翻 §9.4 的"只给请求方一侧"**）：前端绘制只画自己一侧即可；`?trace=self\|all` **废弃**（参数被忽略）。**已接受风险**：玩家可见对手 AI 的逐步执行轨迹与条件值（程序源码仍不外泄）——登记为 SEC-33。<br>④ **新增 `GET /api/v1/replay/:id?frames=debug`**（`DL_ADMIN_TOKEN`/`DL_ADMIN_USERS`）：返回**含 `events`** 的原始帧，并可越过参与者鉴权排查他人对局（每次访问记 `store.abuse.suspect` 审计）；非法 `frames` 值 → 400 `bad_request`。<br>⑤ **匹配响应内联全量帧**：`POST /quick/run` → `data.frames`；`POST /ranked/run` → `results[].frames`（幂等重放 `duplicate` 场次不回带，客户端按 `battleId` 走 `GET /replay/:id`）。帧由 `ranked.battleOne` 直接产出并经 `battle.toFrames` 投影 ⇒ **不写 `battle.REPLAYS` 注册表**（无上限增长与本条无关）。**同时修掉 `battleOne` 不传 `aiTrace` 缓冲导致内联帧 trace 恒空**的缺陷。<br>⑥ 引擎 `diff` 仍逐帧携带 `events`（契约未变）；审计工具 `.audit/replay-audit.js` 改为：`events` **可选**（缺失则跳过 cid 检查），并把原"命中帧链基于日志"的检查改写为**基于帧内结构**（`bullets.outcome=hit → bulletHits → damages.srcUid` 三方一致 + **hp 下降必须被 damages 归因** + `hp ≤ maxHp`） | `server/core/engine.js`（diff/baseHits/damages/bullets 生命周期/action/effects）、`server/battle.js`（`toFrames`：默认剥 events，`keepEvents` 供调试）、`server/ranked.js`（`battleOne` 回带 frames + aiTrace 缓冲）、`server/quickmatch.js`（响应内联 frames）、`server/index.js`（`frames=debug` + 去 trace 裁剪）、`cli/index.js`（回放改读 `damages`）、`.audit/replay-audit.js`、`docs/interfaces.md` §2/§4.3/§5、`docs/systems/07-engine.md` §4.8、`docs/server.md` §11、`docs/security-backlog.md` SEC-33、`tests/api/api-match-frames.test.js`（MF-1…MF-3）、`tests/unit/replay.test.js`、`tests/api/api-battle.test.js`、`tests/api/api-battle-legacy-replay-trace.test.js`、`tests/api/api-replay-auth.test.js`（RP-7 重写）、`tests/cli/cli-replay.test.js`、`tests/cli/cli-battle.test.js` |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

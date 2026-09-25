@@ -97,22 +97,28 @@ function runBattle(opts) {
   runtime.destroyContext(b2.ctx);
 
   const id = `r${++replaySeq}`;
-  const frames = result.diffs.map((d) => ({
-    tick: d.tick,
-    diff: {
-      players: d.players,
-      bullets: d.bullets,
-      bases: d.bases,
-      events: d.events || [],
-      aiTrace: d.aiTrace || [],
-      collision: d.collision || null,
-      bulletHits: d.bulletHits,
-      verdict: d.verdict || null,
-    },
-  }));
+  const frames = toFrames(result.diffs, { keepEvents: opts.keepEvents === true });
   const summary = { id, seed, tier, winner: result.winner, phase: b.state.verdict ? b.state.verdict.phase : null, ticks: result.ticks };
   REPLAYS.set(id, { ...summary, frames });
   return { status: 200, data: { ...summary, frames } };
+}
+
+/* ---------- D-167：对外帧投影（画面数据自足；日志只走管理员调试接口） ----------
+ * · **默认剥掉 `events`**：`events` 是引擎的可观测性日志流（每 tick 14 条 `tick.step` 等），实测占整场
+ *   76%~84% 的字节，与"表现战斗过程"无关；渲染所需的伤害数值/暴击背击标记已在 `diff.damages[]` 里。
+ * · 其它字段**原样带出**（按 diff 自身的键遍历 ⇒ 引擎将来新增字段自动随行，不会漏字段）。
+ * · `keepEvents: true` 供 `POST /api/v1/admin/replay-frames`（工程排查）使用。
+ */
+function toFrames(diffs, opts) {
+  const keepEvents = !!(opts && opts.keepEvents);
+  return (Array.isArray(diffs) ? diffs : []).map((d) => {
+    const diff = {};
+    for (const k of Object.keys(d)) {
+      if (k === 'events' && !keepEvents) continue;
+      diff[k] = d[k];
+    }
+    return { tick: d.tick, diff };
+  });
 }
 
 // 取回放（?from=&to= 1-based 含端；默认全量）；未知 id → 404
@@ -124,4 +130,4 @@ function getReplay(id, from, to) {
   return { status: 200, data: { id: rep.id, seed: rep.seed, winner: rep.winner, phase: rep.phase, ticks: rep.ticks, frames: rep.frames.slice(lo - 1, hi) } };
 }
 
-module.exports = { runBattle, getReplay, buildPlayer, sideWarehouses, REPLAYS };
+module.exports = { runBattle, getReplay, buildPlayer, sideWarehouses, toFrames, REPLAYS };

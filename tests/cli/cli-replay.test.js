@@ -39,7 +39,17 @@ test('帧充分性审计（auditFrames）：字段/1px/tick 连续/事件 cid/�
   assert.equal(r.status, 200);
   const audit = auditFrames(r.data.frames);
   assert.equal(audit.ok, true, audit.problems.join('；'));
-  assert.ok(audit.stats.frames > 0 && audit.stats.events > 0, '事件密度非零（B22 P1-1 修复后 events 非空）');
+  // D-167：对外帧不再携带引擎日志（events）；"这一帧发生了什么"改由结构化 damages/bullets 承载。
+  //   断言强度不降：要求每一处 hp 变化都能在 damages 里找到归因（或本 tick 无伤害）。
+  const dmgFrames = r.data.frames.filter((f) => (f.diff.damages || []).length > 0);
+  assert.ok(dmgFrames.length > 0, '技能局应有带 damages 的帧（本用例不得空转）');
+  for (const f of dmgFrames) {
+    for (const dm of f.diff.damages) {
+      assert.ok(Number.isInteger(dm.amount) && dm.amount >= 0, `damages.amount 非法: ${JSON.stringify(dm)}`);
+      assert.ok(['bullet', 'collision', 'base', 'overtime'].includes(dm.kind), `damages.kind 非法: ${dm.kind}`);
+    }
+  }
+  assert.equal('events' in r.data.frames[0].diff, false, 'D-167：对外帧不得携带 events（日志走 /admin/replay-frames）');
   // 负向验证：篡改一帧 → 审计必抓
   const bad = JSON.parse(JSON.stringify(r.data.frames));
   delete bad[0].diff.bases;
@@ -93,7 +103,7 @@ test('B23 audit 第七维：技能局 hits>0 且链序/守恒通过（雕像局�
 });
 
 // ================= B23 可读性增强（用户 2026-09-19 勾选项 2）：伤害值 + 暴击/背击标注 =================
-// 素材：帧 events[] 的 damage.calc（hitUid/dmg/crit/critM/backstab/backM）——只读帧，不改退出码契约（0/1/2）。
+// 素材：帧 `diff.damages[]` 的 `{srcUid,attacker,target,amount,crit,critM,backstab,backM}`（D-167 起）——只读帧，不改退出码契约（0/1/2）。
 
 // 有命中的真实回放（skillAi vs 追击者：seed 20260913 稳定产生 bulletHits）
 function makeHitReplayFile() {
@@ -118,13 +128,11 @@ function makeSyntheticReplayFile() {
       },
       collision: { contactX: 256 },
       bulletHits: [{ uid: 'b_1', target: 'p2', atX: 500 }, { uid: 'b_2', target: 'p1', atX: 400 }],
-      events: [
-        { cid: 't1:1', channel: 'damage', event: 'damage.calc', msg: 'A -> B 12', data: { attacker: 'A', target: 'B', dmg: 12, crit: true, critM: 1.5, backstab: true, backM: 1.5, hitUid: 'b_1' } },
-        { cid: 't1:2', channel: 'damage', event: 'damage.calc', msg: 'B -> A 7', data: { attacker: 'B', target: 'A', dmg: 7, crit: false, backstab: false, hitUid: 'b_2' } },
-        { cid: 't1:3', channel: 'damage', event: 'damage.calc', msg: 'A -> B 5', data: { attacker: 'A', target: 'B', dmg: 5, crit: false, backstab: true, backM: 1.5, hitUid: null } },
-        { cid: 't1:4', channel: 'damage', event: 'damage.calc', msg: '缺 data（护栏）' },
-        { cid: 't1:5', channel: 'damage', event: 'damage.dodge', msg: 'B 闪避', data: { target: 'B' } },
-        { cid: 't1:6', channel: 'engine', event: 'tick.end', msg: 'tick 1 完成', data: { tick: 1 } },
+      // D-167：伤害数值改由 damages[] 承载（不再有 events）
+      damages: [
+        { srcUid: 'b_1', attacker: 'p1', target: 'p2', amount: 12, atX: 500, kind: 'bullet', crit: true, critM: 1.5, backstab: true, backM: 1.5, dodged: false },
+        { srcUid: 'b_2', attacker: 'p2', target: 'p1', amount: 7, atX: 400, kind: 'bullet', crit: false, critM: 1, backstab: false, backM: 1, dodged: false },
+        { srcUid: null, attacker: 'p1', target: 'p2', amount: 5, atX: null, kind: 'collision', crit: false, critM: 1, backstab: true, backM: 1.5, dodged: false },
       ],
       verdict: null,
     },
@@ -138,7 +146,7 @@ function makeSyntheticReplayFile() {
       },
       collision: null,
       bulletHits: [{ uid: 'b_9', target: 'p2', atX: 50 }],
-      // 故意缺 events 字段（护栏分支；命中无伤害事件 → 只显示命中坐标）
+      // 故意缺 damages 字段（护栏分支；命中无对应伤害 → 只显示命中坐标）
     },
   };
   const frame3 = {
@@ -150,7 +158,7 @@ function makeSyntheticReplayFile() {
       },
       collision: null,
       bulletHits: [],
-      events: [null, { cid: 't3:1', channel: 'damage', event: 'damage.calc', msg: 'A -> B 3', data: { attacker: 'A', target: 'B', dmg: 3, crit: false, backstab: false, hitUid: null } }],
+      damages: [null, { srcUid: null, attacker: 'p1', target: 'p2', amount: 3, atX: null, kind: 'overtime', crit: false, critM: 1, backstab: false, backM: 1, dodged: false }],
       verdict: { winner: 'p1', phase: 'role' },
     },
   };
@@ -168,23 +176,23 @@ test('B23 增强：真实战斗回放逐帧命中带伤害归属与数值（hitU
     const outText = rest.log.concat(rest.err).join('\n');
     const hits = frames.flatMap((f) => (f.diff.bulletHits || []).map((h) => ({ ...h })));
     assert.ok(hits.length > 0, '夹具局应有命中（否则本用例空转）');
-    const dmgUids = new Set(frames.flatMap((f) => (f.diff.events || [])
-      .filter((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.hitUid)
-      .map((e) => e.data.hitUid)));
-    assert.ok(dmgUids.size > 0, '夹具局应有带 hitUid 的伤害事件');
+    const dmgUids = new Set(frames.flatMap((f) => (f.diff.damages || [])
+      .filter((dm) => dm && typeof dm.srcUid === 'string' && dm.srcUid !== '')
+      .map((dm) => dm.srcUid)));
+    assert.ok(dmgUids.size > 0, '夹具局应有带 srcUid 的伤害记录');
     for (const h of hits) {
       const base = `${h.uid}->${h.target}@${h.atX}`;
       assert.ok(outText.includes(base), `回放应含命中坐标 ${base}`);
       if (dmgUids.has(h.uid)) assert.ok(outText.includes(`${base}->`), `命中 ${h.uid} 应带伤害归属（uid->目标@坐标->攻方->受方 数值）`);
-      else assert.ok(!outText.includes(`${base}->`), `命中 ${h.uid} 无 damage.calc → 不应伪造伤害数字`);
+      else assert.ok(!outText.includes(`${base}->`), `命中 ${h.uid} 无 damages → 不应伪造伤害数字`);
     }
     // 帧里出现暴击/背击时，输出必须标注（条件断言；绝对值由下一条合成帧用例钉死）
-    const evs = frames.flatMap((f) => f.diff.events || []);
-    if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.crit)) {
-      assert.ok(outText.includes('暴击×'), '存在暴击事件 → 输出应标注暴击');
+    const dms = frames.flatMap((f) => f.diff.damages || []);
+    if (dms.some((dm) => dm && dm.crit)) {
+      assert.ok(outText.includes('暴击×'), '存在暴击 → 输出应标注暴击');
     }
-    if (evs.some((e) => e && e.channel === 'damage' && e.event === 'damage.calc' && e.data && e.data.backstab)) {
-      assert.ok(outText.includes('背击×'), '存在背击事件 → 输出应标注背击');
+    if (dms.some((dm) => dm && dm.backstab)) {
+      assert.ok(outText.includes('背击×'), '存在背击 → 输出应标注背击');
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -197,20 +205,20 @@ test('B23 增强：渲染分支钉死（暴击/背击/无标注/无 hitUid 伤�
     const all = await c.capture(() => cli.main(['replay', '--file', file], { baseUrl: 'http://127.0.0.1:1' }));
     assert.equal(all.result, 0, '全量时间线 → 0');
     const outText = merged(all);
-    assert.ok(outText.includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), `暴击+背击应标注：${outText}`);
-    assert.ok(outText.includes('b_2->p1@400->B->A 7'), '无暴击/背击 → 只有数值，无括号标注');
-    assert.ok(!outText.includes('B->A 7 ('), '无标注时不得输出括号尾巴');
-    assert.ok(outText.includes('| 伤害[A->B 5 (背击×1.5)]'), '无 hitUid 的伤害（碰撞/附加）归入「伤害[]」段');
-    assert.ok(outText.includes('| 伤害[A->B 3]'), '第 3 帧无 hitUid 伤害同样渲染');
-    assert.ok(outText.includes('| 命中[b_9->p2@50]'), '命中无对应伤害事件 → 只显示坐标（不伪造数字）');
-    assert.ok(outText.includes('tick 2: p1 288->288'), '帧 2 缺 events 字段不抛（护栏）');
+    assert.ok(outText.includes('b_1->p2@500->p1->p2 12 (暴击×1.5 背击×1.5)'), `暴击+背击应标注：${outText}`);
+    assert.ok(outText.includes('b_2->p1@400->p2->p1 7'), '无暴击/背击 → 只有数值，无括号标注');
+    assert.ok(!outText.includes('p2->p1 7 ('), '无标注时不得输出括号尾巴');
+    assert.ok(outText.includes('| 伤害[p1->p2 5 (背击×1.5)]'), '无 srcUid 的伤害（碰撞/撞基地/超时）归入「伤害[]」段');
+    assert.ok(outText.includes('| 伤害[p1->p2 3]'), '第 3 帧无 srcUid 伤害同样渲染');
+    assert.ok(outText.includes('| 命中[b_9->p2@50]'), '命中无对应伤害记录 → 只显示坐标（不伪造数字）');
+    assert.ok(outText.includes('tick 2: p1 288->288'), '帧 2 缺 damages 字段不抛（护栏）');
     assert.ok(outText.includes('verdict: winner=p1 phase=role（3 tick）'), '终帧 verdict 行保持');
     // 单帧路径（--tick 1）同样带伤害标注
     const one = await c.capture(() => cli.main(['replay', '--file', file, '--tick', '1'], { baseUrl: 'http://127.0.0.1:1' }));
     assert.equal(one.result, 0, '--tick 1 → 0');
-    assert.ok(merged(one).includes('b_1->p2@500->A->B 12 (暴击×1.5 背击×1.5)'), '单帧路径同样标注伤害');
+    assert.ok(merged(one).includes('b_1->p2@500->p1->p2 12 (暴击×1.5 背击×1.5)'), '单帧路径同样标注伤害');
     const two = await c.capture(() => cli.main(['replay', '--file', file, '--tick', '2'], { baseUrl: 'http://127.0.0.1:1' }));
-    assert.equal(two.result, 0, '--tick 2（缺 events 字段）→ 0 不抛');
+    assert.equal(two.result, 0, '--tick 2（缺 damages 字段）→ 0 不抛');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

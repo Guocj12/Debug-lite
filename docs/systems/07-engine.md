@@ -125,9 +125,10 @@
 
 ### 4.8 帧差异输出（供前端绘制）
 
-1. 每 tick 生成 `diff`：`players`（**对象 `{p1,p2}`，不是数组**；各自 `fromX/toX/facing/hp/mp/sp`）、`bullets`、`bases`、`events`、`aiTrace`，另含 `collision`（碰撞位置）、`bulletHits`（命中 uid/目标/1px 命中位置）、`verdict`；位置、碰撞位置、命中位置均为 **1px** 精度。
-2. 事件带 `cid`（`t{tick}:{owner}:{seq}`），可串联 `skill.cast → bullet.spawn → bullet.collide → bullet.hit → damage.calc → effect.add → tick.end`。
-3. 前端只按 `diff` 插值绘制，不自行重模拟。
+1. 每 tick 生成 `diff`：`players`（**对象 `{p1,p2}`，不是数组**）、`bullets`、`bases`、`events`、`aiTrace`，另含 `collision`（碰撞位置）、`baseHits[]`（玩家撞基地）、`bulletHits`（命中 uid/目标/1px 命中位置）、`damages[]`（伤害数值与来源）、`verdict`；位置、碰撞位置、命中位置、弹幕出现/消失位置、伤害位置均为 **1px** 精度。
+2. **D-167（2026-09-25）画面数据自足**：`players.<side>` = `{fromX,toX,facing, hp,mp,sp, maxHp,maxMp,maxSp, atk,def, defending,dodging,fullDodge, action{kind,dir?,sid?,cells?}, effects[]}`（`action` = 本 tick **实际提交**的行动，`kind ∈ move/dodge/forced_move/cast/displacement/defend/turn/wait`；`effects[]` 同 AI 快照形状）；`bases.<side>` 含 `maxHp`；`bullets[]` 为**完整生命周期**（`spawnX/endX/outcome:'hit'|'collide'|'expire'/hitTarget/collideWith/collideWinner`）；`damages[]` = `{target,amount,atX,kind:'bullet'|'collision'|'base'|'overtime',srcUid,attacker,crit,critM,backstab,backM,dodged}`。`baseHits` 用**数组**（同 tick 双方可各自撞基地——旧版只结算一侧，已修）。
+3. 事件带 `cid`（`t{tick}:{owner}:{seq}`），可串联 `skill.cast → bullet.spawn → bullet.collide → bullet.hit → damage.calc → effect.add → tick.end`。**引擎 `diff.events` 契约不变**（demo/CLI/审计在进程内消费）；但**对外帧（HTTP）不携带 `events`**（`server/battle.js` 的 `toFrames` 默认剥掉；日志改由 `GET /replay/:id?frames=debug` 提供），且 `aiTrace` **双方都给**。
+4. 前端只按 `diff` 插值绘制，不自行重模拟。
 
 ## 5. 边界与异常
 

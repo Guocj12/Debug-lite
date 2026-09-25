@@ -32,7 +32,12 @@ test('CLI battle：--p1/--p2 对战 → 0；--out 落盘回放 JSON 且可读', 
     const disc = JSON.parse(fs.readFileSync(out, 'utf8'));
     assert.ok(disc.summary && Number.isInteger(disc.summary.ticks) && disc.summary.ticks > 0, '回放文件含 summary');
     assert.equal(disc.frames.length, disc.summary.ticks, '回放文件帧数 == ticks');
-    assert.ok('diff' in disc.frames[0] && 'events' in disc.frames[0].diff, '帧契约（B23 回放器输入）');
+    // D-167：对外帧 = 画面数据 + 双方 aiTrace，**不含 events**（日志走 POST /admin/replay-frames）
+    const d0 = disc.frames[0].diff;
+    for (const k of ['players', 'bullets', 'bases', 'collision', 'baseHits', 'bulletHits', 'damages', 'verdict', 'aiTrace']) {
+      assert.ok(k in d0, `帧契约缺字段 ${k}（B23 回放器输入）`);
+    }
+    assert.ok(!('events' in d0), 'D-167：对外帧不得携带 events');
     fs.unlinkSync(out);
     const noOut = await c.quiet(() => cli.main(['battle', '--p1', LD_FILE, '--p2', LD_FILE, '--seed', '7'], { baseUrl }));
     assert.equal(noOut, 0, '无 --out 也成功');

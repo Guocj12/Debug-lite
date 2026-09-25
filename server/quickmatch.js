@@ -437,6 +437,9 @@ function createQuickMatch(options) {
           delta: opponentDelta,
         },
         replayId: battleId,
+        // D-167：**内联全量战斗过程**（画面数据 + 双方 aiTrace；不含引擎日志 events）。
+        //   幂等重放（同 seed + 同双方快照 → 已存在记录）时 `r` 仍是本次真实执行结果，故帧照常回带。
+        frames: Array.isArray(r.frames) ? r.frames : null,
         duplicate: !!existing,
       },
     };

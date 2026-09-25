@@ -74,8 +74,8 @@
 | POST | `/api/v1/ai/compile` | 规范化 + programHash + 统计 | 400 `ai_too_large` | B16 ✅ 已实现 |
 | POST | `/api/v1/ai/battle` | 给定 AI 跑一场（服务端重新执行，T-AP-4） | 400 / 409 | B16 ✅ 已实现 |
 | POST | `/api/v1/battle` | 双方 loadout + AI + seed → 完整回放帧（1px 位置 + 碰撞位置；服务端重执行） | 400 `bad_request`/`bad_seed`/`bad_tier`；409 `loadout_invalid` | B22 ✅ 已实现 |
-| GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 1-based 含端分片）。**P7-4 已实现**：参与者鉴权 + 进程内 **LRU 64**（`service-config.replayCacheSize`）+ 淘汰/版本不匹配/快照失效 → 410；`b_` 型归档回放**按需重算**（不受 `DL_LEGACY_STATELESS` 影响） | 403 `replay_forbidden`；404 `unknown_replay`；410 `replay_expired` | B22 ✅ / P7-4 ✅（D-135） |
-| POST | `/api/v1/ranked/run` | 排位：**双轨（P7-4）**。① 有 Bearer token → **档案驱动**：服务端抽池（`byTier ∩ 可用快照 ∩ 未封禁 ∩ 在池 ∩ 排除自己`）、双向记账（发起者 attack 同步结算；防守方离线只记 `defense`，**不掉段不掉分**）、去重裁定（`strict` ≥72h 优先 / `relaxed` 24–72h 启用并记 `relaxed:true` / **间隔 <24h 两池皆拒——24h 硬底线**）、池不足**如实回报 `shortfall`**（**禁止 bot 充数**，D-152）、`batchId = f(playerId,seed)` 幂等、晋升在此落地。② 无 token 且 `DL_LEGACY_STATELESS=1`（默认）→ 遗留无状态（`loadout/warehouse/pool/tier` 由请求传入）；`=0` → 401 | 400 `bad_seed`/`bad_tier`/`pool_forbidden`（**传入 `pool` → 服务端抽池不接受**）/`bad_pool`（遗留路径）；401 `unauthorized`；409 `no_loadout`/`loadout_invalid`/`no_active_config`/`store_not_found`；503 `store_unavailable` | B24 ✅ / B31 ✅（D-132/D-136） |
+| GET | `/api/v1/replay/:id` | 取回放帧（`?from=&to=` 1-based 含端分片；`?frames=render\|debug`，缺省 `render`）。**P7-4 已实现**：参与者鉴权 + 进程内 **LRU 64**（`service-config.replayCacheSize`）+ 淘汰/版本不匹配/快照失效 → 410；`b_` 型归档回放**按需重算**（不受 `DL_LEGACY_STATELESS` 影响）。**D-167**：帧**永远带双方 `aiTrace`**（`?trace=*` 已废弃、被忽略）；`frames=debug` 需管理员令牌（`DL_ADMIN_TOKEN`/`DL_ADMIN_USERS`），返回**含 `events`** 的原始帧并可越过参与者鉴权（每次访问记 `store.abuse.suspect` 审计）；非法 `frames` 值 → 400 | 400 `bad_request`；403 `replay_forbidden`/`forbidden`；404 `unknown_replay`；410 `replay_expired`；503 `admin_token_missing`（debug 且管理端未配置） | B22 ✅ / P7-4 ✅（D-135） / D-167 ✅ |
+| POST | `/api/v1/ranked/run` | 排位：**双轨（P7-4）**。① 有 Bearer token → **档案驱动**：服务端抽池（`byTier ∩ 可用快照 ∩ 未封禁 ∩ 在池 ∩ 排除自己`）、双向记账（发起者 attack 同步结算；防守方离线只记 `defense`，**不掉段不掉分**）、去重裁定（`strict` ≥72h 优先 / `relaxed` 24–72h 启用并记 `relaxed:true` / **间隔 <24h 两池皆拒——24h 硬底线**）、池不足**如实回报 `shortfall`**（**禁止 bot 充数**，D-152）、`batchId = f(playerId,seed)` 幂等、晋升在此落地。② 无 token 且 `DL_LEGACY_STATELESS=1`（默认）→ 遗留无状态（`loadout/warehouse/pool/tier` 由请求传入）；`=0` → 401。**D-167**：`results[].frames` **内联该场完整战斗过程**（画面数据 + 双方 `aiTrace`，不含日志；幂等重放场次为 `null`，按 `battleId` 走 `GET /replay/:id`） | 400 `bad_seed`/`bad_tier`/`pool_forbidden`（**传入 `pool` → 服务端抽池不接受**）/`bad_pool`（遗留路径）；401 `unauthorized`；409 `no_loadout`/`loadout_invalid`/`no_active_config`/`store_not_found`；503 `store_unavailable` | B24 ✅ / B31 ✅（D-132/D-136） / D-167 ✅ |
 | POST | `/api/v1/ranked/promote` | 晋升（x=6，D-122）+ 段位奖励品质。有 token → **段位以档案为准**（入参 `tier` 不一致 → 403）；**只判定不落盘**（落盘在 `/ranked/run`）；无 token → 遗留口径（`tier`/`wins` 由请求传入） | 400 `bad_tier`/`bad_wins`；401 `unauthorized`；403 `forbidden`；409 `already_max` | B25 ✅ / B31 ✅ |
 | POST | `/api/v1/auth/register` | 注册（下发默认配置 + token，D-131）；**并发同名注册闭合**（`withRegisterLock`） | 400 `weak_password`/`bad_request`；409 `username_taken` | B28 ✅ 已实现 |
 | POST | `/api/v1/auth/login` | 登录发 token | 401 `invalid_credentials`；429 `too_many_attempts` | B28 ✅ 已实现 |
@@ -99,7 +99,7 @@
 | GET | `/api/v1/me/records` | 战绩（`?since=&limit=&role=`）；返回 `records/since/latestSeq/limit/role/unread/maxSeq` | 400 `bad_request`；401 | B30 ✅ 已实现 |
 | POST | `/api/v1/me/records/seen` | 推进未读游标（**游标推进的唯一入口**）；**别名** `/me/seen` ≡ 本行 | 400 `bad_request`；401 | B30 ✅ 已实现 |
 | GET | `/api/v1/me/defense` | 防守战绩汇总（被抽场次/胜负/最近） | 401 | B30 ✅ 已实现 |
-| POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，D-133）；响应 `seed` = **对局种子**（入参 `seed` 只影响匹配抽选） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`/`no_active_config`/`store_not_found` | B32 ✅ 已实现 |
+| POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算，D-133）；响应 `seed` = **对局种子**（入参 `seed` 只影响匹配抽选）。**D-167**：响应内联 `data.frames` = 该场**完整战斗过程**（画面数据 + 双方 `aiTrace`，不含日志） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`/`no_active_config`/`store_not_found` | B32 ✅ 已实现 / D-167 ✅ |
 | GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`；只回 `publicId/nickname/points/tier`，**不回 `playerId`**） | 400 `bad_scope` | B30/B32 ✅ 已实现 |
 | POST | `/api/v1/admin/bots` | 注入调试 bot 档案（**双门控**：`DL_ADMIN_TOKEN` + `DL_DEBUG_BOTS=1`）。**D-165**：注入即写入**真实（合成）仓库**，使其回放可重算；**D-166**：每个 bot 按自身 `botKey` 派生**不同**预设（3 族 × 3 子变体），可选 `preset` 指定族（非法 → 400 `bad_request`），响应回带 `preset` | 401/403 `forbidden`；403 `debug_bots_disabled`；503 `admin_token_missing`；400 `bad_request` | B33 ✅ / D-165 / D-166 ✅ |
 | POST | `/api/v1/admin/rebuild-index` | 重建索引 | 401/403；503 `admin_token_missing` | B33 ✅ 已实现 |
@@ -185,7 +185,19 @@ health | data <table>
 
 1. **BattleState**：`tick/seed/rng/players{p1,p2}/bases/bullets/verdict/queuedActions`（`createBattle` 实际产出；**没有** `events[]`/`rngStreams`——整场事件由调用方注入缓冲，按 tick 切进 `frame.diff.events`）。
 2. **玩家运行时**：`x`（px，1px 精度）/`facing`/`hp,mp,sp`/`maxHp,maxMp,maxSp`/`atk,def`/`regen{hp,mp,sp}`（模板 regen + 角色插件 `*_regen` 词条叠加）/`special`/`cooldowns{}`/`effects[]`/`skills{}`/`aiContext`/每 tick 瞬时标记 `defending`（D-43）/`dodging`/`fullDodgeDuring`（步骤 6 置位、步骤 1 复位，D-72）。
-3. **回放帧 `frame`**：`{tick, diff}`；`diff = {players, bullets, bases, events, aiTrace, collision, bulletHits, verdict}`——**`diff.players` 是对象 `{p1,p2}`（不是数组）**，各含 `fromX/toX/facing/hp/mp/sp`；位置、碰撞位置、命中位置均 **1px**；事件带 `cid`（D-17/D-23）。
+3. **回放帧 `frame`（D-167 重构；画面数据自足）**：`{tick, diff}`，`diff` 字段如下——**`diff.players` 是对象 `{p1,p2}`（不是数组）**；位置/碰撞位置/命中位置/弹幕出现消失位置/伤害位置均 **1px 整数**。
+   - `players.<side>`：`{fromX,toX,facing, hp,mp,sp, maxHp,maxMp,maxSp, atk,def, defending,dodging,fullDodge, action, effects[]}`
+     - `action` = **本 tick 实际提交的行动**（步骤 5 控制复写后、步骤 6 提交后）：`{kind:'move'|'dodge'|'forced_move'|'cast'|'displacement'|'defend'|'turn'|'wait', dir?, sid?, cells?}`；技能未装配/不可施放时 `kind:'wait'`（诚实表达"这一步什么也没做成"）。
+     - `effects[]` = buff 摘要，与 AI 快照同形状：`{uid,kind,stat,delta,displacement,remaining}`。
+   - `bullets[]`：**完整生命周期**（弹幕当 tick 全解算，D-20）：`{uid, owner, level, btype, srcType, dir, v, len, spawnX, endX, outcome:'hit'|'collide'|'expire', hitTarget, collideWith, collideWinner, collided, expired[, falloffFactor]}`。
+   - `bases.<side>`：`{hp, maxHp, def}`。
+   - `collision`：`{contactX, t} | null`（玩家互撞，1px 接触位置 + 参数 t）。
+   - `baseHits[]`：玩家撞基地：`{owner, by, atX}`（**数组**：同 tick 双方可各自撞基地，D-167 修掉旧版只结算一侧）。
+   - `bulletHits[]`：`{uid, target, atX}`（命中位置索引；与 `bullets[].outcome='hit'`、`damages[].srcUid` 三方一致）。
+   - `damages[]`：**伤害数值**（渲染伤害飘字/归因，替代旧口径"从日志里挖"）：`{target, amount, atX, kind:'bullet'|'collision'|'base'|'overtime', srcUid, attacker, crit, critM, backstab, backM, dodged[, overtime]}`。
+   - `verdict`：`{winner:'p1'|'p2'|'draw', reason, phase, ticks} | null`。
+   - `aiTrace[]`：**双方** AI 执行轨迹（每条带 `owner:'p1'|'p2'` 与 `tick`；D-167 起**永远双方都返回**，前端只画自己一侧）。
+   - ⚠️ **对外帧不含 `events`**（引擎日志流占整场 76–84%，与表现无关）：需要日志时用 `GET /api/v1/replay/:id?frames=debug`（管理员）；引擎内部 `diff.events` 契约不变（demo/CLI/审计在进程内消费）。
 4. **物品/技能实例/loadout/AI AST**：`decisions.md` 与 `v3-design` §4.4/§6.3/§12.2/§11.5 冻结；`loadout = {role, skills[3], ai}`（T-RK-6）。**物品 `uid` 语义（B17 登记）**：进程内单调唯一（服务重启后重新计数），不参与内容级比较——「同 seed 复现」均为**内容级**（B18 仓库以 uid 区分同 seed 双开的同内容物品）。**`action.name` 是自由标签**（D-80）：引擎 `normalizeAction` 把未知名归一化为 `wait` 并记 `action.invalid`(warn)；`ai-nodes.json` 的 `actions` 只是**词汇表登记**（前端下拉取值来源），**校验期不拒绝**任何动作名。
 5. **AiContext 序列化产物**（`runtime.serializeContext` 实际字段）：`programHash/entry/frames[{kind,path,childIndex,remaining,condValue,fnScope}]/vars/halted/stepCount/trace/stepLimit/traceLimit/recursionLimit/traceTruncated`（**可序列化**；帧存稳定 `path` + `fnScope` 快照，**不含** `nodeId/phase/scopeDepth`）。
 6. **LogRecord**：`seq/ts/cid/tick/level/levelValue/channel/event/msg/data`（§6 登记）。
@@ -243,6 +255,7 @@ health | data <table>
 | D-164 | §1 `server/runner.js`（`mirrorSnapshot`/`unmirrorAction`/`makeAiDriver`/`MIRROR_ACTION`：**守方 AI 完整镜像**，p2 的 AI 在镜像世界思考、方向动作反镜像）+ §1 `server/battle.js`·`server/ranked.js`（唯一接线处） |
 | D-165 | §1 `server/loadout.js` 的 `warehouseResolves`（**仓库覆盖判据与 `resolveItems` 同谓词**）+ §1 `server/index.js` 的 `loadWarehouse`（各来源改用该判据）+ §2 `admin/bots`（注入即携带真实仓库）+ §5 P0 修复：bot 对手回放 410 |
 | D-166 | §2 `admin/bots`（**每个 bot 按自身 `botKey` 派生不同预设** + 可选 `preset`；非法 → 400 `bad_request`；响应回带 `preset`）+ §1 `server/ranked.js` 的 `buildDefaultLoadout(identity, options)` |
+| D-167 | §4.3 **回放帧契约重构**（画面数据自足：五维/上限/行动/buff/基地受击/弹幕生命周期/伤害数值；**对外帧去 `events`**；`aiTrace` **双方都给**）+ §2 `GET /replay/:id?frames=render\|debug`（debug 需管理员，含日志、可越权排查）+ §2 `quick/run`·`ranked/run` 响应**内联 `frames`** + §1 `server/battle.js` 的 `toFrames`/`keepEvents` + §1 `server/ranked.js` 的 `battleOne` 回带 frames |
 
 ## §6 日志事件登记（§4.6 覆盖矩阵；实现批次标注，T-LG-4 断言于此）
 

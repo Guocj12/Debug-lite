@@ -23,6 +23,71 @@ const DEFAULT_CFG = require('../data/battle-config.json');
 // 词条语义注册表（命中类/释放类词条由本模块按表结算，不按 id 写分支）
 const AFFIXES = require('../data/affix-registry.json').affixes;
 
+/* ---------- D-167：回放帧的"画面数据"投影（纯标签化，不复制任何战斗公式） ---------- */
+
+// 本 tick 实际提交的行动 → 帧字段。kind 词表（冻结于 docs/interfaces.md §4.3）：
+//   move / dodge / forced_move / cast / displacement / defend / turn / wait
+function actionOfPlan(plan, intent) {
+  const p = plan || { kind: 'wait' };
+  const out = { kind: p.kind };
+  if (typeof p.dir === 'number') out.dir = p.dir;
+  if (p.kind === 'cast' || p.kind === 'displacement') {
+    out.sid = intent && typeof intent.sid === 'string' ? intent.sid : null;
+  }
+  if (p.kind === 'forced_move') out.cells = intent && typeof intent.cells === 'number' ? intent.cells : null;
+  return out;
+}
+
+// 持续效果摘要（与 AI 快照 `self.effects[i]` 同形状：uid/kind/stat/delta/remaining/displacement）
+function effectsSummaryOf(player) {
+  const list = player && Array.isArray(player.effects) ? player.effects : [];
+  return list.map((e) => ({
+    uid: e.uid === undefined ? null : String(e.uid),
+    kind: e.kind === undefined ? null : String(e.kind),
+    stat: e.stat === undefined ? null : String(e.stat),
+    delta: typeof e.delta === 'number' ? e.delta : null,
+    displacement: typeof e.displacement === 'number' ? e.displacement : null,
+    remaining: typeof e.remaining === 'number' ? e.remaining : null,
+  }));
+}
+
+// 弹幕生命周期：把"步骤 6 的生成记录"与"步骤 8 的解算事件（互撞/命中/清场）"合成一条**自足**的记录，
+//   使渲染方无需自行推算"在哪里消失 / 是什么结局"（弹幕当 tick 全解算，D-20）。
+//   outcome ∈ {'hit'|'collide'|'expire'}：'collide' = 该弹幕被互撞移除（含双方同灭）；'expire' = tick 末清场。
+function bulletsLifecycleOf(spawns, events) {
+  const ev = events || {};
+  const collides = Array.isArray(ev.collides) ? ev.collides : [];
+  const hits = Array.isArray(ev.hits) ? ev.hits : [];
+  const expires = Array.isArray(ev.expires) ? ev.expires : [];
+  return (Array.isArray(spawns) ? spawns : []).map((b) => {
+    const col = collides.find((c) => c.a === b.uid || c.b === b.uid) || null;
+    const removedByCollide = col !== null && (col.winner === 'none' || col.winner !== b.uid);
+    const hit = hits.find((h) => h.uid === b.uid) || null;
+    const exp = expires.find((e) => e.uid === b.uid) || null;
+    const endX = hit ? hit.atX : (col && removedByCollide ? col.atX : round1(b.x + b.dir * b.len));
+    const out = {
+      uid: b.uid,
+      owner: b.owner,
+      level: b.level === undefined ? null : b.level,
+      btype: b.type === undefined ? null : b.type,
+      srcType: b.srcType === undefined ? null : b.srcType,
+      dir: b.dir,
+      v: b.v,
+      len: b.len,
+      spawnX: b.x,
+      endX,
+      outcome: hit ? 'hit' : (removedByCollide ? 'collide' : 'expire'),
+      hitTarget: hit ? hit.target : null,
+      collideWith: col ? (col.a === b.uid ? col.b : col.a) : null,
+      collideWinner: col ? col.winner : null,
+      collided: col !== null,
+      expired: exp !== null,
+    };
+    if (hit) out.falloffFactor = hit.falloffFactor;
+    return out;
+  });
+}
+
 function createBattle(cfgIn, options) {
   const opts = options || {};
   const cfg = Object.assign({}, DEFAULT_CFG, cfgIn || {});
@@ -169,14 +234,18 @@ function createBattle(cfgIn, options) {
     const bBase = hitBase(b);
     if (aBase || bBase) {
       const settle = (m) => (hitBase(m) ? m.x : m.toX);
+      // D-167：**双方可在同一 tick 各自撞到对方基地**（修前只回报第一个 ⇒ 第二个基地不掉血）。
+      //   这里返回数组；`baseHit` 保留为首项（兼容既有调用点/测试）。
+      const baseHits = [];
+      if (aBase) baseHits.push({ owner: a.player.facing > 0 ? 'p2' : 'p1', by: a.player, atX: a.x });
+      if (bBase) baseHits.push({ owner: b.player.facing > 0 ? 'p2' : 'p1', by: b.player, atX: b.x });
       return {
         p1: { fromX: a.x, toX: round1(field.clampX(settle(a))) },
         p2: { fromX: b.x, toX: round1(field.clampX(settle(b))) },
         collision: null,
         // owner 与 field.touchesBase 同规则（facing 朝向哨位侧基地，B8 审查 P1-1）
-        baseHit: aBase ? { owner: a.player.facing > 0 ? 'p2' : 'p1', by: a.player, atX: a.x }
-          : bBase ? { owner: b.player.facing > 0 ? 'p2' : 'p1', by: b.player, atX: b.x }
-            : null,
+        baseHit: baseHits[0] || null,
+        baseHits,
       };
     }
     const t1 = field.clampX(a.toX);
@@ -210,6 +279,7 @@ function createBattle(cfgIn, options) {
           p2: { fromX: b.x, toX: round1(field.clampX(bx)) },
           collision: { contactX: round1((ax + bx) / 2), t: round1(tStar * 10000) / 10000 },
           baseHit: null,
+          baseHits: [],
         };
       }
     }
@@ -232,6 +302,7 @@ function createBattle(cfgIn, options) {
       p2: { fromX: b.x, toX: round1(to2) },
       collision: null,
       baseHit: null,
+      baseHits: [],
     };
   }
 
@@ -274,6 +345,9 @@ function createBattle(cfgIn, options) {
       p.fullDodgeDuring = false;
       p.dodging = false;
     }
+    // D-167：本 tick 的"画面数据"累加器（步骤 6 填 action、步骤 9 填 damages；步骤 13 输出）
+    state._frameActions = null;
+    state._frameDamages = [];
     stepLog(1, '冷却递减/重置标记');
 
     // 步骤 2：持续效果
@@ -365,8 +439,11 @@ function createBattle(cfgIn, options) {
       plans[owner] = plan;
     }
     stepLog(6, '意图提交');
+    // D-167：本 tick 双方**实际提交的行动**（步骤 5 控制复写后、步骤 6 提交后的 plan；只做标签化，不复制公式）
+    //   技能未装配/不可施放 → plan 保持 kind:'wait'（诚实表达"这一步什么也没做成"）
+    state._frameActions = { p1: actionOfPlan(plans.p1, intents.p1), p2: actionOfPlan(plans.p2, intents.p2) };
     // 弹幕快照（B22 回放帧：bullets[] 契约——步骤 6 生成完毕、步骤 8 解算前的场上弹幕，1px x0）
-    battleState._frameBullets = state.bullets.map((b) => ({ uid: b.uid, owner: b.owner, type: b.type, level: b.level, dir: b.dir, x: b.x0, len: b.len, v: b.v }));
+    state._frameBullets = state.bullets.map((b) => ({ uid: b.uid, owner: b.owner, type: b.type, level: b.level, dir: b.dir, x: b.x0, len: b.len, v: b.v }));
 
     // 步骤 7：统一落位与角色碰撞（07 §1 五步）
     //   转向写回（06-field §4.2：`turn` 翻转朝向；move/dodge/位移**不**改变朝向，D-50 的"位移后朝向"= 本步骤写回后的朝向）
@@ -407,23 +484,34 @@ function createBattle(cfgIn, options) {
       const def = players[h.target];
       if (def.hp <= 0) continue;
       const backstab = isBackstab({ attackerX: atk.x, attackerFacing: atk.facing }, def, h.srcType || 'aoe', h.dir);
-      dealDamage(atk, def, {
+      const res = dealDamage(atk, def, {
         mult: h.payload.multiplier * h.falloffFactor,
         critRng, backstab, affixes: h.payload.affixes || [], specials: h.payload.specials || {},
         sourceDir: h.dir, hitUid: h.uid,
       });
+      // D-167：伤害数值进帧（剥离 events 后，渲染方仍需"这一下打掉多少、是不是暴击/背击"）
+      battleState._frameDamages.push({
+        target: h.target, amount: res.dmg, atX: h.atX, kind: 'bullet', srcUid: h.uid,
+        attacker: h.owner, crit: res.crit === true, critM: res.crit ? cfg.crit : 1,
+        backstab: res.backstab === true, backM: res.backstab ? cfg.backstab : 1, dodged: res.dodged === true,
+      });
     }
     if (resolved.collision) {
       // 双方各受对方 atk×0.8（D-10），走完整机制（闪避/暴击/背击/吸血，§4.3）；背击按位移后位置判定
-      dealDamage(p1, p2, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p1.x }, p2, 'melee') });
-      dealDamage(p2, p1, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p2.x }, p1, 'melee') });
+      const c1 = dealDamage(p1, p2, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p1.x }, p2, 'melee') });
+      const c2 = dealDamage(p2, p1, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p2.x }, p1, 'melee') });
+      battleState._frameDamages.push({ target: 'p2', amount: c1.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p1', crit: c1.crit === true, critM: c1.crit ? cfg.crit : 1, backstab: c1.backstab === true, backM: c1.backstab ? cfg.backstab : 1, dodged: c1.dodged === true });
+      battleState._frameDamages.push({ target: 'p1', amount: c2.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p2', crit: c2.crit === true, critM: c2.crit ? cfg.crit : 1, backstab: c2.backstab === true, backM: c2.backstab ? cfg.backstab : 1, dodged: c2.dodged === true });
     }
-    if (resolved.baseHit) {
-      // 撞基地：atk × baseHitMul 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）
-      const base = battleState.bases[resolved.baseHit.owner];
-      const atk = resolved.baseHit.by;
+    // 撞基地：atk × baseHitMul 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）。
+    // D-167：**逐条**结算（修前只看 `baseHit` 首项 ⇒ 同 tick 双方各自撞基地时第二个不掉血）
+    for (const bh of resolved.baseHits || []) {
+      const base = battleState.bases[bh.owner];
+      const atk = bh.by;
       const reduction = 1 - base.def / (base.def + cfg.defK);
-      base.hp = Math.max(0, base.hp - Math.max(1, Math.floor(atk.atk * cfg.baseHitMul * reduction)));
+      const amount = Math.max(1, Math.floor(atk.atk * cfg.baseHitMul * reduction));
+      base.hp = Math.max(0, base.hp - amount);
+      battleState._frameDamages.push({ target: bh.owner, amount, atX: bh.atX, kind: 'base', srcUid: null, attacker: atk.owner || null, crit: false, critM: 1, backstab: false, backM: 1, dodged: false });
     }
     stepLog(9, '伤害结算');
 
@@ -454,6 +542,9 @@ function createBattle(cfgIn, options) {
         const baseCut = Math.ceil(baseMaxHp * cfg.overtimeRatio);
         p.hp = Math.max(0, p.hp - cut);
         base.hp = Math.max(0, base.hp - baseCut);
+        // D-167：超时扣血也进帧（否则渲染方看到血条无故下降，无法归因）
+        state._frameDamages.push({ target: owner, amount: cut, atX: null, kind: 'overtime', srcUid: null, attacker: null, crit: false, critM: 1, backstab: false, backM: 1, dodged: false, overtime: 'role' });
+        state._frameDamages.push({ target: owner, amount: baseCut, atX: null, kind: 'overtime', srcUid: null, attacker: null, crit: false, critM: 1, backstab: false, backM: 1, dodged: false, overtime: 'base' });
       }
       logger.info('engine', 'battle.overtime', `tick ${tick} 超时扣血`, { tick });
     }
@@ -471,24 +562,41 @@ function createBattle(cfgIn, options) {
     logger.info('engine', 'tick.end', `tick ${tick} 完成`, { tick });
 
     // 步骤 13：帧差异（diff；前端只按 diff 插值；B22 回放帧契约：players/bullets/bases/events/aiTrace，1px + cid）
+    //   D-167 扩充（画面自足）：players 补五维/上限/行动/buff/标记；bullets 合成完整生命周期；
+    //   bases 补 maxHp；新增 baseHits[]（玩家撞基地）与 damages[]（伤害数值）；
+    //   对外帧由 server/battle.js 剥掉 events 后再发给调用方（日志走专用管理员接口）。
+    const sideFrame = (owner) => {
+      const p = players[owner];
+      const mv = resolved[owner];
+      return {
+        fromX: mv.fromX, toX: p.x, facing: p.facing,
+        hp: p.hp, mp: p.mp, sp: p.sp,
+        maxHp: p.maxHp, maxMp: p.maxMp, maxSp: p.maxSp,
+        atk: p.atk, def: p.def,
+        defending: p.defending === true, dodging: p.dodging === true, fullDodge: p.fullDodgeDuring === true,
+        action: (battleState._frameActions && battleState._frameActions[owner]) || null,
+        effects: effectsSummaryOf(p),
+      };
+    };
     const diff = {
       tick,
-      players: {
-        p1: { fromX: resolved.p1.fromX, toX: p1.x, facing: p1.facing, hp: p1.hp, mp: p1.mp, sp: p1.sp },
-        p2: { fromX: resolved.p2.fromX, toX: p2.x, facing: p2.facing, hp: p2.hp, mp: p2.mp, sp: p2.sp },
-      },
-      bullets: battleState._frameBullets || [],
+      players: { p1: sideFrame('p1'), p2: sideFrame('p2') },
+      bullets: bulletsLifecycleOf(battleState._frameBullets, bulletEvents),
       bases: {
-        p1: { hp: battleState.bases.p1.hp, def: battleState.bases.p1.def },
-        p2: { hp: battleState.bases.p2.hp, def: battleState.bases.p2.def },
+        p1: { hp: battleState.bases.p1.hp, maxHp: battleState.bases.p1.maxHp === undefined ? null : battleState.bases.p1.maxHp, def: battleState.bases.p1.def },
+        p2: { hp: battleState.bases.p2.hp, maxHp: battleState.bases.p2.maxHp === undefined ? null : battleState.bases.p2.maxHp, def: battleState.bases.p2.def },
       },
       events: frameEvents ? frameEvents.filter((r) => r.tick === tick) : [],
       collision: resolved.collision,
+      baseHits: (resolved.baseHits || []).map((h) => ({ owner: h.owner, by: h.by && h.by.owner ? h.by.owner : null, atX: h.atX })),
       bulletHits: bulletEvents.hits.map((h) => ({ uid: h.uid, target: h.target, atX: h.atX })),
+      damages: (battleState._frameDamages || []).slice(),
       verdict: state.verdict || null,
       aiTrace: aiTraceBuf ? aiTraceBuf.slice() : [],
     };
     battleState._frameBullets = null;
+    battleState._frameActions = null;
+    battleState._frameDamages = [];
     stepLog(13, '帧输出');
 
     return diff;

@@ -301,10 +301,22 @@ function battleOne(mine, opponent, wh, tier, seed) {
   const logger = require('../shared/log.js').createLogger({ level: 'silent' });
   const b = engine.createBattle(undefined, { seed, players: { p1: b1.player, p2: b2.player }, logger });
   // D-164：p2 守方镜像（runner.makeAiDriver 统一实现；与 battle.runBattle 同一口径，禁止两处各写一份）
-  const res = b.runFull({ actions: { p1: runner.makeAiDriver(b1), p2: runner.makeAiDriver(b2) } });
+  // D-167：把双方 aiTrace 缓冲交给引擎（`actions.aiTrace`；引擎每 tick 重置并写进 `diff.aiTrace`）——
+  //   修前 battleOne 不传该缓冲 ⇒ 内联帧的 aiTrace 恒为空（前端拿不到"AI 在想什么"）。
+  const aiTrace = [];
+  const driver = (bp) => {
+    const step = runner.makeAiDriver(bp);
+    return (state) => {
+      const action = step(state);
+      for (const e of runner.takeTrace(bp.ctx)) aiTrace.push(Object.assign({ tick: state.tick, owner: bp.player.owner }, e));
+      return action;
+    };
+  };
+  const res = b.runFull({ actions: { aiTrace, p1: driver(b1), p2: driver(b2) } });
   runtime.destroyContext(b1.ctx);
   runtime.destroyContext(b2.ctx);
-  return { winner: res.winner || 'draw', ticks: res.ticks };
+  // D-167：回带**全量战斗过程**（画面数据 + 双方 aiTrace；`diff.events` 由 battle.toFrames 剥掉）
+  return { winner: res.winner || 'draw', ticks: res.ticks, frames: battle.toFrames(res.diffs) };
 }
 
 /* ---------- 纯工具 ---------- */
@@ -625,6 +637,10 @@ async function runBatchUnlocked(o, deps) {
     results.push({
       match: matchIndex, opponentPlayerId: foe.playerId, opponentPublicId: foe.entry.publicId,
       winner, ticks: r.ticks, battleId: null, duplicate: false,
+      // D-167：**逐场内联全量战斗过程**（画面数据 + 双方 aiTrace；不含引擎日志）。
+      //   帧由 battleOne 直接产出（不走 battle.REPLAYS 注册表 ⇒ 无上限增长不存在）；
+      //   幂等重放（duplicate）路径不回带帧（客户端按 battleId 走 GET /replay/:id 取）。
+      frames: Array.isArray(r.frames) ? r.frames : null,
     });
     pendingSettlements.push({
       slot, matchIndex, opponentPlayerId: foe.playerId, opponentPublicId: foe.entry.publicId, ticks: r.ticks,
