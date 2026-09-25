@@ -1238,6 +1238,97 @@
     'viewer-ai-logic': { label: 'AI 逻辑查看器', run: function (ctx) { return openAiLogic(ctx); } },
     'viewer-load-replay': { label: '读取本场回放', run: function (ctx) { return loadReplay(ctx); } },
 
+    /* ----- F7：锦标赛 + 排行榜（05 §4；10 个动作） -----
+     * 帧查看相关动作（viewer-*）复用 F6 的 9 个，不重复注册。
+     */
+    'tournament-run': {
+      label: '开始锦标赛',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        // 不传 seed（服务端生成并回带）；批次幂等由 batchId 保证
+        return ctx.api.rankedRun(token, {}).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.rankedNoticeText(result.envelope));
+            return undefined;
+          }
+          ctx.dispatch({ type: 'tournament.set', envelope: result.envelope });
+          // 新批次 → 清掉上一批的查看器（避免"看着旧批的帧、列表是新批的"）
+          ctx.dispatch({ type: 'viewer.set', frames: null, source: 'tournament', battleId: null });
+          noticeNotice(ctx, 'info', ctx.format.rankedOkText(result.envelope));
+          return undefined;
+        });
+      },
+    },
+
+    'tournament-page-prev': { label: '上一页', run: function (ctx) { return turnPage(ctx, -1); } },
+    'tournament-page-next': { label: '下一页', run: function (ctx) { return turnPage(ctx, 1); } },
+
+    // 看某一场的战斗：有内联帧直接用；**没有内联帧**（重放批次）则按 battleId 读归档回放（05 §2 反驳 3）
+    'tournament-open-battle': {
+      label: '看这一场',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var index = intOf(payload === null || payload === undefined ? null : payload.idx);
+        if (index === null) return Promise.resolve();
+        var env = ctx.state.tournament ? ctx.state.tournament.envelope : null;
+        if (env === null || !ctx.format.isOk(env)) return Promise.resolve();
+        var frames = ctx.format.rankedFramesOf(env, index);
+        var battleId = ctx.format.rankedBattleIdOf(env, index);
+        if (Array.isArray(frames) && frames.length > 0) {
+          ctx.dispatch({ type: 'viewer.set', frames: frames, source: 'tournament', battleId: battleId });
+          noticeNotice(ctx, 'info', ctx.format.battleLoadedText(index, frames));
+          return Promise.resolve();
+        }
+        if (battleId === null) {
+          noticeNotice(ctx, 'error', ctx.format.NO_BATTLE_ID_TEXT);
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.replay(token, battleId).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.rankedNoticeText(result.envelope));
+            return undefined;
+          }
+          ctx.dispatch({ type: 'viewer.replay.set', envelope: result.envelope });
+          ctx.dispatch({
+            type: 'viewer.set',
+            frames: ctx.format.replayFrames(result.envelope),
+            source: 'tournament',
+            battleId: battleId,
+          });
+          noticeNotice(ctx, 'info', ctx.format.replayOkText(result.envelope));
+          return undefined;
+        });
+      },
+    },
+
+    'board-points': { label: '积分榜', run: function (ctx) { return switchBoard(ctx, 'points', null); } },
+    'board-tier': { label: '段位榜', run: function (ctx) { return switchBoard(ctx, 'arrival', null); } },
+    // 范围按钮（data-tier = 'global' | common | rare | epic | legendary | mythic）
+    'board-scope': {
+      label: '范围',
+      run: function (ctx, payload) {
+        var tier = payload !== null && payload !== undefined && typeof payload.tier === 'string' ? payload.tier : '';
+        return switchBoard(ctx, null, tier === '' || tier === 'global' ? 'global' : 'tier:' + tier);
+      },
+    },
+    'board-prev': { label: '上一页', run: function (ctx) { return pageBoard(ctx, -1); } },
+    'board-next': { label: '下一页', run: function (ctx) { return pageBoard(ctx, 1); } },
+    'board-refresh': { label: '刷新', run: function (ctx) { return loadBoard(ctx, false); } },
+
     // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9 / FR-10）    //   提交③ 起弹窗内有**本地草稿**（state.configs.draft）→ 关闭必须一并丢弃，否则再打开会看到"上次没保存的改动"
     'modal-close': {
       label: '关闭',
@@ -1333,7 +1424,8 @@
   }
 
   // AI 逻辑查看器（04 §3.3）：取我方出战配置（程序正文）+ AI 库（把 aiId 显示成名字）。
-  //   两次都成功才打开弹窗 —— 失败时只写文案，**不打开空弹窗**（按钮永不无声）。
+  //   `GET /me/configs` 是**必需**依赖（没有它就没有程序树）；`GET /me/ai` 只把 aiId 显示成名字，
+  //   属**软依赖** —— 它失败时只写提示，弹窗照常打开（名字回落 aiId）。审查 F6-3 修正。
   function openAiLogic(ctx) {
     if (ctx.state.busy) return Promise.resolve();
     var token = ctx.state.session.token;
@@ -1349,23 +1441,19 @@
       }
       return ctx.api.aiList(token).then(function (ai) {
         busy(ctx, false);
-        if (ai.transport === 'error') return failFrom(ctx, ai);
-        if (!ctx.format.isOk(ai.envelope)) {
-          if (ctx.format.isSessionError(ai.envelope)) return sessionLost(ctx, ai);
-          return failFrom(ctx, ai);
-        }
+        var nameOk = ai.transport !== 'error' && ctx.format.isOk(ai.envelope);
         ctx.dispatch({ type: 'viewer.configs.set', envelope: configs.envelope });
-        ctx.dispatch({ type: 'viewer.ai.set', envelope: ai.envelope });
+        if (nameOk) ctx.dispatch({ type: 'viewer.ai.set', envelope: ai.envelope });
         ctx.dispatch({ type: 'modal.set', modal: { kind: 'ai-logic' } });
-        noticeNotice(ctx, 'info', ctx.format.AI_LOGIC_OK_TEXT);
+        if (nameOk) noticeNotice(ctx, 'info', ctx.format.AI_LOGIC_OK_TEXT);
+        else noticeNotice(ctx, 'info', ctx.format.AI_LOGIC_NAME_FAIL_TEXT);
         return undefined;
       });
     });
   }
 
   // 无内联帧时的兜底：按 battleId 读归档回放（04 §2 反驳 3）
-  function loadReplay(ctx) {
-    if (ctx.state.busy) return Promise.resolve();
+  function loadReplay(ctx) {    if (ctx.state.busy) return Promise.resolve();
     var token = ctx.state.session.token;
     if (!token) return sessionLost(ctx, null);
     var battleId = viewerOf(ctx).battleId;
@@ -1393,6 +1481,93 @@
       noticeNotice(ctx, 'info', ctx.format.replayOkText(result.envelope));
       return undefined;
     });
+  }
+
+  /* ---------- F7：锦标赛与排行榜的公共工具 ---------- */
+
+  // 锦标赛翻页：纯本地动作（页码夹取；不重发请求 —— 整批结果已在 state 里）
+  function turnPage(ctx, delta) {
+    if (ctx.state.busy) return Promise.resolve();
+    var env = ctx.state.tournament ? ctx.state.tournament.envelope : null;
+    if (env === null || !ctx.format.isOk(env)) return Promise.resolve();
+    var total = ctx.format.resultsOf(env).length;
+    var pages = total === 0 ? 1 : Math.ceil(total / ctx.format.TOURNAMENT_PAGE_SIZE);
+    var next = (ctx.state.tournament.page || 0) + delta;
+    if (next < 0) next = 0;
+    if (next > pages - 1) next = pages - 1;
+    ctx.dispatch({ type: 'tournament.page.set', page: next });
+    return Promise.resolve();
+  }
+
+  // 拉榜单（唯一取数实现）：board/scope/offset 缺省沿用当前状态
+  function loadBoard(ctx, quiet, override) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    var b = (ctx.state.board || {}).board;
+    b = b === 'arrival' ? 'arrival' : 'points';
+    var scope = (ctx.state.board || {}).scope || 'global';
+    var offset = (ctx.state.board || {}).offset || 0;
+    var limit = (ctx.state.board || {}).limit || 20;
+    if (override) {
+      if (override.board !== undefined) b = override.board;
+      if (override.scope !== undefined) scope = override.scope;
+      if (override.offset !== undefined) offset = override.offset;
+    }
+    busy(ctx, true);
+    if (quiet !== true) ctx.dispatch({ type: 'notice.set', notice: null });
+    return ctx.api.leaderboard(token, ctx.format.boardQuery(b, scope, offset, limit)).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        noticeNotice(ctx, 'error', ctx.format.boardNoticeText(result.envelope));
+        return undefined;
+      }
+      // 审查 F7-D：榜上人数在会话中途缩水（封禁/删号）时不能停在空页上 —— 服务端会把越界 offset 变成
+      //   "0 行 + total=1"，屏上就会出现 `第 2/1 页 · 共 1 人`（与「（本榜暂无玩家）」并列）。
+      //   修法：按 `total` 夹取 offset，**最多回退一次**（与 §8 A-4 的删除后回退同一手法）。
+      var total = ctx.format.boardTotal(result.envelope);
+      var clamped = offset;
+      var allowClamp = !(override && override.noClamp === true);
+      if (allowClamp && total >= 0 && limit > 0 && offset > 0) {
+        var maxOffset = total === 0 ? 0 : Math.floor((total - 1) / limit) * limit;
+        if (offset > maxOffset) clamped = maxOffset;
+      }
+      if (clamped !== offset) {
+        return loadBoard(ctx, quiet, { board: b, scope: scope, offset: clamped, noClamp: true });
+      }
+      ctx.dispatch({
+        type: 'board.set', envelope: result.envelope, board: b, scope: scope,
+        offset: offset, limit: limit,
+      });
+      if (quiet !== true) noticeNotice(ctx, 'info', ctx.format.BOARD_OK_TEXT);
+      return undefined;
+    });
+  }
+
+  // 切榜 / 换范围：改 board/scope 并**回到第 1 页**（否则会看到"第 3 页的另一个榜"）
+  function switchBoard(ctx, board, scope) {
+    if (ctx.state.busy) return Promise.resolve();
+    var b = board === null || board === undefined ? (ctx.state.board || {}).board : board;
+    var s = scope === null || scope === undefined ? (ctx.state.board || {}).scope : scope;
+    return loadBoard(ctx, false, { board: b, scope: s, offset: 0 });
+  }
+
+  // 翻页（offset 由 limit 推进一步；上一页夹到 0；下一页仅在服务端说 hasMore 时有效）
+  function pageBoard(ctx, delta) {
+    if (ctx.state.busy) return Promise.resolve();
+    var env = ctx.state.board ? ctx.state.board.envelope : null;
+    if (env === null || !ctx.format.isOk(env)) {
+      // 还没加载过榜单：点翻页等于"先拉第一页"，不是静默失败
+      return loadBoard(ctx, false, { offset: 0 });
+    }
+    var limit = (ctx.state.board || {}).limit || 20;
+    var offset = (ctx.state.board || {}).offset || 0;
+    if (delta > 0 && !ctx.format.boardHasMore(env)) return Promise.resolve();
+    var next = offset + delta * limit;
+    if (next < 0) next = 0;
+    return loadBoard(ctx, false, { offset: next });
   }
 
   // 每页条数切换（§4：改 limit 并回到第 1 页）

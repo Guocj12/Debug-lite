@@ -17,12 +17,13 @@ const format = require('../../public/format.js');
 
 const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
-// F1 分册 + F2 分册 + F3 分册 + F6 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
+// F1 分册 + F2 分册 + F3 分册 + F6 分册 + F7 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
 const DOC_PATHS = [
   path.join(REPO, 'docs', 'frontend', '01-auth.md'),
   path.join(REPO, 'docs', 'frontend', '02-accounts.md'),
   path.join(REPO, 'docs', 'frontend', '03-hub-warehouse-loadout.md'),
   path.join(REPO, 'docs', 'frontend', '04-quickmatch.md'),
+  path.join(REPO, 'docs', 'frontend', '05-tournament.md'),
 ];
 
 const ENVELOPE_PATHS = new Set(contract.AUTH_FIELD_CONTRACT.map((entry) => entry.path));
@@ -115,6 +116,16 @@ async function capture() {
     assert.ok(Array.isArray(replayResp.body.data.frames) && replayResp.body.data.frames.length > 0,
       '回放应带回帧数组');
 
+    // F7：锦标赛批次（05 §5.1）与排行榜（D-171）——同样必须在 logout 之前
+    const ranked = await post('/api/v1/ranked/run', {}, token);
+    assert.equal(ranked.status, 200, `锦标赛应 200：${ranked.raw.slice(0, 300)}`);
+    assert.ok(Array.isArray(ranked.body.data.results) && ranked.body.data.results.length > 0,
+      '批次应至少打到一场（池内有对手）');
+    const boardResp = await get('/api/v1/leaderboard?order=points&scope=global&offset=0&limit=5', token);
+    assert.equal(boardResp.status, 200, `排行榜应 200：${boardResp.raw.slice(0, 200)}`);
+    assert.ok(Array.isArray(boardResp.body.data.rows) && boardResp.body.data.rows.length > 0, '榜单应有行');
+    assert.ok(boardResp.body.data.self !== null, '带 Bearer 时应有本人名次（F7 §5.1 的宿主）');
+
     const pwd = await post('/api/v1/auth/password', { oldPassword: PASSWORD, newPassword: 'pw87654321' }, token);
     assert.equal(pwd.status, 200);
 
@@ -169,7 +180,7 @@ async function capture() {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
       configs: configs.body, assemble: asm.body,
-      quick: quick.body, replay: replayResp.body,
+      quick: quick.body, replay: replayResp.body, ranked: ranked.body, board: boardResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
       adminRebuild: rebuild.body, adminBots: bots.body, adminClearBots: clearBots.body, adminBan: ban.body,
@@ -221,6 +232,9 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     // F6（04 §5.1）：快速对战与归档回放
     'quick/run': { envelopes: [real.quick], anyOf: false },
     'replay/:id': { envelopes: [real.replay], anyOf: false },
+    // F7（05 §5.1 + D-171）：锦标赛批次与排行榜
+    'ranked/run': { envelopes: [real.ranked], anyOf: false },
+    leaderboard: { envelopes: [real.board], anyOf: false },
     any: { envelopes: [real.register, real.password, real.logout, real.error.dup, real.error.weak, real.error.noAuth], anyOf: true },
   };
   for (const entry of contract.AUTH_FIELD_CONTRACT) {

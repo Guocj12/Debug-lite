@@ -640,7 +640,7 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
     for (const ns of ['index', 'snapshot', 'sessions']) {
       assert.equal(typeof store[ns], 'object', `适配器缺命名空间 ${ns}`);
     }
-    for (const m of ['snapshot', 'get', 'byTier', 'leaderboard', 'rank', 'rebuild', 'save', 'stats']) {
+    for (const m of ['snapshot', 'get', 'byTier', 'leaderboard', 'board', 'needsTierStamp', 'rank', 'rebuild', 'save', 'stats']) {
       assert.equal(typeof store.index[m], 'function', `store.index 缺方法 ${m}`);
     }
     for (const m of ['freeze', 'put', 'get', 'has', 'list', 'ref', 'refCount', 'gc', 'stats']) {

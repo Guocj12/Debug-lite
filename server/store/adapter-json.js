@@ -223,14 +223,17 @@ function createJsonAdapter(options) {
     if (!fsatomic.pathExists(file)) return null;
     const raw = fsatomic.readJsonSync(file, undefined); // 损坏 → store_corrupt
     const migrated = archiveMod.migrateArchive(raw, { logger: log });
+    // D-171：老档案（v2 之前就存在、但当时没有 tierUpdatedAt）缺段位到达时间 → 一次性兜底盖章，
+    //   与迁移同样"写回磁盘"（否则每次开机都会重复重建索引，见 F7-B 审查）。
+    const stamped = archiveMod.stampTierUpdatedAt(migrated.archive);
     archiveMod.assertArchiveInvariants(migrated.archive, { config: serviceConfig });
     cacheSet(playerId, migrated.archive);
     stats.reads += 1;
     log.trace('store', 'store.read', `读取档案 ${playerId}（seq=${migrated.archive.record.appliedSeq}）`, {
       playerId, seq: migrated.archive.record.appliedSeq,
     });
-    if (migrated.migrated) {
-      // 升级后立即原子写回（§5.7）
+    if (migrated.migrated || stamped) {
+      // 升级/盖章后立即原子写回（§5.7；D-171）
       writeArchiveRaw(migrated.archive);
       saveIndex();
     }
@@ -296,10 +299,10 @@ function createJsonAdapter(options) {
     index.rebuild(archives, nowFn());
   }
 
-  function rebuildIndex() {
-    const ids = listPlayerIds();
+  // 读全部档案（只读；D-171 的索引补齐与 `rebuildIndex()` 共用同一"扫描 → 容错隔离"口径）
+  function readAllArchivesForIndex() {
     const archives = [];
-    for (const playerId of ids) {
+    for (const playerId of listPlayerIds()) {
       try {
         const archive = readArchiveRaw(playerId);
         if (archive) archives.push(archive);
@@ -308,6 +311,11 @@ function createJsonAdapter(options) {
         quarantineArchive(playerId, err);
       }
     }
+    return archives;
+  }
+
+  function rebuildIndex() {
+    const archives = readAllArchivesForIndex();
     index.rebuild(archives, nowFn());
     flushIndexNow(); // 修复类操作：索引立即落盘（重建结果必须可被磁盘观察）
     return index.stats();
@@ -989,6 +997,14 @@ function createJsonAdapter(options) {
       } else if (indexExists) {
         log.error('store', 'store.error', '索引损坏（index.json 不可解析或结构非法）→ 进入重建分支', { file: indexPath });
       }
+      // D-171 迁移：老索引（D-171 之前落盘的）条目里没有 `tierUpdatedAt` ⇒ 段位榜无法按"到达时间"排序。
+      //   **一次性**从档案重建索引把该字段补齐（不是"索引损坏"：info 级日志 + 明确原因），此后正常路径不再触发。
+      if (indexLoaded && index.needsTierStamp()) {
+        log.info('store', 'store.index.rebuild',
+          '索引缺少 tierUpdatedAt（D-171：段位榜按到达时间排序）→ 从档案重建索引补齐', { file: indexPath });
+        rebuildIndexFromArchives(readAllArchivesForIndex());
+        indexLoaded = true;
+      }
       sessions.load();
       // 启动清理（P7-2 最小加法，§6.7：会话 TTL 过期清理 = 启动一次 + 读时懒清理；§3.4 无定时器）
       sessions.prune(nowFn());
@@ -1362,6 +1378,9 @@ function createJsonAdapter(options) {
       playerIds: () => index.playerIds(),
       byTier: (tier) => index.byTier(tier),
       leaderboard: (query) => index.leaderboard(query),
+      // D-171：榜单查询（积分榜/段位榜 + 分页 + 本人名次）；`needsTierStamp` 供 open() 的迁移判断与测试
+      board: (query) => index.board(query),
+      needsTierStamp: () => index.needsTierStamp(),
       rank: (playerId) => index.rank(playerId),
       rebuild: async () => rebuildIndex(),
       save: async () => flushIndexNow(),

@@ -421,16 +421,38 @@ function createQuickMatch(options) {
     };
   }
 
-  // GET /api/v1/leaderboard（§8.6：按 points 降序，同分按 peakPoints，再按 updatedAt 升序）
+  // GET /api/v1/leaderboard（§8.6 + D-171）
+  //   · 积分榜（缺省 `order=points`）：points 降序 → peakPoints 降序 → updatedAt 升序
+  //   · **段位榜**（`order=arrival`，D-171）：tier 由高到低 → 同段位 **tierUpdatedAt 升序**（先到者在前）
+  //   · 分页：`offset`（≥0）+ `limit`（1..100）；响应回带 `total`/`hasMore`/`self`
+  //   · `self` = 调用者在本榜本 scope 的名次（**可选** Bearer 才有；不含 playerId）
   async function loadLeaderboard(query) {
     const q = query || {};
     const limit = q.limit === undefined || q.limit === null ? 50 : q.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
       return { status: 400, code: 'bad_request', message: `limit 必须是 1..${MAX_LIMIT} 的整数` };
     }
+    const offset = q.offset === undefined || q.offset === null ? 0 : q.offset;
+    if (!Number.isInteger(offset) || offset < 0) {
+      return { status: 400, code: 'bad_request', message: 'offset 必须是非负整数' };
+    }
+    const order = q.order === undefined || q.order === null || q.order === '' ? 'points' : String(q.order);
+    if (order !== 'points' && order !== 'arrival') {
+      return { status: 400, code: 'bad_request', message: 'order 必须是 points|arrival（points=积分榜；arrival=段位榜）' };
+    }
     try {
-      const rows = store.index.leaderboard({ scope: q.scope, limit });
-      return { status: 200, data: { scope: q.scope === undefined || q.scope === null ? 'global' : String(q.scope), limit, rows } };
+      const page = store.index.board({
+        scope: q.scope, order, offset, limit,
+        playerId: typeof q.playerId === 'string' && q.playerId !== '' ? q.playerId : null,
+      });
+      return {
+        status: 200,
+        data: {
+          scope: q.scope === undefined || q.scope === null || q.scope === '' ? 'global' : String(q.scope),
+          order, offset, limit,
+          total: page.total, hasMore: page.hasMore, rows: page.rows, self: page.self,
+        },
+      };
     } catch (err) {
       if (err && err.code === 'bad_scope') return { status: 400, code: 'bad_scope', message: err.message };
       throw err;

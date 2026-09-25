@@ -1210,8 +1210,17 @@ function createHandler(logger, extraRoutes, runtime) {
       handler: async (ctx) => respond(await rt.account.defenseSummary({ playerId: ctx.player.playerId, limit: intOf(ctx.query.limit) })),
     },
     '/api/v1/leaderboard': {
+      // D-171：`tolerant` 让"带了 Bearer 就认身份"（用于回带调用者自己的名次 `data.self`），
+      //   但**不要求**登录（无 token/坏 token 按匿名，仍 200）—— 与既有"公开榜单"语义一致。
+      tolerant: true,
       redact: true,
-      handler: async (ctx) => respond(await rt.quick.loadLeaderboard({ scope: ctx.query.scope, limit: intOf(ctx.query.limit) })),
+      handler: async (ctx) => respond(await rt.quick.loadLeaderboard({
+        scope: ctx.query.scope,
+        order: ctx.query.order,
+        offset: intOf(ctx.query.offset),
+        limit: intOf(ctx.query.limit),
+        playerId: ctx.player ? ctx.player.playerId : null,
+      })),
     },
   };
 

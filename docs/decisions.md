@@ -309,6 +309,17 @@
 
 ---
 
+### 14.9 排行榜扩展（2026-09-25 追加，D-171）
+
+> 用户 2026-09-25 口径：**"段位榜（按段位、同段位按到达时间）+ 积分榜，都要能分页，并显示自己的名次"**。
+> 当时的 `GET /leaderboard` 只有 `scope`+`limit`（硬 top-N ≤100、无 offset/total、**不回本人名次**、只有积分序），无法满足 ⇒ 按总纲 §2.7 升级为决策记录（**本批唯一的后端契约改动**）。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-171** | ⚠️ **`GET /api/v1/leaderboard` 扩展：两张榜 + 分页 + 本人名次**：<br>① **两张榜（`order`）**：`order=points`（缺省）= 既有**积分榜**（`points` 降序 → `peakPoints` 降序 → `updatedAt` 升序，**排序口径一字未改**）；`order=arrival` = **段位榜**（`tier` 按 `TIERS` 由高到低 → **同段位内 `tierUpdatedAt` 升序（先到者在前）** → `publicId` 升序兜底）。<br>② **分页**：新增 `offset`（≥0，缺省 0；非法 → 400 `bad_request`），`limit` 仍 1..100；响应新增 `order`/`offset`/`total`（**该榜该 scope 的全量**）/`hasMore`，行新增 `tierUpdatedAt`（`null` = 未知）。<br>③ **本人名次**：新增 `data.self` = 调用者在本榜本 scope 的**全榜**名次 `{rank, publicId, nickname, points, tier, tierUpdatedAt}`（**不含 `playerId`**，与行同口径）；`self=null` 表示未登录/未上榜。为拿到身份，路由改为 `{tolerant:true}`（**带 Bearer 才认身份，不带仍公开可读** —— 既有"无需鉴权"语义不变）。<br>④ **实现唯一处** = `server/store/index-file.js` 的 `board(query)`；`leaderboard(query)` 退化为 `board(query).rows` 薄封装（旧调用方/CLI/测试零改动）。段位榜排序独立懒缓存，并在 `tier`/`tierUpdatedAt`/`publicId` 变化时失效（否则榜单会停在上一次排序）。<br>⑤ **索引与迁移**：索引条目新增 `tierUpdatedAt`（取自 `progress.tierUpdatedAt`）；**老 `index.json`（D-171 之前落盘）没有该字段** → `store.open()` 检测到即**从档案重建索引**补齐（info 日志写明原因，**不谎称"索引损坏"**），重建结果立即落盘，此后正常路径不再触发。<br>⑥ **已知开销（登记而非本批缺陷）**：每页仍全量排序（`ensureSorted`/`ensureArrivalSorted`，O(n log n)），与既有实现同量级；超大账号量的分页索引化登记在 `docs/security-backlog.md`。<br>**证据**：`tests/api/api-leaderboard.test.js` **LB-3**（逐页拼起来 == 全量、无重复无遗漏、`total`/`hasMore`/越界 offset）/ **LB-4**（`self.rank` 与同一榜行位置一致；分页不影响；匿名与坏 token → `self=null`）/ **LB-5**（段位榜：高段位在前、同段位按 `tierUpdatedAt` 严格升序、单段位 scope）/ **LB-6**（`offset`/`order` 非法 → 400 `bad_request`；`scope` 非法仍 `bad_scope`）/ **LB-7**（老索引迁移：手工删掉 `tierUpdatedAt` → 重启后被补齐并落盘、排序不失真、留痕）；`tests/contract/store-contract.test.js` CN-12（`board`/`needsTierStamp`）；前端消费见 `docs/frontend/05-tournament.md` TB-7/TB-8。 | `server/store/index-file.js`（`entryOf.tierUpdatedAt`/`board`/`ensureArrivalSorted`/`needsTierStamp`）、`server/store/adapter-json.js`（`index.board`/`needsTierStamp`/open() 迁移/`readAllArchivesForIndex`）、`server/quickmatch.js`（`loadLeaderboard`）、`server/index.js`（`tolerant` + 参数透传）、`docs/interfaces.md` §2/§5、`docs/systems/11-account-store.md` §8.6、`docs/server.md` §3.2、`tests/api/api-leaderboard.test.js` LB-3…LB-7、`tests/contract/store-contract.test.js` CN-12 |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

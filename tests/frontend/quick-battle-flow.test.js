@@ -34,6 +34,13 @@ const PW = 'pw12345678';
 const F6_ACTIONS = ['quick-run', 'viewer-first', 'viewer-prev', 'viewer-next', 'viewer-last',
   'viewer-trace-p1', 'viewer-trace-p2', 'viewer-ai-logic', 'viewer-load-replay'];
 
+// QB-11 用的"别场帧"桩（合成数据：只验证门控，不假装是服务端响应）
+const QUICK_FRAMES_STUB = [
+  { tick: 1, diff: { tick: 1, players: {}, bullets: [], bases: {}, collision: null, baseHits: [], bulletHits: [], damages: [], verdict: null, aiTrace: [] } },
+  { tick: 2, diff: { tick: 2, players: {}, bullets: [], bases: {}, collision: null, baseHits: [], bulletHits: [], damages: [], verdict: null, aiTrace: [] } },
+  { tick: 3, diff: { tick: 3, players: {}, bullets: [], bases: {}, collision: null, baseHits: [], bulletHits: [], damages: [], verdict: { winner: 'p1', phase: 'role' }, aiTrace: [] } },
+];
+
 // 与 public/app.js 的 buildCtx/run 同形；api 出口逐个计数（用于"本地动作不发请求"类断言）
 function harness(baseUrl) {
   const st = store.createStore(store.initialState());
@@ -231,7 +238,9 @@ test('QB-5 AI 逻辑查看器：真实配置 + AI 库 → 程序树 + 本帧执�
     await runOneBattle(h, 'qb5');
     const before = h.counter.n;
     await h.run('viewer-ai-logic');
-    assert.deepEqual(h.calls.slice(-2), ['configs', 'aiList'], '应静默取配置与 AI 库（各一次）');
+    // 审查 F6-3：`configs` 是必需依赖、`aiList` 是软依赖；成功路径仍然是这两次请求
+    assert.ok(h.calls.slice(-2).join(',') === 'configs,aiList' || h.calls.slice(-2).join(',') === 'aiList,configs',
+      `应取配置与 AI 库（各一次）：${h.calls.slice(-3).join(',')}`);
     assert.equal(h.counter.n, before + 2);
     assert.equal(h.state().modal.kind, 'ai-logic', '弹窗应打开');
     assert.equal(h.notice(), format.AI_LOGIC_OK_TEXT);
@@ -242,10 +251,26 @@ test('QB-5 AI 逻辑查看器：真实配置 + AI 库 → 程序树 + 本帧执�
     assert.ok(text.indexOf('（该配置没有 AI）') === -1, '出厂配置必带新手 AI');
     assert.ok(text.indexOf('action ') !== -1, '程序树应含 action 行');
     assert.ok(text.indexOf('if ') !== -1, '程序树应含 if 行');
-    assert.ok(text.indexOf('body.s[0]') !== -1 || text.indexOf('body') !== -1);
+    // 审查 F6-4：程序树**每行行尾带稳定路径** —— 区段断言（程序段内至少一行含 body 路径），
+    //   并核对路径语法与同帧 aiTrace[].path 有交集（删掉修前那个恒真的 `|| text.indexOf('body')`）
+    const progStart = vm.modal.lines.findIndex((l) => l.indexOf('程序（') === 0);
+    const progEnd = vm.modal.lines.findIndex((l) => l.indexOf('本帧执行轨迹') === 0);
+    assert.ok(progStart >= 0 && progEnd > progStart, `弹窗应有"程序"段与"轨迹"段：${vm.modal.lines.slice(0, 4).join(' | ')}`);
+    const progLines = vm.modal.lines.slice(progStart + 1, progEnd);
+    assert.ok(progLines.length > 2, `程序段行数过少：${progLines.length}`);
+    assert.ok(progLines.some((l) => l.indexOf('body') !== -1), `程序段每行必须带稳定路径：${progLines.join(' | ')}`);
+    const progPaths = new Set();
+    for (const line of progLines) {
+      const m = /\s(body(?:\.\w+(?:\[\d+\])?)*)\s*(?:←|$)/.exec(line);
+      if (m) progPaths.add(m[1]);
+    }
+    const frame = h.state().viewer.frames[h.state().viewer.index];
+    const tracePaths = new Set(format.traceEntriesOf(frame, 'p1').map((e) => e.path));
+    const overlap = [...progPaths].filter((p) => tracePaths.has(p));
+    assert.ok(tracePaths.size === 0 || overlap.length > 0,
+      `程序树路径应与同帧 aiTrace[].path 有交集（程序 ${[...progPaths].slice(0, 3)} vs 轨迹 ${[...tracePaths].slice(0, 3)}）`);
     assert.ok(text.indexOf(format.AI_LOGIC_TRACE_NOTE) !== -1, '必须声明对手只有轨迹（SEC-33）');
     // 本帧执行标记：p1 本帧有轨迹 → 程序树里至少有一行被标记
-    const frame = h.state().viewer.frames[h.state().viewer.index];
     if (format.traceEntriesOf(frame, 'p1').length > 0) {
       assert.ok(vm.modal.lines.some((l) => l.indexOf('← 本帧执行') !== -1),
         `本帧有 p1 轨迹时程序树应有执行标记：${text.slice(0, 400)}`);
@@ -317,34 +342,69 @@ test('QB-6 帧字段三方一致：contract == 04 §5.2 == format.js 实读，�
           for (const line of bulletLines) assert.ok(!line.includes('undefined'), `弹幕行泄漏：${line}`);
         }
       }
-      for (const f of contract.FRAME_ACTION_FIELDS) assert.ok(f in diff.players.p1.action, `action 缺 ${f}`);
-      // 可选字段（dir/sid/cells）按 kind 出现 —— 用**全部 8 种行动**各渲染一次，核对投影不泄漏
-      const side = (action) => ({
-        fromX: 0, toX: 0, facing: 1, hp: 1, mp: 1, sp: 1, maxHp: 1, maxMp: 1, maxSp: 1, atk: 1, def: 1,
-        defending: false, dodging: false, fullDodge: false, action, effects: [],
-      });
-      const synthetic = (action) => ({
-        tick: 1,
-        diff: {
-          tick: 1, players: { p1: side(action), p2: side(action) }, bullets: [],
-          bases: { p1: { hp: 1, maxHp: 1, def: 1 }, p2: { hp: 1, maxHp: 1, def: 1 } },
-          collision: null, baseHits: [], bulletHits: [], damages: [], verdict: null, aiTrace: [],
-        },
-      });
-      const kinds = [
-        { kind: 'move', dir: 1 }, { kind: 'move', dir: -1 }, { kind: 'dodge', dir: 1 },
-        { kind: 'forced_move', dir: -1, cells: 2 }, { kind: 'cast', sid: 'skill_1' },
-        { kind: 'displacement', sid: 'skill_1', dir: 1 }, { kind: 'defend' }, { kind: 'turn' }, { kind: 'wait' },
-      ];
-      for (const action of kinds) {
-        const rendered = format.frameLines(synthetic(action), 0, 1).join('\n');
-        assert.ok(!rendered.includes('undefined'), `行动 ${action.kind} 渲染泄漏 undefined`);
-        assert.ok(rendered.includes('行动 '), `行动 ${action.kind} 应渲染行动文本`);
-      }
-      for (const f of contract.FRAME_ACTION_OPTIONAL_FIELDS) {
-        const usesIt = kinds.some((k) => f in k);
-        assert.ok(usesIt, `可选行动字段 ${f} 在合成用例里未被覆盖`);
-      }
+    }
+    // 审查 F6-8：行动字段**每帧都有**，核对必须移出 `if (withBullet)` 之外
+    for (const f of contract.FRAME_ACTION_FIELDS) assert.ok(f in diff.players.p1.action, `action 缺 ${f}`);
+    // 可选字段（dir/sid/cells）按 kind 出现 —— 用**全部 9 种行动形态**各渲染一次，核对投影不泄漏
+    const side = (action) => ({
+      fromX: 0, toX: 0, facing: 1, hp: 1, mp: 1, sp: 1, maxHp: 1, maxMp: 1, maxSp: 1, atk: 1, def: 1,
+      defending: false, dodging: false, fullDodge: false, action, effects: [],
+    });
+    const synthetic = (action) => ({
+      tick: 1,
+      diff: {
+        tick: 1, players: { p1: side(action), p2: side(action) }, bullets: [],
+        bases: { p1: { hp: 1, maxHp: 1, def: 1 }, p2: { hp: 1, maxHp: 1, def: 1 } },
+        collision: null, baseHits: [], bulletHits: [], damages: [], verdict: null, aiTrace: [],
+      },
+    });
+    const kinds = [
+      { kind: 'move', dir: 1 }, { kind: 'move', dir: -1 }, { kind: 'dodge', dir: 1 },
+      { kind: 'forced_move', dir: -1, cells: 2 }, { kind: 'cast', sid: 'skill_1' },
+      { kind: 'displacement', sid: 'skill_1', dir: 1 }, { kind: 'defend' }, { kind: 'turn' }, { kind: 'wait' },
+    ];
+    for (const action of kinds) {
+      const rendered = format.frameLines(synthetic(action), 0, 1).join('\n');
+      assert.ok(!rendered.includes('undefined'), `行动 ${action.kind} 渲染泄漏 undefined`);
+      assert.ok(rendered.includes('行动 '), `行动 ${action.kind} 应渲染行动文本`);
+    }
+    for (const f of contract.FRAME_ACTION_OPTIONAL_FIELDS) {
+      const usesIt = kinds.some((k) => f in k);
+      assert.ok(usesIt, `可选行动字段 ${f} 在合成用例里未被覆盖`);
+    }
+    // 审查 F6-8：`effects` / `baseHits` / `collision` 三组在真实对局里恒为空（实测 6 场 258 帧全为 0）
+    //   → 用**合成帧**覆盖其投影分支与字段清单（明确标注：以下是合成数据，不是服务端响应）
+    const synthFrame = {
+      tick: 9,
+      diff: {
+        tick: 9,
+        players: { p1: side({ kind: 'move', dir: 1 }), p2: side({ kind: 'defend' }) },
+        bullets: [],
+        bases: { p1: { hp: 1, maxHp: 100, def: 64 }, p2: { hp: 100, maxHp: 100, def: 64 } },
+        collision: { contactX: 640, t: 9 },
+        baseHits: [{ owner: 'p1', by: 'p2', atX: 608 }],
+        bulletHits: [{ uid: 'b_x', target: 'p1', atX: 608 }],
+        damages: [],
+        verdict: null,
+        aiTrace: [],
+      },
+    };
+    synthFrame.diff.players.p1.effects = [{ uid: 'e_1', kind: 'burn', stat: 'hp', delta: -3, displacement: 0, remaining: 2 }];
+    const synthLines = format.frameLines(synthFrame, 0, 1).join('\n');
+    assert.ok(!synthLines.includes('undefined') && !synthLines.includes('null'), `合成帧投影泄漏：${synthLines}`);
+    assert.ok(synthLines.includes('碰撞：接触点 640'), synthLines);
+    assert.ok(synthLines.includes('撞基地：p1 被 p2 撞 @608'), synthLines);
+    assert.ok(synthLines.includes('弹幕命中：b_x → p1 @608'), synthLines);
+    assert.ok(synthLines.includes('buff burn（hp-3，剩2）'), synthLines);
+    for (const f of contract.FRAME_EFFECT_FIELDS) {
+      assert.ok(Object.prototype.hasOwnProperty.call(synthFrame.diff.players.p1.effects[0], f),
+        `合成 effects 缺少已声明字段 ${f}`);
+    }
+    for (const f of contract.FRAME_BASE_HIT_FIELDS) {
+      assert.ok(Object.prototype.hasOwnProperty.call(synthFrame.diff.baseHits[0], f), `合成 baseHits 缺少 ${f}`);
+    }
+    for (const f of contract.FRAME_COLLISION_FIELDS) {
+      assert.ok(Object.prototype.hasOwnProperty.call(synthFrame.diff.collision, f), `合成 collision 缺少 ${f}`);
     }
     const withDamage = frames.find((f) => (f.diff.damages || []).length > 0);
     if (withDamage) {
@@ -392,6 +452,7 @@ test('QB-7 AI 节点类型与 server/ai/ast.js 的 NODE_TYPES 逐值相等；出
     for (const line of lines) {
       assert.ok(line.text.indexOf('未知节点') === -1, `出现未知节点：${line.text}`);
       assert.ok(line.text.indexOf('undefined') === -1, line.text);
+      assert.ok(line.text.indexOf('null') === -1, `程序树不得打印 null（审查 F6-12）：${line.text}`);
     }
     assert.ok(lines.every((l) => l.path === null || typeof l.path === 'string'));
     assert.ok(format.programLines(null).length === 0, '空程序应产出 0 行（不抛错）');
@@ -427,11 +488,15 @@ test('QB-8 无帧与失败路径：步进空操作、AI 查看器失败不开弹
   let vmA = format.viewModel(st.getState());
   assert.deepEqual(vmA.buttons.filter((b) => b.action === 'viewer-load-replay'), [], '无 id 不渲染读取回放');
   assert.ok(vmA.lines.join('').indexOf('无法读取回放') !== -1, vmA.lines.join(' | '));
-  // 无帧但有 id：渲染「读取本场回放」且可用
+  // 本屏有对局（envelope 带 battleId）但帧缺失：渲染「读取本场回放」且可用（审查 F6-2：判据取**本屏对局**）
+  st.dispatch({
+    type: 'quick.set',
+    envelope: { ok: true, data: { frames: null, battleId: 'b_x', winner: 'p1', ticks: 3, self: { delta: 0 } } },
+  });
   st.dispatch({ type: 'viewer.set', frames: null, source: 'quick', battleId: 'b_x' });
   const vmB = format.viewModel(st.getState());
   const replayBtn = vmB.buttons.filter((b) => b.action === 'viewer-load-replay')[0];
-  assert.ok(replayBtn && replayBtn.disabled === false, '有 id 时必须给出可点的读取回放入口（否则用户无路可走）');
+  assert.ok(replayBtn && replayBtn.disabled === false, '本屏有对局且无帧时必须有可点的读取回放入口（否则用户无路可走）');
 
   // ② AI 查看器失败（配置读取 500）→ 写文案、**不**打开弹窗
   const st2 = store.createStore(store.initialState());
@@ -478,6 +543,83 @@ test('QB-9 快速对战屏动作双向闭合（渲染集合 == 注册表的 F6 �
       assert.ok(actions.ACTIONS[name] && typeof actions.ACTIONS[name].run === 'function', `${name} 未注册`);
     }
   });
+});
+
+/* ---------- QB-11：跨屏门控（审查 F6-1/F6-2 的回归） ---------- */
+
+test('QB-11 跨屏门控：快速对战屏只渲染属于本场的帧；本屏无对局时不出现「读取本场回放」', async () => {
+  await withHarness(async (h) => {
+    await runOneBattle(h, 'qb11');
+    const mine = h.state().quick.envelope.data;
+    // 正常情况下本屏拥有帧：渲染查看区
+    let vm = format.viewModel(h.state());
+    assert.ok(vm.lines.some((l) => l.indexOf('第 1/' + mine.frames.length + ' 帧') === 0), '本场帧应渲染');
+    // 别场（模拟 F7 的「看这一场」覆盖共享查看器）
+    h.dispatch({ type: 'viewer.set', frames: QUICK_FRAMES_STUB, source: 'tournament', battleId: 'b_other' });
+    vm = format.viewModel(h.state());
+    assert.ok(!vm.lines.some((l) => l.indexOf('第 1/' + QUICK_FRAMES_STUB.length + ' 帧') === 0),
+      '别场的帧**不得**被当作本场渲染');
+    assert.ok(vm.lines.some((l) => l.indexOf('别处') !== -1), `应写明查看器里是别处的战斗：${vm.lines.join(' | ')}`);
+    const dis = (a) => vm.buttons.filter((b) => b.action === a)[0].disabled === true;
+    for (const a of ['viewer-first', 'viewer-prev', 'viewer-next', 'viewer-last', 'viewer-trace-p1', 'viewer-trace-p2']) {
+      assert.ok(dis(a), `非本场帧时 ${a} 必须禁用`);
+    }
+    assert.equal(vm.buttons.some((b) => b.action === 'viewer-load-replay'), true, '本屏有对局且无本场帧 → 应能读本场回放');
+    // 本屏**没跑过**对局 + viewer 持有别场 id → 不得渲染「读取本场回放」（审查 F6-2 的反例）
+    h.dispatch({ type: 'quick.set', envelope: null });
+    h.dispatch({ type: 'viewer.set', frames: null, source: 'tournament', battleId: 'b_other' });
+    vm = format.viewModel(h.state());
+    assert.equal(vm.buttons.some((b) => b.action === 'viewer-load-replay'), false,
+      '本屏没有对局时不得渲染「读取本场回放」（点了会"成功但屏幕无任何变化"）');
+    assert.equal(format.viewModel(h.state()).lines.join(''), format.QUICK_IDLE_TEXT);
+    // 非法 source 进不了状态（白名单）
+    h.dispatch({ type: 'viewer.set', frames: QUICK_FRAMES_STUB, source: 'nonsense', battleId: 'b_x' });
+    assert.equal(h.state().viewer.source, 'tournament', '非法 source 应被白名单挡下（沿用旧值）');
+  });
+});
+
+/* ---------- QB-12：AI 名是软依赖（审查 F6-3 的回归） ---------- */
+
+test('QB-12 AI 名是软依赖：configs 成功 + aiList 失败 → 弹窗仍打开（名字回落 aiId）；configs 失败 → 不开弹窗', async () => {
+  const makeCtx = (st, api) => ({
+    state: st.getState(), dispatch: (a) => st.dispatch(a), api, format, storage: { clear() {} }, actions: actions.ACTIONS,
+  });
+  const okConfigs = () => Promise.resolve({
+    transport: 'response', status: 200,
+    envelope: { ok: true, data: { slots: [{ slotId: 'slot1', loadout: { role: null, skills: [null, null, null], ai: { type: 'program', body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } }, aiId: 'ai_x' } }], activeSlotId: 'slot1' } },
+  });
+  // aiList 500
+  const st1 = store.createStore(store.initialState());
+  st1.dispatch({ type: 'session.set', token: 't', publicId: 'u_1', nickname: 'n', isAdmin: false });
+  st1.dispatch({ type: 'view.go', view: 'quick' });
+  await actions.ACTIONS['viewer-ai-logic'].run(makeCtx(st1, {
+    configs: okConfigs,
+    aiList: () => Promise.resolve({ transport: 'response', status: 500, envelope: { ok: false, error: { code: 'internal_error', message: 'boom', details: [] } } }),
+  }), null);
+  assert.equal(st1.getState().modal.kind, 'ai-logic', 'AI 库失败不得阻断弹窗（F6-3）');
+  assert.equal(st1.getState().notice.text, format.AI_LOGIC_NAME_FAIL_TEXT);
+  const lines = format.viewModel(st1.getState()).modal.lines;
+  assert.ok(lines[0].indexOf('我方 AI：ai_x') === 0, `AI 名应回落 aiId：${lines[0]}`);
+  assert.ok(lines.some((l) => l.indexOf('程序（') === 0), '程序树照常渲染');
+  // aiList 传输失败
+  const st2 = store.createStore(store.initialState());
+  st2.dispatch({ type: 'session.set', token: 't', publicId: 'u_1', nickname: 'n', isAdmin: false });
+  st2.dispatch({ type: 'view.go', view: 'quick' });
+  await actions.ACTIONS['viewer-ai-logic'].run(makeCtx(st2, {
+    configs: okConfigs, aiList: () => Promise.resolve({ transport: 'error', message: '断网' }),
+  }), null);
+  assert.equal(st2.getState().modal.kind, 'ai-logic', 'AI 库传输失败同样不得阻断');
+  assert.equal(st2.getState().notice.text, format.AI_LOGIC_NAME_FAIL_TEXT);
+  // configs 失败 → 不打开弹窗
+  const st3 = store.createStore(store.initialState());
+  st3.dispatch({ type: 'session.set', token: 't', publicId: 'u_1', nickname: 'n', isAdmin: false });
+  st3.dispatch({ type: 'view.go', view: 'quick' });
+  await actions.ACTIONS['viewer-ai-logic'].run(makeCtx(st3, {
+    configs: () => Promise.resolve({ transport: 'response', status: 500, envelope: { ok: false, error: { code: 'internal_error', message: 'boom', details: [] } } }),
+    aiList: () => { throw new Error('不应走到 aiList'); },
+  }), null);
+  assert.equal(st3.getState().modal, null, 'configs 失败不得打开空弹窗');
+  assert.equal(st3.getState().notice.kind, 'error');
 });
 
 /* ---------- QB-10：busy 语义 ---------- */

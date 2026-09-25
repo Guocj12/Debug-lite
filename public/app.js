@@ -148,7 +148,7 @@
       var ds = el && el.dataset ? el.dataset : null;
       if (!ds) return null;
       var out = {};
-      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId'];
+      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId', 'tier'];
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;

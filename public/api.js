@@ -111,6 +111,12 @@
         var qs = typeof query === 'string' && query !== '' ? '?' + query : '';
         return call('GET', '/api/v1/replay/' + encodeURIComponent(String(battleId)) + qs, undefined, token);
       },
+      // F7（05 §1）：锦标赛（排位批次）与排行榜（D-171：order/offset；带 Bearer 才回本人名次）
+      rankedRun: function (token, input) { return call('POST', '/api/v1/ranked/run', input === undefined ? {} : input, token); },
+      leaderboard: function (token, query) {
+        var qs = typeof query === 'string' && query !== '' ? '?' + query : '';
+        return call('GET', '/api/v1/leaderboard' + qs, undefined, token);
+      },
       admin: admin,
     };
   }

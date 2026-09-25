@@ -30,8 +30,9 @@
 | # | 端点 | 本批 UI 路径 | 状态 |
 |---|---|---|---|
 | 1 | `POST /api/v1/quick/run` | 快速对战屏·「开始快速对战」→ 结果行 + 内联完整战斗过程逐帧查看 | ✅ 本批接 UI（D-167 已内联 `frames`） |
-| 2 | `GET /api/v1/replay/:id` | 快速对战屏·「读取本场回放」（**仅当本次响应未带帧**时出现） | ✅ 本批接 UI |
-| 3 | `GET /api/v1/me/configs` | AI 逻辑查看器·读取**我方出战配置的 AI 程序正文**（`slot.loadout.ai`） | ✅ 复用提交③ 出口 |
+| 2 | `GET /api/v1/replay/:id` | 快速对战屏·「读取本场回放」（**仅当本屏已有对局且本场无内联帧**时出现） | ✅ 本批接 UI |
+| 3 | `GET /api/v1/me/configs` | AI 逻辑查看器·读取**我方出战配置的 AI 程序正文**（`slot.loadout.ai`）——**必需**依赖 | ✅ 复用提交③ 出口 |
+| 3b | `GET /api/v1/me/ai` | AI 逻辑查看器·把 `aiId` 显示成 AI 名 —— **软依赖**（失败只写提示，弹窗照常打开、名字回落 aiId；审查 F6-3） | ✅ 复用提交③ 出口 |
 | 4 | `GET /api/v1/me` | 已有（hub/profile） | 复用 |
 | 5 | `GET /api/v1/leaderboard` | — | ⛔ F7 |
 | 6 | `POST /api/v1/ranked/run`、`/ranked/promote`、`/me/records`、`/me/defense` | — | ⛔ F7 |
@@ -89,17 +90,28 @@
 判决：p2 胜（phase=role）
 ```
 - 空数组时对应行**整行不出现**（不打印空标题）。
-- `action` 文本：`move→左移/右移`、`dodge→左闪/右闪`、`forced_move→被推左/右`、`cast→释放<sid>`、`displacement→位移<sid>`、`defend→格挡`、`turn→转身`、`wait→待机`。
-- `effects[]` 文本：`<kind>(<stat><delta>，剩<remaining>)`，多个用 `、` 连接；空则 `无`。
+- `action` 文本（**与实现逐字一致**）：`move→移动左/右`、`dodge→闪避左/右`、`forced_move→被推左/右（<n> 格）`、`cast→释放<sid>`、`displacement→位移<sid> 左/右`、`defend→格挡`、`turn→转身`、`wait→待机`。
+- 朝向：`+1（向右）` / `-1（向左）`。
+- 基地行：`基地：p1 hp 100/100（def 64） · p2 …`。
+- 弹幕行：`弹幕 b_43（p2，straight，dir 左，v 512，长 512，等级 3）672→608 命中 p1`（含 `等级`）。
+- 弹幕命中行（`bulletHits[]`）：`弹幕命中：b_43 → p1 @608`。
+- 判决行：`判决：p2（对手）（phase=role）`（`winner` 用**绝对侧位**口径：`p1（我方）`/`p2（对手）`/`平局`）。
+- `effects[]` 文本：`<kind>(<stat><±delta>[,位移<±d>]，剩<remaining>)`，多个用 `、` 连接；空则 `无`（**不显示 effect 的 `uid`**，见 §13 R-7）。
+- **跨屏残留门控（审查 F6-1/F6-2 修正）**：本屏**只渲染属于本屏那一场**的帧 —— 判据 = `state.viewer.source ∈ {quick, replay}` **且** `state.viewer.battleId === data.battleId`。
+  不满足时（例如刚在锦标赛屏点过「看这一场」）不渲染任何帧/轨迹、四个步进与两个轨迹按钮**全部禁用**，并写一行
+  `（当前查看器里是**别处**的战斗：点「开始快速对战」重新发起本屏对局）`；「读取本场回放」也**只在"本屏已有对局且本场无可显示帧"时**出现。
 
 ### 3.3 AI 逻辑查看器（屏内弹窗 `state.modal.kind='ai-logic'`，FR-10）
 
 - 打开时**静默**读取一次 `GET /me/configs`（落 `state.viewer.configs`；**不碰** `state.configs`，避免丢弃配置编辑器里未保存的草稿）。
 - 弹窗内容（全文本）：
   1. `我方 AI：<name 或 aiId 或「（该配置没有 AI）」>`
-  2. 程序树：按 AST 逐节点缩进一行，行尾带**稳定路径**（与帧里 `aiTrace[].path` 同一语法：`body.s[i]` / `.then` / `.else` / `.body`），**本帧执行过的节点**行尾追加 `← 本帧执行`；
+  2. 程序树：按 AST 逐节点缩进一行，**行尾带稳定路径**（与帧里 `aiTrace[].path` 同一语法：`body.s[i]` / `.then` / `.else` / `.body`），**本帧执行过的节点**行尾追加 `← 本帧执行`（于是程序树与下方轨迹行可逐条对照；审查 F6-4）；
   3. `本帧执行轨迹（我方 <k> 条 / 对手 <m> 条）`：逐条 `#seq <owner> <path> <nodeType>[ → <result>]`；
   4. 固定说明行：`对手 AI 只提供执行轨迹、不提供源码（D-167 / SEC-33）`。
+- **0 帧时**：`本帧：无帧（本屏暂无可查看的对局）`（不打印 `第 1/0 帧`；审查 F6-5）。
+- **无 AI 时**：只写一次 `（该配置没有 AI）`（审查 F6-11）。
+- `literal` 节点取值缺失时打 `?`（不泄漏 `undefined`；审查 F6-12）。
 - 按钮：`关闭`（`modal-close`）。点弹窗外背景同样关闭（`render` 统一产出）。
 - 程序树节点文案（16 类节点全覆盖，`literal/get/var/set/getVar/arith/cmp/logic/random/if/loop/break/function/call/action/seq`）：以表达式渲染（`self.hp < 30`、`(enemy.x - self.x)`、`random(<p>)`）与语句渲染（`action move_right`、`loop count×3`、`call foo`、`break`）为准；深度上限 32 层（超出打 `…（超出显示深度）`，防病态程序把屏幕打爆）。
 
@@ -120,8 +132,8 @@
 | `viewer-last` | 查看器·`最后一帧` | 帧游标 → n−1 | 同上 | — |
 | `viewer-trace-p1` | 查看器·`看我方(进攻方)轨迹` | 轨迹侧 → `p1` | 轨迹行切到 p1 | — |
 | `viewer-trace-p2` | 查看器·`看对手(防守方)轨迹` | 轨迹侧 → `p2` | 轨迹行切到 p2 | — |
-| `viewer-ai-logic` | 查看器·`AI 逻辑查看器` | 静默 `GET /me/configs` → 打开 `ai-logic` 弹窗 | 弹窗（§3.3） | 网络/401 文案（**不打开空弹窗**） |
-| `viewer-load-replay` | 查看器·`读取本场回放`（**仅当无内联帧**） | `GET /replay/<battleId>` → 帧并入 `state.viewer` | `已读取回放：<n> 帧` | `410 replay_expired` / `403 replay_forbidden` 文案 |
+| `viewer-ai-logic` | 查看器·`AI 逻辑查看器` | `GET /me/configs`（必需）→ 打开 `ai-logic` 弹窗；随后 `GET /me/ai` **尽力**取 AI 名 | 弹窗（§3.3） | 配置读取失败：网络/401 文案且**不打开空弹窗**；**AI 库失败不阻断**：弹窗仍打开，提示 `AI 逻辑查看器已就绪（AI 库读取失败：AI 名回落为 aiId）`（审查 F6-3） |
+| `viewer-load-replay` | 查看器·`读取本场回放`（**仅当本屏已有对局且本场无内联帧**） | `GET /replay/<battleId>` → 帧并入 `state.viewer` | `已读取回放 <id>：<n> 帧（…）` | `410 replay_expired` / `403 replay_forbidden` 文案 |
 
 - 双向核对口径：`admin-ui-contract.test.js` 的 `F6_ACTIONS` 数组 ←→ 本表 ←→ `actions.ACTIONS` 键集（`AU-1`）；非管理员态可达性由 `auth-ui-contract.test.js` 的 `nonAdminRenderings()` 纳入"快速对战屏（含帧）"状态（`UI-2`）。
 - 本批**不新增** `data-*` 寻址键（`app.js` 的 `payloadOf` 白名单 9 键不变）：步进与侧位切换都是"整屏动作"，不需要行级目标。
@@ -170,7 +182,7 @@
 - `diff`：`players` `bases` `bullets` `baseHits` `bulletHits` `damages` `collision` `verdict` `aiTrace`
 - `players.<side>`：`fromX` `toX` `facing` `hp` `mp` `sp` `maxHp` `maxMp` `maxSp` `atk` `def` `defending` `dodging` `fullDodge` `action` `effects`
 - `action`：`kind`（**可选**：`dir` 只在 move/dodge/forced_move/displacement；`sid` 只在 cast/displacement；`cells` 只在 forced_move）
-- `effects[i]`：`uid` `kind` `stat` `delta` `displacement` `remaining`
+- `effects[i]`：`kind` `stat` `delta` `displacement` `remaining`（**不含 `uid`**：本批不显示 effect 的 uid，见 §13 R-7）
 - `bullets[i]`：`uid` `owner` `level` `btype` `dir` `v` `len` `spawnX` `endX` `outcome` `hitTarget` `collideWith` `collideWinner` `collided` `expired`（**可选**：`falloffFactor` —— 引擎只对"有衰减的弹幕"补该键，实测近战弹幕没有）
 - `damages[i]`：`target` `amount` `atX` `kind` `srcUid` `attacker` `crit` `critM` `backstab` `backM` `dodged`
 - `baseHits[i]`：`owner` `by` `atX`
@@ -232,6 +244,9 @@ reducer 动作增量：`quick.set`（`{envelope}`）／`viewer.set`（`{frames, 
 | Q-10 | 配置读取失败（网络/401） | 不打开空弹窗；写失败文案（按钮永不无声） |
 | Q-11 | 程序深度 > 32 | 截断并写 `…（超出显示深度）` |
 | Q-12 | `aiTrace` 为空（某帧 AI 未记录） | 轨迹行写 `（本帧无 AI 轨迹）` |
+| Q-13 | 本屏无帧时打开 AI 逻辑查看器 | `本帧：无帧（本屏暂无可查看的对局）`（不打印 `第 1/0 帧`；审查 F6-5） |
+| Q-14 | 查看器里是别屏/别场的帧 | 本屏不渲染这些帧、步进与轨迹按钮禁用，并写明 `（当前查看器里是**别处**的战斗…）`；「读取本场回放」不出现（审查 F6-1/F6-2） |
+| Q-15 | `GET /me/ai` 失败（AI 名软依赖） | 弹窗**照常打开**，AI 名回落 `aiId`，提示 `…（AI 库读取失败：AI 名回落为 aiId）`（审查 F6-3） |
 
 ---
 
@@ -260,12 +275,14 @@ reducer 动作增量：`quick.set`（`{envelope}`）／`viewer.set`（`{frames, 
 | QB-2 | 帧投影：对真实帧跑 `frameLines`，`第 i/n 帧`、双方位置/血量/行动、弹幕/伤害/判决行齐全，且**不出现 `undefined`/`null`**（全帧遍历） |
 | QB-3 | 查看器按钮语义：`viewer-first/prev/next/last` 的夹取边界（0 与 n−1），禁用状态随游标变化；**不发任何请求**（本地动作） |
 | QB-4 | 轨迹：`viewer-trace-p1/p2` 切换后，轨迹行的 `owner` 与当前帧 `aiTrace` 同源；条数 == 该 owner 在该帧的条目数 |
-| QB-5 | AI 逻辑查看器：真实 `GET /me/configs` → 弹窗含我方 AI 名与程序行；本帧执行节点被标记；对手只有轨迹；点背景可关闭 |
-| QB-6 | 帧字段三方一致：`contract` 的 9 个字段数组 == 04 §5.2 清单 == `format.js` 中出现的字面量；并在**真实帧**上逐字段验证存在（`FORMAT-1`） |
+| QB-5 | AI 逻辑查看器：真实 `GET /me/configs` → 弹窗含我方 AI 名与程序行；**程序树每行带稳定路径**（区段断言：程序段内至少一行含 `body`，且路径集合与同帧 `aiTrace[].path` 有交集）；本帧执行节点被标记；对手只有轨迹；点背景可关闭 |
+| QB-6 | 帧字段三方一致：`contract` 的 **15 个 `FRAME_*` 字段数组**（§5.2 的 12 组 + 3 组可选字段）== 04 §5.2 清单 == `format.js` 中出现的字面量；并在**真实帧**上逐字段验证存在；`effects`/`baseHits`/`collision` 三组在真实帧里恒为空 → 用**合成帧**覆盖其投影分支（明确标注合成） |
 | QB-7 | AI 节点类型 16 类与 `server/ai/ast.js` 的 `NODE_TYPES` 逐值相等；程序树渲染对**出厂 starter AI 的真实 program** 全覆盖（无未知节点、无异常） |
 | QB-8 | 预校验与失败路径：无帧时步进动作是空操作（不发请求）；`viewer-ai-logic` 在配置读取失败时不打开弹窗且写文案；`replay_expired`/`403` 文案 |
 | QB-9 | 「按钮永不无声」闭环：快速对战屏（有帧态）渲染出的 `data-action` 全部命中注册表；注册表里的 F6 动作全部在该屏出现（双向） |
 | QB-10 | `busy` 时快速对战屏全部按钮 `disabled`；`quick-run` 在 busy 下不重复发请求 |
+| QB-11 | 跨屏门控（审查 F6-1/F6-2）：快速对战成功后把 `state.viewer` 换成"别场"（模拟 F7 的「看这一场」）→ 本屏不渲染该帧、步进/轨迹按钮全部禁用、出现"别处战斗"提示；`quick.envelope=null`（本屏没跑过）+ viewer 持有别场 id → **不渲染**「读取本场回放」（修前会渲染且点了无任何可见变化） |
+| QB-12 | AI 名是**软依赖**（审查 F6-3）：`configs` 成功 + `aiList` 失败（403/500/传输失败）→ 弹窗仍打开、首行含 `aiId`、提示 `AI_LOGIC_NAME_FAIL_TEXT`；`configs` 失败 → 不打开弹窗且文案可见 |
 
 ---
 
@@ -279,10 +296,10 @@ reducer 动作增量：`quick.set`（`{envelope}`）／`viewer.set`（`{frames, 
 | 2 | 点 `开始快速对战` | 结果区 | `对手 <昵称>（u_…，段位 common，bot|玩家）· 结果 你赢了|你输了|平局 · 积分 0→<n>（<±d>）· 胜率预测 0.5 · 共 <t> tick` |
 | 3 | 看抽池行 | 文本区 | `抽池窗口 100 · 对手冷却权重 1 · 回满小时 4 · 零和 … · 本次为重复对局 否` |
 | 4 | 点 `下一帧` ×3 | 查看器区 | `第 4/<n> 帧（tick 4）`，双方位置/血量随帧推进变化 |
-| 5 | 点 `最后一帧` | 查看器区 | `第 <n>/<n> 帧`；出现 `判决：p1|p2|draw 胜（phase=base|role）` |
+| 5 | 点 `最后一帧` | 查看器区 | `第 <n>/<n> 帧`；出现 `判决：p1（我方）|p2（对手）|平局（phase=base|role）`（实现为绝对侧位口径） |
 | 6 | 点 `第一帧` | 查看器区 | `第 1/<n> 帧` |
 | 7 | 点 `看对手(防守方)轨迹` | 轨迹行 | 该行 `<owner=p2>` 的 path 列表；再点 `看我方(进攻方)轨迹` 切回 p1 |
-| 8 | 点 `AI 逻辑查看器` | 弹窗 | `我方 AI：新手AI` + 程序树（`if`/`action` 逐行，含 `body.s[0]…` 路径）+ 若干行带 `← 本帧执行`；底部 `对手 AI 只提供执行轨迹、不提供源码（D-167 / SEC-33）` |
+| 8 | 点 `AI 逻辑查看器` | 弹窗 | `我方 AI：新手AI` + 程序树（`if`/`action` 逐行，**每行行尾带路径**如 `body.s[0]`、`body.s[0].else.s[0]`）+ 若干行带 `← 本帧执行`；底部 `对手 AI 只提供执行轨迹、不提供源码（D-167 / SEC-33）` |
 | 9 | 点弹窗外背景 | 弹窗 | 关闭，回到快速对战屏（草稿/游标不变） |
 | 10 | 点 `返回主界面` → 再进 `快速对战` | 屏 | 上一场结果与帧仍在（内存态），步进可用 |
 | 11 | 无候选池时点 `开始快速对战`（如把其他账号踢出池） | 结果区/提示 | `no_opponent` 的可读文案（**不是**空白或 5xx） |
@@ -308,15 +325,18 @@ reducer 动作增量：`quick.set`（`{envelope}`）／`viewer.set`（`{frames, 
 | R-4 | 前端不做帧的本地缓存/预取 | 每次 `quick-run` 都是新对局；历史对局回看要走回放（本批已提供入口） |
 | R-5 | 文本化的战斗过程信息量上限 | 弹幕/伤害/基地行逐帧打印，长对局（>64 tick）单帧行数有限但**总信息量大**；本批不做折叠/过滤（F5 正式批次的查看器可加过滤） |
 | R-6 | 未接 `/me/records` 战绩列表 | 属 F7 之后的批次；本批只做"刚打完的这一场" |
-| R-7 | `effects` 的 `uid` 可能为 `null` | 打印为 `-`；不影响可读性 |
+| R-7 | 本批**不显示** effect 的 `uid` | `effects[]` 里有 `uid` 字段（服务端给），但它是内部标识、对"看懂这一帧"无帮助 ⇒ 投影不读、不打印；`FRAME_EFFECT_FIELDS` 与 §5.2 同步**不含** `uid`（审查 F6-6：修前文档说"打印为 `-`"，实现从没打印过 —— 已按"以实现为准"统一为"不显示"） |
+| R-8 | 本批只支持**进攻方视角**（`p1 = 我方`） | 快速对战/锦标赛里请求者恒为进攻方 p1（实测），故投影把 `p1` 硬编码为"我方"；D-169 规定防守方看同一回放时应看到自己在 p2 —— 那条路径（`/me/defense` 的防守回放）**本批未接**，届时需给 `state.viewer` 增 `selfSide` 并由投影据此生成"我方/对手"标签（审查 F6-9：本批不可达，登记为跨批复用风险） |
+| R-9 | 跨屏共享查看器需靠"来源 + 对局 id"门控 | 单一 `state.viewer` 是刻意设计（§2 反驳 2）；代价已在 §3.2 末段写明门控规则与提示文案（审查 F6-1/F6-2 修） |
 
 ---
 
 ## 14. 实施与对账
 
-- 实施顺序：`store.js`（切片 + reducer + `MODAL_KINDS`）→ `format.js`（投影 + 屏 + 弹窗 + 导出）→ `api.js`（`quickRun`/`replay`/`replayQuery` 出口）→ `actions.js`（9 个动作 + 会话清理）→ `contract.js`（28 条端点路径 + 9 个帧字段数组 + `AI_NODE_TYPES`）→ `app.js`（**不改**）→ 测试（`quick-battle-flow.test.js` 新增；`auth-ui-contract`/`admin-ui-contract`/`auth-field-contract`/`hub-warehouse-flow` 四处登记同步）→ 文档（本文件 + `interfaces.md` §9.3 漂移修正 + `progress.md`）。
+- 实施顺序：`store.js`（切片 + reducer + `MODAL_KINDS` + `VIEWER_SOURCES`）→ `format.js`（投影 + 屏 + 弹窗 + 门控 + 导出）→ `api.js`（`quickRun`/`replay` 出口）→ `actions.js`（9 个动作 + 会话清理）→ `contract.js`（**26 条**端点路径 + **15 个** `FRAME_*` 字段数组 + `AI_NODE_TYPES`）→ `app.js`（**不改**）→ 测试（`quick-battle-flow.test.js` 新增；`auth-ui-contract`/`admin-ui-contract`/`auth-field-contract`/`hub-warehouse-flow` 四处登记同步）→ 文档（本文件 + `interfaces.md` §9.3 漂移修正 + `progress.md`）。
 - 对账（实现完成后逐条回填）：
   - §1 端点映射：`quick/run` ✅ / `replay/:id` ✅ / `me/configs` ✅
   - §4 动作 9 个 ✅（`AU-1`/`UI-2` 双向断言）
-  - §5 字段 28 条 ✅（`FC-1/FC-2/FC-3`）+ 帧字段 9 组 ✅（`QB-6`）
+  - §5 字段 **26 条**（quick/run 21 + replay/:id 5）✅（`FC-1/FC-2/FC-3`）+ `FRAME_*` 字段 **15 组** ✅（`QB-6`）
+  - §10 独立审查 `docs/reviews/F6.md` 的 P1（F6-1…F6-4）与 P2（F6-5…F6-12）**已逐条修复**，并新增 QB-11/QB-12 回归 ✅
   - §6 失败路径 ✅（`QB-8` + `format` 文案表）

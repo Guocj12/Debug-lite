@@ -139,6 +139,47 @@ function quickState(opts) {
   return state;
 }
 
+// F7（05 §5.2）：锦标赛批次与排行榜的真实响应形状（真起服务抓取过；与 TB-1/TB-7 同源）
+const RANKED_ENVELOPE = {
+  ok: true,
+  data: {
+    batchId: 'bt_fe7', tier: 'common', requested: 10, matches: 2, shortfall: 8,
+    wins: 1, draws: 0, losses: 1, invalids: 1, recoveryHours: 4,
+    promoted: false, tierAfter: 'common', reward: 'common',
+    results: [
+      { match: 1, opponentPublicId: 'u_foe1', winner: 'p1', ticks: 1, battleId: 'b_fe7', frames: QUICK_FRAMES },
+      { match: 2, opponentPublicId: 'u_foe2', winner: 'invalid', ticks: 0, battleId: null },
+    ],
+  },
+};
+const BOARD_ENVELOPE = {
+  ok: true,
+  data: {
+    scope: 'global', order: 'points', offset: 0, limit: 20, total: 2, hasMore: false,
+    rows: [
+      { rank: 1, publicId: 'u_b1', nickname: '榜一', points: 10, tier: 'common', tierUpdatedAt: 1 },
+      { rank: 2, publicId: 'u_b2', nickname: '榜二', points: 0, tier: 'common', tierUpdatedAt: null },
+    ],
+    self: { rank: 1, publicId: 'u_b1', nickname: '榜一', points: 10, tier: 'common', tierUpdatedAt: 1 },
+  },
+};
+
+function tournamentState() {
+  const state = stateFor('tournament');
+  state.session = { token: 'token-for-test', publicId: 'u_me', nickname: '我', expiresAt: null, isAdmin: false };
+  state.tournament.envelope = RANKED_ENVELOPE;
+  state.viewer.frames = QUICK_FRAMES;
+  state.viewer.battleId = 'b_fe7';
+  state.viewer.source = 'tournament';
+  return state;
+}
+
+function boardState() {
+  const state = stateFor('leaderboard');
+  state.board.envelope = BOARD_ENVELOPE;
+  return state;
+}
+
 function nonAdminRenderings() {
   const list = store.VIEWS.map((view) => stateFor(view));
   const itemDetail = stateFor('warehouse');
@@ -162,6 +203,9 @@ function nonAdminRenderings() {
   aiLogic.viewer.ai = AI_ENVELOPE;
   aiLogic.modal = { kind: 'ai-logic' };
   list.push(aiLogic);
+  // F7（05 §4）：锦标赛屏（有批次 + 已载入某场）与排行榜屏（已加载榜单）
+  list.push(tournamentState());
+  list.push(boardState());
   return list;
 }
 

@@ -42,8 +42,10 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-09-25：D-167——回放帧契约重构：画面数据自足 + 双方 aiTrace + 日志出帧 + 匹配内联全量帧；
   //   2026-09-25：D-168——软冷却（4h 线性回满）取代 D-136 的 24h 硬底线 + strict/relaxed 双池；
   //   2026-09-25：D-169——对外胜负口径统一 p1/p2/draw/invalid（档案内每人 result 仍保留 win/loss/draw）；
-  //   2026-09-25：D-170——新增 admin op `account-patch`（改任意账号段位/积分/入池，写 journal、峰值只升不降））
-  assert.equal(decided.size, 122, `D 编号数量应为 122（decisions.md 无跳段之外的编号）`);
+  //   2026-09-25：D-170——新增 admin op `account-patch`（改任意账号段位/积分/入池，写 journal、峰值只升不降）；
+  //   2026-09-25：D-171——排行榜扩展（分页 offset/total/hasMore + 本人名次 self + 段位榜 order=arrival 按到达时间）；
+  //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号））
+  assert.equal(decided.size, 123, `D 编号数量应为 123（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

@@ -44,6 +44,9 @@ const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'g
 // F6（04 §4）：快速对战 + 战斗查看器 + AI 逻辑查看器 的 9 个非管理动作
 const F6_ACTIONS = ['quick-run', 'viewer-first', 'viewer-prev', 'viewer-next', 'viewer-last',
   'viewer-trace-p1', 'viewer-trace-p2', 'viewer-ai-logic', 'viewer-load-replay'];
+// F7（05 §4）：锦标赛 + 排行榜 的 10 个非管理动作
+const F7_ACTIONS = ['tournament-run', 'tournament-page-prev', 'tournament-page-next', 'tournament-open-battle',
+  'board-points', 'board-tier', 'board-scope', 'board-prev', 'board-next', 'board-refresh'];
 
 const ROW = {
   playerId: 'pl_row0001', publicId: 'u_row0001', nickname: '行一', tier: 'common', points: 120,
@@ -148,6 +151,46 @@ function adminQuickState(opts) {
   state.viewer.battleId = opts.battleId;
   return state;
 }
+
+// F7（05 §5.2）：锦标赛批次与排行榜的真实响应形状（真起服务抓取过；TB-1/TB-7 同源）
+const RANKED_ENVELOPE = {
+  ok: true,
+  data: {
+    batchId: 'bt_fe7', tier: 'common', requested: 10, matches: 2, shortfall: 8,
+    wins: 1, draws: 0, losses: 1, invalids: 1, recoveryHours: 4,
+    promoted: false, tierAfter: 'common', reward: 'common',
+    results: [
+      { match: 1, opponentPublicId: 'u_foe1', winner: 'p1', ticks: 1, battleId: 'b_fe7', frames: QUICK_FRAMES },
+      { match: 2, opponentPublicId: 'u_foe2', winner: 'invalid', ticks: 0, battleId: null },
+    ],
+  },
+};
+const BOARD_ENVELOPE = {
+  ok: true,
+  data: {
+    scope: 'global', order: 'points', offset: 0, limit: 20, total: 2, hasMore: false,
+    rows: [
+      { rank: 1, publicId: 'u_b1', nickname: '榜一', points: 10, tier: 'common', tierUpdatedAt: 1 },
+      { rank: 2, publicId: 'u_b2', nickname: '榜二', points: 0, tier: 'common', tierUpdatedAt: null },
+    ],
+    self: { rank: 1, publicId: 'u_b1', nickname: '榜一', points: 10, tier: 'common', tierUpdatedAt: 1 },
+  },
+};
+
+function adminTournamentState() {
+  const state = adminState('tournament');
+  state.tournament.envelope = RANKED_ENVELOPE;
+  state.viewer.frames = QUICK_FRAMES;
+  state.viewer.battleId = 'b_fe7';
+  state.viewer.source = 'tournament';
+  return state;
+}
+
+function adminBoardState() {
+  const state = adminState('leaderboard');
+  state.board.envelope = BOARD_ENVELOPE;
+  return state;
+}
 function attrValues(html, attr) {
   const out = new Set();
   for (const m of html.matchAll(new RegExp(attr + '="([^"]*)"', 'g'))) if (m[1] !== '') out.add(m[1]);
@@ -173,12 +216,15 @@ function adminRenderings() {
   // F6（04 §4）：快速对战屏的两种互斥可达态（有内联帧 / 无内联帧但有对局 id）
   list.push(htmlFor(adminQuickState({ frames: QUICK_FRAMES, battleId: 'b_fe6' })));
   list.push(htmlFor(adminQuickState({ frames: null, battleId: 'b_fe6' })));
+  // F7（05 §4）：锦标赛屏（有批次 + 已载入某场）与排行榜屏（已加载榜单）
+  list.push(htmlFor(adminTournamentState()));
+  list.push(htmlFor(adminBoardState()));
   return list;
 }
 
 test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交③后按实际值核对）', () => {
-  // F1 + F2 + F3（提交②/③）+ F6 的四段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS])].sort();
+  // F1 + F2 + F3（提交②/③）+ F6 + F7 的五段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();

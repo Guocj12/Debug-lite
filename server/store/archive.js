@@ -566,6 +566,20 @@ function migrateV1toV2(raw) {
 
 const MIGRATIONS = Object.freeze({ 1: migrateV0toV1, 2: migrateV1toV2 });
 
+// D-171：老档案缺 `progress.tierUpdatedAt`（段位榜排序键）时的**一次性兜底盖章**。
+//   · 取值链：`createdAt`（账号创建时间，最保守的"至少不比它晚"代理）→ `updatedAt` → 0；
+//   · **只补一次**：调用方（adapter-json 的 readArchiveRaw）在返回 true 时把档案写回磁盘，
+//     于是第二次读就不再触发（`needsTierStamp` 也随之收敛）；
+//   · **不伪造"最近一次段位变化"**：它只是"到达时间未知"的历史数据代理，`systems/11` §8.6 的 R-6 口径不变。
+function stampTierUpdatedAt(archive) {
+  if (!archive || !archive.progress || typeof archive.progress !== 'object') return false;
+  if (Number.isInteger(archive.progress.tierUpdatedAt)) return false;
+  const at = Number.isInteger(archive.createdAt) ? archive.createdAt
+    : (Number.isInteger(archive.updatedAt) ? archive.updatedAt : 0);
+  archive.progress.tierUpdatedAt = at;
+  return true;
+}
+
 // 读档时按需升级；更高版本 → 拒绝（防止新版本写过的数据被旧版本覆盖）
 function migrateArchive(archive, options) {
   const opts = options || {};
@@ -1542,6 +1556,7 @@ module.exports = {
   markSeen,
   maxSlotsOf,
   migrateArchive,
+  stampTierUpdatedAt,
   newPlayerId,
   newPublicId,
   nextTier,

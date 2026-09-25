@@ -138,6 +138,33 @@
     { endpoint: 'replay/:id', path: 'data.phase', use: '回放头·判决依据（base|role）' },
     { endpoint: 'replay/:id', path: 'data.ticks', use: '回放头·总 tick' },
     { endpoint: 'replay/:id', path: 'data.frames', use: '无内联帧时的帧来源' },
+    // POST /api/v1/ranked/run（F7 锦标赛；05 §5.1）
+    //   ⚠️ 刻意**不登记** `data.seed`（03 分册已按路径登记为"前端不读"，FC-4 按路径强校验；
+    //   且它无法喂回入参，复现一律用 battleId）与 `data.duplicate`/`data.replayed`（只在**重放批次**
+    //   出现 ⇒ 无法在"新批次"响应里核对；"有没有帧"才是前端需要的判据）
+    { endpoint: 'ranked/run', path: 'data.batchId', use: '批次行·批次 id' },
+    { endpoint: 'ranked/run', path: 'data.tier', use: '结果区·批次前段位' },
+    { endpoint: 'ranked/run', path: 'data.requested', use: '结果区·本批应打几场（分页总数用 matches）' },
+    { endpoint: 'ranked/run', path: 'data.matches', use: '结果区 + 分页行·实际场数' },
+    { endpoint: 'ranked/run', path: 'data.shortfall', use: '缺口行·少打几场（>0 时强制不判晋升）' },
+    { endpoint: 'ranked/run', path: 'data.wins', use: '结果区·胜' },
+    { endpoint: 'ranked/run', path: 'data.draws', use: '结果区·平' },
+    { endpoint: 'ranked/run', path: 'data.losses', use: '结果区·负' },
+    { endpoint: 'ranked/run', path: 'data.invalids', use: '结果区·无效场' },
+    { endpoint: 'ranked/run', path: 'data.recoveryHours', use: '批次行·冷却回满小时（D-168）' },
+    { endpoint: 'ranked/run', path: 'data.promoted', use: '结果区·是否晋升（D-122）' },
+    { endpoint: 'ranked/run', path: 'data.tierAfter', use: '结果区·批次后段位' },
+    { endpoint: 'ranked/run', path: 'data.reward', use: '结果区·奖励品质（= 段位名，D-122）' },
+    { endpoint: 'ranked/run', path: 'data.results', use: '场次列表（逐项取 RANKED_RESULT_FIELDS）' },
+    // GET /api/v1/leaderboard（F7 排行榜；D-171 扩展；05 §5.1）
+    { endpoint: 'leaderboard', path: 'data.scope', use: '榜头行·当前范围（global/tier:<t>）' },
+    { endpoint: 'leaderboard', path: 'data.order', use: '榜头行·当前榜（points=积分榜 / arrival=段位榜）' },
+    { endpoint: 'leaderboard', path: 'data.offset', use: '分页行·本页起点' },
+    { endpoint: 'leaderboard', path: 'data.limit', use: '分页行·每页人数' },
+    { endpoint: 'leaderboard', path: 'data.total', use: '分页行·全量人数' },
+    { endpoint: 'leaderboard', path: 'data.hasMore', use: '「下一页」是否可用' },
+    { endpoint: 'leaderboard', path: 'data.rows', use: '行列表（逐项取 LEADERBOARD_ROW_FIELDS）' },
+    { endpoint: 'leaderboard', path: 'data.self', use: '本人名次块（LEADERBOARD_SELF_FIELDS；null = 不在榜内）' },
     // 任意端点：统一信封（server/index.js okEnvelope/errEnvelope）
     { endpoint: 'any', path: 'ok', use: '成功/失败判定（唯一分支依据）' },
     { endpoint: 'any', path: 'error.code', use: '错误分类与文案选择' },
@@ -199,7 +226,7 @@
   var FRAME_ACTION_FIELDS = ['kind'];
   // 可选字段：`dir` 只在 move/dodge/forced_move/displacement；`sid` 只在 cast/displacement；`cells` 只在 forced_move
   var FRAME_ACTION_OPTIONAL_FIELDS = ['dir', 'sid', 'cells'];
-  var FRAME_EFFECT_FIELDS = ['uid', 'kind', 'stat', 'delta', 'displacement', 'remaining'];
+  var FRAME_EFFECT_FIELDS = ['kind', 'stat', 'delta', 'displacement', 'remaining'];
   var FRAME_BULLET_FIELDS = ['uid', 'owner', 'level', 'btype', 'dir', 'v', 'len', 'spawnX', 'endX', 'outcome',
     'hitTarget', 'collideWith', 'collideWinner', 'collided', 'expired'];
   // 可选字段：引擎只对"有衰减的弹幕"补 `falloffFactor`（实测：近战弹幕没有该键）→ 不作为必现字段核对
@@ -213,6 +240,17 @@
   var FRAME_TRACE_FIELDS = ['tick', 'owner', 'seq', 'path', 'nodeType', 'phase', 'depth'];
   // 可选字段：`result` **只有 action 节点**才有（值为该 action 名，见 systems/08-ai.md §3）
   var FRAME_TRACE_OPTIONAL_FIELDS = ['result'];
+
+  /* ---------- F7：锦标赛场次行与排行榜行（05 §5.2） ----------
+   * 同样从子对象上读取（`data.results[i]` / `data.rows[i]` / `data.self`），**不含 `data.` 前缀**；
+   * 由 tests/frontend/tournament-board-flow.test.js 的 TB-6 三方核对（本表 == 05 §5.2 == format.js 实读
+   * == 真实响应逐字段）。
+   */
+  var RANKED_RESULT_FIELDS = ['match', 'opponentPublicId', 'winner', 'ticks', 'battleId'];
+  // 可选字段：重放批次的 `results[i]` **没有 `frames` 键**（不是 null）；`invalid` 场次连 `duplicate` 都没有
+  var RANKED_RESULT_OPTIONAL_FIELDS = ['frames', 'duplicate'];
+  var LEADERBOARD_ROW_FIELDS = ['rank', 'publicId', 'nickname', 'points', 'tier', 'tierUpdatedAt'];
+  var LEADERBOARD_SELF_FIELDS = ['rank', 'publicId', 'nickname', 'points', 'tier', 'tierUpdatedAt'];
 
   // 分册 §5 登记了、但**本批前端明确不读取**的路径（FC-3 的双向核对靠它闭合：
   //   documented == AUTH_FIELD_CONTRACT ∪ DOC_NOT_READ，且两者无交集）
@@ -254,6 +292,11 @@
     FRAME_VERDICT_FIELDS: FRAME_VERDICT_FIELDS,
     FRAME_TRACE_FIELDS: FRAME_TRACE_FIELDS,
     FRAME_TRACE_OPTIONAL_FIELDS: FRAME_TRACE_OPTIONAL_FIELDS,
+    // F7：场次行 / 排行榜行与本人名次块（05 §5.2；TB-6 三方核对）
+    RANKED_RESULT_FIELDS: RANKED_RESULT_FIELDS,
+    RANKED_RESULT_OPTIONAL_FIELDS: RANKED_RESULT_OPTIONAL_FIELDS,
+    LEADERBOARD_ROW_FIELDS: LEADERBOARD_ROW_FIELDS,
+    LEADERBOARD_SELF_FIELDS: LEADERBOARD_SELF_FIELDS,
     DOC_NOT_READ: DOC_NOT_READ,
     UNUSED_FIELDS: UNUSED_FIELDS,
   };

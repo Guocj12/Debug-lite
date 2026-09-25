@@ -1,4 +1,4 @@
-﻿# 账号与存档系统 详细设计（在线服务层）
+# 账号与存档系统 详细设计（在线服务层）
 
 > 所属：Debug-Lite v3　版本：v1　创建：2026-09-16
 > 更新：2026-09-22（D-159…D-162 落地：仓库服务端权威 / 三槽初始形态 / AI 库 / 开箱 seed 收归服务端）
@@ -460,6 +460,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 
 - 索引**只放匹配/排行榜/登录必需字段**（约 200 B/玩家），常驻内存（§11.3）。
 - `byTier` 与 `leaderboard` 在启动时重建；运行期增量维护（升段/积分变化时移动元素）。
+- **D-171**：条目另含 `tierUpdatedAt`（段位到达时间，段位榜排序键）；**老索引缺该字段 → `open()` 从档案重建索引补齐**（一次性迁移，info 日志留痕），补齐后立即落盘。
 - 索引损坏 → `store.index.rebuild` 事件 + 从 `players/*` 重建（§6.4）。
 - **仓库与 AI 库不进索引**（D-159/D-161）：`index.json` 只放匹配/排行榜/登录必需字段（约 200 B/玩家），仓库（可达 1 MB 量级）与 AI 库按需从档案读取——否则索引内存会被经济数据淹没（§11.2.1）。
 - **合并写语义（2026-09-19 实现注记）**：运行期 `index.json` 采用**"标脏 + 微任务合并落盘"**（`saveIndex()` 置脏，`setImmediate` 里一次原子写），因为单次原子写实测 ≈7 ms、占单场结算成本一半以上；`open()`/`close()`/显式 `index.save()`/`rebuildIndex()`/`recover()` 仍**立即落盘**。因此**崩溃可能丢掉最后一次 `index.json` 更新**——这是可接受的：索引是**派生数据**，journal + 档案才是真源，`open()` 按 §6.4 的恢复流程补放/重建（写失败也不阻断，只记 `store.error`）。
@@ -773,11 +774,20 @@ K_loss(R) = clamp(kBase * (1 + R / cap), kBase, kMax)       # 扣分系数：随
 | 分数突变/异常告警 | ⏸ 仅记 `store.abuse.suspect`(warn) 日志（不阻断） |
 | 同设备多号 | ⏸ 不做（§15.5 Q4） |
 
-### 8.6 排行榜（可选但建议）
+### 8.6 排行榜（**D-171 起：两张榜 + 分页 + 本人名次**）
 
-- `GET /api/v1/leaderboard?scope=global|tier:<t>&limit=50`：数据来自内存 `leaderboard` 索引，O(limit) 返回 `{rank, publicId, nickname, points, tier}`。
-- 榜单按 `points` 降序；同分按 `peakPoints` 降序，再按 `updatedAt` 升序（稳定）。
-- **不在响应中暴露 `playerId`**，只给 `publicId + nickname`。
+- `GET /api/v1/leaderboard?scope=global|tier:<t>&order=points|arrival&offset=0&limit=50`：数据来自内存索引，
+  返回 `{scope, order, offset, limit, total, hasMore, rows[], self}`，行 = `{rank, publicId, nickname, points, tier, tierUpdatedAt}`。
+- **积分榜（`order=points`，缺省）**：按 `points` 降序；同分按 `peakPoints` 降序，再按 `updatedAt` 升序（稳定）——**口径未变**。
+- **段位榜（`order=arrival`，D-171）**：`tier` 按 `TIERS` 由高到低 → **同段位内 `tierUpdatedAt` 升序（先到者在前）** → `publicId` 升序兜底；
+  `tierUpdatedAt` 是**最后一次段位变化**的时间（升/降/管理端改档都算），不是"首次到达该段位"的时间；缺失（老数据）时排在本段位末尾。
+- **分页**：`offset`（≥0）+ `limit`（1..100）；`total` = 该榜该 scope 的全量人数（不受本页 `limit` 影响）；`hasMore` = 后面还有行。
+  实现仍是**全量排序后切片**（O(n log n)/页，与既有实现同量级）；超大账号量的分页索引化登记在 `security-backlog`。
+- **本人名次 `self`**：调用者在本榜本 scope 的**全榜**名次 `{rank, publicId, nickname, points, tier, tierUpdatedAt}`；
+  需要可选 Bearer（`tolerant`：带 token 才认身份，**不带仍公开可读**）；未登录/未上榜 → `null`。
+- **不在响应中暴露 `playerId`**（行与 `self` 都不含），只给 `publicId + nickname`。
+- 索引条目新增 `tierUpdatedAt`（D-171）；老 `index.json` 缺该字段 → `open()` 从档案重建索引补齐（迁移，见 §5.6）。
+- 封禁账号一律不进榜；**调试 bot 不排除**（与既有口径一致）。
 
 ---
 
@@ -865,7 +875,7 @@ GET /api/v1/replay/:battleId
 | POST | `/api/v1/ranked/run` | ✅ | **改造（已实现）**：服务端抽池 + 双向记账；无 token 时按 `DL_LEGACY_STATELESS` 走遗留口径（=0 → 401） | 400 `pool_forbidden`（传入 `pool`）/`bad_seed`/`bad_tier`；409 `no_active_config`/`store_not_found`/`loadout_invalid`/`no_loadout` |
 | POST | `/api/v1/ranked/promote` | ✅ | **保留**（兼容），改为读档案而非入参 | 409 `already_max` |
 | POST | `/api/v1/quick/run` | ✅ | 快速对战（积分相近 + 双向 Elo） | 409 `no_opponent` |
-| GET | `/api/v1/leaderboard` | — | 排行榜（`?scope=&limit=`） | 400 `bad_scope` |
+| GET | `/api/v1/leaderboard` | — | 排行榜（`?scope=&order=&offset=&limit=`；**D-171**：两张榜 + 分页 + 本人名次 `self`） | 400 `bad_scope`/`bad_request` |
 | GET | `/api/v1/replay/:battleId` | ✅ | **改造**：参与者鉴权 + 按需重算 | 403 `replay_forbidden` / 410 `replay_expired` |
 | POST | `/api/v1/admin/bots` | 管理员 | 注入 bot 档案 | 401 / 403 |
 | POST | `/api/v1/admin/rebuild-index` | 管理员 | 重建索引 | 401 |

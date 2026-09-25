@@ -49,6 +49,17 @@
   var MODAL_KINDS = Object.freeze(['item-detail', 'config', 'slot-pick', 'plugin-pick', 'ai-pick', 'ai-logic']);
   // F6：战斗查看器的**侧位**（帧里 players.<side> / aiTrace[].owner 的取值；04 §3.2/§3.4）
   var VIEWER_OWNERS = Object.freeze(['p1', 'p2']);
+  // F6：查看器里这帧"是哪来的"（必须被读取：跨屏残留时**不能**把别屏的帧当成本场 —— 审查 F6-1）
+  var VIEWER_SOURCES = Object.freeze(['quick', 'tournament', 'replay']);
+
+  // F7：锦标赛每页场次（总 10 场 → 2 页；05 §3.1）与排行榜每页人数（≤ 服务端单页上限 100；05 §3.2）
+  var TOURNAMENT_PAGE_SIZE = 5;
+  var BOARD_PAGE_SIZE = 20;
+  // F7：两张榜（order=points 积分榜 / order=arrival 段位榜；D-171）
+  var BOARD_ORDERS = Object.freeze(['points', 'arrival']);
+  // F7：榜的范围（global + 五个段位；与 server 的 TIERS 同序，D-171）
+  var BOARD_TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
+  var BOARD_SCOPES = Object.freeze(['global', 'tier:common', 'tier:rare', 'tier:epic', 'tier:legendary', 'tier:mythic']);
   // F3：配置弹窗里的**位置键**（03 §3.7 逐位置：角色模板 / 角色插槽 / 技能1..3 / 技能插槽 / 战斗AI）。
   //   `skillN` 表示第 N 个技能（0 起）；插件位置在 `pos` 之外另带 `idx`（插槽序号）。
   var CONFIG_POSITIONS = Object.freeze(['role', 'skill0', 'skill1', 'skill2', 'ai']);
@@ -92,6 +103,16 @@
     return { frames: null, index: 0, source: null, battleId: null, traceOwner: 'p1', configs: null, ai: null, replay: null };
   }
 
+  // F7：锦标赛（05 §7）—— 只存**最近一次 POST /ranked/run 的响应信封** + 本地页码
+  function emptyTournament() {
+    return { envelope: null, page: 0 };
+  }
+
+  // F7：排行榜（05 §7）—— 只存**最近一次 GET /leaderboard 的响应信封** + 当前榜/范围/分页游标
+  function emptyBoard() {
+    return { envelope: null, board: 'points', scope: 'global', offset: 0, limit: BOARD_PAGE_SIZE };
+  }
+
   // 初始状态（01-auth.md §7.1 + 02-accounts.md §7 + 03 §7）
   function initialState() {
     return {
@@ -113,6 +134,8 @@
       settings: { nickname: '', result: null },
       quick: emptyQuick(),      // F6
       viewer: emptyViewer(),    // F6（F7 共用）
+      tournament: emptyTournament(),  // F7
+      board: emptyBoard(),            // F7
     };
   }
 
@@ -266,15 +289,18 @@
       case 'quick.set':
         return Object.assign({}, state, { quick: { envelope: action.envelope || null } });
       // 查看器换数据源（新对局/读回放）：游标归零，其余侧位与配置信封保持
-      case 'viewer.set':
+      //   `source` 必须落在白名单内（否则投影无法判断"这帧属于哪一屏"）；非法值 → 沿用旧值
+      case 'viewer.set': {
+        var nextSource = VIEWER_SOURCES.indexOf(action.source) === -1 ? state.viewer.source : action.source;
         return Object.assign({}, state, {
           viewer: Object.assign({}, state.viewer, {
             frames: Array.isArray(action.frames) ? action.frames : null,
             index: 0,
-            source: action.source === undefined ? null : action.source,
+            source: nextSource,
             battleId: action.battleId === undefined ? null : action.battleId,
           }),
         });
+      }
       // 帧游标（动作层负责夹取范围；这里只做非负整数兜底，防止脏值把投影打崩）
       case 'viewer.frame.set': {
         var idx = intOr(action.index, state.viewer.index);
@@ -302,9 +328,52 @@
         return Object.assign({}, state, {
           viewer: Object.assign({}, state.viewer, { replay: action.envelope || null }),
         });
-      // 会话切换/登出：清空战斗态（不残留上一个账号的对局）
+      // 会话切换/登出：清空战斗态与榜单态（不残留上一个账号的对局/名次）
       case 'viewer.clear':
-        return Object.assign({}, state, { quick: emptyQuick(), viewer: emptyViewer() });
+        return Object.assign({}, state, {
+          quick: emptyQuick(),
+          viewer: emptyViewer(),
+          tournament: emptyTournament(),
+          board: emptyBoard(),
+        });
+      /* ----- F7：锦标赛 + 排行榜（05 §7） ----- */
+      // 锦标赛响应整包（POST /ranked/run 的**响应信封**）；换批次即回到第 1 页
+      case 'tournament.set':
+        return Object.assign({}, state, {
+          tournament: { envelope: action.envelope || null, page: 0 },
+        });
+      // 锦标赛页码（动作层按页数夹取；这里只做非负兜底）
+      case 'tournament.page.set': {
+        var page = intOr(action.page, state.tournament.page);
+        return Object.assign({}, state, {
+          tournament: Object.assign({}, state.tournament, { page: page < 0 ? 0 : page }),
+        });
+      }
+      // 榜单响应整包 + 本次请求的榜/范围/游标（榜头行与翻页都读它）
+      case 'board.set':
+        return Object.assign({}, state, {
+          board: {
+            envelope: action.envelope || null,
+            board: BOARD_ORDERS.indexOf(action.board) === -1 ? state.board.board : action.board,
+            scope: BOARD_SCOPES.indexOf(action.scope) === -1 ? state.board.scope : action.scope,
+            offset: intOr(action.offset, state.board.offset),
+            limit: intOr(action.limit, state.board.limit),
+          },
+        });
+      // 只改分页游标（翻页）
+      case 'board.page.set':
+        return Object.assign({}, state, {
+          board: Object.assign({}, state.board, { offset: Math.max(0, intOr(action.offset, state.board.offset)) }),
+        });
+      // 只改榜/范围（切榜或换范围必须回到第 1 页 —— 否则会看到"第 3 页的别的榜"）
+      case 'board.mode.set':
+        return Object.assign({}, state, {
+          board: Object.assign({}, state.board, {
+            board: BOARD_ORDERS.indexOf(action.board) === -1 ? state.board.board : action.board,
+            scope: BOARD_SCOPES.indexOf(action.scope) === -1 ? state.board.scope : action.scope,
+            offset: 0,
+          }),
+        });
       // 02-accounts.md §7：管理员令牌（仅内存；空串 = 未填）
       case 'admin.token.set':
         return Object.assign({}, state, { adminToken: strOf(action.value) });
@@ -383,6 +452,7 @@
     WAREHOUSE_BUCKETS: WAREHOUSE_BUCKETS,
     MODAL_KINDS: MODAL_KINDS,
     VIEWER_OWNERS: VIEWER_OWNERS,
+    VIEWER_SOURCES: VIEWER_SOURCES,
     CONFIG_POSITIONS: CONFIG_POSITIONS,
     SKILL_SLOTS: SKILL_SLOTS,
     BOX_TIMES_FIELD: BOX_TIMES_FIELD,
@@ -398,6 +468,13 @@
     emptyConfigs: emptyConfigs,
     emptyQuick: emptyQuick,
     emptyViewer: emptyViewer,
+    emptyTournament: emptyTournament,
+    emptyBoard: emptyBoard,
+    TOURNAMENT_PAGE_SIZE: TOURNAMENT_PAGE_SIZE,
+    BOARD_PAGE_SIZE: BOARD_PAGE_SIZE,
+    BOARD_ORDERS: BOARD_ORDERS,
+    BOARD_TIERS: BOARD_TIERS,
+    BOARD_SCOPES: BOARD_SCOPES,
     reduce: reduce,
     createStore: createStore,
   };

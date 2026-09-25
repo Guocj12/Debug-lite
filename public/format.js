@@ -29,10 +29,9 @@
   // 每桶上限缺省值（正常一律以响应的 data.caps 为准；缺失时才回落，避免整屏崩）
   var CAP_FALLBACK = 500;
   // F3：四个空页的标题与计划批次（03 §3.6；FR-12）
-  //   F6 起 `quick` 已是真屏（04 分册）；`tournament`/`leaderboard` 留给 F7
+  //   F6 起 `quick` 已是真屏（04 分册）；F7 起 `tournament`/`leaderboard` 已是真屏（05 分册）；
+  //   仅剩 `ai-editor`（F5：AI 编辑器）
   var EMPTY_PAGES = Object.freeze({
-    tournament: { title: '锦标赛', sub: '= 排位赛', batch: 'F7' },
-    leaderboard: { title: '排行榜', batch: 'F7' },
     'ai-editor': { title: 'AI 编辑', batch: 'F5' },
   });
   // 提交③（出战配置编辑器）的文案常量见下方 §3.7 段（CONFIG_ACTIVE_HINT / CONFIG_DRAFT_HINT …）
@@ -1124,12 +1123,15 @@
   var QUICK_IDLE_TEXT = '（尚未发起对局：点「开始快速对战」）';
   var QUICK_NO_FRAMES_TEXT = '（本场没有帧数据：点「读取本场回放」）';
   var QUICK_NO_ID_TEXT = '（本场没有帧数据，且响应未带回对局 id：无法读取回放）';
+  var QUICK_OTHER_BATTLE_TEXT = '（当前查看器里是**别处**的战斗：点「开始快速对战」重新发起本屏对局）';
   var QUICK_NO_TRACE_TEXT = '（本帧无 AI 轨迹）';
   var AI_LOGIC_TRACE_NOTE = '对手 AI 只提供执行轨迹、不提供源码（D-167 / SEC-33）';
   var AI_LOGIC_NO_CONFIGS = '（尚未读取到出战配置：点「AI 逻辑查看器」重新读取）';
   var AI_LOGIC_NO_AI = '（该配置没有 AI）';
   var REPLAY_OK_TEXT = '已读取回放';
   var AI_LOGIC_OK_TEXT = 'AI 逻辑查看器已就绪（只读：程序树 + 本帧执行轨迹）';
+  // AI 库（只用来把 aiId 显示成名字）读取失败时的提示：**弹窗仍打开**，名字回落 aiId（审查 F6-3）
+  var AI_LOGIC_NAME_FAIL_TEXT = 'AI 逻辑查看器已就绪（AI 库读取失败：AI 名回落为 aiId）';
 
   // 快速对战专属失败指引（04 §6）：补上"下一步怎么办"，其余 code 走 F1 的 HINTS
   var QUICK_HINTS = Object.freeze({
@@ -1141,7 +1143,10 @@
     store_not_found: '该账号档案不存在或已被删除',
   });
 
-  function quickNoticeText(env) {
+  // PVP 面（快速对战/锦标赛/榜单）共用的失败文案：附加指引 + 服务端文案 + 字段名。
+  //   三个出口名指向同一实现（`quickNoticeText`/`rankedNoticeText`/`boardNoticeText`）—— 语义完全相同，
+  //   分开命名只为调用点可读；**不复制第二份实现**。
+  function pvpNoticeText(env) {
     var code = errorCodeOf(env);
     var extra = QUICK_HINTS[code] === undefined ? '' : QUICK_HINTS[code];
     var base = noticeText(env);
@@ -1318,6 +1323,48 @@
     return state && state.viewer ? arrayOf(state.viewer.frames) : [];
   }
 
+  function viewerSource(state) {
+    return state && state.viewer ? str(state.viewer.source) : null;
+  }
+
+  function viewerBattleId(state) {
+    return state && state.viewer ? str(state.viewer.battleId) : null;
+  }
+
+  // F6-1（审查）：**本屏是否拥有当前查看器里的帧**。
+  //   共享 `state.viewer` 是 F6/F7 的刻意设计（04 §2 反驳 2），代价是跨屏残留 ——
+  //   若不加门控，快速对战屏会把锦标赛里"看这一场"的帧当作"本场"渲染（实测：同屏 `共 2 tick` + `第 1/3 帧`）。
+  //   判据 = 数据源 + 对局 id 属于本屏。
+  function quickViewerActive(state, env) {
+    var src = viewerSource(state);
+    if (src !== 'quick' && src !== 'replay') return false;
+    var mine = str(pick(env, 'data.battleId'));
+    return mine !== null && viewerBattleId(state) === mine;
+  }
+
+  function tournamentViewerActive(state, env) {
+    if (viewerSource(state) !== 'tournament') return false;
+    var id = viewerBattleId(state);
+    if (id === null) return false;
+    return resultsOf(env).some(function (result) {
+      return str(pick(result, 'battleId')) === id;
+    });
+  }
+
+  // 当前**屏**拥有的帧（AI 逻辑查看器的"本帧"必须用它 —— 弹窗由两屏共用，取错了就会把别屏的帧标成"本帧执行"）
+  function activeViewerFrames(state) {
+    var view = state ? state.view : null;
+    if (view === 'quick') {
+      var q = state.quick ? state.quick.envelope : null;
+      return q !== null && isOk(q) && quickViewerActive(state, q) ? viewerFrames(state) : [];
+    }
+    if (view === 'tournament') {
+      var t = state.tournament ? state.tournament.envelope : null;
+      return t !== null && isOk(t) && tournamentViewerActive(state, t) ? viewerFrames(state) : [];
+    }
+    return [];
+  }
+
   function viewerIndex(state, total) {
     if (total <= 0) return 0;
     var raw = state && state.viewer ? numOr(state.viewer.index, 0) : 0;
@@ -1362,10 +1409,21 @@
   }
 
   // 表达式 → 文字（只覆盖 16 类节点里的表达式类；未知类型原样打印类型名）
+  //   `literal` 的取值可能缺失（历史/迁移遗留）→ 显式打 `?`，**不泄漏 undefined/null**（审查 F6-12）
+  function literalText(value) {
+    if (value === undefined) return '?';
+    try {
+      var text = JSON.stringify(value);
+      return typeof text === 'string' ? text : '?';
+    } catch (e) {
+      return '?';
+    }
+  }
+
   function exprText(node) {
     if (node === null || node === undefined || typeof node !== 'object') return '?';
     var type = str(pick(node, 'type'));
-    if (type === 'literal') return JSON.stringify(pick(node, 'value'));
+    if (type === 'literal') return literalText(pick(node, 'value'));
     if (type === 'get') return or(pick(node, 'path'), '?');
     if (type === 'getVar') return or(pick(node, 'name'), '?');
     if (type === 'arith' || type === 'cmp' || type === 'logic') {
@@ -1466,11 +1524,13 @@
     return out;
   }
 
-  // 本帧执行过的节点加标记（path 与 aiTrace[].path 同语法）
+  // 本帧执行过的节点加标记；**每行都带稳定路径**（与帧里 aiTrace[].path 同一语法）——
+  //   这是"树节点 ↔ 轨迹条目"可对照的唯一手段（04 §3.3 第 2 条；审查 F6-4 修）
   function markedProgramLines(program, executed) {
     return programLines(program).map(function (line) {
-      if (line.path !== null && executed[line.path] === true) return line.text + '  ← 本帧执行';
-      return line.text;
+      var text = line.path === null ? line.text : line.text + '  ' + line.path;
+      if (line.path !== null && executed[line.path] === true) return text + '  ← 本帧执行';
+      return text;
     });
   }
 
@@ -1509,11 +1569,12 @@
     return out;
   }
 
-  // AI 逻辑查看器弹窗（04 §3.3）：我方程序树（带本帧执行标记）+ 双方轨迹（对手只有轨迹）
+  // AI 逻辑查看器弹窗（04 §3.3）：我方程序树（带本帧执行标记 + 稳定路径）+ 双方轨迹（对手只有轨迹）
   function aiLogicLines(state) {
     var out = [];
     var env = viewerConfigsEnvelope(state);
-    var frames = viewerFrames(state);
+    // F6-1：本弹窗的"本帧"同样必须取自**本屏拥有的**帧（否则会把别屏的帧标成"本帧执行"）
+    var frames = activeViewerFrames(state);
     var idx = viewerIndex(state, frames.length);
     var frame = frames.length > 0 ? frames[idx] : null;
     var mine = frame === null ? [] : traceEntriesOf(frame, 'p1');
@@ -1523,14 +1584,18 @@
     } else {
       var slot = activeSlotOf(env);
       var loadout = slot === null ? null : pick(slot, 'loadout');
-      out.push('我方 AI：' + (loadout === null || loadout === undefined ? AI_LOGIC_NO_AI : aiNameOf(state, loadout)));
       var program = loadout === null || loadout === undefined ? null : pick(loadout, 'ai');
-      if (program === null || program === undefined || typeof program !== 'object') {
-        out.push(AI_LOGIC_NO_AI);
-      } else {
+      var hasAi = program !== null && program !== undefined && typeof program === 'object';
+      // 审查 F6-11：无槽/loadout 缺失时**只写一次** `（该配置没有 AI）`，不再重复第二行
+      if (loadout === null || loadout === undefined) out.push('我方 AI：' + AI_LOGIC_NO_AI);
+      else out.push('我方 AI：' + aiNameOf(state, loadout));
+      if (loadout !== null && loadout !== undefined && !hasAi) out.push(AI_LOGIC_NO_AI);
+      if (hasAi) {
         out.push('出战槽：' + or(slot === null ? null : pick(slot, 'slotId'), '?')
-          + '　本帧：第 ' + String(idx + 1) + '/' + String(frames.length) + ' 帧');
-        out.push('程序（`← 本帧执行` = 该节点本帧被求值）：');
+          + '　本帧：' + (frames.length === 0
+            ? '无帧（本屏暂无可查看的对局）'
+            : '第 ' + String(idx + 1) + '/' + String(frames.length) + ' 帧'));
+        out.push('程序（行尾为稳定路径；`← 本帧执行` = 该节点本帧被求值）：');
         out = out.concat(markedProgramLines(program, executedPathsOf(frame, 'p1')));
       }
     }
@@ -1573,18 +1638,23 @@
   function quickViewModel(state, notice, busy) {
     var env = state.quick ? state.quick.envelope : null;
     var loaded = env !== null && isOk(env);
-    var frames = viewerFrames(state);
+    // F6-1/F6-2（审查修正）：可见的帧**必须**属于本屏这一场 —— 数据源为 quick/replay 且 battleId 与本屏对局一致。
+    //   否则（例如刚在锦标赛屏点过「看这一场」）共享查看器里装的是别场的帧。
+    var active = loaded && quickViewerActive(state, env);
+    var envBattleId = loaded ? str(pick(env, 'data.battleId')) : null;
+    var frames = active ? viewerFrames(state) : [];
     var total = frames.length;
     var idx = viewerIndex(state, total);
-    var battleId = state.viewer ? str(state.viewer.battleId) : null;
     var lines = [];
     if (!loaded) {
       lines.push(QUICK_IDLE_TEXT);
     } else {
       lines.push(quickPoolText(env));
       lines.push(quickOpponentPointsText(env));
-      if (total === 0) lines.push(battleId === null ? QUICK_NO_ID_TEXT : QUICK_NO_FRAMES_TEXT);
-      else {
+      if (total === 0) {
+        if (envBattleId === null) lines.push(QUICK_NO_ID_TEXT);
+        else lines.push(active ? QUICK_NO_FRAMES_TEXT : QUICK_OTHER_BATTLE_TEXT);
+      } else {
         lines = lines.concat(frameLines(frames[idx], idx, total));
         lines.push(traceSummaryText(frames[idx], state.viewer ? state.viewer.traceOwner : 'p1'));
       }
@@ -1600,7 +1670,9 @@
       { action: 'viewer-trace-p2', label: '看对手(防守方)轨迹', kind: 'button', disabled: busy || noFrames },
       { action: 'viewer-ai-logic', label: 'AI 逻辑查看器', kind: 'button', disabled: busy },
     ];
-    if (noFrames && battleId !== null) {
+    // 「读取本场回放」**仅当本屏已有对局、但本场没有可显示的帧**时出现（审查 F6-2）：
+    //   修前它只看 viewer.battleId ⇒ 本屏没跑过对局时也会渲染，点成功却"屏幕无任何变化"。
+    if (loaded && noFrames && envBattleId !== null) {
       buttons.push({ action: 'viewer-load-replay', label: '读取本场回放', kind: 'button', disabled: busy });
     }
     buttons.push({ action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy });
@@ -1613,6 +1685,300 @@
       buttons: buttons,
       modal: modalViewModel(state, busy),
     });
+  }
+
+  /* ---------- F7：锦标赛 + 排行榜（05 §3/§5） ----------
+   * 布局与 F6 同构：结果区 = 批次汇总、lines = 批次/缺口/分页行 + 当前查看的帧、
+   * rows = 本页场次（每行一个「看这一场」按钮）或榜单行。战斗查看器**复用 F6 的 state.viewer 与投影**。
+   */
+
+  var TOURNAMENT_PAGE_SIZE = 5;
+  // 五段位（与 server/store/index-file.js 的 TIERS、store.BOARD_TIERS 同序；05 §3.2 的范围按钮）
+  var BOARD_TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
+  var TOURNAMENT_NO_BATCH_TEXT = '（尚未发起锦标赛：点「开始锦标赛」）';
+  var TOURNAMENT_EMPTY_TEXT = '（本批没有可用的对局）';
+  var BOARD_EMPTY_TEXT = '（本榜暂无玩家）';
+  var BOARD_SELF_NONE_TEXT = '我：不在本榜内（未登录或未上榜）';
+  var BOARD_OK_TEXT = '榜单已刷新';
+  var BATTLE_LOADED_TEXT = '已载入本场战斗';
+  var NO_BATTLE_ID_TEXT = '该场无效（对手快照不可用，无对局 id 可读回放）';
+  var BOARD_POINTS_LABEL = '积分榜';
+  var BOARD_TIER_LABEL = '段位榜';
+  var BOARD_ALL_LABEL = '全部';
+
+  function rankedNoticeText(env) { return pvpNoticeText(env); }
+  function boardNoticeText(env) { return pvpNoticeText(env); }
+  var quickNoticeText = pvpNoticeText;
+
+  function resultsOf(env) { return arrayOf(pick(env, 'data.results')); }
+
+  // 本批场数 / 页数 / 当前页（页码在投影里夹取，脏状态打不崩）
+  function tournamentPager(state) {
+    var env = state.tournament ? state.tournament.envelope : null;
+    var total = env !== null && isOk(env) ? resultsOf(env).length : 0;
+    var pages = total === 0 ? 1 : Math.ceil(total / TOURNAMENT_PAGE_SIZE);
+    var raw = state.tournament ? numOr(state.tournament.page, 0) : 0;
+    var page = raw < 0 ? 0 : (raw > pages - 1 ? pages - 1 : raw);
+    return { total: total, pages: pages, page: page, size: TOURNAMENT_PAGE_SIZE };
+  }
+
+  function rankedResultText(env) {
+    var promoted = pick(env, 'data.promoted') === true;
+    return '本批 ' + num(pick(env, 'data.matches')) + '/' + num(pick(env, 'data.requested')) + ' 场'
+      + '（缺口 ' + num(pick(env, 'data.shortfall')) + '）'
+      + ' · 胜 ' + num(pick(env, 'data.wins')) + ' / 平 ' + num(pick(env, 'data.draws'))
+      + ' / 负 ' + num(pick(env, 'data.losses')) + ' / 无效 ' + num(pick(env, 'data.invalids'))
+      + ' · 段位 ' + or(pick(env, 'data.tier'), '?') + ' → ' + or(pick(env, 'data.tierAfter'), '?')
+      + '（晋升 ' + yesNo(promoted, '是', '否') + '）'
+      + ' · 奖励品质 ' + or(pick(env, 'data.reward'), '?');
+  }
+
+  function rankedBatchText(env) {
+    return '批次 ' + or(pick(env, 'data.batchId'), '?')
+      + ' · 冷却回满 ' + num(pick(env, 'data.recoveryHours')) + ' 小时';
+  }
+
+  // 缺口行（05 §8 T-2）：池不足**不是**失败，但必须如实说明"缺场批次不判晋升"（server/ranked.js:749）
+  function rankedShortfallText(env) {
+    var shortfall = numOr(pick(env, 'data.shortfall'), 0);
+    if (shortfall <= 0) return null;
+    return '池内候选不足：本批少打 ' + String(shortfall) + ' 场（D-152 禁止 bot 充数；缺场批次不判晋升）';
+  }
+
+  function rankedResultLine(result) {
+    var battleId = str(pick(result, 'battleId'));
+    var frames = pick(result, 'frames');
+    var tail = battleId === null ? '对局 （无）' : '对局 ' + battleId;
+    if (battleId !== null && !Array.isArray(frames)) tail += '（本场无内联帧：点「看这一场」读回放）';
+    if (pick(result, 'duplicate') === true) tail += ' · 重复场次（该对局此前已记录）';
+    return '第 ' + num(pick(result, 'match')) + ' 场 · 对手 ' + or(pick(result, 'opponentPublicId'), '?')
+      + ' · 结果 ' + battleWinnerText(pick(result, 'winner'))
+      + ' · ' + num(pick(result, 'ticks')) + ' tick · ' + tail;
+  }
+
+  function tournamentViewModel(state, notice, busy) {
+    var env = state.tournament ? state.tournament.envelope : null;
+    var loaded = env !== null && isOk(env);
+    var pager = tournamentPager(state);
+    var lines = [];
+    var rows = [];
+    if (!loaded) {
+      lines.push(TOURNAMENT_NO_BATCH_TEXT);
+    } else {
+      lines.push(rankedBatchText(env));
+      var missing = rankedShortfallText(env);
+      if (missing !== null) lines.push(missing);
+      lines.push('第 ' + String(pager.page + 1) + '/' + String(pager.pages) + ' 页（每页 '
+        + String(pager.size) + '，共 ' + String(pager.total) + ' 场）');
+      if (pager.total === 0) lines.push(TOURNAMENT_EMPTY_TEXT);
+      var results = resultsOf(env);
+      var start = pager.page * pager.size;
+      var pageRows = results.slice(start, start + pager.size);
+      rows = pageRows.map(function (result, i) {
+        var idx = start + i;
+        var battleId = str(pick(result, 'battleId'));
+        var ok = battleId !== null;
+        return {
+          text: rankedResultLine(result) + (ok ? '' : ' · ' + NO_BATTLE_ID_TEXT),
+          buttons: [{
+            action: 'tournament-open-battle', label: '看这一场', kind: 'button',
+            disabled: busy || !ok, idx: String(idx),
+          }],
+        };
+      });
+      // 查看区：与 F6 共用同一份 state.viewer 与同一套投影；**只显示属于本批的场次**（F6-1 同口径）
+      var frames = tournamentViewerActive(state, env) ? viewerFrames(state) : [];
+      if (frames.length > 0) {
+        var fi = viewerIndex(state, frames.length);
+        lines = lines.concat(frameLines(frames[fi], fi, frames.length));
+        lines.push(traceSummaryText(frames[fi], state.viewer ? state.viewer.traceOwner : 'p1'));
+      } else if (viewerFrames(state).length > 0) {
+        lines.push('（当前查看器里是别处的战斗：点上面某场的「看这一场」载入本批的帧）');
+      }
+    }
+    var noFrames = !tournamentViewerActive(state, env) || viewerFrames(state).length === 0;
+    var viewerId = viewerBattleId(state);
+    var ownsViewerId = loaded && viewerId !== null && resultsOf(env).some(function (r) {
+      return str(pick(r, 'battleId')) === viewerId;
+    });
+    var buttons = [
+      { action: 'tournament-run', label: '开始锦标赛', kind: 'button', disabled: busy },
+      { action: 'tournament-page-prev', label: '上一页', kind: 'button', disabled: busy || pager.page <= 0 },
+      { action: 'tournament-page-next', label: '下一页', kind: 'button', disabled: busy || pager.page >= pager.pages - 1 },
+      { action: 'viewer-first', label: '第一帧', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-prev', label: '上一帧', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-next', label: '下一帧', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-last', label: '最后一帧', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-trace-p1', label: '看我方(进攻方)轨迹', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-trace-p2', label: '看对手(防守方)轨迹', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-ai-logic', label: 'AI 逻辑查看器', kind: 'button', disabled: busy },
+    ];
+    if (noFrames && ownsViewerId) {
+      buttons.push({ action: 'viewer-load-replay', label: '读取本场回放', kind: 'button', disabled: busy });
+    }
+    buttons.push({ action: 'goto-leaderboard', label: '看段位榜', kind: 'button', disabled: busy });
+    buttons.push({ action: 'board-points', label: '看积分榜', kind: 'button', disabled: busy });
+    buttons.push({ action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy });
+    return vm('锦标赛（= 排位赛）', {
+      notice: notice,
+      hint: '服务端抽池，每批至多 10 场；池不足如实回报缺口（D-152 禁止 bot 充数）；已内联的帧可直接逐场查看',
+      result: loaded ? { kind: 'info', text: rankedResultText(env) } : null,
+      lines: lines,
+      rows: rows,
+      buttons: buttons,
+      modal: modalViewModel(state, busy),
+    });
+  }
+
+  /* ---------- F7：排行榜 ---------- */
+
+  function boardRows(env) {
+    return arrayOf(pick(env, 'data.rows')).map(function (row) {
+      return {
+        rank: num(pick(row, 'rank')),
+        publicId: or(pick(row, 'publicId'), '未知账号'),
+        nickname: or(pick(row, 'nickname'), '（无昵称）'),
+        points: num(pick(row, 'points')),
+        tier: or(pick(row, 'tier'), '?'),
+        tierUpdatedAt: pick(row, 'tierUpdatedAt'),
+      };
+    });
+  }
+
+  function boardSelfOf(env) {
+    var self = pick(env, 'data.self');
+    if (self === null || self === undefined || typeof self !== 'object') return null;
+    return {
+      rank: num(pick(self, 'rank')),
+      publicId: or(pick(self, 'publicId'), '未知账号'),
+      nickname: or(pick(self, 'nickname'), '（无昵称）'),
+      points: num(pick(self, 'points')),
+      tier: or(pick(self, 'tier'), '?'),
+      tierUpdatedAt: pick(self, 'tierUpdatedAt'),
+    };
+  }
+
+  function boardScopeLabel(scope) {
+    var s = str(scope);
+    if (s === null || s === 'global') return BOARD_ALL_LABEL;
+    var idx = s.indexOf('tier:');
+    return idx === 0 ? s.slice(5) : s;
+  }
+
+  function boardHeadText(env) {
+    var order = str(pick(env, 'data.order'));
+    var offset = numOr(pick(env, 'data.offset'), 0);
+    var limit = numOr(pick(env, 'data.limit'), 0);
+    var total = numOr(pick(env, 'data.total'), 0);
+    var pages = limit > 0 && total > 0 ? Math.ceil(total / limit) : 1;
+    var page = limit > 0 ? Math.floor(offset / limit) + 1 : 1;
+    return (order === 'arrival' ? BOARD_TIER_LABEL : BOARD_POINTS_LABEL)
+      + ' · 范围 ' + boardScopeLabel(pick(env, 'data.scope'))
+      + ' · 第 ' + String(page) + '/' + String(pages) + ' 页 · 共 ' + String(total) + ' 人';
+  }
+
+  function boardSelfText(env) {
+    var self = boardSelfOf(env);
+    if (self === null) return BOARD_SELF_NONE_TEXT;
+    return '我：第 ' + self.rank + ' 名（' + self.publicId + '，' + self.points + ' 分，段位 ' + self.tier + '）';
+  }
+
+  function boardLineText(row, env) {
+    var order = str(pick(env, 'data.order'));
+    return '第 ' + row.rank + ' 名 · ' + row.nickname + '（' + row.publicId + '）· ' + row.points
+      + ' 分 · 段位 ' + row.tier
+      + (order === 'arrival' ? ' · 到达 ' + stamp(row.tierUpdatedAt) : '');
+  }
+
+  function leaderboardViewModel(state, notice, busy) {
+    var env = state.board ? state.board.envelope : null;
+    var loaded = env !== null && isOk(env);
+    var lines = [];
+    var rows = [];
+    var offset = state.board ? state.board.offset : 0;
+    var hasMore = false;
+    if (!loaded) {
+      lines.push('（尚未读取榜单：点「积分榜」或「段位榜」）');
+    } else {
+      lines.push(boardHeadText(env));
+      lines.push(boardSelfText(env));
+      hasMore = pick(env, 'data.hasMore') === true;
+      var list = boardRows(env);
+      if (list.length === 0) lines.push(BOARD_EMPTY_TEXT);
+      rows = list.map(function (row) {
+        return { text: boardLineText(row, env), buttons: [] };
+      });
+    }
+    var scope = state.board ? state.board.scope : 'global';
+    var scopeButtons = [{ action: 'board-scope', label: BOARD_ALL_LABEL, kind: 'button', disabled: busy || scope === 'global', tier: 'global' }];
+    BOARD_TIERS.forEach(function (tier) {
+      scopeButtons.push({
+        action: 'board-scope', label: tier, kind: 'button',
+        disabled: busy || scope === 'tier:' + tier, tier: tier,
+      });
+    });
+    var buttons = [
+      { action: 'board-points', label: BOARD_POINTS_LABEL, kind: 'button', disabled: busy },
+      { action: 'board-tier', label: BOARD_TIER_LABEL, kind: 'button', disabled: busy },
+    ].concat(scopeButtons).concat([
+      { action: 'board-prev', label: '上一页', kind: 'button', disabled: busy || offset <= 0 },
+      { action: 'board-next', label: '下一页', kind: 'button', disabled: busy || !hasMore },
+      { action: 'board-refresh', label: '刷新', kind: 'button', disabled: busy },
+      { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
+    ]);
+    return vm('排行榜', {
+      notice: notice,
+      hint: '积分榜 = 逐分排名；段位榜 = 段位高→低、同段位按到达时间（先到者在前）；带登录态时显示本人名次',
+      lines: lines,
+      rows: rows,
+      buttons: buttons,
+      modal: modalViewModel(state, busy),
+    });
+  }
+
+  // 动作层用的"取载荷 + 文案"投影（动作层不读响应字段：UI-9）
+  function rankedResultAt(env, index) {
+    var list = resultsOf(env);
+    return index >= 0 && index < list.length ? list[index] : null;
+  }
+
+  function rankedFramesOf(env, index) {
+    var result = rankedResultAt(env, index);
+    var frames = result === null ? null : pick(result, 'frames');
+    return Array.isArray(frames) ? frames : null;
+  }
+
+  function rankedBattleIdOf(env, index) {
+    var result = rankedResultAt(env, index);
+    return result === null ? null : str(pick(result, 'battleId'));
+  }
+
+  function rankedOkText(env) {
+    return '锦标赛完成：' + num(pick(env, 'data.matches')) + ' 场（胜 ' + num(pick(env, 'data.wins'))
+      + ' / 平 ' + num(pick(env, 'data.draws')) + ' / 负 ' + num(pick(env, 'data.losses')) + '）'
+      + ' · 段位 ' + or(pick(env, 'data.tierAfter'), '?')
+      + (pick(env, 'data.promoted') === true ? '（已晋升）' : '');
+  }
+
+  function battleLoadedText(index, frames) {
+    return BATTLE_LOADED_TEXT + '：第 ' + String(index + 1) + ' 场（'
+      + String(Array.isArray(frames) ? frames.length : 0) + ' 帧）';
+  }
+
+  function boardHasMore(env) { return pick(env, 'data.hasMore') === true; }
+
+  // 榜单全量人数（动作层用它夹取 offset；审查 F7-D）。缺失/非法 → -1（表示"未知，不要夹取"）
+  function boardTotal(env) {
+    var total = pick(env, 'data.total');
+    return typeof total === 'number' && isFinite(total) && total >= 0 ? total : -1;
+  }
+
+  // 榜单请求的查询串（**只由状态/参数推导**，不读响应字段）
+  function boardQuery(board, scope, offset, limit) {
+    return 'order=' + (board === 'arrival' ? 'arrival' : 'points')
+      + '&scope=' + encodeURIComponent(scope === undefined || scope === null || scope === '' ? 'global' : String(scope))
+      + '&offset=' + String(offset < 0 ? 0 : offset)
+      + '&limit=' + String(limit);
   }
 
   /* ---------- F3 §3.6：四个空页 ---------- */
@@ -1897,6 +2263,8 @@
     if (state.view === 'box') return boxViewModel(state, notice, busy);
     if (state.view === 'settings') return settingsViewModel(state, notice, busy);
     if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
+    if (state.view === 'tournament') return tournamentViewModel(state, notice, busy);   // F7（05 分册）
+    if (state.view === 'leaderboard') return leaderboardViewModel(state, notice, busy); // F7（05 分册）
     if (EMPTY_PAGES[state.view] !== undefined) return emptyPageViewModel(state, notice, busy);
 
     if (state.view === 'register') {
@@ -2050,6 +2418,45 @@
     battleWinnerText: battleWinnerText,
     absoluteWinnerText: absoluteWinnerText,
     quickNoticeText: quickNoticeText,
+    rankedNoticeText: rankedNoticeText,
+    boardNoticeText: boardNoticeText,
+    // F7：锦标赛 + 排行榜（05 §3/§5；TB-1…TB-10 的断言对象）
+    rankedResultText: rankedResultText,
+    rankedBatchText: rankedBatchText,
+    rankedShortfallText: rankedShortfallText,
+    rankedResultLine: rankedResultLine,
+    rankedResultAt: rankedResultAt,
+    rankedFramesOf: rankedFramesOf,
+    rankedBattleIdOf: rankedBattleIdOf,
+    rankedOkText: rankedOkText,
+    resultsOf: resultsOf,
+    tournamentPager: tournamentPager,
+    tournamentViewModel: tournamentViewModel,
+    battleLoadedText: battleLoadedText,
+    boardRows: boardRows,
+    boardSelfOf: boardSelfOf,
+    boardScopeLabel: boardScopeLabel,
+    boardHeadText: boardHeadText,
+    boardSelfText: boardSelfText,
+    boardLineText: boardLineText,
+    boardQuery: boardQuery,
+    boardHasMore: boardHasMore,
+    boardTotal: boardTotal,
+    quickViewerActive: quickViewerActive,
+    tournamentViewerActive: tournamentViewerActive,
+    activeViewerFrames: activeViewerFrames,
+    viewerSource: viewerSource,
+    viewerBattleId: viewerBattleId,
+    QUICK_OTHER_BATTLE_TEXT: QUICK_OTHER_BATTLE_TEXT,
+    leaderboardViewModel: leaderboardViewModel,
+    BOARD_OK_TEXT: BOARD_OK_TEXT,
+    BOARD_EMPTY_TEXT: BOARD_EMPTY_TEXT,
+    BOARD_SELF_NONE_TEXT: BOARD_SELF_NONE_TEXT,
+    BOARD_TIERS: BOARD_TIERS,
+    TOURNAMENT_PAGE_SIZE: TOURNAMENT_PAGE_SIZE,
+    TOURNAMENT_NO_BATCH_TEXT: TOURNAMENT_NO_BATCH_TEXT,
+    TOURNAMENT_EMPTY_TEXT: TOURNAMENT_EMPTY_TEXT,
+    NO_BATTLE_ID_TEXT: NO_BATTLE_ID_TEXT,
     quickResultText: quickResultText,
     quickPoolText: quickPoolText,
     quickOpponentPointsText: quickOpponentPointsText,
@@ -2069,6 +2476,7 @@
     AI_MAX_DEPTH: AI_MAX_DEPTH,
     AI_LOGIC_TRACE_NOTE: AI_LOGIC_TRACE_NOTE,
     AI_LOGIC_OK_TEXT: AI_LOGIC_OK_TEXT,
+    AI_LOGIC_NAME_FAIL_TEXT: AI_LOGIC_NAME_FAIL_TEXT,
     quickFrames: quickFrames,
     quickBattleId: quickBattleId,
     quickOkText: quickOkText,

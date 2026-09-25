@@ -112,6 +112,8 @@
     if (typeof button.idx === 'string' && button.idx !== '') out += ' data-idx="' + esc(button.idx) + '"';
     if (button.empty === true) out += ' data-empty="1"';
     if (typeof button.aiId === 'string' && button.aiId !== '') out += ' data-ai-id="' + esc(button.aiId) + '"';
+    // F7：排行榜的"范围"按钮（board-scope）用 data-tier 携带段位（'' = 全部）
+    if (typeof button.tier === 'string' && button.tier !== '') out += ' data-tier="' + esc(button.tier) + '"';
     return out;
   }
 

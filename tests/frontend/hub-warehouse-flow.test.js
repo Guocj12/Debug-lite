@@ -72,6 +72,9 @@ function harness(baseUrl) {
     // F6：快速对战与归档回放出口（新出口必须在此登记，否则动作调用 ctx.api.xxx 会 TypeError）
     quickRun: counting(raw.quickRun),
     replay: counting(raw.replay),
+    // F7：锦标赛批次与排行榜出口
+    rankedRun: counting(raw.rankedRun),
+    leaderboard: counting(raw.leaderboard),
     admin: counting(raw.admin),
     box: (token, input) => {
       counter.n += 1;
