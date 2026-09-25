@@ -145,11 +145,15 @@ function presetOf(identity) {
   return variantOf(identity).preset;
 }
 
-function buildDefaultLoadout(identity) {
+function buildDefaultLoadout(identity, options) {
+  const o = options || {};
   const ROLE = require('./data/role-templates.json').roleTemplates.find((r) => r.id === 'role_bal');
   const TEMPLATES = require('./data/skill-templates.json').skillTemplates;
   const variant = variantOf(identity);
-  const order = PRESET_SKILL_ORDER[variant.preset] || PRESET_SKILL_ORDER.steady;
+  // D-166：允许显式指定预设族（管理端注入 bot 时可指定强弱）；子变体仍按身份派生（可显式覆盖）
+  const preset = DEFAULT_AI_PRESETS.includes(o.preset) ? o.preset : variant.preset;
+  const sub = Number.isInteger(o.sub) && o.sub >= 0 && o.sub <= 2 ? o.sub : variant.sub;
+  const order = PRESET_SKILL_ORDER[preset] || PRESET_SKILL_ORDER.steady;
   const skillItems = [];
   for (let i = 0; i < 3; i++) {
     const t = TEMPLATES.find((x) => x.id === order[i % order.length]) || TEMPLATES.filter((x) => !x.unlockTier || x.unlockTier === 'common')[i % 2];
@@ -166,7 +170,7 @@ function buildDefaultLoadout(identity) {
       regen: ROLE.regen, pluginPoints: ROLE.pluginPoints || 3, unlockTier: 'common',
     },
     skills: skillItems,
-    ai: aiProgramOf(variant.preset, variant.sub),
+    ai: aiProgramOf(preset, sub),
   };
 }
 
@@ -296,11 +300,8 @@ function battleOne(mine, opponent, wh, tier, seed) {
   }
   const logger = require('../shared/log.js').createLogger({ level: 'silent' });
   const b = engine.createBattle(undefined, { seed, players: { p1: b1.player, p2: b2.player }, logger });
-  const driver = (bp) => (state) => {
-    const r = runtime.resume(bp.ctx, runner.projectSnapshot(state, bp.player.owner), state.rng.deriveStream(state.tick, 'ai'));
-    return r.action;
-  };
-  const res = b.runFull({ actions: { p1: driver(b1), p2: driver(b2) } });
+  // D-164：p2 守方镜像（runner.makeAiDriver 统一实现；与 battle.runBattle 同一口径，禁止两处各写一份）
+  const res = b.runFull({ actions: { p1: runner.makeAiDriver(b1), p2: runner.makeAiDriver(b2) } });
   runtime.destroyContext(b1.ctx);
   runtime.destroyContext(b2.ctx);
   return { winner: res.winner || 'draw', ticks: res.ticks };

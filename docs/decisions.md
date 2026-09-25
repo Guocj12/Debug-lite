@@ -257,6 +257,18 @@
 
 ---
 
+### 14.4 战斗线后端修复（2026-09-25 追加，D-164…D-166）
+
+> 用户 2026-09-25 就"快速对战与锦标赛"给出的口径（逐条问答见本轮会话）：**守方 AI 必须镜像**；回放只表现战斗、不含日志；注入的 bot 必须是**完整账号 + 完整战斗 AI**；24h 硬底线改为**4 小时线性软冷却**；胜负对外统一 `p1/p2/draw/invalid`；管理员可直接改任意账号段位/积分（留痕）。本节记录其中**已落地**的三条（其余见后续追加）。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-164** | ⚠️ **守方 AI 完整镜像（"每个玩家都在自己的 p1 坐标系里思考"）**：玩家编写的出战配置 AI **一律按 p1（左、facing=+1）帧书写**；服务端在 **p2 侧**给 AI 一份**镜像快照**（`x' = fieldPx − x`、`facing' = −facing`、`effects[].displacement' = −displacement`），并把其产出的**方向动作反镜像**回真实世界（`move_left↔move_right`、`dodge_left↔dodge_right`；`turn` 自反、`wait`/`defend`/`skill:<槽位>` 不映射）。唯一实现处 = `server/runner.js` 的 `mirrorSnapshot`/`unmirrorAction`/`makeAiDriver`，由 `server/battle.js`（`/battle` 与回放重算）与 `server/ranked.js`（`battleOne`，排位/快速共用）调用——**禁止两处各写一份**。<br>**为什么不是"只翻动作名"（实测反例）**：出厂默认/新手 AI（`ranked.buildDefaultLoadout`，所有新号与 bot 都用它）用**有符号距离** `enemy.x − self.x` 选绝对方向，两侧本来就自洽；只翻输出动作会让它当守方时**掉头退回自己基地角、整场不开火**（实测 2 账号受控局：p2 由 800 退到 992，进攻方满血）。而**完整镜像**对这类方向无关程序是**恒等变换**（实测同 seed 逐 tick 帧完全一致 ⇒ 不改动任何既有对局/黄金/压测结论），却能让"按 p1 坐标写死方向"的玩家程序（永远 `move_right`、`self.x<500 → move_right`、看 `facing` 转身）在守方位**正确迎战**（实测：`永远 move_right` 当守方由"退到墙角被打死"变为"逼近至 480 并交战"）。<br>**范围**：仅玩家配置 AI；内置对手 `OPPONENTS`（写死 p2 语义、不经 `runtime.resume`）与 `/ai/battle` 的 p2 **一律不镜像**（实测 charger 仍直扑 p1）。<br>**帧与档案一律保留真实坐标**（镜像只作用于 AI 视角），侧位呈现由前端按 side 处理。 | `server/runner.js`（`mirrorSnapshot`/`unmirrorAction`/`makeAiDriver`/`MIRROR_ACTION`）、`server/battle.js`、`server/ranked.js`、`docs/interfaces.md` §1/§5、`docs/systems/08-ai.md`、`tests/unit/ai-mirror.test.js`（M-1…M-7）、`tests/cli/cli-replay.test.js`（夹具按新契约改写为 p1 帧） |
+| **D-165** | ⚠️ **回放重算的仓库覆盖判据与 `resolveItems` 同谓词 + 注入 bot 携带真实仓库（修 P0：bot 对手回放 100% 410）**：<br>① 新增 `server/loadout.js` 的 `warehouseResolves(loadout, warehouse)`——要求**角色 + 3 技能 + 全部插件引用**都能在库中按 uid 命中（与 `resolveItems` 同一谓词）；`server/index.js` 的 `rt.loadWarehouse` 各来源改用该判据（修前用 `ranked.warehouseCovers`，**只看 `pluginUid`**）。<br>② `server/admin.js` 的 `injectDebugBots` 注入时把 `ranked.syntheticVerifiedWarehouse(loadout)` 作为 `warehouse` 写入档案（并随快照冻结）。<br>**根因（实测定位到行）**：bot 档案仓库为空且其 loadout 无插件引用 ⇒ 只查插件的覆盖判据**空转通过** ⇒ `loadWarehouse` 返回"真值但空"的仓库 ⇒ 回放重算时 `resolveItems` 报 `物品不在仓库: bot_role` ⇒ 410 `replay_expired：快照无法实例化（loadout_invalid）`。实测真人 vs bot 排位 **10/10 场回放全部 410**，而同一对局用 `p2Warehouse=null` 或合成仓库复算均 **200**。真人 vs 真人不受影响（服务端权威仓库完整）。**语义边界**：`syntheticVerifiedWarehouse` 只用于**服务端自签发的 bot 配置**；真人仍走服务端权威仓库，D-163 的"客户端数值不可信"不受影响。 | `server/loadout.js`（`warehouseResolves`）、`server/index.js`（`loadWarehouse`）、`server/admin.js`（bot 仓库）、`docs/interfaces.md` §1/§5、`tests/api/api-replay-bot.test.js`（RB-1/RB-2/RB-5） |
+| **D-166** | ⚠️ **注入 bot 的多样化与预设参数（修"互打恒平局"）**：`POST /api/v1/admin/bots` 的 bot **逐个按自己的 `botKey` 派生**默认配置（`ranked.buildDefaultLoadout({botKey})`，3 族 × 3 子变体共 9 个程序），不再让整批共用同一个 `steady/0`；新增可选入参 **`preset`**（`steady`/`aggressive`/`kite`，非法 → 400 `bad_request`），用于按强弱造池；显式传入 `loadout` 时仍按调用方给定（逐条相同）。响应新增回带 `preset`。<br>**动机（实测）**：修前一批 bot 的 AI 程序逐字节相同 ⇒ bot 互打**恒平局**（实测 10 场 0 胜 10 平、每场 38 tick），使段位晋升（10 场胜 >6）与积分验收**无法进行**。 | `server/admin.js`、`server/ranked.js`（`buildDefaultLoadout(identity, options)` 支持 `preset`/`sub`）、`docs/interfaces.md` §2/§5、`docs/server.md` §3.2、`docs/systems/10-ranked.md`、`tests/api/api-replay-bot.test.js`（RB-3/RB-4） |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

@@ -57,9 +57,12 @@ function skillAi(LD) {
 }
 
 // p2 独立追击 loadout（相向才产生碰撞/命中）
+// D-164（2026-09-25）：AI 一律按"玩家自己永远在左（p1）"书写；p2 由服务端做守方镜像。
+//   故"追击"必须写成 move_right（镜像到 p2 的真实世界 = move_left = 朝对手推进）；
+//   修前写 move_left 属"p2 帧"旧口径，镜像落地后会让 p2 掉头远离 → 本用例会因 0 命中而失败。
 function chaserLoadout(LD) {
   const ld = JSON.parse(JSON.stringify(LD.loadout));
-  ld.ai = { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'action', name: 'move_left' }] } };
+  ld.ai = { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'action', name: 'move_right' }] } };
   return ld;
 }
 

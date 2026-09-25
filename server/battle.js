@@ -81,14 +81,18 @@ function runBattle(opts) {
   const battleLogger = createLogger({ level: 'all', ringSize: 50000, now: () => 0, onRecord: (r) => battleEvents.push(r) });
   const b = engine.createBattle(undefined, { seed, players: { p1: b1.player, p2: b2.player }, logger: battleLogger });
   const aiTrace = [];
-  const driver = (owner, bp) => (state) => {
-    const r = runtime.resume(bp.ctx, runner.projectSnapshot(state, owner), state.rng.deriveStream(state.tick, 'ai'));
-    // runtime 已改为**每 tick 重置** ctx.trace（单 tick 上限 2000）→ 必须取该 tick 全量，
-    // 不能再用 slice(prevLen) 增量（否则第 2 tick 起 aiTrace 恒为空；2026-09-16 修复）。
-    for (const e of runner.takeTrace(bp.ctx)) aiTrace.push(Object.assign({ tick: state.tick, owner }, e));
-    return r.action;
+  // D-164：p2 走**守方镜像**——统一实现见 runner.makeAiDriver（p1 直通 / p2 镜像快照 + 反镜像动作）
+  const driver = (bp) => {
+    const step = runner.makeAiDriver(bp);
+    return (state) => {
+      const action = step(state);
+      // runtime 已改为**每 tick 重置** ctx.trace（单 tick 上限 2000）→ 必须取该 tick 全量，
+      // 不能再用 slice(prevLen) 增量（否则第 2 tick 起 aiTrace 恒为空；2026-09-16 修复）。
+      for (const e of runner.takeTrace(bp.ctx)) aiTrace.push(Object.assign({ tick: state.tick, owner: bp.player.owner }, e));
+      return action;
+    };
   };
-  const result = b.runFull({ actions: { aiTrace, p1: driver('p1', b1), p2: driver('p2', b2) }, eventsBuf: battleEvents });
+  const result = b.runFull({ actions: { aiTrace, p1: driver(b1), p2: driver(b2) }, eventsBuf: battleEvents });
   runtime.destroyContext(b1.ctx);
   runtime.destroyContext(b2.ctx);
 

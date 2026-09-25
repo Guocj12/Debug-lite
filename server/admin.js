@@ -227,19 +227,33 @@ function createAdmin(options) {
       }
       const keyBase = o.botKey === undefined || o.botKey === null ? `auto-${nowFn()}` : String(o.botKey);
       const at = nowFn();
-      const loadout = o.loadout === undefined || o.loadout === null ? ranked.buildDefaultLoadout() : o.loadout;
+      const explicitLoadout = o.loadout === undefined || o.loadout === null ? null : o.loadout;
+      // D-166：可显式指定预设族（强弱）；未指定时**每个 bot 按自己的 botKey 派生**不同预设/子变体
+      const preset = o.preset === undefined || o.preset === null ? null : String(o.preset);
+      if (preset !== null && !ranked.DEFAULT_AI_PRESETS.includes(preset)) {
+        return { status: 400, code: 'bad_request', message: `非法 preset ${preset}（可选: ${ranked.DEFAULT_AI_PRESETS.join('/')}）` };
+      }
       const created = [];
       for (let i = 0; i < count; i++) {
         const botKey = `${BOT_KEY_PREFIX}${keyBase}-${i + 1}`;
         const playerId = o.playerIdPrefix ? `${o.playerIdPrefix}${i + 1}` : botPlayerIdOf(keyBase, i + 1);
         const existing = await store.loadArchive(playerId);
         if (existing) { created.push({ playerId, botKey, skipped: true }); continue; }
-        const snapshot = store.freezeSnapshot(loadout, store.versions);
+        // D-166：修前所有 bot 共用**同一个** loadout（steady/0）⇒ 互打恒平局（实测 10 场 0 胜 10 平），
+        //   无法用于段位晋升/积分验收。现按 botKey 逐个派生（9 个程序：3 族 × 3 子变体）。
+        const loadout = explicitLoadout !== null
+          ? explicitLoadout
+          : ranked.buildDefaultLoadout({ botKey }, preset === null ? undefined : { preset });
+        // D-165：bot 也要有**真实仓库**（含自己的角色/技能/插件引用）。修前 bot 仓库为空且快照不带镜像，
+        //   而仓库覆盖判据只看 pluginUid ⇒ 空转通过 ⇒ 对局能跑但**回放重算 100% 410**（实测 10/10 场）。
+        const warehouse = ranked.syntheticVerifiedWarehouse(loadout);
+        const snapshot = store.freezeSnapshot(loadout, store.versions, { warehouse });
         const slotId = archiveMod.slotIdOf(store.config || {}, 1);
         await store.createAccount({
           playerId, publicId: archiveMod.newPublicId(), nickname: o.nickname || `debug-bot-${i + 1}`,
           at, tier, points, isBot: true,
           flags: { isBot: true, botKey, debug: true },
+          warehouse,
           slot: { slotId, name: '调试配置', snapshotHash: snapshot.hash, configHash: snapshot.configHash, versions: store.versions },
         });
         created.push({ playerId, botKey, tier, points, snapshotHash: snapshot.hash, skipped: false });
@@ -256,7 +270,7 @@ function createAdmin(options) {
         data: {
           injected: created.filter((c) => !c.skipped).length,
           skipped: created.filter((c) => c.skipped).length,
-          tier, points, debug: true, bots: created,
+          tier, points, debug: true, preset, bots: created,
         },
       };
     });

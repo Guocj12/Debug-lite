@@ -131,6 +131,22 @@ function referencedUidsOf(loadout) {
   return out;
 }
 
+// 仓库是否**足以按 uid 重建**这份配置（与 resolveItems 同一谓词：角色 + 3 技能 + 全部插件引用都必须命中）。
+// D-165 修复（2026-09-25，实测根因）：加载仓库镜像时的覆盖判据原先只查 `pluginUid`（ranked.warehouseCovers），
+//   于是"真值但缺角色/技能的仓库"被当成可用来源 —— 最典型是管理端注入的 bot：其仓库为空、
+//   loadout 又无插件引用 ⇒ 覆盖判定**空转通过**，随后 resolveItems 报 `物品不在仓库: bot_role`
+//   → 对局成立但**回放重算 100% 判 loadout_invalid → 410**（实测 10/10 场）。
+//   本谓词把"能不能重建"这件事收敛成一处，调用方（server/index.js 的 loadWarehouse）据此跳过不足的来源。
+function warehouseResolves(loadout, warehouse) {
+  if (!warehouse || typeof warehouse !== 'object') return false;
+  const uids = referencedUidsOf(loadout);
+  if (uids.size === 0) return true; // 无可解析引用（如空配置）→ 任何仓库都"足够"
+  for (const uid of uids) {
+    if (!findItem(warehouse, uid)) return false;
+  }
+  return true;
+}
+
 
 // 校验（I-12a/b/d/e + T-PB-9）：{ok, errors:[{where, code, message}]}
 // opts.items：items.js 实例注入缝（缺省 = 模块单例）——段位门控开关由该实例承载
@@ -289,6 +305,7 @@ function withGating(enabled) {
     buildPanel: (ld, opts) => buildPanel(ld, bind(opts)),
     resolveItems,
     referencedUidsOf,
+    warehouseResolves,
     findItem,
     withGating,
   };
@@ -298,6 +315,8 @@ module.exports = {
   EMPTY_LOADOUT, validateLoadout, buildPanel, findItem,
   // D-163 热修新增：权威仓库解析（身份/数值）+ 引用 uid 集合（跨配置独占判定）
   resolveItems, referencedUidsOf,
+  // D-165 修复新增：仓库覆盖判据（与 resolveItems 同谓词；回放/对局加载镜像时用）
+  warehouseResolves,
   // 缺省门控取值（= unlock.json gating.enabled，经 items 单例透传；门禁/文档可读）
   gatingEnabled: items.gatingEnabled,
   withGating,

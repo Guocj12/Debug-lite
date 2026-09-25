@@ -105,6 +105,72 @@ function projectSnapshot(state, owner) {
   };
 }
 
+/* ---------- 守方镜像（用户 2026-09-25 口径；D-164） ----------
+ * 规则：**每个玩家都在自己的 p1 坐标系里思考**。p2（右侧、facing=−1）的 AI 拿到的是**镜像世界**：
+ *   x' = fieldPx − x、facing' = −facing、effects[].displacement' = −displacement；
+ *   它产出的方向动作再**反镜像**回真实世界（move_left↔move_right、dodge_left↔dodge_right）。
+ * 为什么不是"只翻动作名"（实测反例，2026-09-25 探针）：
+ *   出厂默认/新手 AI（ranked.buildDefaultLoadout，所有新号与 bot 都用它）用**有符号距离**
+ *   `enemy.x − self.x` 选绝对方向，两侧本来就自洽；若只翻输出动作，p2 会掉头退回自己基地角、
+ *   永不交战（实测：默认 AI 当守方从 800 退到 992，整场不开火）。
+ *   完整镜像对这类"方向无关"程序是**恒等变换**（实测逐 tick 帧完全一致），
+ *   而对"按 p1 坐标写死方向"的玩家程序（永远 move_right、self.x<500→move_right、看 facing 转身）
+ *   才产生正确行为。`turn`（自反）、`wait`/`defend`（无方向）、`skill:<槽位>`（方向取自 facing）不参与映射。
+ * 范围：仅**玩家编写的出战配置 AI**。内置对手 OPPONENTS（runner.js 下方，写死 p2 语义、且不经
+ *   runtime.resume）与 `/ai/battle` 的 p2 一律不镜像。
+ */
+const MIRROR_ACTION = Object.freeze({
+  move_left: 'move_right',
+  move_right: 'move_left',
+  dodge_left: 'dodge_right',
+  dodge_right: 'dodge_left',
+});
+
+function mirrorSnapshot(snapshot) {
+  const snap = snapshot;
+  if (!snap || typeof snap !== 'object') return snap;
+  const W = snap.field && typeof snap.field.fieldPx === 'number' ? snap.field.fieldPx : BATTLE_CFG.fieldPx;
+  const flip = (side) => {
+    if (!side || typeof side !== 'object') return side;
+    const out = Object.assign({}, side);
+    if (typeof side.x === 'number') out.x = W - side.x;
+    if (typeof side.facing === 'number') out.facing = -side.facing;
+    out.effects = (Array.isArray(side.effects) ? side.effects : []).map((e) => {
+      const c = Object.assign({}, e);
+      if (typeof c.displacement === 'number') c.displacement = -c.displacement;
+      return c;
+    });
+    return out;
+  };
+  // 只镜像绝对量（x/facing/位移）；self/enemy 的归属、bases、field、cooldowns、五维与资源都不变
+  return {
+    tick: snap.tick,
+    self: flip(snap.self),
+    enemy: flip(snap.enemy),
+    bases: snap.bases,
+    field: snap.field,
+  };
+}
+
+// 反镜像：把"镜像世界里产出的动作"翻译回真实世界（未登记的动作名原样返回，交由引擎按 D-80 归一化）
+function unmirrorAction(action) {
+  const name = typeof action === 'string' && action !== '' ? action : 'wait';
+  return MIRROR_ACTION[name] || name;
+}
+
+// 共享 AI 驱动：p1 直通；p2 走"镜像快照 → 执行 → 反镜像动作"。
+// 排位/快速（ranked.battleOne）与 /battle·回放重算（battle.runBattle）都必须用它，避免两处实现漂移。
+function makeAiDriver(built) {
+  const owner = built.player.owner;
+  const mirrored = owner === 'p2';
+  return (state) => {
+    const snap = projectSnapshot(state, owner);
+    const view = mirrored ? mirrorSnapshot(snap) : snap;
+    const r = runtime.resume(built.ctx, view, state.rng.deriveStream(state.tick, 'ai'));
+    return mirrored ? unmirrorAction(r.action) : r.action;
+  };
+}
+
 // 编译（/ai/compile）：版本迁移 → 结构校验 → programHash + 统计（+ warnings 非阻断提示回带）
 function compileAi(program, logger) {
   const astApi = logger ? ast.withLogger(logger) : ast;
@@ -415,4 +481,4 @@ function countActions(diffs, events) {
   };
 }
 
-module.exports = { compileAi, runAiBattle, playerOneOf, projectSnapshot, OPPONENTS, baselinePlayer, takeTrace, countActions, isObservableActionEvent };
+module.exports = { compileAi, runAiBattle, playerOneOf, projectSnapshot, OPPONENTS, baselinePlayer, takeTrace, countActions, isObservableActionEvent, mirrorSnapshot, unmirrorAction, makeAiDriver, MIRROR_ACTION };

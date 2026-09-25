@@ -37,6 +37,7 @@ const quickmatchMod = require('./quickmatch.js');
 const adminMod = require('./admin.js');
 const rankedMod = require('./ranked.js');
 const battleApi = require('./battle.js');
+const loadoutMod = require('./loadout.js'); // D-165：仓库覆盖判据（warehouseResolves）与 resolveItems 同谓词
 
 const DATA_DIR = path.join(__dirname, 'data');
 const ASSETS_DIR = path.join(__dirname, '..', 'assets'); // P0-9：占位美术表作为数据表经 API 提供
@@ -384,12 +385,14 @@ async function createRuntime(logger, options) {
   };
   // D1-residual：镜像来源必须**覆盖**当前出战配置的引用，否则跳过该来源并落到下一级
   //   （修前：账号级陈旧子集镜像会遮蔽快照自带镜像 → 抽池"可用"而实例化"悬挂引用"→ 409 no_opponent）。
+  // D-165（2026-09-25 修复）：覆盖判据改用 loadout.warehouseResolves（**与 resolveItems 同谓词**：
+  //   角色 + 3 技能 + 全部插件引用都要在库）。修前只查 pluginUid ⇒ 空仓库/只含插件的仓库被判"覆盖"，
+  //   随后 resolveItems 报 `物品不在仓库` ⇒ 对局成立但回放重算 410（实测 bot 对手 10/10 场）。
   rt.loadWarehouse = async (playerId) => {
     if (typeof playerId !== 'string' || playerId === '') return null;
     const snap = await rt.activeSnapshotOf(playerId);
     const loadoutOfPlayer = snap && snap.loadout ? snap.loadout : null;
-    const needs = loadoutOfPlayer ? rankedMod.needsWarehouse(loadoutOfPlayer) : false;
-    const covers = (wh) => !needs || rankedMod.warehouseCovers(loadoutOfPlayer, wh);
+    const covers = (wh) => loadoutMod.warehouseResolves(loadoutOfPlayer, wh);
     const sources = [];
     // ⓪ D-159：**服务端权威仓库（真源）** —— 仓库上云后这是首选来源；命中即用。
     if (rt.store && typeof rt.store.getWarehouse === 'function') {
