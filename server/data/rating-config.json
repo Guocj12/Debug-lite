@@ -1,6 +1,6 @@
 {
   "_sample": false,
-  "_note": "快速对战积分与匹配参数表（D-133 §8.3 / D-122 / D-136）：非对称 Elo（加分系数随积分递减、扣分系数随积分递增）、匹配窗口递进、对手去重窗口、晋升阈值与批次规模。数值单一来源=本表；代码侧同值默认值见 server/store/config.js（DEFAULT_RATING_CONFIG），门禁项 4 逐值冻结比对（server/data/schema.js 的 RATING_CONFIG_FROZEN）。",
+  "_note": "快速对战积分与匹配参数表（D-133 §8.3 / D-122；对手冷却口径见 D-168）：非对称 Elo（加分系数随积分递减、扣分系数随积分递增）、匹配窗口递进、**软冷却回满小时数**（`opponentRecoveryHours`，取代 D-136 的 24h 硬底线与 strict/relaxed 双池：候选不被硬拒，只按已过时间线性加权）、晋升阈值与批次规模。数值单一来源=本表；代码侧同值默认值见 server/store/config.js（DEFAULT_RATING_CONFIG），门禁项 4 逐值冻结比对（server/data/schema.js 的 RATING_CONFIG_FROZEN）。",
   "base": 0,
   "cap": 3000,
   "scale": 400,
@@ -11,7 +11,7 @@
   "matchWindowStart": 100,
   "matchWindowStep": 100,
   "matchWindowMax": 600,
-  "opponentCooldownHours": 24,
+  "opponentRecoveryHours": 4,
   "dailyBattleLimit": 0,
   "rounding": "half_up",
   "promoteWins": 6,

@@ -198,11 +198,12 @@ test('LOAD-0 批量流程完整度：N 个真实玩家全部注册 + 配齐出�
   const matches = report.phases.matches;
   assert.ok(matches.totalMatches > 0, '必须真的打成对局');
   assert.ok(matches.ranked.matches > 0, `排位批次必须成场（实际 ${matches.ranked.matches}）`);
-  // 快速对战：对手去重窗口（D-136 的 24h 硬底线）使 N 个玩家一轮最多 ceil(N/2) 场成局（每场消耗 2 人）；
-  // 后发起的玩家池子变小 → 允许 no_opponent（这是"池不足不打 bot"的设计口径，不是缺陷）。
+  // D-168：24h 硬底线已由**软冷却**取代 ⇒ 不再有"一轮最多 ceil(N/2) 场"的上限（该上限来自"每场把双方各锁 24h"）。
+  //   现在每人 quickRuns=1 ⇒ 上限 = 注册玩家数；且每次发起都必须有明确结果（成场 or 如实 no_opponent）。
   assert.ok(matches.quick.ok > 0, `快速对战必须成场（实际 ${matches.quick.ok}）`);
-  assert.ok(matches.quick.ok <= Math.ceil(PLAYERS / 2),
-    `快速成局数不得超过 ceil(N/2)=${Math.ceil(PLAYERS / 2)}（实际 ${matches.quick.ok}）`);
+  assert.ok(matches.quick.ok <= PLAYERS, `快速成局数不得超过发起人数 ${PLAYERS}（实际 ${matches.quick.ok}）`);
+  assert.equal(matches.quick.ok + matches.quick.noOpponent, matches.quick.attempts,
+    '每次快速发起都必须有结果（成场 + no_opponent = 发起次数；D-168 起不再有"被硬拒"的第三类）');
   // 延迟口径：P50 ≤ P95 ≤ max
   for (const [group, s] of Object.entries(report.metrics.latencyMs)) {
     if (s.count === 0) continue;

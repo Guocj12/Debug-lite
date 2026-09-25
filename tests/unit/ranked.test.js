@@ -209,64 +209,61 @@ test('T-RK-1h 档案驱动：某候选快照缺失 → 跳过（不占场次）�
   assert.ok(fx.events().includes('store.snapshot.missing'), '记 store.snapshot.missing(warn) 告警');
 });
 
-/* ---------- 去重窗口（D-136） ---------- */
+/* ---------- 软冷却（D-168；取代 D-136 的 24h 硬底线 + strict/relaxed 双池） ---------- */
 
-test('T-RK-4a 去重窗口：24h 内被排除；>72h 可用；候选不足时放宽到 72h 并标 relaxed', async (t) => {
+test('T-RK-4a 软冷却：权重 0（刚打过）在有其他已恢复候选时不被抽中；批次内不重复；回满后权重=1', async (t) => {
   const now = Date.now();
   const hour = 3600 * 1000;
-  // 以**同一时间基准**构造三种对手：fresh=1h 前（两窗口都排除）/ mid=25h 前（仅放宽窗口可用）/ stale=80h 前（两窗口都可）
-  async function fixtureWith(gaps) {
-    const fx = await h.openFixture({ startAt: now });
-    const players = await fx.registerPlayers(4);
-    const me = players[0];
-    const foes = players.slice(1);
-    await fx.store.updateArchive(me.playerId, (ar) => {
-      foes.forEach((p, i) => { ar.pool.lastOpponentAt[p.playerId] = now - gaps[i] * hour; });
-      return null;
-    });
-    return { fx, me, foes };
-  }
+  const fx = await h.openFixture({ startAt: now });
+  t.after(() => fx.cleanup());
+  const players = await fx.registerPlayers(13); // me + 12 对手（>10 场，才能观察"谁被优先抽"）
+  const me = players[0];
+  const foes = players.slice(1);
+  const justFaced = foes[0];
+  await fx.store.updateArchive(me.playerId, (ar) => {
+    // 11 个对手 80h 前（≥4h → 权重 1）；1 个"刚刚打过"（权重 0）
+    for (const p of foes.slice(1)) ar.pool.lastOpponentAt[p.playerId] = now - 80 * hour;
+    ar.pool.lastOpponentAt[justFaced.playerId] = now;
+    return null;
+  });
 
-  // (1) 24h 内的 fresh 被排除；>24h 的 mid/stale 可用；严格窗口凑不满 10 场 → 实际启用放宽窗口
-  const one = await fixtureWith([1, 25, 80]);
-  t.after(() => one.fx.cleanup());
-  const r1 = await ranked.runRankedBattle({ store: one.fx.store, playerId: one.me.playerId, seed: 9 });
+  const r1 = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 9 });
   assert.equal(r1.status, 200, JSON.stringify(r1));
-  assert.equal(r1.data.matches, 2, '24h 内已战对手被排除，只打 mid + stale 两场');
-  assert.equal(r1.data.relaxed, true, '严格窗口凑不满 → 实际启用 72h 放宽窗口（本轮无"仅放宽可用"之外的额外对手）');
-  assert.ok(!r1.data.results.some((m) => m.opponentPlayerId === one.foes[0].playerId), 'fresh（1h 前）两窗口都排除');
-  assert.deepEqual(r1.data.results.map((m) => m.opponentPlayerId).sort(), [one.foes[1].playerId, one.foes[2].playerId].sort(), '抽中的是 mid + stale');
+  assert.equal(r1.data.matches, 10, '轮盘抽签打满 10 场（候选 12 个）');
+  assert.equal(r1.data.shortfall, 0, '请求 10 场、抽到 10 场 → 无缺口（12 个候选里用 10 个）');
+  assert.equal(r1.data.recoveryHours, 4, 'D-168：回满小时数如实回带');
+  const ids = r1.data.results.map((m) => m.opponentPlayerId);
+  assert.equal(new Set(ids).size, ids.length, '批次内对手不重复');
+  assert.equal(ids.length, 10, '恰 10 场');
+  assert.ok(!ids.includes(justFaced.playerId), '权重 0 的对手在有其他已恢复候选时不会被抽中（确定性）');
 
-  // (2) 严格窗口为空、放宽窗口有候选：1h 内的两窗口都排除，25h 前的仅放宽窗口可用 → relaxed=true
-  const two = await fixtureWith([1, 25, 1]);
-  t.after(() => two.fx.cleanup());
-  const r2 = await ranked.runRankedBattle({ store: two.fx.store, playerId: two.me.playerId, seed: 10 });
-  assert.equal(r2.status, 200, JSON.stringify(r2));
-  assert.equal(r2.data.relaxed, true, '严格窗口为空 → 放宽到 72h 并标注 relaxed');
-  assert.equal(r2.data.matches, 1, '放宽后仅 24h~72h 之间的对手可用（1h 内的仍被排除）');
-  assert.equal(r2.data.results[0].opponentPlayerId, two.foes[1].playerId, '被放宽选中的是 25h 前那个对手');
+  // 4h 后权重线性回满 → 纯函数口径直接断言（确定性，不依赖抽签）
+  const ar = await fx.store.loadArchive(me.playerId);
+  assert.equal(ranked.cooldownWeightOf(ar, justFaced.playerId, now + 2 * hour, 4), 0.5, '2h → 0.5');
+  assert.equal(ranked.cooldownWeightOf(ar, justFaced.playerId, now + 4 * hour, 4), 1, '4h → 回满 1');
+  fx.clock.advance(4 * hour);
+  const r2 = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 10 });
+  assert.equal(r2.data.matches, 10, '回满后仍打满 10 场');
+  assert.equal(r2.data.results.filter((m) => m.opponentPlayerId === justFaced.playerId).length <= 1, true, '同批次内不重复');
 });
 
-test('T-RK-4b 去重窗口：全部候选都在 72h 内 → 一场不打（shortfall 如实回报，不放宽到"无限制"）', async (t) => {
+test('T-RK-4b 软冷却：全员刚打过（权重 0）也照常打满，永不 no_opponent / 不再 0 场', async (t) => {
   const now = Date.now();
   const fx = await h.openFixture({ startAt: now });
   t.after(() => fx.cleanup());
-  const players = await fx.registerPlayers(3);
+  const players = await fx.registerPlayers(13); // me + 12 对手
   const me = players[0];
   await fx.store.updateArchive(me.playerId, (ar) => {
-    for (const p of players.slice(1)) ar.pool.lastOpponentAt[p.playerId] = now - 1 * 3600 * 1000;
+    for (const p of players.slice(1)) ar.pool.lastOpponentAt[p.playerId] = now; // 全部"刚刚打过"
     return null;
   });
   const r = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 11 });
   assert.equal(r.status, 200, JSON.stringify(r));
-  assert.equal(r.data.matches, 0, '72h 去重窗口内一律不重复（放宽也只到 72h）');
-  assert.equal(r.data.shortfall, 10, '缺口如实回报，不用 bot 补齐');
-  assert.equal(r.data.relaxed, false, '无候选可放宽 → relaxed 不置位');
-  // 超过 72h：去重窗口完全失效
-  fx.clock.advance(73 * 3600 * 1000);
-  const r2 = await ranked.runRankedBattle({ store: fx.store, playerId: me.playerId, seed: 12 });
-  assert.equal(r2.data.matches, 2, '超窗后对手重新可用');
-  assert.equal(r2.data.relaxed, false, '超窗后回到严格 24h 窗口（已无人被去重）');
+  assert.equal(r.data.matches, 10, 'D-168：权重全 0 时退化为"最久未打"一组抽签，仍打满 10 场（取代 D-136 的 0 场）');
+  assert.equal(r.data.shortfall, 0, '请求 10 场、抽到 10 场 → 无缺口');
+  const ids = r.data.results.map((m) => m.opponentPlayerId);
+  assert.equal(new Set(ids).size, ids.length, '批次内不重复');
+  assert.equal(r.data.results.every((m) => m.winner !== 'invalid'), true, '全部为真实对局');
 });
 
 /* ---------- 胜负分支（真实构造的对手档案） ---------- */
@@ -532,7 +529,8 @@ test('P1-5 缺口 3 并发互斥：并发同 seed → 仅一个批次落盘（ba
   assert.equal(a.data.draws, b.data.draws);
   assert.equal(a.data.losses, b.data.losses);
   assert.equal(a.data.invalids, b.data.invalids, 'invalids 随批次落盘 → 回放同值');
-  assert.equal(a.data.relaxed, b.data.relaxed, 'relaxed 随批次落盘 → 回放同值');
+  assert.equal(a.data.recoveryHours, b.data.recoveryHours, 'D-168：回满小时数两响应一致');
+  assert.equal(a.data.relaxed, undefined, 'D-168：relaxed 字段已废止（响应不再回带）');
   assert.equal(a.data.matches, b.data.matches);
   assert.equal(a.data.tierAfter, b.data.tierAfter);
   assert.equal([a.data.replayed, b.data.replayed].filter(Boolean).length, 1, '恰好一个走回放路径（另一个首次结算）');

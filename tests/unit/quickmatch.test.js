@@ -216,7 +216,7 @@ test('T-QM-R6 cap 3000 不越界：满积分玩家赢球仍为 3000，Δ 由公�
   assert.ok(mine.rating.points <= fx.RATING.cap, '落盘积分不越界');
 });
 
-test('T-QM-R7 去重窗口：24h 内唯一对手被排除 → no_opponent；超 72h 后重新可匹', async (t) => {
+test('T-QM-R7 软冷却（D-168）：刚打过的唯一对手仍可匹（权重 <1）；4h 后权重回满 1', async (t) => {
   const now = Date.now();
   const fx = await h.openFixture({ startAt: now });
   t.after(() => fx.cleanup());
@@ -228,13 +228,16 @@ test('T-QM-R7 去重窗口：24h 内唯一对手被排除 → no_opponent；超 
     return null;
   });
   const quick = qm.createQuickMatch({ store: fx.store });
-  const blocked = await quick.run({ playerId: me.playerId, seed: 6 });
-  assert.equal(blocked.status, 409);
-  assert.equal(blocked.code, 'no_opponent', '24h 内唯一对手被去重 → 无候选');
-  fx.clock.advance(73 * 3600 * 1000); // 超过 72h（偏好间隔）→ 进 strict 池
-  const ok = await quick.run({ playerId: me.playerId, seed: 6 });
+  // D-168：不再有 24h 硬底线——刚打过（权重 0）的唯一对手**仍可被匹配**（单候选池 ⇒ 无限等待也不合理）
+  const stillMatched = await quick.run({ playerId: me.playerId, seed: 6 });
+  assert.equal(stillMatched.status, 200, 'D-168：软冷却下唯一候选照样匹配（取代 D-136 的 24h 硬拒）');
+  assert.equal(stillMatched.data.opponent.playerId, foe.playerId);
+  assert.ok(Math.abs(stillMatched.data.opponentWeight - 0.25) < 0.01, `1h 前交手 → 权重 ≈ 1h/4h = 0.25（实得 ${stillMatched.data.opponentWeight}）`);
+  assert.equal(stillMatched.data.recoveryHours, 4, '回满小时数如实回带（4h）');
+  fx.clock.advance(4 * 3600 * 1000); // 4h → 线性回满
+  const ok = await quick.run({ playerId: me.playerId, seed: 7 });
   assert.equal(ok.status, 200, JSON.stringify(ok));
-  assert.equal(ok.data.relaxed, false, '≥72h → strict 池，不标 relaxed');
+  assert.equal(ok.data.opponentWeight, 1, 'D-168：4h 回满 → 权重 1');
   assert.equal(ok.data.opponent.playerId, foe.playerId);
 });
 

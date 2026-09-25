@@ -1,4 +1,4 @@
-# 排位系统 详细设计
+﻿# 排位系统 详细设计
 
 > 所属：Debug-Lite v3　本文档精确到代码逻辑（自然语言，不写代码）。与 `../v3-design.md` 冲突时以本文档为准。
 >
@@ -6,7 +6,7 @@
 >
 > - ✅ **现行（已实现，P7-3/D-132 档案驱动）**：`server/ranked.js` 为**服务端抽池 + 双向记账**实现——玩家档案（段位/积分/战绩/配置槽）由 `server/store/*` 持久化；`POST /ranked/run` 从 `byTier` 索引抽同段位对手快照，逐场离线对战，**每场写 journal（`battle.recorded`）后 apply 到双方档案**；发起者计 `stats.attack`，被抽取方计 `stats.defense` 且**段位与积分不变（离线只记战绩）**；晋升在批次内落地。
 > - 🚫 **已删除**：`BOT_LD`（内置占位 bot 补齐）**不存在**（实测 `require('./server/ranked.js').BOT_LD === undefined`）；**池不足一律如实回报 `shortfall`，禁止 bot 充数**（D-152）。bot 只能由管理员注入**真实档案**（`server/admin.js`，双门控）。
-> - ✅ **去重窗口裁定（用户 2026-09-16）**：`strict` = 间隔 ≥ 72h（优先）；`relaxed` = 24h ≤ 间隔 < 72h（仅当 strict 凑不满需要时启用，响应记 `relaxed:true`）；**间隔 < 24h 两池皆拒 —— 24h 是硬底线，永不"允许重复"**；仍不足 → `shortfall`。
+> - ✅ **软冷却（D-168，2026-09-25，取代 D-136 的 24h 硬底线）**：**任何在池候选永不因"最近打过"被硬拒**；只按权重 `clamp(已过小时 / opponentRecoveryHours, 0, 1)`（默认 4h **线性回满**）做**加权轮盘抽签**；批次内不重复；**全员权重 0** 时取"最久未打"一组（**永不 `no_opponent`**）；池真的为空/窗口用尽 → 如实 `shortfall`。~~strict ≥72h / relaxed 24–72h / <24h 硬拒~~ 已废止，`relaxed` 字段不再回带（改回带 `recoveryHours`）。
 > - ✅ **双轨（P7-4）**：PG 有 Bearer token → 档案驱动；无 token 且 `DL_LEGACY_STATELESS=1`（默认）→ 遗留无状态口径（`loadout/warehouse/pool/tier` 由请求传入并回带，D-123）；置 `0` → 401。
 > - **D-122 规则继续有效**（未被推翻）：10 场批次、`wins > x`（`x = 6`，即胜 7 场）晋升、平局不计胜、段位序号即品质上限（门控默认关闭，见 `interfaces.md` §1 unlock 行）。
 > - **tier 以档案为准**：`/ranked/promote` 读档案段位（入参 `tier` 不一致 → 403 `forbidden`），且**只判定不落盘**——落盘只发生在 `/ranked/run` 的批次结算里。
@@ -15,7 +15,7 @@
 
 - 玩家出战配置的保存与快照。**现状（已实现）**：配置槽由 `server/account.js` + `server/store/*` 承载（`PUT /me/configs/:slotId` 校验 → 深拷贝冻结 → 算 hash → 写内容寻址快照库 → 更新档案）；`ranked.takeSnapshot` 仍提供"不可变深拷贝"原语供离线路径使用。
 - 匹配 10 个同段位快照，依次离线对战。**现状（已实现）**：池来自服务端索引（真实档案），**池不足如实 `shortfall`，不补 bot**。
-- **已实现**：服务端按段位索引抽池（D-132）、跨批去重窗口与 `relaxed` 标记（D-136）、双向战绩记账与 journal（D-134）。
+- **已实现**：服务端按段位索引抽池（D-132）、软冷却加权选择（D-168，取代 D-136 硬底线）、双向战绩记账与 journal（D-134）。
 - 晋升判定与段位 → 奖励品质映射。**已实现**（`promote` / `tierReward` / `promotedAt`）。
 
 ## 2. 依赖
@@ -27,7 +27,7 @@
 ## 3. 数据结构
 
 - **已实现**：玩家档案 `playerId`、`progress.tier`、`rating.points`、`configs.slots[≤3]`、`configs.activeSlotId`、`record.stats.{attack,defense}`、`record.unread`、`pool.*`（字段全表见 `11-account-store` §5.2）。
-- **现行（保留）**：`loadout`（`role` 角色模板及插件、`skills[3]` 三个技能模板及各自插件、`ai` AI 程序）；**遗留路径**入参 = `{loadout, warehouse, pool, seed, tier}`；**档案路径**入参 = `{seed?, pool?}`（传 `pool` → 400 `pool_forbidden`）。返回值带 `tier/seed/matches/wins/draws/losses/invalids/promoted/shortfall/relaxed/results/batchId`。
+- **现行（保留）**：`loadout`（`role` 角色模板及插件、`skills[3]` 三个技能模板及各自插件、`ai` AI 程序）；**遗留路径**入参 = `{loadout, warehouse, pool, seed, tier}`；**档案路径**入参 = `{seed?, pool?}`（传 `pool` → 400 `pool_forbidden`）。返回值带 `tier/seed/matches/wins/draws/losses/invalids/promoted/shortfall/recoveryHours/results/batchId`（D-168 起不再有 `relaxed`；D-167 起每场含 `frames`）。
 - **持久化口径（D-129，已实现）**：段位/积分/战绩/配置槽**落盘于服务端**（`DL_DATA_DIR`，默认 `<repo>/runtime`）；仓库与物品仍由客户端 localStorage 持有（D-130），服务端只保存**出战快照副本**。
 - **快照**：出战配置的不可变深拷贝（`takeSnapshot` 深冻结 + `JSON` 克隆）**+ 版本戳**（`hash`/`engineVersion`/`dataVersion`/`configHash`）并存入**内容寻址快照库**（`runtime/snapshots/<hex[0:2]>/<hex>.json`；磁盘文件名去掉 `sha256:` 前缀）。
 
@@ -52,7 +52,7 @@
 > - **遗留路径**（无 token 且 `DL_LEGACY_STATELESS=1`）：`{loadout, warehouse, pool, seed, tier}` 全部由请求传入并回带（D-123），**无任何落盘**。
 
 1. 取**同段位玩家池**（服务端索引 `byTier[tier]`，池 = 所有玩家的出战快照，D-132），随机抽 10 个（排除自己）。— **已实现**
-2. 跨批去重（D-136 裁定）：`strict` = 同一对手**间隔 ≥ 72h**（优先）；`relaxed` = **24h ≤ 间隔 < 72h**（仅当 strict 凑不满时启用并记 `relaxed:true`）；**间隔 < 24h 任何池都不收（24h 硬底线）**；仍不足 → `shortfall`。— **已实现**
+2. 软冷却（D-168 裁定，取代 D-136）：候选**永不硬拒**；权重 = `clamp(已过小时 / opponentRecoveryHours, 0, 1)`（默认 4h 线性回满）→ **加权轮盘抽签**；批次内不重复；全员权重 0 → 取最久未打一组；池空/窗口用尽 → `shortfall`。— **已实现**
 3. 池不足 10 个 → **本轮不注入 bot**；只打实际可用的场次，响应 `matches` 与 `shortfall` 如实回带（bot 由管理员注入**真实档案**，见 `server/admin.js`）。— **已实现**
    - ⚠️ **口径要求（2026-09-19 登记，同日已修复）**：**抽池筛选与最终实例化必须共用同一"可用性"判定**（快照可实例化 + 装配引用有可用仓库镜像）。若两处口径不一致，会出现"抽得到但打不了"的含混失败——`POST /quick/run` 曾报告此类残余（发起者带装配引用 + 抽到默认配置对手 + 进程内镜像缓存缺失 → `409 no_opponent`）。**修法（D-157）**：`ranked.sideInstantiable(loadout, warehouse, tier)`（与 `battleOne` 同一 `battle.buildPlayer` 实现）作为**唯一判据**，`server/quickmatch.js` 的 `candidatePool`（不可实例化 → `skipped.notInstantiable`、不入池）与 `requireArchive`/`run` 两处一致；回归用例 `tests/unit/quickmatch-availability.test.js`。`shortfall`/`no_opponent` 都不得用 bot 凑数（D-152）。
 4. 依次与每个快照离线对战（调用引擎 `runFull`）。— **已实现**
@@ -100,7 +100,7 @@
 - 快照不可变（含深冻结）+ hash 稳定 + 内容寻址库（同配置同 hash 只存一份）。— **已实现**
 - 出战配置结构完整（1 角色 + 3 技能 + AI），服务端存取无损。— **已实现**（服务端配置槽 `PUT /me/configs/:slotId`）
 - **被抽取方离线仍产生防守战绩**，且段位/积分不变（T-RK-3）。— **已实现**
-- 跨批去重窗口（`strict` ≥72h / `relaxed` 24–72h / **<24h 硬拒**）与 `relaxed` 标记（T-RK-4）。— **已实现**
+- 软冷却（D-168）：权重线性回满 / 权重 0 在有恢复候选时不被抽中 / 全员 0 时永不 no_opponent / 批次内不重复（T-RK-4a/T-RK-4b）。— **已实现**
 - 崩溃恢复后双方战绩一致（T-ST-3）。— **已实现**
 - 批次幂等：同 `(playerId, seed)` 重发 → 命中既有批次，不重复结算/不重复晋升（P1-4）。— **已实现**
 - 双轨零回归：`DL_LEGACY_STATELESS=1` 时旧无状态调用方不变；`=0` 时遗留端点 410、`ranked/*` 无 token 401。— **已实现**

@@ -871,11 +871,23 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
     assert.equal(pointsBefore[publicId], arch.rating.points, `排位不得改防守方积分（${publicId}）`);
   }
 
-  // 24h 去重：紧接着再跑一轮 → 上一轮对手全部仍在冷却窗口 → 抽不到任何人（无论池里有多少人）
+  // D-168 软冷却（取代 D-136 的 24h 硬底线）：紧接着再跑一轮 → 上一轮对手**仍可被抽中**（只是权重低），
+  //   即"冷却只降低概率、不硬拒"；并如实回带回满小时数。
   const rk2 = await s.request('POST', '/api/v1/ranked/run', { seed: 12 }, h.authed(F.A.token));
   assert.equal(rk2.status, 200, rk2.raw);
-  assert.equal(rk2.body.data.matches, 0, '24h 去重后应无可用对手（D-136）');
-  assert.equal(rk2.body.data.shortfall, rk2.body.data.requested, '缺口应等于整批目标（本轮一场未打）');
+  assert.equal(rk2.body.data.recoveryHours, 4, 'D-168：软冷却回满小时数如实回带');
+  assert.ok(rk2.body.data.matches >= 1, 'D-168：刚打过的对手仍可被匹配（不再 0 场 / 不再 24h 硬拒）');
+  const foes2 = rk2.body.data.results.map((r) => r.opponentPublicId);
+  assert.equal(new Set(foes2).size, foes2.length, '同批次对手不得重复');
+  for (const publicId of foes2) assert.ok(foes.includes(publicId), '第二轮对手仍来自同一真实玩家池（无 bot）');
+  // 刚交手 → 权重 < 1（软冷却生效）；这是"降低概率"的可观测证据
+  const archA = await s.store.loadArchive(await h.playerIdByPublicId(s.store, F.A.publicId));
+  const rankedMod = require('../../server/ranked.js');
+  for (const publicId of foes2) {
+    const pid = await h.playerIdByPublicId(s.store, publicId);
+    const w = rankedMod.cooldownWeightOf(archA, pid, Date.now(), 4);
+    assert.ok(w < 1, `刚交手的对手权重应 <1（${publicId} → ${w}）`);
+  }
 
   // 发起者同步结算：战绩条数 = 本批次场次；排位不改积分（D-133 双轨）
   const meA = await s.request('GET', '/api/v1/me', undefined, h.authed(F.A.token));
@@ -885,9 +897,14 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
     `排位不改积分（D-133 双轨）：应为快速对战后的 ${F.pointsAfterQuick}`);
   const recA = await s.request('GET', '/api/v1/me/records?role=attack&limit=100', undefined, h.authed(F.A.token));
   const ranked = recA.body.data.records.filter((x) => x.mode === 'ranked');
-  assert.equal(ranked.length, rd.matches, '排位战绩应逐场落盘（同步结算）');
+  // D-168：第二轮同样有对局（软冷却不硬拒）→ 战绩总数 = 两场次之和
+  assert.equal(ranked.length, rd.matches + rk2.body.data.matches, '排位战绩应逐场落盘（同步结算；两轮之和）');
 
-  // 防守方离线记账（D-132）：被抽者 +1 场、不掉段、积分不变；未被抽者场次不变
+  // 防守方离线记账（D-132）：被抽者按"两轮被抽次数"增加、不掉段、积分不变；未被抽者场次不变
+  //   D-168：第二轮不再被硬拒 ⇒ 同一对手可能被抽两次，故期望值按两批实际抽中次数累计。
+  const drawnCountExpect = new Map();
+  for (const publicId of foes) drawnCountExpect.set(publicId, (drawnCountExpect.get(publicId) || 0) + 1);
+  for (const publicId of foes2) drawnCountExpect.set(publicId, (drawnCountExpect.get(publicId) || 0) + 1);
   for (const publicId of [F.A.publicId, F.B.publicId, F.outsider.publicId].concat(foes)) {
     const token = F.tokens[publicId];
     let view;
@@ -901,8 +918,9 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
     }
     assert.equal(view.stats.wins + view.stats.losses + view.stats.draws, view.drawnCount, '防守胜负平应闭合到被抽场次');
     const delta = view.drawnCount - drawnBefore[publicId];
-    if (foes.includes(publicId)) {
-      assert.equal(delta, 1, `被抽方 ${publicId} 的被抽场次应恰 +1（${drawnBefore[publicId]} → ${view.drawnCount}）`);
+    const want = drawnCountExpect.get(publicId) || 0;
+    if (want > 0) {
+      assert.equal(delta, want, `被抽方 ${publicId} 的被抽场次应为 +${want}（两轮累计；${drawnBefore[publicId]} → ${view.drawnCount}）`);
       assert.ok(Array.isArray(view.recent) && view.recent.length >= 1, `被抽方 ${publicId} 应有 recent 列表`);
       assert.equal(typeof view.recent[0].battleId, 'string');
       const pid = await h.playerIdByPublicId(s.store, publicId);
@@ -910,7 +928,7 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
       assert.equal(arch.progress.tier, 'common', '防守方不掉段');
       assert.equal(arch.rating.points, pointsBefore[publicId], '防守方积分不变');
     } else {
-      assert.equal(delta, 0, `${publicId} 未被本批次抽中 → 被抽场次不得增加（${drawnBefore[publicId]} → ${view.drawnCount}）`);
+      assert.equal(delta, 0, `${publicId} 未被任何批次抽中 → 被抽场次不得增加（${drawnBefore[publicId]} → ${view.drawnCount}）`);
     }
   }
 

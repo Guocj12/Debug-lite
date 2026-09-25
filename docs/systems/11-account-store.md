@@ -1,4 +1,4 @@
-# 账号与存档系统 详细设计（在线服务层）
+﻿# 账号与存档系统 详细设计（在线服务层）
 
 > 所属：Debug-Lite v3　版本：v1　创建：2026-09-16
 > 更新：2026-09-22（D-159…D-162 落地：仓库服务端权威 / 三槽初始形态 / AI 库 / 开箱 seed 收归服务端）
@@ -625,7 +625,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | 同段位 | 只从 `progress.tier == 发起者 tier` 取（沿用 D-122/RK 语义） |
 | 排除自己 | 按 `playerId` 排除（比现实现的 JSON 深等更严格且更快） |
 | 池有效期 | `pool.ttlDays`（默认 **0 = 不过期**，符合用户口径）；置为 >0 时，`lastSeenAt` 超期的玩家退出抽取但不退池。**现状：参数已留、未启用**（代码不消费该值，退出抽取的分支不可达） |
-| 跨批去重（**用户 2026-09-16 裁定**） | `pool.opponentCooldownHours`（默认 **24**，"仅对手去重"）：`strict` = 同一对手**间隔 ≥ 72h**（优先）；`relaxed` = **24h ≤ 间隔 < 72h**（仅当 strict 候选凑不满本轮所需场次时启用，响应记 `relaxed:true`）；**间隔 < 24h 两池皆拒 —— 24h 是硬底线，永不"允许重复"**；仍不足 → `shortfall`。**`relaxed` 已落 journal（2026-09-19 修正，旧文"不落 journal"已过时）**：`ranked.batch` 记录现带 `relaxed`(bool) + `invalids`(int)，使"同 seed 重发命中既有批次"时能给出与首次**逐值一致**的响应；**旧记录缺这两个字段 → 回放回落 `relaxed=null` / `invalids=0`** 并在日志中标注为不可复原（`server/store/ledger.js:253-265`、`server/ranked.js:412-438`） |
+| 跨批冷却（**D-168，2026-09-25 取代 D-136**） | **软冷却**：`rating-config.opponentRecoveryHours`（默认 **4**，"仅对手去重"）——候选**永不硬拒**，权重 = `clamp(已过小时 / 4, 0, 1)` **线性回满** → **加权轮盘抽签**；批次内不重复；全员权重 0 → 取最久未打一组（永不 `no_opponent`）；仍不足（池空/窗口用尽）→ 如实 `shortfall`。**`relaxed` 已废止**（不再落 `ranked.batch`、不再回带；旧记录里的该字段被忽略）；`invalids`(int) 仍落记录，使"同 seed 重发命中既有批次"给出与首次**逐值一致**的响应（`server/store/ledger.js`、`server/ranked.js`） |
 | 抽样 | 批次内不重复（`splice` 语义）；用种子派生 RNG，可复现 |
 | 数量不足 | 候选 < 10 → **本轮不注入 bot**（用户口径："暂不考虑，开发完成后我会自行注入 bot 用户"）；只打实际可用场次，响应 `matches` 与 **`shortfall`**（**字段名就是 `shortfall`，不是 `no_opponent`**）如实告知，**不伪造对局**（§7.7）；`shortfall > 0` 的批次**不判晋升** |
 | 并发安全 | 抽池只读索引快照；对手档案在结算时才落盘 |
@@ -700,7 +700,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 2. 窗口递进：`window` 从 `matchWindowStart`（默认 100）开始，未命中则 `+= matchWindowStep`（默认 100），直到 `matchWindowMax`（默认 600）；仍无 → `409 no_opponent`。
 3. 候选中优先"最久未对战"（`lastOpponentAt` 在档案的 `pool` 段可扩字段），再用种子随机打破平局。
 4. 段位**不**参与匹配（双轨；跨段位对局允许，这正是积分的意义）。
-5. `opponentCooldownHours`（默认 24）：同一对手在该窗口内不重复；不足时放宽（同 §7.2）。
+5. `opponentRecoveryHours`（默认 4，D-168）：软冷却"线性回满"小时数——同一对手刚打过后权重 0、随时间线性回到 1；**永不硬拒**（同 §7.2）。
 
 ### 8.3 积分公式（非对称 Elo，D-133）
 
@@ -726,7 +726,7 @@ K_loss(R) = clamp(kBase * (1 + R / cap), kBase, kMax)       # 扣分系数：随
   "base": 0, "cap": 3000, "scale": 400,
   "kBase": 32, "kMin": 8, "kMax": 64, "drawFactor": 0.5,
   "matchWindowStart": 100, "matchWindowStep": 100, "matchWindowMax": 600,
-  "opponentCooldownHours": 24,
+  "opponentRecoveryHours": 4,
   "dailyBattleLimit": 0,            // 0 = 不限制（用户选择"仅对手去重"）
   "rounding": "half_up"
 }
@@ -766,7 +766,7 @@ K_loss(R) = clamp(kBase * (1 + R / cap), kBase, kMax)       # 扣分系数：随
 
 | 措施 | 状态 |
 |---|---|
-| 同一对手 24h 去重 | ✅ 实现 |
+| 同一对手软冷却（4h 线性回满，加权抽签） | ✅ 实现（D-168） |
 | 同批次对手不重复 | ✅ 实现（沿用） |
 | 每日上限 | ⏸ `dailyBattleLimit` 参数已留，默认 0（不限制） |
 | 禁止自选对手 | ✅ 天然满足（服务端抽池，无 `opponent` 参数） |
@@ -1152,7 +1152,7 @@ admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 | T-RK-1 | 排位批次 | 抽 10 场、同段位、排除自己、批次内不重复（沿用 `tests/unit/ranked.test.js` 断言） |
 | T-RK-2 | 晋升 | `wins > 6` → `tier+1` 落盘；`mythic` 不晋升 |
 | T-RK-3 | 防守记账 | 被抽方离线 → 档案 `stats.defense` 与 `recent`、`unread.defense` 正确；**段位/积分不变** |
-| T-RK-4 | 去重窗口 | **24h 内同一对手不重复（硬底线，两池皆拒）**；严格候选（间隔 ≥72h）优先；严格候选不足时启用 24–72h 并记 `relaxed:true`；仍不足 → `shortfall`（`relaxed`/`invalids` 已落 `ranked.batch`，旧记录回落 `null`/`0`） |
+| T-RK-4 | 软冷却（D-168） | **永不因冷却硬拒**；权重 = `clamp(已过小时/4,0,1)` 线性回满 → 加权轮盘；权重 0 者在其有恢复候选时确定性地不被抽中；批次内不重复；全员 0 → 取最久未打（仍打满）；池空/窗口用尽 → `shortfall`（`invalids` 落 `ranked.batch`） |
 | T-RK-5 | 单场隔离 | 一个对手快照损坏 → 该场 `invalid`，其余照常（批次不整体失败） |
 | T-QM-1 | 匹配窗口 | 无同窗候选 → 逐级放宽到 600；仍无 → `no_opponent` |
 | T-QM-2 | 积分公式 | 表驱动断言：`R=0` 对称；`R=1500` 时加分 < 扣分；`r = 2p−1` 均衡点解析值一致 |

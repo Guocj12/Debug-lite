@@ -309,10 +309,10 @@ function buildBatchRecord(input) {
     batchId: o.batchId, tier: isTier(o.tier) ? o.tier : 'common',
     seed: Number.isInteger(o.seed) ? o.seed : null,
     opponentCount: Number.isInteger(o.opponentCount) ? o.opponentCount : 0,
-    // P1 缺口 3 配套：批次内 invalid 场数（不进 journal 的 battle.recorded）与是否启用放宽窗口。
-    // 二者不进 journal 就无法在"回放既有批次"时复原 → 一并落记录，使重发响应与首次逐值一致。
+    // P1 缺口 3 配套：批次内 invalid 场数（不进 journal 的 battle.recorded）。
+    // 不进 journal 就无法在"回放既有批次"时复原 → 落记录，使重发响应与首次逐值一致。
+    // D-168：`relaxed` 随 strict/relaxed 双池废止（不再写入；旧记录里的该字段被读取方忽略）。
     invalids: Number.isInteger(o.invalids) ? o.invalids : 0,
-    relaxed: o.relaxed === true,
   };
 }
 

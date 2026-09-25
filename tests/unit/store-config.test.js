@@ -32,7 +32,7 @@ test('CFG-1 默认 service config 覆盖 interfaces §4.12 的全部键与 §11.
   assert.equal(s.snapshot.retentionDays, 90);
   assert.equal(s.session.ttlDays, 7);
   assert.equal(s.session.maxPerPlayer, 5);
-  assert.equal(s.pool.opponentCooldownHours, 24);
+  assert.equal(s.pool.opponentRecoveryHours, 4);
   assert.equal(s.auth.scrypt.N, 16384);
   assert.equal(s.auth.maxFailures, 5);
   assert.equal(s.auth.lockMinutes, 5);
@@ -48,7 +48,7 @@ test('CFG-2 默认 rating config 与 §8.3 数值逐项一致', () => {
   assert.equal(r.matchWindowStart, 100);
   assert.equal(r.matchWindowStep, 100);
   assert.equal(r.matchWindowMax, 600);
-  assert.equal(r.opponentCooldownHours, 24);
+  assert.equal(r.opponentRecoveryHours, 4, 'D-168 软冷却：4 小时线性回满');
   assert.equal(r.dailyBattleLimit, 0);
   assert.equal(r.rounding, 'half_up');
   assert.equal(r.promoteWins, 6, 'D-122 晋升阈值');

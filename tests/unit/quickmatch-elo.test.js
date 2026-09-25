@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const qm = require('../../server/quickmatch.js');
+const rankedMod = require('../../server/ranked.js');
 const ledger = require('../../server/store/ledger.js');
 const h = require('../helpers/ranked.js');
 
@@ -194,68 +195,68 @@ test('T-QM-1b 候选过滤：isEligible 为假的（封禁/退池/自己）一�
   assert.equal(found.opponent.playerId, 'b');
 });
 
-test('T-QM-4 去重窗口（纯函数）：<24h 两池皆拒；24–72h 进 relaxed；≥72h 进 strict', () => {
+test('T-QM-4 软冷却（D-168 纯函数）：权重随时间线性回满、永不硬拒；全员为 0 时取最久未打', () => {
   const hour = 3600 * 1000;
   const now = 1_800_000_000_000;
   const old = { pool: { lastOpponentAt: {} } };
   const pool = poolOf([{ playerId: 'a', points: 1500 }, { playerId: 'b', points: 1500 }, { playerId: 'c', points: 1500 }]);
-  // a：1h 前（<24h 硬底线，两池皆拒）；b：25h 前（24–72h → relaxed）；c：80h 前（≥72h → strict）
-  old.pool.lastOpponentAt = { a: now - 1 * hour, b: now - 25 * hour, c: now - 80 * hour };
-  const split = qm.splitByCooldown(pool, old, 24, 72, now);
-  assert.deepEqual(split.strict.map((x) => x.playerId), ['c'], 'strict = ≥72h 的新鲜对手');
-  assert.deepEqual(split.relaxed.map((x) => x.playerId), ['b'], 'relaxed = 24–72h');
-  assert.ok(!split.strict.concat(split.relaxed).some((x) => x.playerId === 'a'), '1h 前 → 两池都不接纳（硬底线）');
-  // strict 非空 → 优先 strict，relaxed 不启用
-  const prefer = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 1, at: now, foeArchive: old, isEligible: () => true });
-  assert.equal(prefer.relaxed, false);
-  assert.equal(prefer.opponent.playerId, 'c', 'strict 有候选就不放宽');
-  // 只有 24–72h 的对手（c 压到 30h）→ strict 空 → 放宽并标 relaxed
-  const old2 = { pool: { lastOpponentAt: { a: now - 1 * hour, b: now - 25 * hour, c: now - 30 * hour } } };
-  const relax = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 1, at: now, foeArchive: old2, isEligible: () => true });
-  assert.equal(relax.relaxed, true, 'strict 为空 → 启用 relaxed');
-  assert.ok(['b', 'c'].includes(relax.opponent.playerId));
-  // 全部 <24h → 无候选
-  const old3 = { pool: { lastOpponentAt: { a: now - hour, b: now - hour, c: now - hour } } };
-  assert.deepEqual(qm.splitByCooldown(pool, old3, 24, 72, now), { strict: [], relaxed: [] });
+  const w = (pid) => rankedMod.cooldownWeightOf(old, pid, now, 4);
+  // 从未交手 → 1（完全恢复）；刚刚交手 → 0；4h 回满 → 1；2h → 0.5
+  assert.equal(w('never'), 1, '从未交手 = 完全恢复');
+  old.pool.lastOpponentAt = { a: now, b: now - 2 * hour, c: now - 4 * hour };
+  assert.equal(w('a'), 0, '刚交手 = 0');
+  assert.equal(w('b'), 0.5, '2h / 4h = 0.5');
+  assert.equal(w('c'), 1, '4h 回满 = 1');
+  old.pool.lastOpponentAt = { a: now - 8 * hour };
+  assert.equal(w('a'), 1, '超过回满时间 → 封顶 1');
+  // 权重为 0 的候选**仍可被抽中**（取代 D-136 的硬底线）：池里只有"刚打过"的对手 → 照样匹配
+  const onlyJustFaced = { pool: { lastOpponentAt: { a: now, b: now, c: now } } };
+  const still = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 1, at: now, foeArchive: onlyJustFaced, isEligible: () => true });
+  assert.equal(still.ok, true, '全员冷却未恢复也不 no_opponent（D-168：永不硬拒）');
+  assert.ok(['a', 'b', 'c'].includes(still.opponent.playerId));
+  assert.equal(still.weight, 0, '选中者的权重如实回报为 0');
+  // 很久没打的对手权重更高 → 抽签期望上优先（同 seed 断言可复现的具体结果）
+  const mixed = { pool: { lastOpponentAt: { a: now, b: now - 3 * hour, c: now - 100 * hour } } };
+  const picked = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 7, at: now, foeArchive: mixed, isEligible: () => true });
+  assert.equal(picked.ok, true);
+  assert.equal(picked.opponent.playerId, 'c', '权重 1 的最久未打者在本次抽签中被选中（seed=7 可复现）');
+  const again = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed: 7, at: now, foeArchive: mixed, isEligible: () => true });
+  assert.equal(again.opponent.playerId, picked.opponent.playerId, '同 seed 同结果（可复现）');
 });
 
-test('T-QM-4b 最久未对战优先（§8.2 步骤 3 / P1-2）：先取 lastOpponentAt 的 argmin 组，再**仅组内**随机', () => {
+test('T-QM-4b 软冷却抽签（D-168）：权重 0 不会被"有恢复的"对手挤掉；已恢复者等权；全员 0 时退化为最久一组', () => {
   const hour = 3600 * 1000;
   const now = 1_800_000_000_000;
   const pool = poolOf([{ playerId: 'a', points: 1500 }, { playerId: 'b', points: 1500 }, { playerId: 'c', points: 1500 }]);
-  // 3 候选：a = 100h 前、b = 80h 前、c = 76h 前（都 ≥72h → strict 池）→ **恒选 a**（唯一 argmin）
-  const foe = { pool: { lastOpponentAt: { a: now - 100 * hour, b: now - 80 * hour, c: now - 76 * hour } } };
-  const picked = new Set();
+  // ① 有人已恢复（b: 4h → 权重 1）时，刚打过的 a（权重 0）**永不被抽中**（确定性；取代 D-136 的硬底线）
+  const foe1 = { pool: { lastOpponentAt: { a: now, b: now - 4 * hour, c: now } } };
   for (let seed = 1; seed <= 24; seed++) {
-    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe, isEligible: () => true });
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe1, isEligible: () => true });
     assert.equal(f.ok, true);
-    assert.equal(f.argminGroup, 1, `seed ${seed}: argmin 组恰 1 个`);
-    assert.equal(f.opponent.playerId, 'a', `seed ${seed}: 恒选最久未对战者（100h）`);
+    assert.equal(f.opponent.playerId, 'b', `seed ${seed}: 只有 b 有恢复权重 → 恒选 b（a/c 权重 0 不参与）`);
+  }
+  // ② 半恢复（a: 2h → 0.5）vs 已恢复（b: 4h → 1）：两者都可能被抽到，但 b 的频次显著更高
+  const foe2 = { pool: { lastOpponentAt: { a: now - 2 * hour, b: now - 4 * hour, c: now } } };
+  let countA = 0;
+  let countB = 0;
+  for (let seed = 1; seed <= 240; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe2, isEligible: () => true });
+    assert.ok(['a', 'b'].includes(f.opponent.playerId), `seed ${seed}: 只在有恢复权重的 a/b 中（c 权重 0）`);
+    if (f.opponent.playerId === 'a') countA += 1;
+    else countB += 1;
+  }
+  assert.ok(countA > 0, '半恢复者仍可能被抽中（软冷却不是硬拒）');
+  assert.ok(countB > countA, `已恢复者频次应更高（实测 a=${countA} / b=${countB}）`);
+  // ③ 全员权重 0（都很久没打过？不——都很"刚刚"）→ 退化为"最久未打"一组内抽签，永不 no_opponent
+  const foe3 = { pool: { lastOpponentAt: { a: now, b: now - hour, c: now - 2 * hour } } };
+  const picked = new Set();
+  for (let seed = 1; seed <= 60; seed++) {
+    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe3, isEligible: () => true });
+    assert.equal(f.ok, true, '永不 no_opponent（D-168）');
     picked.add(f.opponent.playerId);
   }
-  assert.deepEqual([...picked], ['a'], '选中集合 ⊆ argmin 组 = {a}（修前"全池均匀随机"会命中 b/c）');
-  // 并列 argmin 组：a/b 均 100h、c = 76h → 只在 {a,b} 内随机；c **从不**出现，且组内两成员都被抽到（随机仍在生效）
-  const foe2 = { pool: { lastOpponentAt: { a: now - 100 * hour, b: now - 100 * hour, c: now - 76 * hour } } };
-  const picked2 = new Set();
-  for (let seed = 1; seed <= 60; seed++) {
-    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe2, isEligible: () => true });
-    assert.equal(f.argminGroup, 2, `seed ${seed}: argmin 组 2 个`);
-    assert.ok(['a', 'b'].includes(f.opponent.playerId), `seed ${seed}: 只能抽 argmin 组（实得 ${f.opponent.playerId}）`);
-    picked2.add(f.opponent.playerId);
-  }
-  assert.deepEqual([...picked2].sort(), ['a', 'b'], '选中集合恰为 argmin 组（c 从不出现 / 组内两成员均被抽到）');
-  // 反向：把 a 调成 300h 前 → 首选 a；再把 b 调成唯一最久 → 首选 b
-  const foe3 = { pool: { lastOpponentAt: { a: now - 300 * hour, b: now - 10 * hour, c: now - 200 * hour } } };
-  for (let seed = 1; seed <= 8; seed++) {
-    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe3, isEligible: () => true });
-    assert.equal(f.opponent.playerId, 'a', `seed ${seed}: a（300h）唯一最久 → 恒选`);
-  }
-  // 从未对战（不在 map 里 → lastOpponentAt=0）优先于任何"打过"的候选
-  const foe4 = { pool: { lastOpponentAt: { a: now - 100 * hour } } };
-  for (let seed = 1; seed <= 8; seed++) {
-    const f = qm.findMatch({ pool, selfPoints: 1500, config: CFG, seed, at: now, foeArchive: foe4, isEligible: () => true });
-    assert.ok(['b', 'c'].includes(f.opponent.playerId), `seed ${seed}: 未对战者优先（实得 ${f.opponent.playerId}）`);
-  }
+  // 权重：a=0、b=0.25、c=0.5 → 三者都可能（无硬拒）；但**权重最高者**（c）应占多数
+  assert.ok(picked.size >= 2, `软冷却下多个候选都可能（实得 ${[...picked].join(',')}）`);
 });
 
 test('T-QM-2h 突变告警判据 = 单场真实上界 max(kBase, kMax)（P1-3）：不再把合法败局判成突变', () => {
@@ -290,18 +291,22 @@ test('T-QM-2h 突变告警判据 = 单场真实上界 max(kBase, kMax)（P1-3）
 });
 
 
-test('T-QM-1c 匹配参数：matchWindowConfig 缺省与非法值兜底', () => {
-  const cfg = qm.matchWindowConfig({ matchWindowStart: 0, matchWindowStep: 0, matchWindowMax: 0, opponentCooldownHours: 0 });
-  assert.deepEqual(cfg, { start: 0, step: 0, max: 0, cooldown: 0 }, '0 是合法值（不限制）');
+test('T-QM-1c 匹配参数：matchWindowConfig 缺省与非法值兜底（D-168：cooldown → recovery）', () => {
+  const cfg = qm.matchWindowConfig({ matchWindowStart: 0, matchWindowStep: 0, matchWindowMax: 0, opponentRecoveryHours: 0 });
+  assert.deepEqual(cfg, { start: 0, step: 0, max: 0, recovery: 0 }, '0 是合法值（不启用软冷却）');
   const dflt = qm.matchWindowConfig(undefined);
-  assert.deepEqual(dflt, { start: 0, step: 0, max: 0, cooldown: 0 }, '缺省 config → 全 0（不编造数值）');
-  const bad = qm.matchWindowConfig({ matchWindowStart: 'x', matchWindowStep: -5, matchWindowMax: null, opponentCooldownHours: 1.5 });
-  assert.deepEqual(bad, { start: 0, step: 0, max: 0, cooldown: 0 }, '非法值一律回落 0');
+  assert.deepEqual(dflt, { start: 0, step: 0, max: 0, recovery: 0 }, '缺省 config → 全 0（不编造数值）');
+  const bad = qm.matchWindowConfig({ matchWindowStart: 'x', matchWindowStep: -5, matchWindowMax: null, opponentRecoveryHours: 1.5 });
+  assert.deepEqual(bad, { start: 0, step: 0, max: 0, recovery: 0 }, '非法值一律回落 0');
+  const ok = qm.matchWindowConfig({ matchWindowStart: 100, matchWindowStep: 100, matchWindowMax: 600, opponentRecoveryHours: 4 });
+  assert.deepEqual(ok, { start: 100, step: 100, max: 600, recovery: 4 }, 'D-168 冻结值：4h 线性回满');
 });
 
-test('候选字段与常量：COOLDOWN_RELAX_MULT=3（24h → 72h）；MAX_LIMIT=100', () => {
-  assert.equal(qm.COOLDOWN_RELAX_MULT, 3);
+test('候选字段与常量（D-168：软冷却取代双池）：MAX_LIMIT=100；splitByCooldown/COOLDOWN_RELAX_MULT 已删除', () => {
   assert.equal(qm.MAX_LIMIT, 100);
+  assert.equal(qm.splitByCooldown, undefined, 'D-168：strict/relaxed 双池已删除');
+  assert.equal(qm.COOLDOWN_RELAX_MULT, undefined, 'D-168：72h 放宽倍数已删除');
+  assert.equal(typeof rankedMod.cooldownWeightOf, 'function', '软冷却权重在 ranked 单一实现（quickmatch 复用）');
   assert.equal(qm.matchCandidates(poolOf([{ playerId: 'a', points: 100 }]), 100, -1, () => true).length, 0, '负数窗口不命中');
   assert.equal(qm.matchCandidates(poolOf([{ playerId: 'a', points: 100 }]), 100, 0, () => true).length, 1, '窗口 0 = 仅同分');
 });

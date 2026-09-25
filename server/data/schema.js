@@ -85,7 +85,7 @@ const SERVICE_CONFIG_FROZEN = Object.freeze({
   journal: { fsyncMode: 'batch', compactAfterDays: 30, bufferBytes: 1048576 },
   snapshot: { retentionDays: 90 },
   replayCacheSize: 64,
-  pool: { ttlDays: 0, opponentCooldownHours: 24 },
+  pool: { ttlDays: 0, opponentRecoveryHours: 4 },
   warehouse: { maxPerBucket: 500 },
   ai: { maxPerPlayer: 100 },
 });
@@ -101,7 +101,7 @@ const RATING_CONFIG_FROZEN = Object.freeze({
   matchWindowStart: 100,
   matchWindowStep: 100,
   matchWindowMax: 600,
-  opponentCooldownHours: 24,
+  opponentRecoveryHours: 4,
   dailyBattleLimit: 0,
   rounding: 'half_up',
   promoteWins: 6,
@@ -578,7 +578,7 @@ function validateStructure(dataDir, assetsDir) {
     const pl = sc.pool || {};
     // P2-8：`pool.ttlDays` 只做形状校验 —— 当前**无任何消费方**（参数已留、未启用，与 rating.dailyBattleLimit 同口径）
     if (!isNum(pl.ttlDays) || pl.ttlDays < 0) problems.push('service-config.pool.ttlDays 应为 ≥0 的数（0 = 池不过期；当前参数已留、未启用）');
-    if (!isNum(pl.opponentCooldownHours) || pl.opponentCooldownHours < 0) problems.push('service-config.pool.opponentCooldownHours 应为 ≥0 的数');
+    if (!isNum(pl.opponentRecoveryHours) || pl.opponentRecoveryHours < 0) problems.push('service-config.pool.opponentRecoveryHours 应为 ≥0 的数（0 = 不启用软冷却；D-168）');
     // D-159/D-161：仓库每桶上限与 AI 库上限（服务端权威，超限拒绝写入）
     const whc = sc.warehouse || {};
     if (!isInt(whc.maxPerBucket) || whc.maxPerBucket < 1) problems.push('service-config.warehouse.maxPerBucket 应为正整数（每桶上限；超限拒绝开箱）');
@@ -606,7 +606,7 @@ function validateStructure(dataDir, assetsDir) {
     if (!isNum(rc.matchWindowStart) || rc.matchWindowStart <= 0) problems.push('rating-config.matchWindowStart 应为正数');
     if (!isNum(rc.matchWindowStep) || rc.matchWindowStep <= 0) problems.push('rating-config.matchWindowStep 应为正数');
     if (!isNum(rc.matchWindowMax) || rc.matchWindowMax < rc.matchWindowStart) problems.push('rating-config.matchWindowMax 应 ≥ matchWindowStart（窗口递进上界）');
-    if (!isNum(rc.opponentCooldownHours) || rc.opponentCooldownHours < 0) problems.push('rating-config.opponentCooldownHours 应为 ≥0 的数（D-136 去重窗口）');
+    if (!isNum(rc.opponentRecoveryHours) || rc.opponentRecoveryHours < 0) problems.push('rating-config.opponentRecoveryHours 应为 ≥0 的数（软冷却回满小时数；D-168）');
     if (!isInt(rc.dailyBattleLimit) || rc.dailyBattleLimit < 0) problems.push('rating-config.dailyBattleLimit 应为 ≥0 的整数（0 = 不限制）');
     if (!['half_up', 'round'].includes(rc.rounding)) problems.push(`rating-config.rounding 应为 half_up|round（实际 ${rc.rounding}）`);
     if (!isInt(rc.promoteWins) || rc.promoteWins < 0) problems.push('rating-config.promoteWins 应为 ≥0 的整数（D-122：胜 > 6 晋升）');

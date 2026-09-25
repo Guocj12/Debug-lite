@@ -22,7 +22,6 @@ const ledger = require('./store/ledger.js');
 const ranked = require('./ranked.js');
 
 const SEED_MAX = 0x7fffffff;
-const COOLDOWN_RELAX_MULT = ranked.COOLDOWN_RELAX_MULT;
 const MAX_LIMIT = 100;
 
 /* ---------- Elo 原语（纯函数，供测试机器复算） ---------- */
@@ -64,7 +63,8 @@ function matchWindowConfig(config) {
     start: Number.isInteger(cfg.matchWindowStart) ? cfg.matchWindowStart : 0,
     step: Number.isInteger(cfg.matchWindowStep) && cfg.matchWindowStep > 0 ? cfg.matchWindowStep : 0,
     max: Number.isInteger(cfg.matchWindowMax) ? cfg.matchWindowMax : 0,
-    cooldown: Number.isInteger(cfg.opponentCooldownHours) ? cfg.opponentCooldownHours : 0,
+    // D-168：`opponentRecoveryHours` = 软冷却"线性回满"小时数（取代 D-136 的 opponentCooldownHours 硬底线）
+    recovery: Number.isInteger(cfg.opponentRecoveryHours) && cfg.opponentRecoveryHours > 0 ? cfg.opponentRecoveryHours : 0,
   };
 }
 
@@ -79,58 +79,32 @@ function matchCandidates(pool, selfPoints, window, isEligible) {
   return out;
 }
 
-// 去重窗口（§8.2 步骤 5 / D-136，与 ranked 同一裁定口径）：
-//   strict = 间隔 ≥ 72h（新鲜）；relaxed = 24h ≤ 间隔 < 72h；间隔 < 24h 任何池都不收（硬底线）
-function splitByCooldown(candidates, foeArchive, cooldownHours, relaxHours, at) {
-  const strict = [];
-  const relaxed = [];
-  for (const c of candidates) {
-    if (!archiveMod.opponentCooldownOk(foeArchive, c.playerId, cooldownHours, at)) continue;
-    if (archiveMod.opponentCooldownOk(foeArchive, c.playerId, relaxHours, at)) strict.push(c);
-    else relaxed.push(c);
-  }
-  return { strict, relaxed };
-}
-
-// "最久未对战"优先，再用种子随机打破平局（§8.2 步骤 3）
-function lastOpponentAtOf(foeArchive, playerId) {
-  const map = (foeArchive && foeArchive.pool && foeArchive.pool.lastOpponentAt) || {};
-  const last = map[playerId];
-  return Number.isInteger(last) ? last : 0;
-}
+// D-168 软冷却：**不再有 strict/relaxed 双池、不再有 24h 硬底线**——任何候选都可被抽中，
+//   只是"刚打过"的权重低、随时间线性回满。选择实现与排位同源：`ranked.pickByCooldownWeight`。
 
 function findMatch(input) {
   const o = input || {};
   const cfg = matchWindowConfig(o.config);
   const at = Number.isInteger(o.at) ? o.at : 0;
-  const relaxHours = cfg.cooldown * COOLDOWN_RELAX_MULT;
   const rng = o.rng || createRng(Number.isInteger(o.seed) ? o.seed : 1).deriveStream(0, 'quick');
   const maxWindow = cfg.max > cfg.start ? cfg.max : cfg.start;
   for (let window = cfg.start; ; window += cfg.step) {
     const found = matchCandidates(o.pool, o.selfPoints, window, o.isEligible);
     if (found.length > 0) {
-      const split = splitByCooldown(found, o.foeArchive, cfg.cooldown, relaxHours, at);
-      // 严格池（≥72h 新鲜对手）优先；不足 1 个时才启用 24–72h 的放宽池（裁定口径，同 ranked）
-      const relaxed = split.strict.length === 0 && split.relaxed.length > 0;
-      const usable = relaxed ? split.relaxed : split.strict;
-      if (usable.length > 0) {
-        // 最久未对战优先（§8.2 步骤 3）：先取 `lastOpponentAt` 的 **argmin 组**，再只在组内用种子随机打破平局。
-        // 🚫 不允许"排序后全池均匀随机"——那会让 100h 未打的最久候选被 76h 的候选挤掉（P1-2）。
-        const sorted = usable.slice().sort((a, b) => {
-          const la = lastOpponentAtOf(o.foeArchive, a.playerId);
-          const lb = lastOpponentAtOf(o.foeArchive, b.playerId);
-          if (la !== lb) return la - lb;
-          return a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0;
-        });
-        const oldest = lastOpponentAtOf(o.foeArchive, sorted[0].playerId);
-        const argminGroup = sorted.filter((c) => lastOpponentAtOf(o.foeArchive, c.playerId) === oldest);
-        const pick = argminGroup.length === 1 ? argminGroup[0] : argminGroup[rng.int(0, argminGroup.length - 1)];
-        return { ok: true, window, relaxed, cooldown: relaxed ? relaxHours : cfg.cooldown, opponent: pick, candidateCount: found.length, argminGroup: argminGroup.length };
+      // D-168 软冷却：按"距上次交手时间 / recoveryHours"加权轮盘抽签（同 seed 可复现）；
+      //   全员权重为 0（池子极小、都刚打过）时取"最久未打"一组 —— **永不 no_opponent**（除非池空）。
+      const pick = ranked.pickByCooldownWeight(found, o.foeArchive, at, cfg.recovery, rng);
+      if (pick) {
+        return {
+          ok: true, window, recoveryHours: cfg.recovery, opponent: pick,
+          candidateCount: found.length,
+          weight: ranked.cooldownWeightOf(o.foeArchive, pick.playerId, at, cfg.recovery),
+        };
       }
     }
     if (window >= maxWindow || cfg.step <= 0) break;
   }
-  return { ok: false, window: maxWindow, relaxed: false, cooldown: cfg.cooldown, opponent: null, candidateCount: 0 };
+  return { ok: false, window: maxWindow, recoveryHours: cfg.recovery, opponent: null, candidateCount: 0 };
 }
 
 /* ---------- 工厂 ---------- */
@@ -393,10 +367,10 @@ function createQuickMatch(options) {
         deltaP1: selfDelta, deltaP2: opponentDelta,
       });
     }
-    log.info('ranked', 'quick.match', `快速对战匹配成功（窗口 ${found.window}${found.relaxed ? '，放宽去重' : ''}）`, {
+    log.info('ranked', 'quick.match', `快速对战匹配成功（窗口 ${found.window}，软冷却权重 ${Math.round((found.weight || 0) * 100)}%）`, {
       playerId: o.playerId, opponentPublicId: found.opponent.publicId, opponents: found.candidateCount,
       poolSize: poolInfo.poolSize, skipped: poolInfo.skipped, window: found.window,
-      relaxed: found.relaxed, cooldown: found.cooldown, debug: debugBots.enabled, at: peek(),
+      recoveryHours: found.recoveryHours, weight: found.weight, debug: debugBots.enabled, at: peek(),
     });
     log.info('ranked', 'quick.settle',
       `quick 结算 ${winner}：${selfPointsBefore}→${selfPointsAfter}（${selfDelta >= 0 ? '+' : ''}${selfDelta}） vs ${opponentPointsBefore}→${opponentPointsAfter}（${opponentDelta >= 0 ? '+' : ''}${opponentDelta}）`,
@@ -417,7 +391,9 @@ function createQuickMatch(options) {
         winner: winner === 'p1' ? 'win' : winner === 'p2' ? 'loss' : 'draw',
         ticks: r.ticks,
         window: found.window,
-        relaxed: found.relaxed,
+        // D-168：`relaxed` 随 strict/relaxed 双池废止；改回带软冷却信息（权重与回满小时数）
+        opponentWeight: found.weight,
+        recoveryHours: found.recoveryHours,
         zeroSum: selfDelta + opponentDelta === 0,
         self: {
           playerId: o.playerId,
@@ -481,12 +457,10 @@ module.exports = {
   settle,
   findMatch,
   matchCandidates,
-  splitByCooldown,
   matchWindowConfig,
   maxSingleMatchDelta,
   // 对外便捷入口：等价于 `const qm = createQuickMatch({store}); await qm.run({playerId, seed})`
   runQuickMatch: (options, input) => createQuickMatch(options).run(input),
-  COOLDOWN_RELAX_MULT,
   MAX_LIMIT,
   SEED_MAX,
 };

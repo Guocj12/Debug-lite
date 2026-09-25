@@ -279,6 +279,16 @@
 
 ---
 
+### 14.6 匹配冷却与胜负口径（2026-09-25 追加，D-168）
+
+> 用户 2026-09-25 口径：**"不加硬底线。对手冷却只是减少匹配到的概率，逐时间恢复。4 小时从 0 到 100% 回满。不要 24 小时了"**；以及 **"winner 统一成 p1/p2/draw/invalid"**。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-168** | ⚠️ **软冷却取代 D-136 的 24h 硬底线与 strict/relaxed 双池**：<br>① **语义**：任何在池候选**永不因"最近打过"被硬拒**；只有**权重**随"距上次交手的时间"**线性回满**：`weight = clamp(已过小时 / recoveryHours, 0, 1)`（从未交手 = 1，刚交手 = 0）。`recoveryHours` = 新配置键 **`opponentRecoveryHours`（默认 4）**，落 `rating-config.json`（+ `service-config.json` 的 `pool` 同键、`store/config.js` 默认值、`schema.js` 冻结值与形状校验）；**`opponentCooldownHours` 键删除**。<br>② **选择**：**加权轮盘抽签**（rng 由匹配 seed 派生 ⇒ 同 seed 同结果、可复现）；排位批次内**不重复**（逐个抽签后移除）；**全员权重为 0**（池子极小、都刚打过）→ 在"最久未打"一组内抽签，**永不 `no_opponent`**（`no_opponent` 只可能来自"池内无候选"）。实现**唯一处** = `server/ranked.js` 的 `cooldownWeightOf`/`pickByCooldownWeight`/`drawByCooldown`，`server/quickmatch.js` 直接复用（`splitByCooldown`/`COOLDOWN_RELAX_MULT`/`argminGroup` 一并删除）。<br>③ **响应**：`relaxed` **字段删除**（`/quick/run` 与 `/ranked/run`；journal 的 `ranked.batch` 也不再写该字段、旧记录里的被忽略）；`shortfall` **保留**（池不足如实回报，禁止 bot 充数 D-152）；新增回带 **`recoveryHours`**（ranked）与 **`opponentWeight`/`recoveryHours`**（quick），便于前端解释"为什么最近总碰到这批人"。<br>④ **已知代价（用户知情后接受）**：薄池下可反复匹配同一对手 ⇒ 排位晋升可被"刷"（登记 `security-backlog` **SEC-34**）。<br>**证据/实测**：`tests/unit/quickmatch-elo.test.js` T-QM-4/T-QM-4b（权重线性回满、权重 0 在有恢复候选时**确定性地**不被抽中、全员 0 时永不 no_opponent、同 seed 可复现）、`tests/unit/ranked.test.js` T-RK-4a/T-RK-4b（12 候选 10 场、权重 0 者不入选、批次内不重复、回满后权重 1）、`tests/unit/quickmatch.test.js` T-QM-R7、`tests/integration/e2e-play.test.js` E2E-5（第二轮不再 0 场、被抽场次按两轮累计）、`tests/integration/load-integrity.test.js`（不再有 ceil(N/2) 上限）。 | `server/ranked.js`、`server/quickmatch.js`、`server/store/{config,ledger}.js`、`server/data/{rating-config,service-config}.json`、`server/data/schema.js`、`docs/interfaces.md` §2/§4.11/§5、`docs/systems/10-ranked.md`、`docs/systems/11-account-store.md` §7.2/§8.2、`docs/server.md`、`docs/security-backlog.md` SEC-34、`tests/helpers/ranked.js`、`tests/unit/{ranked,quickmatch,quickmatch-elo,store-config}.test.js`、`tests/integration/{e2e-play,load-integrity}.test.js` |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

@@ -37,7 +37,7 @@ const DEFAULT_SERVICE_CONFIG = Object.freeze({
   replayCacheSize: 64,
   // P2-8：`pool.ttlDays` 当前**零消费方**（对局/抽池路径均不读它）——按 §7.2 的"参数已留、未启用"口径登记，
   //   与 `rating.dailyBattleLimit` 的标注方式一致；文档 `11-account-store.md §7.2` 的表需同步为"⏸ 未启用"。
-  pool: { ttlDays: 0, opponentCooldownHours: 24 },
+  pool: { ttlDays: 0, opponentRecoveryHours: 4 },
   // D-159：仓库改为服务端权威（推翻 D-130 的"仓库由客户端持有"）——四桶各自上限；超限拒绝开箱
   warehouse: { maxPerBucket: 500 },
   // D-161：AI 库与物品**分别计数**；满则拒绝创建
@@ -55,7 +55,7 @@ const DEFAULT_RATING_CONFIG = Object.freeze({
   matchWindowStart: 100,
   matchWindowStep: 100,
   matchWindowMax: 600,
-  opponentCooldownHours: 24,
+  opponentRecoveryHours: 4, // D-168：软冷却"线性回满"小时数（取代 D-136 的 24h 硬底线）
   dailyBattleLimit: 0,
   rounding: 'half_up',
   promoteWins: 6, // D-122：批次 10 场、胜 > 6 晋升（x = 6）

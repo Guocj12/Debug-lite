@@ -22,14 +22,14 @@ const VERSIONS = Object.freeze({ engine: '3.0.0', data: 'b25' });
 const RATING = Object.freeze({
   base: 0, cap: 3000, scale: 400, kBase: 32, kMin: 8, kMax: 64, drawFactor: 0.5,
   matchWindowStart: 100, matchWindowStep: 100, matchWindowMax: 600,
-  opponentCooldownHours: 24, dailyBattleLimit: 0, rounding: 'half_up',
+  opponentRecoveryHours: 4, dailyBattleLimit: 0, rounding: 'half_up',
   promoteWins: 6, batchSize: 10,
 });
 const SERVICE = Object.freeze({
   config: { maxSlots: 3, slotIdPrefix: 'slot' },
   record: { recentLimit: 100 },
   journal: { fsyncMode: 'sync', compactAfterDays: 30, bufferBytes: 1048576 },
-  pool: { ttlDays: 0, opponentCooldownHours: 24 },
+  pool: { ttlDays: 0, opponentRecoveryHours: 4 },
 });
 
 function makeTempDir(prefix) {

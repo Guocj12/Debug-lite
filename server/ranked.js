@@ -35,7 +35,7 @@ const DEFAULT_BATCH_SIZE = 10; // §7.2：一轮排位批次 10 场（rating-con
 const REQUESTED_MIN = 1;
 const REQUESTED_MAX = 10;
 const SEED_MAX = 0x7fffffff;
-const COOLDOWN_RELAX_MULT = 3; // D-136：24h 候选不足 → 放宽到 72h（= 3 × 24h）
+// D-136 的"24h 硬底线 + 72h 放宽"已由 D-168 的软冷却取代（`COOLDOWN_RELAX_MULT` 随之删除）。
 const RAW_SNAPSHOT_FIELD = ['load', 'out'].join(''); // §5.4 快照正文键（带 loadout 的快照才可实例化对手）
 
 /* ---------- 快照：出战配置的不可变深拷贝（T-RK-5） ---------- */
@@ -327,13 +327,68 @@ function batchSizeOf(ratingConfig) {
     ? cfg.batchSize : DEFAULT_BATCH_SIZE;
 }
 
-// D-136 去重窗口小时数：**单一来源 = `rating-config.json`**（§8.3）。
-//   P2-5（2026-09-19）：删除 `service-config.pool.opponentCooldownHours` 兜底分支——它是双源（同名两义），
-//   且永远不可达（rating-config 的冻结默认恒带该键）；表内 `pool.opponentCooldownHours` 仅为兼容
-//   `server/data/schema.js` 的冻结键集而保留（键集/段校验不在本批所有权内，见交付报告）。
-function cooldownHoursOf(config, ratingConfig) {
+// D-168 软冷却：**冷却回满小时数**（单一来源 = `rating-config.json` 的 `opponentRecoveryHours`）。
+//   取代 D-136 的"`opponentCooldownHours` = 24h 硬底线 + strict/relaxed 双池"：现在**永不硬拒**任何候选，
+//   只是把"最近刚打过的对手"权重压低，随经过时间**线性回满**。
+function recoveryHoursOf(ratingConfig) {
   const rating = ratingConfig || {};
-  return Number.isInteger(rating.opponentCooldownHours) ? rating.opponentCooldownHours : 0;
+  return Number.isInteger(rating.opponentRecoveryHours) && rating.opponentRecoveryHours > 0
+    ? rating.opponentRecoveryHours : 0;
+}
+
+// 该对手"上次与我交手"的时刻（0 = 从未交手/无记录）
+function lastFaceAtOf(archive, foePlayerId) {
+  const map = archive && archive.pool && archive.pool.lastOpponentAt;
+  const t = map ? map[foePlayerId] : undefined;
+  return Number.isInteger(t) && t > 0 ? t : 0;
+}
+
+// D-168 权重：从未交手 → 1（完全恢复）；刚交手 → 0；否则 = 已过小时 / recoveryHours（上限 1）
+function cooldownWeightOf(archive, foePlayerId, at, recoveryHours) {
+  if (!(recoveryHours > 0)) return 1; // 未启用冷却：所有候选等权
+  const last = lastFaceAtOf(archive, foePlayerId);
+  if (last === 0) return 1;
+  const hours = (at - last) / 3600000;
+  if (!(hours > 0)) return 0;
+  return Math.min(1, hours / recoveryHours);
+}
+
+// D-168 选择：按权重**轮盘抽签**（rng 由调用方注入 ⇒ 同 seed 同结果，可复现）。
+//   若全员权重为 0（池子极小、所有人都是"刚刚才打过"）→ 在"最久未打"一组内抽签：**永不 no_opponent**。
+function pickByCooldownWeight(candidates, archive, at, recoveryHours, rng) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  if (list.length === 0) return null;
+  const weights = list.map((c) => cooldownWeightOf(archive, c.playerId, at, recoveryHours));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total > 0) {
+    let r = rng.float(0, total);
+    for (let i = 0; i < list.length; i += 1) {
+      r -= weights[i];
+      if (r < 0) return list[i];
+    }
+    return list[list.length - 1];
+  }
+  const elapsed = list.map((c) => {
+    const last = lastFaceAtOf(archive, c.playerId);
+    return last === 0 ? Infinity : at - last;
+  });
+  const maxElapsed = Math.max(...elapsed);
+  const group = list.filter((c, i) => elapsed[i] === maxElapsed);
+  return group.length === 1 ? group[0] : group[rng.int(0, group.length - 1)];
+}
+
+// D-168 抽 n 个（批次内不重复）：逐个按权重抽签后移除（同尺度顺序化 ⇒ 结果确定可复现）
+function drawByCooldown(candidates, archive, n, at, recoveryHours, rng) {
+  const pool = (Array.isArray(candidates) ? candidates : []).slice();
+  const out = [];
+  const want = Math.min(n, pool.length);
+  while (out.length < want && pool.length > 0) {
+    const pick = pickByCooldownWeight(pool, archive, at, recoveryHours, rng);
+    if (!pick) break;
+    out.push(pick);
+    pool.splice(pool.indexOf(pick), 1);
+  }
+  return out;
 }
 
 // §5.4：只有带**正文**（含 loadout）的快照才能实例化对手（configHash 仅存在于正文里）
@@ -415,20 +470,7 @@ async function candidatesOf(store, tier, excludeId, L, resolveWarehouse) {
   return { candidates, unusable, noWarehouse, degraded, banned, outOfPool, poolSize: ids.length };
 }
 
-// D-136 去重窗口（裁定口径）：24h 是**硬底线**（间隔 < 24h 的对手任何池都不接纳），72h 是**偏好间隔**。
-//   strict  = 间隔 ≥ 72h 的新鲜对手（优先抽）
-//   relaxed = 24h ≤ 间隔 < 72h（仅当 strict 不足 min(requested, 可用) 时启用，并置 relaxed:true）
-function splitByCooldown(candidates, foeArchive, cooldownHours, relaxHours, at) {
-  const strict = [];
-  const relaxed = [];
-  for (const c of candidates) {
-    if (!archiveMod.opponentCooldownOk(foeArchive, c.playerId, cooldownHours, at)) continue; // <24h：硬底线，两池都不收
-    if (archiveMod.opponentCooldownOk(foeArchive, c.playerId, relaxHours, at)) strict.push(c);
-    else relaxed.push(c);
-  }
-  return { strict, relaxed };
-}
-
+// 全池洗牌（遗留无状态路径的抽对手用；D-168 的匹配路径已改为按冷却权重逐个抽签）
 function shuffleByRng(list, rng) {
   const arr = list.slice();
   for (let i = arr.length - 1; i > 0; i--) {
@@ -440,9 +482,10 @@ function shuffleByRng(list, rng) {
   return arr;
 }
 
+// D-168 抽池摘要日志（软冷却：记"权重轮盘"口径与实际回满小时数）
 function logPool(L, data) {
   L && L.debug('ranked', 'ranked.pool',
-    `抽池 tier=${data.tier} 池=${data.poolSize} 候选=${data.candidates} 抽中=${data.drawn} 缺口=${data.shortfall}${data.relaxed ? '（放宽窗口）' : ''}`,
+    `抽池 tier=${data.tier} 池=${data.poolSize} 候选=${data.candidates} 抽中=${data.drawn} 缺口=${data.shortfall}（软冷却 ${data.recoveryHours}h 线性回满）`,
     data);
 }
 
@@ -479,10 +522,10 @@ async function findPriorBatch(store, playerId, batchId) {
 }
 
 // 回放既有批次的结果（P1-4）。**逐场结果来自 journal 原记录**，故与首次响应一致；
-// `invalids`/`relaxed` 自 P1 缺口 3 起一并落在 `ranked.batch` 记录里（旧记录缺字段 → 回落旧口径：
-//   invalids=0 / relaxed=null，并在日志中标注为不可复原）。
+// `invalids` 自 P1 缺口 3 起落在 `ranked.batch` 记录里（旧记录缺字段 → 回落 0，并在日志中标注为不可复原）。
+// D-168：`relaxed` 字段随 strict/relaxed 双池一并废止（旧记录里的该字段被忽略、不再回带）。
 function replayBatchPayload(input) {
-  const { prior, batchId, seed, requested, tier } = input;
+  const { prior, batchId, seed, requested, tier, recoveryHours } = input;
   const battles = prior.battles.slice().sort((a, b) => (a.matchIndex || 0) - (b.matchIndex || 0));
   const results = battles.map((rec) => ({
     match: rec.matchIndex,
@@ -499,13 +542,12 @@ function replayBatchPayload(input) {
   const matches = battles.length;
   const promoted = prior.promote !== null;
   const tierAfter = promoted ? prior.promote.tierAfter : (prior.batch.tier || tier);
-  const relaxedKnown = typeof prior.batch.relaxed === 'boolean';
   return {
     batchId, seed, tier: prior.batch.tier || tier,
     requested, matches, shortfall: Math.max(0, requested - matches),
     wins, draws, losses,
     invalids: Number.isInteger(prior.batch.invalids) ? prior.batch.invalids : 0,
-    relaxed: relaxedKnown ? prior.batch.relaxed : null,
+    recoveryHours: Number.isInteger(recoveryHours) ? recoveryHours : 0,
     promoted,
     tierAfter,
     reward: tierReward(tierAfter),
@@ -549,8 +591,7 @@ async function runBatchUnlocked(o, deps) {
   const tier = (o.archive.progress && o.archive.progress.tier) || 'common';
   const seed = o.seed;
   const requested = batchSizeOf(ratingConfig);
-  const cooldownHours = cooldownHoursOf(store.config, ratingConfig);
-  const relaxHours = cooldownHours * COOLDOWN_RELAX_MULT;
+  const recoveryHours = recoveryHoursOf(ratingConfig);
   const at = nowFn();
 
   // 批次级幂等（P1-4）：同 (playerId, seed) 的既有批次 → 直接回放，不再抽池/结算/写 journal
@@ -561,25 +602,19 @@ async function runBatchUnlocked(o, deps) {
       `批次重发：命中既有 ranked.batch ${batchId}（回放 ${prior.battles.length} 场，不重复结算）`, {
         playerId: o.playerId, batchId, seed, mode: 'ranked', replayed: true, matches: prior.battles.length,
       });
-    return { status: 200, data: replayBatchPayload({ prior, batchId, seed, requested, tier }) };
+    return { status: 200, data: replayBatchPayload({ prior, batchId, seed, requested, tier, recoveryHours }) };
   }
 
   const pool = await candidatesOf(store, tier, o.playerId, L, deps.loadWarehouse);
-  const split = splitByCooldown(pool.candidates, o.archive, cooldownHours, relaxHours, at);
-  // D-136 口径：同一对手 24h 去重；**候选不足**（严格窗口凑不满本轮场次）时放宽到 72h。
-  //   `relaxed:true` ⟺ 本轮**实际启用**了放宽窗口（有"仅放宽窗口可用"的对手被加入抽取池）；
-  //   严格窗口已够时不抽任何放宽候选，也就不会置位（避免"标了 relaxed 其实没用"）。
-  const usableCount = split.strict.length + split.relaxed.length;
-  const relaxed = split.relaxed.length > 0 && split.strict.length < Math.min(requested, usableCount);
-  const usable = relaxed ? split.strict.concat(split.relaxed) : split.strict;
+  // D-168 软冷却（取代 D-136 的 24h 硬底线 + strict/relaxed 双池）：候选不再被硬拒，
+  //   只按"距上次交手时间 / recoveryHours"加权轮盘抽签；同 seed 可复现；池不足如实 shortfall。
   const rng = createRng(seed).deriveStream(0, 'ranked');
-  const ordered = shuffleByRng(usable, rng);
-  const drawn = ordered.slice(0, Math.min(requested, ordered.length));
+  const drawn = drawByCooldown(pool.candidates, o.archive, requested, at, recoveryHours, rng);
   const shortfall = requested - drawn.length;
 
   logPool(L, {
     tier, seed, poolSize: pool.poolSize, candidates: pool.candidates.length,
-    cooldown: cooldownHours, relaxHours, relaxed, drawn: drawn.length, shortfall,
+    recoveryHours, drawn: drawn.length, shortfall,
     unusable: pool.unusable.length, banned: pool.banned, outOfPool: pool.outOfPool,
     noWarehouse: pool.noWarehouse ? pool.noWarehouse.length : 0,
     warehouseDegraded: (o.warehouseDegraded ? 1 : 0) + (pool.degraded ? pool.degraded.length : 0),
@@ -704,10 +739,10 @@ async function runBatchUnlocked(o, deps) {
   }
 
   // 批次记录 + 晋升判定（wins > 6 → tier+1；D-122/D-132：只有发起者会晋升）
-  // `invalids`/`relaxed` 一并落记录（P1 缺口 3 配套）：并发第二个请求回放时能给出与首次**同值**的结果，
-  //   而不是"unavailable 就写 null/0"——批次级不可复原字段归零（旧口径）在并发验收下会被读成"结果不一致"。
+  // `invalids` 落记录（P1 缺口 3 配套）：并发第二个请求回放时能给出与首次**同值**的结果。
+  //   D-168：`relaxed` 随双池一并废止，不再写记录、不再回带。
   const batchRecord = await store.append(ledger.buildBatchRecord({
-    playerId: o.playerId, batchId, tier, seed, opponentCount: drawn.length, at, invalids, relaxed,
+    playerId: o.playerId, batchId, tier, seed, opponentCount: drawn.length, at, invalids,
   }));
   await store.applyRecord(batchRecord); // 只涉及发起者（A/B 类之外的"批次计数"写）
   const promotion = ledger.promoteAfterBatch({ tier, wins, config: ratingConfig });
@@ -727,7 +762,8 @@ async function runBatchUnlocked(o, deps) {
       batchId, seed, tier,
       requested, matches: results.length, shortfall,
       wins, draws, losses, invalids,
-      relaxed,
+      // D-168：软冷却回满小时数（前端可用于解释"为什么最近总碰到同一批人"）
+      recoveryHours,
       promoted,
       tierAfter: promoted ? promotion.tierAfter : tier,
       reward: tierReward(promoted ? promotion.tierAfter : tier),
@@ -966,12 +1002,16 @@ module.exports = Object.assign(makeRanked(), {
   X_PROMOTE,
   TIERS,
   DEFAULT_BATCH_SIZE,
-  COOLDOWN_RELAX_MULT,
   // P7-3 内部纯函数（快速对战/管理端与测试复用）
   battleOne,
   inspectDebugBots,
   batchSizeOf,
-  cooldownHoursOf,
+  // D-168 软冷却（取代 D-136 的硬底线 + strict/relaxed 双池；quickmatch 复用同一实现）
+  recoveryHoursOf,
+  lastFaceAtOf,
+  cooldownWeightOf,
+  pickByCooldownWeight,
+  drawByCooldown,
   isUsableSnapshot,
   loadSnapshotOf,
   loadoutKey,
