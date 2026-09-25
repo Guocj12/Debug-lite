@@ -918,8 +918,8 @@ async function main() {
     /* ---- [12/22] Elo 可复算 + cap ---- */
     await step(12, "Elo：R' = R + K(S−E) 双向变动可复算；cap 3000 不越界", async () => {
       const d = state.facts.quick1;
-      const selfResult = d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw';
-      const foeResult = d.winner === 'win' ? 'loss' : d.winner === 'loss' ? 'win' : 'draw';
+      const selfResult = d.winner === 'p1' ? 'win' : d.winner === 'p2' ? 'loss' : 'draw'; // D-169
+      const foeResult = d.winner === 'p1' ? 'loss' : d.winner === 'p2' ? 'win' : 'draw'; // D-169
       const selfCalc = quickmatch.ratingDelta({ points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore, result: selfResult, config: RATING });
       const foeCalc = quickmatch.ratingDelta({ points: d.opponent.pointsBefore, opponentPoints: d.self.pointsBefore, result: foeResult, config: RATING });
       expect(d.self.pointsAfter === selfCalc.pointsAfter,
@@ -1294,11 +1294,11 @@ async function main() {
       await assertReal(s.store, [state.facts.A.publicId, d.opponent.publicId], 'quick/run#2');
       const selfCalc = quickmatch.ratingDelta({
         points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore,
-        result: d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw', config: RATING,
+        result: d.winner === 'p1' ? 'win' : d.winner === 'p2' ? 'loss' : 'draw', config: RATING, // D-169
       });
       const foeCalc = quickmatch.ratingDelta({
         points: d.opponent.pointsBefore, opponentPoints: d.self.pointsBefore,
-        result: d.winner === 'win' ? 'loss' : d.winner === 'loss' ? 'win' : 'draw', config: RATING,
+        result: d.winner === 'p1' ? 'loss' : d.winner === 'p2' ? 'win' : 'draw', config: RATING, // D-169
       });
       expect(d.self.pointsAfter === selfCalc.pointsAfter, `A 积分可复算：${d.self.pointsAfter} ≠ ${selfCalc.pointsAfter}`, j(d.self));
       expect(d.opponent.pointsAfter === foeCalc.pointsAfter, `对手积分可复算：${d.opponent.pointsAfter} ≠ ${foeCalc.pointsAfter}`, j(d.opponent));
@@ -1306,8 +1306,8 @@ async function main() {
       expect(d.opponent.pointsAfter >= 0 && d.opponent.pointsAfter <= RATING.cap, `对手积分越界 ${d.opponent.pointsAfter}`, j(d.opponent));
       // 双向结算：赢家 Δ>0；输家 Δ ≤0（0 分玩家负场被下限保护为 0，§8.3 性质 4）——
       // 对手由服务端抽池决定，故不断言"脆皮必败"，只断言"落盘值 ≡ 公式 + 方向/有界正确"。
-      const winnerDelta = d.winner === 'win' ? d.self.delta : d.winner === 'loss' ? d.opponent.delta : 0;
-      const loserDelta = d.winner === 'win' ? d.opponent.delta : d.winner === 'loss' ? d.self.delta : 0;
+      const winnerDelta = d.winner === 'p1' ? d.self.delta : d.winner === 'p2' ? d.opponent.delta : 0; // D-169
+      const loserDelta = d.winner === 'p1' ? d.opponent.delta : d.winner === 'p2' ? d.self.delta : 0; // D-169
       if (d.winner === 'draw') {
         expect(d.self.delta === 0 && d.opponent.delta === 0, '平局且同分时应双方 Δ=0（E=0.5）', j(d));
       } else {

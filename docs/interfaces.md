@@ -1,4 +1,4 @@
-# Debug-Lite v3 接口冻结（ICD v1）
+﻿# Debug-Lite v3 接口冻结（ICD v1）
 
 > 版本：v1　创建：2026-09-12（P0-7）　更新：2026-09-19（**P7 已落地同步**：§0/§1/§2/§3/§4/§6/§7 按 `server/{index,auth,account,quickmatch,ranked,admin}.js` 与 `server/store/*` 实测口径改写；§2 端点状态 B27–B33 → ✅ 已实现 + 新增 §2.1 错误码表）　**本文件是接口唯一权威**（L1）；接口变更走 `docs/tasks.md` §10。
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > 本文件 > `docs/tasks.md`。
@@ -99,7 +99,7 @@
 | GET | `/api/v1/me/records` | 战绩（`?since=&limit=&role=`）；返回 `records/since/latestSeq/limit/role/unread/maxSeq` | 400 `bad_request`；401 | B30 ✅ 已实现 |
 | POST | `/api/v1/me/records/seen` | 推进未读游标（**游标推进的唯一入口**）；**别名** `/me/seen` ≡ 本行 | 400 `bad_request`；401 | B30 ✅ 已实现 |
 | GET | `/api/v1/me/defense` | 防守战绩汇总（被抽场次/胜负/最近） | 401 | B30 ✅ 已实现 |
-| POST | `/api/v1/quick/run` | 快速对战（积分窗口递进 + 非对称 Elo 双向结算，D-133）。**D-168**：对手选择 = **软冷却加权轮盘**（`weight = clamp(已过小时/opponentRecoveryHours,0,1)`，**永不因冷却硬拒**；全员 0 时取最久未打）；响应 `seed` = **对局种子**（入参 `seed` 只影响匹配抽选）、含 `opponentWeight`/`recoveryHours`，**不再有 `relaxed`**。**D-167**：响应内联 `data.frames` = 该场**完整战斗过程**（画面数据 + 双方 `aiTrace`，不含日志） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`（**仅当候选池确实为空/窗口用尽**时才出现）/`no_active_config`/`store_not_found` | B32 ✅ 已实现 / D-167 ✅ / D-168 ✅ |
+| POST | `/api/v1/quick/run` | 快速对战（积分窗口递进 + 非对称 Elo 双向结算，D-133）。**D-168**：对手选择 = **软冷却加权轮盘**（`weight = clamp(已过小时/opponentRecoveryHours,0,1)`，**永不因冷却硬拒**；全员 0 时取最久未打）；响应 `seed` = **对局种子**（入参 `seed` 只影响匹配抽选）、含 `opponentWeight`/`recoveryHours`，**不再有 `relaxed`**；**D-169**：`winner` 为**绝对口径** `p1\|p2\|draw`（与 `/ranked/run`、回放帧、journal 判决一致；档案里"我赢了几场"仍为 `win/loss/draw`）。**D-167**：响应内联 `data.frames` = 该场**完整战斗过程**（画面数据 + 双方 `aiTrace`，不含日志） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`（**仅当候选池确实为空/窗口用尽**时才出现）/`no_active_config`/`store_not_found` | B32 ✅ 已实现 / D-167 ✅ / D-168 ✅ |
 | GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`；只回 `publicId/nickname/points/tier`，**不回 `playerId`**） | 400 `bad_scope` | B30/B32 ✅ 已实现 |
 | POST | `/api/v1/admin/bots` | 注入调试 bot 档案（**双门控**：`DL_ADMIN_TOKEN` + `DL_DEBUG_BOTS=1`）。**D-165**：注入即写入**真实（合成）仓库**，使其回放可重算；**D-166**：每个 bot 按自身 `botKey` 派生**不同**预设（3 族 × 3 子变体），可选 `preset` 指定族（非法 → 400 `bad_request`），响应回带 `preset` | 401/403 `forbidden`；403 `debug_bots_disabled`；503 `admin_token_missing`；400 `bad_request` | B33 ✅ / D-165 / D-166 ✅ |
 | POST | `/api/v1/admin/rebuild-index` | 重建索引 | 401/403；503 `admin_token_missing` | B33 ✅ 已实现 |
@@ -256,6 +256,7 @@ health | data <table>
 | D-165 | §1 `server/loadout.js` 的 `warehouseResolves`（**仓库覆盖判据与 `resolveItems` 同谓词**）+ §1 `server/index.js` 的 `loadWarehouse`（各来源改用该判据）+ §2 `admin/bots`（注入即携带真实仓库）+ §5 P0 修复：bot 对手回放 410 |
 | D-166 | §2 `admin/bots`（**每个 bot 按自身 `botKey` 派生不同预设** + 可选 `preset`；非法 → 400 `bad_request`；响应回带 `preset`）+ §1 `server/ranked.js` 的 `buildDefaultLoadout(identity, options)` |
 | D-167 | §4.3 **回放帧契约重构**（画面数据自足：五维/上限/行动/buff/基地受击/弹幕生命周期/伤害数值；**对外帧去 `events`**；`aiTrace` **双方都给**）+ §2 `GET /replay/:id?frames=render\|debug`（debug 需管理员，含日志、可越权排查）+ §2 `quick/run`·`ranked/run` 响应**内联 `frames`** + §1 `server/battle.js` 的 `toFrames`/`keepEvents` + §1 `server/ranked.js` 的 `battleOne` 回带 frames |
+| D-169 | §2 `quick/run`（**`winner` 统一为绝对口径 `p1/p2/draw`**；档案内每人 `result` 仍为 `win/loss/draw`）+ §2 `ranked/run`·回放帧·journal 判决同值不变量 |
 | D-168 | §2 `ranked/run`·`quick/run`（**软冷却取代 24h 硬底线与 strict/relaxed 双池**：权重 `clamp(已过小时/opponentRecoveryHours,0,1)` 线性回满、加权轮盘抽签、全员 0 时取最久未打、**永不因冷却 no_opponent**；**删 `relaxed`**、保留 `shortfall`、新增 `recoveryHours`/`opponentWeight`）+ §1 `server/ranked.js` 的 `cooldownWeightOf`/`pickByCooldownWeight`/`drawByCooldown`（quickmatch 复用）+ §4.11 `rating-config.opponentRecoveryHours=4` |
 
 ## §6 日志事件登记（§4.6 覆盖矩阵；实现批次标注，T-LG-4 断言于此）

@@ -978,11 +978,11 @@ test('E2E-5 排位与积分：ranked/run shortfall 不注入 bot；发起者结�
   assert.ok(qd, 'E2E-4 必须已产出快速对战结果（共用夹具）');
   const selfCalc = quickmatch.ratingDelta({
     points: qd.self.pointsBefore, opponentPoints: qd.opponent.pointsBefore,
-    result: qd.winner === 'win' ? 'win' : qd.winner === 'loss' ? 'loss' : 'draw', config: RATING,
+    result: qd.winner === 'p1' ? 'win' : qd.winner === 'p2' ? 'loss' : 'draw', config: RATING, // D-169
   });
   const foeCalc = quickmatch.ratingDelta({
     points: qd.opponent.pointsBefore, opponentPoints: qd.self.pointsBefore,
-    result: qd.winner === 'win' ? 'loss' : qd.winner === 'loss' ? 'win' : 'draw', config: RATING,
+    result: qd.winner === 'p1' ? 'loss' : qd.winner === 'p2' ? 'win' : 'draw', config: RATING, // D-169
   });
   assert.equal(qd.self.pointsAfter, selfCalc.pointsAfter, '发起者积分应可复算（R + K(S−E)）');
   assert.equal(qd.opponent.pointsAfter, foeCalc.pointsAfter, '对手积分应可复算');

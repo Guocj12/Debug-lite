@@ -71,7 +71,7 @@ test('INV-1 快速对战积分守恒 + Elo 可复算 + cap/段位不变量 + 对
     //   → 两者仅在**未触发下限裁剪**（`pointsBefore + 公式Δ ≥ 0`）时相等。故：
     //   ① 先断言恒真的守恒式 `delta === pointsAfter − pointsBefore`（落盘 Δ 与前后差值一致）；
     //   ② 再在未触发下限保护时断言与公式值逐值相等（公式复算断言**保留**，不放宽为"随便"）。
-    const p1Result = d.winner === 'win' ? 'win' : d.winner === 'loss' ? 'loss' : 'draw';
+    const p1Result = d.winner === 'p1' ? 'win' : d.winner === 'p2' ? 'loss' : 'draw'; // D-169：响应为绝对口径
     const p2Result = p1Result === 'win' ? 'loss' : p1Result === 'loss' ? 'win' : 'draw';
     const e1 = ledger.ratingDelta({ points: d.self.pointsBefore, opponentPoints: d.opponent.pointsBefore, result: p1Result, config: fx.RATING });
     const e2 = ledger.ratingDelta({ points: d.opponent.pointsBefore, opponentPoints: d.self.pointsBefore, result: p2Result, config: fx.RATING });

@@ -289,6 +289,16 @@
 
 ---
 
+### 14.7 胜负口径统一（2026-09-25 追加，D-169）
+
+> 用户 2026-09-25 口径：**"写成统一逻辑。统一成 p1/p2/draw/invalid。每场战斗结束后给双方玩家发送同一个回放。（防守方会看到自己在 p2，进攻方看到自己在 p1）"**
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-169** | ⚠️ **对外"谁赢了"一律 `p1/p2/draw/invalid`（绝对口径）；档案内的"我赢了几场"保留 `win/loss/draw`（玩家视角）**：<br>① **统一处**：`POST /quick/run` 的 `data.winner` 由**请求者视角** `win/loss/draw` 改为**绝对口径** `p1/p2/draw`（与 `/ranked/run` 的 `results[].winner`、回放帧 `verdict.winner`、journal `battle.recorded.verdict.winner` 完全一致——后三者**本来就是**绝对口径）。<br>② **不动的部分（刻意保留）**：`journal`/档案里**每个玩家自己的** `result` 仍是 `win/loss/draw`（`stats.attack/defense` 直接累加它；`/me/records`、`/me/defense`、`recent[]`、Elo 结算输入都依赖"我这局赢了没"）——改成 `p1/p2` 会让"我赢了几场"无法直接累加，且需要迁移全部历史档案与 5 个测试套件的断言。**前端**把 `p1/p2` 翻成"你赢了/你输了"（自己那一侧由 `self`/`attacker` 字段可知）。<br>③ **不变量（可机器核对）**：`quick.response.winner === replay.frames[].verdict.winner === replay.data.winner === journal.verdict.winner`（同一场四处同值）。<br>**证据**：`tests/api/api-quick.test.js`（枚举改为 `p1/p2/draw`）、`tests/unit/quickmatch.test.js`、`tests/integration/quickmatch-invariants.test.js`、`tests/api/api-replay-auth.test.js`（重算判决与实战判决直接相等）、`tests/integration/e2e-play.test.js`、`scripts/e2e.js`（Elo 复算改为按 `p1/p2` 映射）。 | `server/quickmatch.js`、`docs/interfaces.md` §2/§5、`docs/systems/11-account-store.md` §8、`tests/api/api-quick.test.js`、`tests/api/api-replay-auth.test.js`、`tests/unit/quickmatch.test.js`、`tests/integration/{quickmatch-invariants,e2e-play}.test.js`、`scripts/e2e.js` |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。

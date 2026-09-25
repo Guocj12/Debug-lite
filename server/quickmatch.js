@@ -388,7 +388,7 @@ function createQuickMatch(options) {
       data: {
         battleId,
         seed: matchSeed,
-        winner: winner === 'p1' ? 'win' : winner === 'p2' ? 'loss' : 'draw',
+        winner, // D-169：统一绝对口径 p1/p2/draw（原为请求者视角 win/loss/draw）
         ticks: r.ticks,
         window: found.window,
         // D-168：`relaxed` 随 strict/relaxed 双池废止；改回带软冷却信息（权重与回满小时数）

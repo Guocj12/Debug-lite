@@ -35,7 +35,7 @@ test('QU-1 POST /quick/run：抽真实档案对手 + 双向 Elo 落盘 + 回放�
     assert.equal(typeof d.battleId, 'string');
     assert.match(d.battleId, /^b_[0-9a-f]{16}$/, 'battleId 内容寻址（§9.1）');
     assert.ok(Number.isInteger(d.seed) && d.seed >= 1, 'seed 回带（对局种子由匹配种子派生）');
-    assert.ok(['win', 'loss', 'draw'].includes(d.winner));
+    assert.ok(['p1', 'p2', 'draw'].includes(d.winner)); // D-169：绝对口径
     assert.ok(d.ticks >= 1);
     assert.equal(d.replayId, d.battleId);
     assert.equal(d.self.pointsBefore, 0);

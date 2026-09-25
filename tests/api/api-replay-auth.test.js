@@ -125,7 +125,7 @@ test('RP-2 归档回放参与者鉴权：无 token 401 / 非参与者 403 replay
       assert.equal(view.body.data.id, data.battleId, '归档回放 id = battleId');
       assert.equal(view.body.data.seed, data.seed);
       assert.equal(view.body.data.frames.length, data.ticks, '重算帧数 = 记录 ticks');
-      assert.equal(view.body.data.winner, data.winner === 'win' ? 'p1' : data.winner === 'loss' ? 'p2' : 'draw', '重算结果与记录一致（确定性）');
+      assert.equal(view.body.data.winner, data.winner, '重算结果与记录一致（确定性；D-169 起双方都是绝对口径 p1/p2/draw）');
       assert.ok(view.body.data.frames.every((f) => f.diff && f.diff.players && f.diff.players.p1), '帧结构完整');
     }
     const rec = await s.store.findBattleRecord(data.battleId);
@@ -307,7 +307,7 @@ test('RP-8 缺口 2：含装配引用的对局，帧缓存清空后归档回放�
     const first = await h.request(s.port, 'GET', `/api/v1/replay/${data.battleId}`, undefined, h.authed(a.token));
     assert.equal(first.status, 200, `含装配引用的归档回放必须 200（修前 410）：${first.raw.slice(0, 200)}`);
     assert.equal(first.body.data.frames.length, data.ticks, '重算帧数 = 实战 tick 数');
-    assert.equal(first.body.data.winner, data.winner === 'win' ? 'p1' : data.winner === 'loss' ? 'p2' : 'draw',
+    assert.equal(first.body.data.winner, data.winner,
       '重算结果与实战一致（逐侧镜像生效 → 面板一致）');
     // 清掉帧缓存 → 触发按需重算路径
     const frameId = s.runtime.replayMeta.get(data.battleId).frameId;

@@ -40,8 +40,9 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-09-22：F3 物品线补充 D-159..D-162 共 4 条；2026-09-25：D-163 热修 1 条；
   //   2026-09-25：战斗线后端修复批补充 D-164..D-166 共 3 条——守方镜像 / 回放 410 修复 / bot 多样化；
   //   2026-09-25：D-167——回放帧契约重构：画面数据自足 + 双方 aiTrace + 日志出帧 + 匹配内联全量帧；
-  //   2026-09-25：D-168——软冷却（4h 线性回满）取代 D-136 的 24h 硬底线 + strict/relaxed 双池）
-  assert.equal(decided.size, 120, `D 编号数量应为 120（decisions.md 无跳段之外的编号）`);
+  //   2026-09-25：D-168——软冷却（4h 线性回满）取代 D-136 的 24h 硬底线 + strict/relaxed 双池；
+  //   2026-09-25：D-169——对外胜负口径统一 p1/p2/draw/invalid（档案内每人 result 仍保留 win/loss/draw））
+  assert.equal(decided.size, 121, `D 编号数量应为 121（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

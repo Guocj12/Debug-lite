@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* tests/unit/quickmatch.test.js —— 快速对战（store 驱动：匹配 + 双向结算 + 落盘）测试
  * 权威：docs/systems/11-account-store.md §8（流程/匹配/双向结算/bot 例外）、§10.2（响应示例）、§8.6（排行榜）；
  *      decisions.md D-133（非对称 Elo）/D-135（回放只存引用）。
@@ -19,7 +19,7 @@ const h = require('../helpers/ranked.js');
 //   故本函数先断言恒真的守恒式 `delta === pointsAfter − pointsBefore`，再在未触发下限裁剪时断言公式值。
 function assertEloRecomputable(data, cfg, label) {
   const { self, opponent } = data;
-  const p1Result = data.winner === 'win' ? 'win' : data.winner === 'loss' ? 'loss' : 'draw';
+  const p1Result = data.winner === 'p1' ? 'win' : data.winner === 'p2' ? 'loss' : 'draw'; // D-169：响应为绝对口径
   const p2Result = p1Result === 'win' ? 'loss' : p1Result === 'loss' ? 'win' : 'draw';
   const e1 = ledger.ratingDelta({ points: self.pointsBefore, opponentPoints: opponent.pointsBefore, result: p1Result, config: cfg });
   const e2 = ledger.ratingDelta({ points: opponent.pointsBefore, opponentPoints: self.pointsBefore, result: p2Result, config: cfg });
@@ -67,7 +67,7 @@ test('T-QM-R1 store 驱动：匹配 → 跑一场 → 双向 Elo → 双方档�
   const derived = require('../../server/core/rng.js').createRng(runSeed).deriveStream(0, 'quick').int(1, 0x7fffffff);
   assert.equal(d.seed, derived, 'seed 回带 = 实际战斗种子（由入参 seed 确定性派生）');
   assert.equal(require('../../server/core/rng.js').createRng(runSeed).deriveStream(0, 'quick').int(1, 0x7fffffff), d.seed, '同入参 → 同战斗种子（可复现）');
-  assert.ok(['win', 'loss', 'draw'].includes(d.winner));
+  assert.ok(['p1', 'p2', 'draw'].includes(d.winner)); // D-169：绝对口径
   assert.equal(d.opponent.playerId, foe.playerId, '匹配到同池的唯一真实对手');
   assert.equal(d.opponent.isBot, false, '对手是真实玩家（非 bot）');
   assertEloRecomputable(d, fx.RATING, 'T-QM-R1');
@@ -311,7 +311,7 @@ test('P1-3 合法对局不再触发 store.abuse.suspect：R=2900 败局（-31）
   const quick1 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, config: R });
   const r1 = await quick1.run({ playerId: h.makePlayerId(1), seed: 31337 });
   assert.equal(r1.status, 200, JSON.stringify(r1));
-  assert.equal(r1.data.winner, 'loss', '脆弱配置且对手会交战 → 必败');
+  assert.equal(r1.data.winner, 'p2', '脆弱配置且对手会交战 → 我方（p1）必败（D-169：绝对口径）');
   assert.equal(r1.data.self.delta, -31, 'R=2900 败局 Δ=-31（公式值）');
   assert.ok(Math.abs(r1.data.self.delta) > R.kBase / 2, '该 Δ 已超旧阈值 kBase/2=16（修前必然误报）');
   assert.ok(!fx.events().includes('store.abuse.suspect'), '合法败局**不得**产生 store.abuse.suspect');
@@ -323,7 +323,7 @@ test('P1-3 合法对局不再触发 store.abuse.suspect：R=2900 败局（-31）
   const quick2 = qm.createQuickMatch({ store: fx.store, logger: fx.logger, config: cfgWide });
   const r2 = await quick2.run({ playerId: h.makePlayerId(11), seed: 4242 });
   assert.equal(r2.status, 200, JSON.stringify(r2));
-  assert.equal(r2.data.winner, 'win', '对满积分脆弱对手 → 我方胜');
+  assert.equal(r2.data.winner, 'p1', '对满积分脆弱对手 → 我方（p1）胜（D-169：绝对口径）');
   assert.equal(r2.data.self.delta, R.kBase, 'R=0 胜满积分对手 Δ=+32=kBase（对满分对手上限）');
   assert.ok(r2.data.self.delta > R.kBase / 2, '该 Δ 已超旧阈值 16（修前必然误报）');
   assert.ok(!fx.events().includes('store.abuse.suspect'), '合法胜局**不得**产生 store.abuse.suspect');
