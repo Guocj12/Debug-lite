@@ -514,6 +514,16 @@ function createJsonAdapter(options) {
     return loadArchive(o.playerId);
   }
 
+  // D-170：管理员直接改账号（段位/积分/入池）——写 journal 留痕（可重放、可审计）
+  async function accountPatch(input) {
+    const o = input || {};
+    const record = ledger.buildAccountPatchRecord({
+      playerId: o.playerId, tier: o.tier, points: o.points, inPool: o.inPool, reason: o.reason, at: nowFn(),
+    });
+    await appendAndApply([record]);
+    return loadArchive(o.playerId);
+  }
+
   // 冻结快照。`extras.warehouse`（缺口 1）：本次冻结**校验所用的仓库镜像**——只把其中该配置
   //   实际引用到的插件项（archive.warehouseExcerpt，有界）随快照正文落盘，使对局/回放不再依赖
   //   进程内镜像缓存（重启/淘汰后仍可用）。缺省 undefined → 快照形状与旧版逐字节一致。
@@ -1299,6 +1309,7 @@ function createJsonAdapter(options) {
     setBanned,
     setNickname,
     setPool,
+    accountPatch,
     touchLastSeen,
     markRecordsSeen,
     // 配置槽 + 快照

@@ -625,6 +625,8 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
   try {
     for (const method of ['open', 'close', 'loadArchive', 'saveArchive', 'updateArchive', 'listPlayerIds',
       'createAccount', 'setPasswordHash', 'setBanned', 'setNickname', 'setPool', 'touchLastSeen', 'markRecordsSeen',
+      // D-170：管理员直接改账号（段位/积分/入池）——写 account.patched journal
+      'accountPatch',
       'saveConfigSlot', 'createConfigSlot', 'activateConfigSlot', 'deleteConfigSlot', 'freezeSnapshot',
       // D-159/D-161：服务端权威仓库 + AI 库
       'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'deleteAi',

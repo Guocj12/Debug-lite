@@ -24,14 +24,16 @@ const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
-// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个）。F3（03 §4）在此之上再增 26 个
-//   **非管理**动作（提交② 17 + 提交③ 9，见 F3_ACTIONS）→ 注册表 51 = 9 + 16 + 17 + 9；管理动作仍是这 16 个。
+// 02-accounts.md §4 的动作白名单（F1 九个 + F2 增量十六个 + **D-170 增量一个**）。F3（03 §4）在此之上再增 26 个
+//   **非管理**动作（提交② 17 + 提交③ 9，见 F3_ACTIONS）→ 注册表 = 9 + 17 + 26；管理动作 = 这 17 个。
 //   AU-1 因此改为「管理员态渲染集合 == 注册表全集（实际值）」，数字不再写死（03 §10 UW-3 / K-5）。
 const F1_ACTIONS = ['submit-login', 'submit-register', 'submit-password', 'refresh-profile', 'logout',
   'goto-register', 'goto-login', 'goto-password', 'goto-home'];
 const F2_ACTIONS = ['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
   'accounts-size-20', 'accounts-size-50', 'accounts-size-100', 'admin-delete-account', 'confirm-yes', 'confirm-no',
-  'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row'];
+  'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row',
+  // D-170：改任意账号的段位/积分（管理面板新增按钮 + 三格输入）
+  'admin-account-patch'];
 // F3 实际注册的非管理动作：提交② 17（主界面线）+ 提交③ 9（出战配置编辑器）
 const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'goto-quick', 'goto-tournament',
   'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub', 'refresh-warehouse', 'warehouse-bucket',

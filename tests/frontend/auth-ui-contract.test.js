@@ -25,10 +25,11 @@ const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
-// 02-accounts.md §4 的十六个管理动作（只在管理员态渲染；非管理员态**完全不出现**，A-1）
+// 02-accounts.md §4 的十七个管理动作（F2 十六 + D-170 一个；只在管理员态渲染，非管理员态**完全不出现**，A-1）
 const ADMIN_ACTIONS = new Set(['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
   'accounts-size-20', 'accounts-size-50', 'accounts-size-100', 'admin-delete-account', 'confirm-yes', 'confirm-no',
-  'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row']);
+  'admin-stats', 'admin-rebuild-index', 'admin-bots', 'admin-clear-bots', 'admin-ban-row', 'admin-unban-row',
+  'admin-account-patch']);
 
 function readPublic(name) {
   return fs.readFileSync(path.join(PUBLIC_DIR, name), 'utf8');
@@ -138,8 +139,8 @@ test('UI-2 非管理员态全部屏的 data-action 集合 == 注册表的非管�
 
   // F3 提交③ 口径（03-hub-warehouse-loadout.md §4 / §10 UW-2）：提交③ 落地配置编辑器后，
   //   「渲染集合 == 注册表中**非管理动作**集合」的口径不变，数字随实现推进：
-  //     注册表 51 = F1 9 + F2 16 + F3 提交② 17 + F3 提交③ 9
-  //     非管理 35 = 51 − 16（管理动作）
+  //     注册表 52 = F1 9 + F2 17（含 D-170 的 admin-account-patch）+ F3 提交② 17 + F3 提交③ 9
+  //     非管理 35 = 52 − 17（管理动作）
   //   数字一律由**实际注册表**推出（不写死），失败时打印实际集合便于定位。
   const managed = ACTION_NAMES.filter((a) => !ADMIN_ACTIONS.has(a));
   const expected = [...new Set(managed)].sort();

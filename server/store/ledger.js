@@ -288,6 +288,17 @@ function buildRemovedRecord(input) {
   };
 }
 
+// D-170：管理员直接改账号（段位/积分/入池）——写 journal 留痕（可重放、可审计），只写显式给出的字段。
+function buildAccountPatchRecord(input) {
+  const o = input || {};
+  const rec = { type: 'account.patched', v: RECORD_VERSION, at: o.at, playerId: o.playerId };
+  if (typeof o.tier === 'string') rec.tier = o.tier;
+  if (Number.isInteger(o.points)) rec.points = o.points;
+  if (typeof o.inPool === 'boolean') rec.inPool = o.inPool;
+  if (o.reason !== undefined) rec.reason = o.reason === null ? null : String(o.reason);
+  return rec;
+}
+
 function buildConfigRecord(input) {
   const o = input || {};
   return {
@@ -349,6 +360,7 @@ module.exports = {
   buildNicknameRecord,
   buildPoolRecord,
   buildRemovedRecord,
+  buildAccountPatchRecord,
   buildConfigRecord,
   buildBatchRecord,
   buildPromoteRecord,

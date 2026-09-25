@@ -392,12 +392,71 @@ function createAdmin(options) {
     });
   }
 
+  /* ---------- D-170：管理员直接改账号（段位/积分/入池） ----------
+   * 用途（用户 2026-09-25 要求）：验收"排位升段 / 快速对战积分 / 段位榜"时可直接把任意账号改到目标状态，
+   *   不必靠反复对局刷；同时是长期运维工具（如把误封/异常账号拉回正常段位）。
+   * 语义：
+   *   · **写 journal 留痕**（`account.patched`）——可重放、可审计（`via` 亦记日志）；
+   *   · **不动 `peakTier`/`peakPoints`**（历史峰值 = "曾经达到过"，人为调低会自相矛盾）；
+   *   · 段位变化同步 `tierUpdatedAt`（段位榜按到达时间排序要用）；
+   *   · 至少给一项（tier/points/inPool），否则 400；未知账号 → 404；非法值 → 400。
+   */
+  async function accountPatch(input) {
+    return withAccess(input, 'accountPatch', async (o) => {
+      const target = await resolveTarget(o);
+      if (target.error) return target.error;
+      const archive = await store.loadArchive(target.playerId);
+      if (!archive) return { status: 404, code: 'store_not_found', message: `档案 ${target.playerId} 不存在` };
+
+      const tier = o.tier === undefined || o.tier === null ? undefined : String(o.tier);
+      if (tier !== undefined && !TIERS.includes(tier)) {
+        return { status: 400, code: 'bad_request', message: `非法段位 ${tier}（可选: ${TIERS.join('/')}）` };
+      }
+      const cap = (store.ratingConfig && Number.isInteger(store.ratingConfig.cap)) ? store.ratingConfig.cap : 3000;
+      const points = o.points === undefined || o.points === null ? undefined : o.points;
+      if (points !== undefined && (!Number.isInteger(points) || points < 0 || points > cap)) {
+        return { status: 400, code: 'bad_request', message: `points 必须是 0..${cap} 的整数` };
+      }
+      const inPool = o.inPool === undefined || o.inPool === null ? undefined : o.inPool === true || o.inPool === 'true';
+      if (o.inPool !== undefined && o.inPool !== null && typeof o.inPool !== 'boolean' && o.inPool !== 'true' && o.inPool !== 'false') {
+        return { status: 400, code: 'bad_request', message: 'inPool 必须是布尔值' };
+      }
+      if (tier === undefined && points === undefined && inPool === undefined) {
+        return { status: 400, code: 'bad_request', message: '至少需要一项：tier / points / inPool' };
+      }
+
+      const updated = await store.accountPatch({
+        playerId: target.playerId, tier, points, inPool,
+        reason: o.reason === undefined ? null : o.reason,
+      });
+      log.warn('store', 'store.write',
+        `管理端改账号 ${updated.publicId}：tier=${updated.progress.tier} points=${updated.rating.points} inPool=${updated.pool.inPool}`, {
+          op: 'accountPatch', playerId: target.playerId, publicId: updated.publicId,
+          tier: updated.progress.tier, points: updated.rating.points, inPool: updated.pool.inPool, via: checkAccess(o).via,
+        });
+      return {
+        status: 200,
+        data: {
+          playerId: target.playerId,
+          publicId: updated.publicId,
+          tier: updated.progress.tier,
+          peakTier: updated.progress.peakTier,
+          points: updated.rating.points,
+          peakPoints: updated.rating.peakPoints,
+          inPool: updated.pool.inPool,
+          tierUpdatedAt: updated.progress.tierUpdatedAt === undefined ? null : updated.progress.tierUpdatedAt,
+        },
+      };
+    });
+  }
+
   return {
     store,
     checkToken,
     checkAccess,
     isAdminPlayer,
     rebuildIndex,
+    accountPatch,
     stats,
     accounts,
     deleteAccount,

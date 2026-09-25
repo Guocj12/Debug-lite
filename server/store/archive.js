@@ -207,6 +207,8 @@ const RECORD_TYPES = Object.freeze([
   // D-161：AI 库
   'ai.created',
   'ai.deleted',
+  // D-170：管理员直接改账号段位/积分/入池（运维与验收用；写 journal 留痕、可重放）
+  'account.patched',
   'checkpoint',
 ]);
 
@@ -769,6 +771,13 @@ function isRecordApplied(archive, record) {
       return record.nickname === undefined || archive.nickname === record.nickname;
     case 'player.pool.changed':
       return archive.pool.inPool === (record.inPool !== false);
+    // D-170：管理员改账号——幂等键 = "当前值已等于记录值即视为已应用"
+    case 'account.patched': {
+      if (isTier(record.tier) && archive.progress.tier !== record.tier) return false;
+      if (Number.isInteger(record.points) && archive.rating.points !== record.points) return false;
+      if (typeof record.inPool === 'boolean' && archive.pool.inPool !== record.inPool) return false;
+      return true;
+    }
     case 'player.config.saved': {
       const slot = findSlot(archive, record.slotId);
       if (record.deleted === true) return slot === null;
@@ -1055,6 +1064,35 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       archive.pool.inPool = inPool;
       if (inPool && !Number.isInteger(archive.pool.enteredAt)) archive.pool.enteredAt = at;
       return { changed: true };
+    }
+    // D-170：管理员直接改段位/积分/入池。**峰值只升不降**（`max`，不变量 `peakPoints >= points` /
+    //   `TIERS.indexOf(peakTier) >= TIERS.indexOf(tier)` 必须保持）：调高时峰值随之上移（"曾经达到过"依然成立），
+    //   调低时峰值原样保留 —— 于是**永远无法用改档伪造（压低）历史峰值**（用户 2026-09-25 裁定）；
+    //   段位变化同步 tierUpdatedAt（段位榜按到达时间排序要用）。
+    case 'account.patched': {
+      let changed = false;
+      if (isTier(record.tier) && archive.progress.tier !== record.tier) {
+        archive.progress.tier = record.tier;
+        if (TIERS.indexOf(record.tier) > TIERS.indexOf(archive.progress.peakTier)) {
+          archive.progress.peakTier = record.tier;
+        }
+        archive.progress.tierUpdatedAt = at;
+        changed = true;
+      }
+      if (Number.isInteger(record.points)) {
+        const p = Math.max(0, record.points); // 上限由 admin 层按 rating-config.cap 校验（此处只保证非负）
+        if (archive.rating.points !== p) {
+          archive.rating.points = p;
+          archive.rating.peakPoints = Math.max(archive.rating.peakPoints, p);
+          changed = true;
+        }
+      }
+      if (typeof record.inPool === 'boolean' && archive.pool.inPool !== record.inPool) {
+        archive.pool.inPool = record.inPool;
+        if (record.inPool && !Number.isInteger(archive.pool.enteredAt)) archive.pool.enteredAt = at;
+        changed = true;
+      }
+      return { changed };
     }
     case 'ranked.batch':
       archive.progress.batchesPlayed += 1;

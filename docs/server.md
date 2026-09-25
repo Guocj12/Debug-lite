@@ -1,4 +1,4 @@
-﻿# Debug-Lite v3 服务器文档
+# Debug-Lite v3 服务器文档
 
 > 版本：v1　创建：2026-09-12　更新基线：**2026-09-22 复核（后端 P0–P5 共 34 批 + P7/B27–B33 共 7 批 + F3 后端契约 ①（`D-159`…`D-162`，非编号批次）已收口；`npm run check:docs` PASS。历史基线：2026-09-19 复核 `npm test` = 942 通过 / 0 失败；`npm run gate` = 9 PASS / 0 FAIL / 0 PEND）**
 > 定位：**部署、配置、端点速查与使用说明**。接口契约的唯一权威是 `docs/interfaces.md`（ICD v1 §2/§3）；本文与之一致，冲突时以 interfaces.md 为准。
@@ -103,7 +103,7 @@
 | GET | `/api/v1/me/defense` | **防守战绩**（被抽场次/胜负/最近列表） | 401 | B30 |
 | POST | `/api/v1/quick/run` | 快速对战（积分相近 + 非对称 Elo 双向结算） | 400 `bad_seed`；401；403 `banned`；409 `no_opponent`/`no_active_config`/`store_not_found` | B32 |
 | GET | `/api/v1/leaderboard` | 排行榜（`?scope=global\|tier:<t>&limit=`；不回 `playerId`） | 400 `bad_scope` | B30/B32 |
-| POST | `/api/v1/admin/:op` | 运维（单动态路由）：`bots`/`rebuild-index`/`stats`/`clear-bots`/`ban`/`unban` + **F2 新增** `accounts`（分页全量账号列表 `{offset,limit}` → `{total,offset,limit,hasMore,rows[]}`；**total 无 100 条上限**）与 `delete-account`（按 `playerId`/`publicId` 删除，写 `player.removed` 墓碑，禁删自己）。**授权（D-158）**：管理员账号（`DL_ADMIN_USERS`，Bearer）**或** `X-Admin-Token`/Bearer == `DL_ADMIN_TOKEN`。**`bots` 的两处修复（D-165/D-166）**：注入时写入**真实（合成）仓库**（否则该 bot 参与的对局**回放 100% 410**），且每个 bot **按自身 `botKey` 派生不同预设**（修前整批共用同一程序 ⇒ 互打恒平局），可选 `preset`（`steady`/`aggressive`/`kite`，非法 → 400，响应回带 `preset`） | 400 `bad_request`；401/403 `forbidden`；403 `debug_bots_disabled`；404 `store_not_found`/`unknown_endpoint`；409 `cannot_delete_self`；503 `admin_token_missing` | B33 / **F2** / D-165 / D-166 |
+| POST | `/api/v1/admin/:op` | 运维（单动态路由）：`bots`/`rebuild-index`/`stats`/`clear-bots`/`ban`/`unban` + **F2 新增** `accounts`（分页全量账号列表 `{offset,limit}` → `{total,offset,limit,hasMore,rows[]}`；**total 无 100 条上限**）与 `delete-account`（按 `playerId`/`publicId` 删除，写 `player.removed` 墓碑，禁删自己）。**授权（D-158）**：管理员账号（`DL_ADMIN_USERS`，Bearer）**或** `X-Admin-Token`/Bearer == `DL_ADMIN_TOKEN`。**`bots` 的两处修复（D-165/D-166）**：注入时写入**真实（合成）仓库**（否则该 bot 参与的对局**回放 100% 410**），且每个 bot **按自身 `botKey` 派生不同预设**（修前整批共用同一程序 ⇒ 互打恒平局），可选 `preset`（`steady`/`aggressive`/`kite`，非法 → 400，响应回带 `preset`）。**D-170 新增** `account-patch`（改任意账号 `{playerId\|publicId, tier?, points?, inPool?, reason?}`，**至少一项**=部分更新；写 journal `account.patched`；**峰值只升不降**、不动战绩与仓库；`points ∈ 0..ratingConfig.cap`（3000），非法 → 400，目标不存在 → 404） | 400 `bad_request`；401/403 `forbidden`；403 `debug_bots_disabled`；404 `store_not_found`/`unknown_endpoint`；409 `cannot_delete_self`；503 `admin_token_missing` | B33 / **F2** / D-165 / D-166 / **D-170** |
 
 > `PUT /me/configs/:slotId`、`PUT /me/nickname`、`PUT /me/warehouse`、`DELETE /me/configs/:slotId`、`POST /me/configs/:slotId/activate` 注册在 `server/index.js` 的 PUT/DELETE 路由表中（其余为 GET/POST）。
 

@@ -1,4 +1,4 @@
-﻿# 当前状态与下一步
+# 当前状态与下一步
 
 > 更新：2026-09-25（**P7 在线服务（B27–B33）已全部交付并收口；F3 全批已落地**——提交① 后端契约（`D-159`…`D-162`）、提交② 前端主界面线、提交③ 出战配置编辑器；**另有 `D-163` 热修**（用户实测报告触发的 3 个真缺陷：`/me/configs` 物品数值可伪造、同配置内模板可重复占位、重启后开箱静默丢件）**已交付**；**战斗线后端修复批进行中（§0.5）：`D-164` 守方 AI 完整镜像 / `D-165` 回放 410 修复 / `D-166` 注入 bot 多样化 三条已交付，帧契约·软冷却·winner 统一·`admin/account-patch` 未做**；**`F1`/`F2`/`F3` 的浏览器人工走查已于 2026-09-25 由用户本人完成并通过（三批自此刻起均判定"能玩"；记录见 `docs/reviews/F3.md` §4）——P6 当前无待办走查项**；本节复核标记均指对应日期复核；决策编号见 `docs/decisions.md` §14 的 **D-137…D-153**、**D-158…D-163**）
 > 用途：跨会话续接，**本项目唯一状态源**。只记录**当前状态**与**待办**，不保留历史（历史仅可在带「历史记录」标注的小节中保留）。
@@ -93,14 +93,15 @@
 - **✅ D-168 软冷却取代 D-136 硬底线（已交付）**：新增 `opponentRecoveryHours=4`（`rating-config` + `service-config.pool` + `store/config.js` 默认 + `schema.js` 冻结值/校验；**`opponentCooldownHours` 删除**）；选择改为**加权轮盘**（`weight = clamp(已过小时/4,0,1)`；排位批次内不重复；**全员权重 0 → 取最久未打一组，永不 no_opponent**）；实现唯一处 = `server/ranked.js` 的 `cooldownWeightOf`/`pickByCooldownWeight`/`drawByCooldown`，`quickmatch` 复用；**删除** `splitByCooldown`/`COOLDOWN_RELAX_MULT`/`cooldownHoursOf` 与响应/记录里的 `relaxed`（改回带 `recoveryHours` / `opponentWeight`）。**已知代价**：薄池可刷分/刷晋升 → 登记 **SEC-34**（用户知情接受）。**证据**：T-QM-4/T-QM-4b、T-RK-4a/T-RK-4b、T-QM-R7、E2E-5（第二轮不再 0 场、被抽场次按两轮累计）、load-integrity（不再有 ceil(N/2) 上限）。
 - **收口实跑（2026-09-25，D-164…D-168）**：`npm test` = **1073 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`check-docs` = **PASS**（批次计数仍 **41**）；`check-arch` = **PASS**（40 文件）。
 - **✅ D-169 胜负口径统一（已交付）**：`POST /quick/run` 的 `data.winner` 由请求者视角 `win/loss/draw` 改为**绝对口径 `p1/p2/draw`**（与 `/ranked/run` 的 `results[].winner`、回放帧 `verdict.winner`、journal `verdict.winner` 完全一致）；**档案里每人自己的 `result` 刻意保留 `win/loss/draw`**（`stats`/`records`/Elo 输入依赖"我赢没赢"）。**证据**：`tests/api/api-quick.test.js`、`tests/unit/quickmatch.test.js`、`tests/integration/quickmatch-invariants.test.js`、`tests/api/api-replay-auth.test.js`（重算判决 ≡ 实战判决）、`scripts/e2e.js`。
-- **⏳ 本批剩余（未做）**：`POST /admin/account-patch`（改任意账号 tier/points/inPool；**受 D-158⑥ 的 admin-op ↔ 前端面板双向相等约束**，需与前端面板动作同批落地）。**这一项落地后 F6/F7 启动。**
+- **✅ D-170 管理端改账号（已交付）**：新增 `POST /api/v1/admin/account-patch`（`{playerId|publicId, tier?, points?, inPool?, reason?}`，**至少一项**=部分更新；缺省字段不改）；落库走 journal **`account.patched`**（`buildAccountPatchRecord` → `applyRecord`），**可重放**（实测：改档 → 关服 → 同 dataDir 重启 → 值仍在）；**峰值只升不降**（`peakPoints=max(peakPoints,points)`、`peakTier` 按 `TIERS` 序取高）⇒ 无法用改档压低/伪造历史峰值；**不动战绩/仓库/装配**。**用途**：验收排位晋升、快速对战积分、段位榜时可直接造目标档位，不必反复刷局。前端面板同步「改账号（段位/积分）」按钮 + 三格输入（`public/api.js`/`actions.js`/`store.js`/`format.js`/`contract.js` 五处 + 分册 §1/§2.5/§4/§5/§11/§13），满足 **D-158⑥** 双向相等。**证据**：`tests/api/api-admin-account-patch.test.js` AP-1…AP-8（契约逐字段/部分更新/峰值只升不降/不动战绩/重启重放/参数与错误码/权限两路径/`inPool=false` 后不再被抽为对手）、`tests/contract/store-contract.test.js` CN-12、前端四个契约测试（`admin-op-parity` AP-5 / `admin-ui-contract` AU-1 / `auth-ui-contract` UI-2 / `auth-field-contract` FC-1…FC-3）。
+- **✅ 本批后端任务已全部落地**：`D-164…D-170` 全部交付。**下一步**：F6 快速对战屏（含 F5-lite AI 逻辑查看器）→ F7 锦标赛屏（10 场分页）+ 段位榜/积分榜（分页 + 自己名次）。
 
 ---
 
 ## 1. 文档体系（权威链）
 
 ```
-docs/decisions.md      决策记录（**D-01…D-153**；D-129…D-136 与 D-137…D-153 均已落地；**D-158…D-163** 见 §14.3）  ← 最高权威
+docs/decisions.md      决策记录（**D-01…D-153**；D-129…D-136 与 D-137…D-153 均已落地；**D-158…D-163** 见 §14.3；**D-164…D-170** 见 §14.4–§14.8）  ← 最高权威
 docs/systems/01~10.md  各系统实现细则（`11-account-store.md` 为**已实现（P7/B27–B33，2026-09-19）**的账号与存档权威设计）
 docs/v3-design.md      主设计文档（架构/数据模型/数值）
 docs/items-data.md     物品数值、名称、贴图占位

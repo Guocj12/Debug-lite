@@ -143,6 +143,11 @@ async function capture() {
     assert.equal(clearBots.status, 200, clearBots.raw);
     const ban = await adminPost('ban', { playerId: banRow.playerId, banned: true });
     assert.equal(ban.status, 200, ban.raw);
+    // D-170：改账号（段位/积分）—— 5 条契约路径（§2.5/§5）的宿主响应
+    const patch = await adminPost('account-patch', { publicId: bannedUser.body.data.publicId, tier: 'rare', points: 100 });
+    assert.equal(patch.status, 200, `改账号应 200：${patch.raw.slice(0, 200)}`);
+    assert.equal(patch.body.data.tier, 'rare');
+    assert.equal(patch.body.data.points, 100);
     const del = await adminPost('delete-account', { publicId: victim.body.data.publicId });
     assert.equal(del.status, 200, del.raw);
 
@@ -153,6 +158,7 @@ async function capture() {
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
       adminRebuild: rebuild.body, adminBots: bots.body, adminClearBots: clearBots.body, adminBan: ban.body,
+      adminPatch: patch.body,
     };
   } finally {
     await s.cleanup();
@@ -195,6 +201,8 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'admin/bots': { envelopes: [real.adminBots], anyOf: false },
     'admin/clear-bots': { envelopes: [real.adminClearBots], anyOf: false },
     'admin/ban': { envelopes: [real.adminBan], anyOf: false },
+    // D-170：改账号（段位/积分）
+    'admin/account-patch': { envelopes: [real.adminPatch], anyOf: false },
     any: { envelopes: [real.register, real.password, real.logout, real.error.dup, real.error.weak, real.error.noAuth], anyOf: true },
   };
   for (const entry of contract.AUTH_FIELD_CONTRACT) {

@@ -27,7 +27,9 @@
   // 账号列表每页条数三档（02-accounts.md §3.2）
   var ADMIN_LIMITS = Object.freeze([20, 50, 100]);
   // 管理面板输入框（02-accounts.md §3.1；全部只进内存，含管理员令牌）
-  var ADMIN_FIELDS = Object.freeze(['adminToken', 'adminTarget', 'adminCount']);
+  // 02-accounts.md §7：管理面板输入框（管理员令牌 / 封禁目标 / 注入数量）
+  // D-170：新增三格「改账号」输入（adminPatchPublicId / adminPatchTier / adminPatchPoints）
+  var ADMIN_FIELDS = Object.freeze(['adminToken', 'adminTarget', 'adminCount', 'adminPatchPublicId', 'adminPatchTier', 'adminPatchPoints']);
   var ADMIN_DEFAULT_LIMIT = 20;
   var ADMIN_DEFAULT_COUNT = 1;
 
@@ -55,8 +57,9 @@
   }
 
   // 管理面初始状态（02-accounts.md §7：accounts/offset/limit/result/confirm/target/count）
+  // D-170：`patch` = 「改账号（段位/积分）」的输入（publicId/tier/points；仅内存，不持久化）
   function emptyAdmin() {
-    return { accounts: null, offset: 0, limit: ADMIN_DEFAULT_LIMIT, result: null, confirm: null, target: '', count: ADMIN_DEFAULT_COUNT };
+    return { accounts: null, offset: 0, limit: ADMIN_DEFAULT_LIMIT, result: null, confirm: null, target: '', count: ADMIN_DEFAULT_COUNT, patch: { publicId: '', tier: '', points: '' } };
   }
 
   // 仓库（03 §7；真源永远是重新请求 GET /me/warehouse）—— 只存**最近一次响应信封**，
@@ -276,6 +279,13 @@
         var admin5 = Object.assign({}, state.admin);
         if (action.field === 'adminTarget') admin5.target = strOf(action.value);
         if (action.field === 'adminCount') admin5.count = strOf(action.value);
+        if (action.field === 'adminPatchPublicId' || action.field === 'adminPatchTier' || action.field === 'adminPatchPoints') {
+          var patch = Object.assign({}, admin5.patch);
+          if (action.field === 'adminPatchPublicId') patch.publicId = strOf(action.value);
+          if (action.field === 'adminPatchTier') patch.tier = strOf(action.value);
+          if (action.field === 'adminPatchPoints') patch.points = strOf(action.value);
+          admin5.patch = patch;
+        }
         return Object.assign({}, state, { admin: admin5 });
       }
       default:

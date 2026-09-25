@@ -772,6 +772,52 @@
       },
     },
 
+    /* D-170：改账号（段位/积分/入池）——目标用 publicId（先经账号列表解析 playerId），
+     * 三项都留空 → 本地拦下（服务端也会 400）。成功后刷新账号列表，使行内 tier/points 立刻可见。 */
+    'admin-account-patch': {
+      label: '改账号（段位/积分）',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var patch = (ctx.state.admin && ctx.state.admin.patch) || {};
+        var publicId = String(patch.publicId === undefined || patch.publicId === null ? '' : patch.publicId).trim();
+        var tierRaw = String(patch.tier === undefined || patch.tier === null ? '' : patch.tier).trim();
+        var pointsRaw = String(patch.points === undefined || patch.points === null ? '' : patch.points).trim();
+        if (publicId === '') {
+          adminResult(ctx, 'error', '请填写改账号目标 publicId');
+          return Promise.resolve();
+        }
+        if (tierRaw === '' && pointsRaw === '') {
+          adminResult(ctx, 'error', '至少要填「目标段位」或「目标积分」之一');
+          return Promise.resolve();
+        }
+        if (pointsRaw !== '' && !/^\d+$/.test(pointsRaw)) {
+          adminResult(ctx, 'error', '目标积分需为 0~3000 的整数');
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        return resolvePlayerIdByPublicId(ctx, publicId).then(function (playerId) {
+          if (playerId === undefined) { busy(ctx, false); return undefined; }
+          if (playerId === null) {
+            busy(ctx, false);
+            adminResult(ctx, 'error', '账号列表中没有 publicId=' + publicId + ' 的账号（先点「刷新账号列表」）');
+            return undefined;
+          }
+          var body = { playerId: playerId };
+          if (tierRaw !== '') body.tier = tierRaw;
+          if (pointsRaw !== '') body.points = Number(pointsRaw);
+          return adminCall(ctx, 'account-patch', body).then(function (result) {
+            busy(ctx, false);
+            if (result.transport === 'error') return adminFail(ctx, result);
+            if (!ctx.format.isOk(result.envelope)) return adminFail(ctx, result);
+            // 文案走 format.patchText（§5 已登记的 5 条路径；不在 actions.js 里拼字段名）
+            adminResult(ctx, 'info', ctx.format.patchText(result.envelope, publicId));
+            var limit = limitOf(ctx);
+            return loadAccounts(ctx, ctx.state.admin.offset, limit);
+          });
+        });
+      },
+    },
+
     /* ----- F3：主界面线（03-hub-warehouse-loadout.md §3/§4；提交②） -----
      *
      * 提交② 只注册真正要用的动作（「按钮永不无声」不允许先注册空壳）；

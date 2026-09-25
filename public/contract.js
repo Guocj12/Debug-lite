@@ -104,6 +104,12 @@
     { endpoint: 'admin/clear-bots', path: 'data.removed', use: '清除结果文案「已清除 <n> 个」' },
     // POST /api/v1/admin/ban（unban 同形）
     { endpoint: 'admin/ban', path: 'data.banned', use: '封禁/解封结果文案' },
+    // POST /api/v1/admin/account-patch（D-170；02-accounts.md §2.5/§5）
+    { endpoint: 'admin/account-patch', path: 'data.publicId', use: '改档结果文案回显目标' },
+    { endpoint: 'admin/account-patch', path: 'data.tier', use: '改档结果文案·段位（现值）' },
+    { endpoint: 'admin/account-patch', path: 'data.peakTier', use: '改档结果文案·段位峰值（证明峰值未被改写）' },
+    { endpoint: 'admin/account-patch', path: 'data.points', use: '改档结果文案·积分（现值）' },
+    { endpoint: 'admin/account-patch', path: 'data.peakPoints', use: '改档结果文案·积分峰值（证明峰值未被改写）' },
     // 任意端点：统一信封（server/index.js okEnvelope/errEnvelope）
     { endpoint: 'any', path: 'ok', use: '成功/失败判定（唯一分支依据）' },
     { endpoint: 'any', path: 'error.code', use: '错误分类与文案选择' },

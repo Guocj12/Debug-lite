@@ -1117,6 +1117,8 @@ function createHandler(logger, extraRoutes, runtime) {
     if (op === 'unban') return respond(await rt.admin.ban({ ...input, banned: false }));
     if (op === 'accounts') return respond(await rt.admin.accounts(input));
     if (op === 'delete-account') return respond(await rt.admin.deleteAccount(input));
+    // D-170：管理员直接改账号（段位/积分/入池；写 journal 留痕）
+    if (op === 'account-patch') return respond(await rt.admin.accountPatch(input));
     return failStatus(404, 'unknown_endpoint', `未知管理端点 POST /api/v1/admin/${op}`);
   }
 

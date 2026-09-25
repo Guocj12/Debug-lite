@@ -19,9 +19,10 @@
 | 7 | `POST /api/v1/admin/unban` | 已有（`server/index.js` 映射到 `ban{banned:false}`） | 同 6 的第二个按钮 | ✅ 本批接 UI |
 | 8 | **`POST /api/v1/admin/accounts`** | **本批新增**（分页、无总数上限） | 账号列表（分页） | 🆕 新增契约 |
 | 9 | **`POST /api/v1/admin/delete-account`** | **本批新增**（写 `player.removed` 墓碑） | 每行「删除」 | 🆕 新增契约 |
-| 10 | 其余 P0–P7 端点（开箱/仓库/装配/AI/对战/回放/排位/快速对战/排行榜/配置槽/战绩） | 已有 | ⛔ **本轮不做**（后续批次按 `00-rules.md` §2 逐批设计） | — |
+| 10 | **`POST /api/v1/admin/account-patch`**（D-170） | **提交①追加**（测试夹具需要「改任意账号段位/积分」；只写 `progress.tier`/`rating.points`/`pool.inPool`，不碰峰值） | 面板·`改账号（段位/积分）` | 🆕 新增契约 |
+| 11 | 其余 P0–P7 端点（开箱/仓库/装配/AI/对战/回放/排位/快速对战/排行榜/配置槽/战绩） | 已有 | ⛔ **本轮不做**（后续批次按 `00-rules.md` §2 逐批设计） | — |
 
-**非目标**：不做新作弊能力（给物品/给积分/改段位——后端无这些端点，属 F3+）；不做管理员持久化角色（Q-A 选环境变量）；不做管理操作审计查询页（审计已由 journal + `store.*` 日志承担）。
+**非目标**：不做**玩家可见**的作弊能力（给物品/发积分/买段位——玩家侧无这些端点，属 F3+；D-170 的 `account-patch` 只走管理员通道，用于测试夹具造数据，见 §2.5）；不做管理员持久化角色（Q-A 选环境变量）；不做管理操作审计查询页（审计已由 journal + `store.*` 日志承担）。
 
 ---
 
@@ -73,12 +74,32 @@
 - **禁止删自己**：请求者账号 == 目标 → 409 `cannot_delete_self`（防管理员误操作把自己锁在门外）。
 - 目标不存在/已删 → 404 `store_not_found`；缺参数 → 400 `bad_request`。
 
-### 2.5 新增/变更错误码
+### 2.5 `POST /api/v1/admin/account-patch`（新增，D-170）
+
+请求：`{ "playerId": "pl_…", "publicId"?: "u_…", "tier"?: "rare", "points"?: 1200, "inPool"?: true, "reason"?: "…", "token"?: "…" }`
+- `playerId` 与 `publicId` 至少给一项（都给时以 `playerId` 为准，与 §2.4 同口径）；`tier`/`points`/`inPool` **至少给一项**，缺省字段一律**不改**（部分更新，不是整档覆盖）。
+- `tier` ∈ `common|rare|epic|legendary|mythic`（`server/admin.js` 的 `TIERS`）；`points` 为 `0 ~ ratingConfig.cap`（`server/data/rating-config.json` 冻结值 3000）的整数；`inPool` 为布尔。非法值 → 400 `bad_request`（文案含合法取值）。
+- `reason` 可留空，仅进 journal 留痕（不参与判定）。
+
+响应 `data`：
+```jsonc
+{ "playerId": "pl_…", "publicId": "u_…", "tier": "rare", "peakTier": "rare",
+  "points": 1200, "peakPoints": 1200, "inPool": true, "tierUpdatedAt": 1789911067638 }
+```
+- 实现 = 写一条 `account.patched` journal 记录（`server/store/ledger.js:buildAccountPatchRecord`），重放时由 `server/store/archive.js` 应用到 `progress.tier` + `tierUpdatedAt`、`rating.points`、`pool.inPool`。
+- **峰值只升不降**：`peakPoints = max(peakPoints, points)`、`peakTier` 按 `TIERS` 序同样取高。原因是档案不变量 `peakPoints >= points` 与「峰值 = 曾经达到过」；调**高**时段位/积分已是新历史事实，峰值随之上移；调**低**时峰值原样保留 —— 于是**永远无法用改档伪造（压低）历史峰值**（`peakTier`/`peakPoints` 在响应里回带，正是让管理员一眼看到它没被压低）。
+- **不改**：`rating.wins/losses/streak`、战绩、仓库、装配（改档不伪造战绩）。
+- `inPool=false` 用于把测试账号踢出匹配池（配合 `tier` 造"指定段位池"）；`inPool=true` 反向放回。
+- **为什么走 journal 而不是直接改档案文件**：所有档案变更必须可重放、可在重启后重建（§11 的存储不变量），绕过 journal 的直写会在 `rebuild-index` 后丢失。
+- `playerId` 属于 admin 通道（不脱敏）；目标不存在/已删 → 404 `store_not_found`；非法 tier/points/缺字段 → 400 `bad_request`。
+- **非目标**：不做「给物品/给金币」（那是改仓库，属 F3+）；不做批量改档（测试夹具逐个调用即可）。
+
+### 2.6 新增/变更错误码
 
 | code | HTTP | 触发 |
 |---|---|---|
 | `cannot_delete_self` | 409 | 管理员删除自己的账号 |
-| （复用）`bad_request` / `store_not_found` / `forbidden` / `admin_token_missing` / `debug_bots_disabled` | 400/404/403/503/403 | 见 §2.2–§2.4 |
+| （复用）`bad_request` / `store_not_found` / `forbidden` / `admin_token_missing` / `debug_bots_disabled` | 400/404/403/503/403 | 见 §2.2–§2.5 |
 
 ---
 
@@ -91,7 +112,7 @@
 - 静态文字：屏标题 `管理员面板`；提示行 `你是管理员账号：<publicId>；下方为后端已实现的管理能力`。
 - 文本区：**最近一次管理操作的结果**（信封投影：成功显示 `data` 的关键字段，失败显示错误文案）。
 - 按钮：`刷新账号列表`（`admin-refresh-accounts`）／`服务统计`（`admin-stats`）／`重建索引`（`admin-rebuild-index`）／`注入调试 bot`（`admin-bots`）／`清除调试 bot`（`admin-clear-bots`）／`返回主页`（`goto-home`）。
-- 输入框：`管理员令牌（可留空：用管理员账号身份免填）`（`adminToken`，**仅内存**）、`封禁目标 publicId`（`adminTarget`）、`注入数量`（`adminCount`，缺省 1）。
+- 输入框：`管理员令牌（可留空：用管理员账号身份免填）`（`adminToken`，**仅内存**）、`封禁目标 publicId`（`adminTarget`）、`注入数量`（`adminCount`，缺省 1）、`改账号目标 publicId`（`adminPatchPublicId`）、`目标段位`（`adminPatchTier`，留空=不改）、`目标积分`（`adminPatchPoints`，留空=不改）。
 
 ### 3.2 屏 `accounts`（账号列表，分页）
 
@@ -109,7 +130,7 @@
 
 ## 4. 按钮 ↔ 动作白名单增量（总纲 §4.1）
 
-在 F1 的 9 个动作之外新增 16 个（合计 25；逐行枚举见下表，AU-1 以此断言）：
+在 F1 的 9 个动作之外新增 17 个（合计 26 = 9 + 17；逐行枚举见下表，AU-1 以此断言）：
 
 | 动作 | 触发控件 | 行为 | 成功可见文本 | 失败可见文本 |
 |---|---|---|---|---|
@@ -127,6 +148,7 @@
 | `admin-clear-bots` | 面板·`清除调试 bot` | `POST /admin/clear-bots` | `已清除 <n> 个` | 错误文案 |
 | `admin-ban-row` | 列表·`封禁此行` | `POST /admin/ban {playerId, banned:true}` | `已封禁 <publicId>` | 错误文案 |
 | `admin-unban-row` | 列表·`解封此行` | `POST /admin/unban {playerId}` | `已解封 <publicId>` | 错误文案 |
+| `admin-account-patch`（D-170 新增） | 面板·`改账号（段位/积分）`（目标 `改账号目标 publicId` + `目标段位` + `目标积分`，后两者可留空=不改） | 先经账号列表把 publicId 解析为 playerId → `POST /admin/account-patch {playerId, tier?, points?}` | `已改 <publicId>：段位 <tier>（峰值 …）· 积分 <points>（峰值 …）` 并刷新账号列表 | 本地前置：`请填写改账号目标 publicId` / `至少要填「目标段位」或「目标积分」之一` / `目标积分需为 0~3000 的整数` / `账号列表中没有 publicId=… 的账号（先点「刷新账号列表」）`；服务端 400/404 文案 |
 
 - 管理动作在 `busy` 时全部禁用（防重复提交）；**非管理员**：这些动作的入口根本不渲染（`data-action` 不出现），但动作实现仍在白名单内（双向核对按「渲染集合 == 注册表」在**管理员态**下进行，见 §10.2）。
 
@@ -152,6 +174,8 @@
 | `admin/bots` | `data.injected` / `data.skipped` | 注入结果文案 |
 | `admin/clear-bots` | `data.removed` | 清除结果文案 |
 | `admin/ban` | `data.banned` | 封禁/解封结果文案 |
+| `admin/account-patch`（D-170） | `data.tier` / `data.peakTier` / `data.points` / `data.peakPoints` | 改档结果文案（峰值单独展示，用于确认峰值未被改写） |
+| `admin/account-patch`（D-170） | `data.publicId` | 结果文案回显目标 |
 
 ---
 
@@ -174,7 +198,8 @@
 
 ```js
 adminToken: '',                                   // 仅内存（Q3 A）；不写 localStorage
-admin: { accounts: null, offset: 0, limit: 20, result: null, confirm: null, target: '', count: 1 },
+admin: { accounts: null, offset: 0, limit: 20, result: null, confirm: null, target: '', count: 1,
+         patch: { publicId: '', tier: '', points: '' } },   // D-170：改账号三格（字符串保存，留空=不改）
 ```
 reducer 动作增量：`admin.token.set` / `admin.accounts.set`(`{envelope, offset, limit}`) / `admin.page.set` / `admin.result.set` / `admin.confirm.set` / `admin.form.set`。会话增量：`session.isAdmin`（来自 `data.player.isAdmin` / `data.flags.isAdmin`）。
 
@@ -241,7 +266,10 @@ F1 的四个测试文件全部继续通过（`data.player.isAdmin` 加入契约�
 | 14 | 点「注入调试 bot」（未设 `DL_DEBUG_BOTS`） | 结果区 | `调试 bot 注入已关闭（需服务端设 DL_DEBUG_BOTS=1）` |
 | 15 | 设 `DL_DEBUG_BOTS=1` 重启后点「注入调试 bot」 | 结果区 | `已注入 <n> 个`；列表出现 bot 行 |
 | 16 | 点「清除调试 bot」 | 结果区 | `已清除 <n> 个` |
-| 17 | 刷新浏览器（F5）后用普通账号登录 | 主页 | 管理入口消失（普通账号只显示正常功能） |
+| 17 | 在 `改账号目标 publicId` 填某普通账号、`目标段位` 填 `legendary`、`目标积分` 填 `2500` → 点「改账号（段位/积分）」 | 结果区 | `已改 u_…：段位 legendary（峰值 …）· 积分 2500（峰值 …）`，且账号列表该行变为 `段位legendary 积分2500` |
+| 18 | 只填 publicId，段位/积分都留空 → 点「改账号」 | 结果区 | `至少要填「目标段位」或「目标积分」之一`（不发请求） |
+| 19 | 用被改账号登录 → 打快速对战 | 对战响应 | 对手段位池与 `legendary` 一致（改档真的生效，非只改列表显示） |
+| 20 | 刷新浏览器（F5）后用普通账号登录 | 主页 | 管理入口消失（普通账号只显示正常功能） |
 
 ---
 
@@ -251,7 +279,7 @@ F1 的四个测试文件全部继续通过（`data.player.isAdmin` 加入契约�
 |---|---|---|
 | ① 行业主流做法（点名模式 + 被否决替代） | ✅ | 沿用 F1 的单向数据流 + 纯 `render(vm)` + 事件委托；**被否决**：(a) 把管理能力做成独立后端管理站点（多一套部署，违反"单一网络出口/同源"）；(b) 管理员令牌写 localStorage（Q3 选仅内存）；(c) 持久化 `flags.isAdmin` + WebUI 授权（Q-A 选环境变量白名单，零迁移）；(d) 一次性返回全部账号（无分页 → 响应体随账号数线性膨胀，故分页 + `total`） |
 | ② 既有约束下合理 | ✅ | 零依赖；`public/**` 不在门禁扫描范围；后端改动仅在 L6（`admin.js`/`auth.js`/`index.js`）+ 新增 admin op，**不改 store 结构、不改 schema**；新增契约按 §2.7 走 D-158 + interfaces 同步 |
-| ③ 功能完整（全部用户动作 + 全部失败路径） | ✅ | §1 端点映射（10 行，含 8 项接 UI）；§4 新增 16 个动作（合计 25）；§6 全部失败路径；§8 九条边界 |
+| ③ 功能完整（全部用户动作 + 全部失败路径） | ✅ | §1 端点映射（11 行，含 9 项接 UI）；§4 新增 17 个动作（合计 26）；§6 全部失败路径；§8 九条边界 |
 | ④ 已明确到可逐行实现 | ✅ | §2 请求/响应字段逐条、§5 字段路径逐条、§7 状态与 reducer 逐项、§10 机器核对逐条 |
 
 ---
@@ -269,3 +297,6 @@ F1 的四个测试文件全部继续通过（`data.player.isAdmin` 加入契约�
 | 13-7 | §3.2 行模板未含 `lastSeenAt`，但 §5 行字段清单含它（读了却不用 = 违反"投影单一真源"精神） | ✅ 行文本在 `playerId=<pl_…>` 后追加 `最后活跃<YYYY-MM-DD HH:mm>`；其余逐字按 §3.2 |
 | 13-8 | §3 规定两屏「仅 `isAdmin` 可达」→ `X-Admin-Token` 路径**无法经 UI 驱动** | ✅ UI 侧令牌输入框保留（仅管理员账号进入面板后可选填，用于**降级**为纯令牌调用）；令牌路径本身由 §10.3 在 **api 层**覆盖（正确 200 / 错误 403 / 未配置 503） |
 | 13-9 | 文档未规定的小实现选择 | ✅ 备案：登出/会话失效一并清 `adminToken` 与列表/确认/结果态；管理结果默认只进结果区，仅当"从非管理屏被强制调用"（A-1）时同文案也写 `#notice`（保证按钮永不无声） |
+| 13-10 | D-170（提交①追加）要求「后端接口能改任意账号的段位/积分」以支撑测试夹具，而 §1 原「非目标」明写不做改段位 | ✅ 新增 op `account-patch`，但**只走管理员通道**且**峰值只升不降**（`max`，不变量 `peakPoints >= points`，见 §2.5）；§1 非目标改写为"不做**玩家可见**的作弊能力"；`admin-op-parity`/`AU-1`/`UI-2` 三处登记同步（否则 AP-5/AU-1 立刻 FAIL，这正是 §10.1 的设计目的） |
+| 13-11 | §4 的 `admin-account-patch` 目标用 `publicId`，而后端 op 只收 `playerId` | ✅ 复用 §13-5 的解析路径：无行 payload 时先分页扫 `admin/accounts`（limit 200）把 publicId 解析成 playerId；解析不到 → 本地文案 `账号列表中没有 publicId=… 的账号（先点「刷新账号列表」）`（§4 表已逐字登记） |
+| 13-12 | `peakTier`/`peakPoints` 在 §5 未登记，但结果文案要显示峰值以证明"改档不伪造峰值" | ✅ 已登记为 `admin/account-patch` 的 4 条字段路径（§5 表末两行）；服务端 `accountPatch` 的峰值取 `max`（只升不降，§2.5），机器断言见 `tests/api/api-admin-account-patch.test.js` |

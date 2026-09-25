@@ -1,4 +1,4 @@
-﻿# Debug-Lite v3 接口冻结（ICD v1）
+# Debug-Lite v3 接口冻结（ICD v1）
 
 > 版本：v1　创建：2026-09-12（P0-7）　更新：2026-09-19（**P7 已落地同步**：§0/§1/§2/§3/§4/§6/§7 按 `server/{index,auth,account,quickmatch,ranked,admin}.js` 与 `server/store/*` 实测口径改写；§2 端点状态 B27–B33 → ✅ 已实现 + 新增 §2.1 错误码表）　**本文件是接口唯一权威**（L1）；接口变更走 `docs/tasks.md` §10。
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > 本文件 > `docs/tasks.md`。
@@ -106,6 +106,7 @@
 | POST | `/api/v1/admin/stats` \| `/clear-bots` \| `/ban` \| `/unban` | 运维：统计 / 清调试 bot / 封禁 / 解封（**封禁与解封写 journal** `account.banned`/`account.unbanned`） | 400 `bad_request`；404 `store_not_found`；503 `admin_token_missing` | B33 ✅ 已实现 |
 | POST | `/api/v1/admin/accounts` | **F2 新增**：分页账号列表 `{offset,limit}` → `{total,offset,limit,hasMore,rows[]}`；**`total` 为全量（无 100 条上限）**；单页 `limit` 缺省 20 / 上限 200；行含 `playerId`（admin 通道不脱敏） | 400 `bad_request`；403 `forbidden`；503 `admin_token_missing` | F2 ✅ 已实现（D-158） |
 | POST | `/api/v1/admin/delete-account` | **F2 新增**：删除账号 `{playerId\|publicId}` → `store.removeArchive`（写 `player.removed` 墓碑）；**禁止删除自己** | 400；403；404 `store_not_found`；409 `cannot_delete_self`；503 | F2 ✅ 已实现（D-158） |
+| POST | `/api/v1/admin/account-patch` | **D-170 新增**：改任意账号 `{playerId\|publicId, tier?, points?, inPool?, reason?}`（**至少一项**，缺省字段不改=部分更新）→ 响应回带 `{playerId,publicId,tier,peakTier,points,peakPoints,inPool,tierUpdatedAt}`。落库走 journal **`account.patched`**（可重放/可审计）；**峰值只升不降**（`max`，维持不变量 `peakPoints >= points` 与 `peakTier` 序）⇒ 无法用改档压低/伪造历史峰值；**不动战绩**（wins/losses/games/batchesPlayed/仓库/装配）。`points ∈ 0..ratingConfig.cap`（3000），`tier ∈ common\|rare\|epic\|legendary\|mythic`，`inPool` 为布尔 | 400 `bad_request`；403 `forbidden`；404 `store_not_found`；503 `admin_token_missing` | D-170 ✅ 已实现 |
 
 > **D-159 仓库服务端权威（推翻 D-130 的"仓库/物品/装配由客户端 localStorage 持有"）**：档案新增 `warehouse` 段（四桶 `role/skill/rolePlugin/skillPlugin`，**每桶上限 500**，值入 `service-config.json` 的 `warehouse.maxPerBucket` 并由 schema 冻结）与 `ai` 段（D-161）；`ARCHIVE_VERSION` 1 → **2**（`migrateV1toV2` 只补**空**仓库：**老账号保持空仓**）。`GET /me/warehouse` 是**真源**；装配/拆卸改为服务端态写（`POST /me/warehouse/assemble|disassemble`，落 journal 增量记录 `warehouse.assemble`/`warehouse.disassemble`）；**注册即发 starter**（`server/starter.js`，种子由身份派生、内容级确定性）：1 角色（**必带 ≥1 插槽**）+ 3 技能 + 1~2 角色插件 + 1 技能插件，**按实际槽类型筛选并已装配**，写入仓库并把配置写进 `slot1`（出战），**同时建满 3 槽**（`slot2`/`slot3` 空槽，见 D-160），另登记库内默认 AI（`name='新手AI'`，`aiId` 写入 `slot1.loadout.aiId`）。出战配置的引用校验**优先用服务端仓库**（不再需要客户端镜像）；`loadWarehouse` 首选服务端仓库。**作弊面关闭**：`systems/11-account-store.md` §15.1 的"改 JS 携带任意属性 loadout"随本决策失效。
 >
@@ -258,6 +259,7 @@ health | data <table>
 | D-167 | §4.3 **回放帧契约重构**（画面数据自足：五维/上限/行动/buff/基地受击/弹幕生命周期/伤害数值；**对外帧去 `events`**；`aiTrace` **双方都给**）+ §2 `GET /replay/:id?frames=render\|debug`（debug 需管理员，含日志、可越权排查）+ §2 `quick/run`·`ranked/run` 响应**内联 `frames`** + §1 `server/battle.js` 的 `toFrames`/`keepEvents` + §1 `server/ranked.js` 的 `battleOne` 回带 frames |
 | D-169 | §2 `quick/run`（**`winner` 统一为绝对口径 `p1/p2/draw`**；档案内每人 `result` 仍为 `win/loss/draw`）+ §2 `ranked/run`·回放帧·journal 判决同值不变量 |
 | D-168 | §2 `ranked/run`·`quick/run`（**软冷却取代 24h 硬底线与 strict/relaxed 双池**：权重 `clamp(已过小时/opponentRecoveryHours,0,1)` 线性回满、加权轮盘抽签、全员 0 时取最久未打、**永不因冷却 no_opponent**；**删 `relaxed`**、保留 `shortfall`、新增 `recoveryHours`/`opponentWeight`）+ §1 `server/ranked.js` 的 `cooldownWeightOf`/`pickByCooldownWeight`/`drawByCooldown`（quickmatch 复用）+ §4.11 `rating-config.opponentRecoveryHours=4` |
+| D-170 | §2 `admin/account-patch`（**改任意账号段位/积分/入池**：部分更新、写 journal `account.patched`、**峰值只升不降**、不动战绩与仓库）+ §1 `server/admin.js` 的 `accountPatch` + §1 `server/store/{ledger,archive,adapter-json}.js`（`buildAccountPatchRecord` / `applyRecord` 分支 / `accountPatch`）+ §2.1 复用 `bad_request`/`store_not_found`/`forbidden`/`admin_token_missing` + §5 管理面板动作 `admin-account-patch` |
 
 ## §6 日志事件登记（§4.6 覆盖矩阵；实现批次标注，T-LG-4 断言于此）
 

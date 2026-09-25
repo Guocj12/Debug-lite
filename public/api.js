@@ -33,6 +33,7 @@
     'clear-bots',      // 既有：清除调试 bot
     'ban',             // 既有：封禁
     'unban',           // 既有：解封（server/index.js 映射到 ban{banned:false}）
+    'account-patch',   // D-170 新增：改任意账号的段位/积分/入池（写 journal 留痕）
   ]);
 
   function createApi(options) {

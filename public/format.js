@@ -212,6 +212,15 @@
     var banned = pick(env, 'data.banned') === true;
     return (banned ? '已封禁 ' : '已解封 ') + or(publicId, '该账号');
   }
+  // D-170：改账号（段位/积分）结果文案。峰值单独展示 —— 服务端显式不写峰值（§2.5），
+  //   把它打出来才能让管理员一眼看到"改档没有伪造历史峰值"。
+  function patchText(env, publicId) {
+    return '已改 ' + or(pick(env, 'data.publicId'), or(publicId, '该账号'))
+      + '：段位 ' + or(pick(env, 'data.tier'), '?')
+      + '（峰值 ' + or(pick(env, 'data.peakTier'), '?') + '）'
+      + '· 积分 ' + or(pick(env, 'data.points'), '?')
+      + '（峰值 ' + or(pick(env, 'data.peakPoints'), '?') + '）';
+  }
 
   /* ---------- 账号列表（02-accounts.md §3.2/§5） ---------- */
 
@@ -1294,6 +1303,10 @@
         { name: 'adminToken', label: '管理员令牌（可留空：用管理员账号身份免填）', type: 'password', value: state.adminToken },
         { name: 'adminTarget', label: '封禁目标 publicId', type: 'text', value: state.admin.target },
         { name: 'adminCount', label: '注入数量', type: 'text', value: state.admin.count },
+        // D-170：改账号（段位/积分）——验收与运维用；只改当前值，不动历史峰值
+        { name: 'adminPatchPublicId', label: '改账号目标 publicId', type: 'text', value: state.admin.patch.publicId },
+        { name: 'adminPatchTier', label: '目标段位（留空=不改；common/rare/epic/legendary/mythic）', type: 'text', value: state.admin.patch.tier },
+        { name: 'adminPatchPoints', label: '目标积分（留空=不改；0~3000）', type: 'text', value: state.admin.patch.points },
       ],
       buttons: [
         { action: 'admin-refresh-accounts', label: '刷新账号列表', kind: 'button', disabled: busy },
@@ -1302,6 +1315,7 @@
         { action: 'admin-bots', label: '注入调试 bot', kind: 'button', disabled: busy },
         { action: 'admin-clear-bots', label: '清除调试 bot', kind: 'button', disabled: busy },
         { action: 'admin-ban-row', label: '封禁目标', kind: 'button', disabled: busy },
+        { action: 'admin-account-patch', label: '改账号（段位/积分）', kind: 'button', disabled: busy },
         { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
       ],
       enterAction: 'admin-refresh-accounts',
@@ -1463,6 +1477,7 @@
     clearBotsText: clearBotsText,
     deleteAccountText: deleteAccountText,
     banText: banText,
+    patchText: patchText,
     ADMIN_ROW_FIELDS: ADMIN_ROW_FIELDS,
     accountRows: accountRows,
     accountsInfoText: accountsInfoText,

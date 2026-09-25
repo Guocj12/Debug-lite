@@ -299,6 +299,16 @@
 
 ---
 
+### 14.8 管理端改账号（2026-09-25 追加，D-170）
+
+> 用户 2026-09-25 口径：**"测试可以批量注册账号……也可以调用后端接口来修改任意账号的段位/积分"**——即验收（排位晋升、快速对战积分、段位榜分页）需要**直接造出目标档位**，不必靠反复对局刷。本节把它落成一个**只走管理员通道**、**写 journal 留痕**、**不伪造战绩与峰值**的 op。
+
+| # | 决策 | 影响 |
+|---|---|---|
+| **D-170** | ⚠️ **新增 `POST /api/v1/admin/account-patch`（改任意账号的段位/积分/入池）**：<br>① **寻址**：`playerId` 或 `publicId` 至少给一项（都给时 `playerId` 优先，与 `/admin/delete-account` 同口径、复用 `resolveTarget`）。<br>② **部分更新**：`tier`（`common\|rare\|epic\|legendary\|mythic`，`server/admin.js` 的 `TIERS`）、`points`（`0..ratingConfig.cap`，冻结值 3000 的整数）、`inPool`（布尔）**至少给一项**；缺省字段**一律不改**（不是整档覆盖）。非法/缺失 → 400 `bad_request`；目标不存在/已删 → 404 `store_not_found`。<br>③ **落库方式 = journal（`account.patched`），不是直写档案文件**：`server/store/ledger.js:buildAccountPatchRecord` 只写显式给出的字段 → `server/store/archive.js` 的 `applyRecord` 落到 `progress.tier`+`tierUpdatedAt`、`rating.points`、`pool.inPool`。**理由**：档案必须可重放、可在重启后重建（§11 存储不变量）；绕过 journal 的直写会在 `rebuild-index`/重放后丢失。实测（`tests/api/api-admin-account-patch.test.js` AP-5）：改档 → 关服 → 同 dataDir 重启 → 值仍在；重复应用幂等。<br>④ **峰值只升不降**：`peakPoints = max(peakPoints, points)`，`peakTier` 按 `TIERS` 序同样取高。原因是档案不变量 `peakPoints >= points` 与"峰值 = 曾经达到过"；调高时峰值随之上移（新事实），调低时峰值原样保留 ⇒ **永远无法用改档压低/伪造历史峰值**。响应回带 `peakTier/peakPoints` 使这一点可被肉眼与机器同时核对。<br>⑤ **不改战绩**：`rating.games/wins/losses/draws/lastBattleAt/seasonId`、`progress.batchesPlayed/batchesPromoted`、仓库、装配一律不动（改档不伪造战绩）。<br>⑥ **前端同步（D-158⑥ 硬要求）**：管理面板新增三格输入（`adminPatchPublicId`/`adminPatchTier`/`adminPatchPoints`）+ 按钮 `admin-account-patch`；目标 publicId 经账号列表分页扫描（limit 200）解析为 playerId。四处登记必须同步，否则 `admin-op-parity`/`AU-1`/`UI-2`/`FC-1..3` 立刻 FAIL。<br>**边界（不是玩家可见能力）**：本 op 只在管理员通道（`DL_ADMIN_USERS` 白名单或 `DL_ADMIN_TOKEN`）可用，玩家侧无任何"给积分/买段位"端点；`docs/frontend/02-accounts.md` §1 的"非目标"据此改写。<br>**证据**：`tests/api/api-admin-account-patch.test.js`（AP-1…AP-8：契约逐字段 / 部分更新 / 峰值只升不降 / 不动战绩 / 重启重放 / 参数与错误码 / 权限两路径 / 改 `inPool=false` 后不再被抽为对手）、`tests/contract/store-contract.test.js` CN-12（适配器方法齐备）、`tests/frontend/{admin-op-parity,admin-ui-contract,auth-ui-contract,auth-field-contract}.test.js`。 | `server/admin.js`（`accountPatch`）、`server/index.js`（`adminOp` 分派）、`server/store/{ledger,archive,adapter-json}.js`、`public/{api,actions,store,format,contract}.js`、`docs/interfaces.md` §2/§2.1/§5、`docs/server.md` §3.2、`docs/frontend/02-accounts.md` §1/§2.5/§4/§5/§11/§13、`docs/tasks.md` §6、`tests/api/api-admin-account-patch.test.js` |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
 - 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。
