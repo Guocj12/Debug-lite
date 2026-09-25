@@ -17,11 +17,12 @@ const format = require('../../public/format.js');
 
 const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
-// F1 分册 + F2 分册 + F3 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
+// F1 分册 + F2 分册 + F3 分册 + F6 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
 const DOC_PATHS = [
   path.join(REPO, 'docs', 'frontend', '01-auth.md'),
   path.join(REPO, 'docs', 'frontend', '02-accounts.md'),
   path.join(REPO, 'docs', 'frontend', '03-hub-warehouse-loadout.md'),
+  path.join(REPO, 'docs', 'frontend', '04-quickmatch.md'),
 ];
 
 const ENVELOPE_PATHS = new Set(contract.AUTH_FIELD_CONTRACT.map((entry) => entry.path));
@@ -101,6 +102,19 @@ async function capture() {
       { authorization: `Bearer ${token}` });
     assert.equal(nick.status, 200, nick.raw);
 
+    // F6：快速对战（04 §5.1）—— 必须在 `logout` **之前**（登出后 token 失效）；
+    //   池内需至少一个候选，故先注册一个对手账号（注册即入池），再按 battleId 读一次归档回放
+    const foe = await post('/api/v1/auth/register', { username: 'fec1foe', password: PASSWORD });
+    assert.equal(foe.status, 200, `对手账号应注册成功：${foe.raw.slice(0, 200)}`);
+    const quick = await post('/api/v1/quick/run', {}, token);
+    assert.equal(quick.status, 200, `快速对战应 200（池内需有候选）：${quick.raw.slice(0, 300)}`);
+    assert.ok(Array.isArray(quick.body.data.frames) && quick.body.data.frames.length > 0,
+      'D-167：/quick/run 应内联完整战斗过程（frames 非空）');
+    const replayResp = await get('/api/v1/replay/' + quick.body.data.battleId, token);
+    assert.equal(replayResp.status, 200, `归档回放应 200：${replayResp.raw.slice(0, 200)}`);
+    assert.ok(Array.isArray(replayResp.body.data.frames) && replayResp.body.data.frames.length > 0,
+      '回放应带回帧数组');
+
     const pwd = await post('/api/v1/auth/password', { oldPassword: PASSWORD, newPassword: 'pw87654321' }, token);
     assert.equal(pwd.status, 200);
 
@@ -155,6 +169,7 @@ async function capture() {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
       configs: configs.body, assemble: asm.body,
+      quick: quick.body, replay: replayResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
       adminRebuild: rebuild.body, adminBots: bots.body, adminClearBots: clearBots.body, adminBan: ban.body,
@@ -203,6 +218,9 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'admin/ban': { envelopes: [real.adminBan], anyOf: false },
     // D-170：改账号（段位/积分）
     'admin/account-patch': { envelopes: [real.adminPatch], anyOf: false },
+    // F6（04 §5.1）：快速对战与归档回放
+    'quick/run': { envelopes: [real.quick], anyOf: false },
+    'replay/:id': { envelopes: [real.replay], anyOf: false },
     any: { envelopes: [real.register, real.password, real.logout, real.error.dup, real.error.weak, real.error.noAuth], anyOf: true },
   };
   for (const entry of contract.AUTH_FIELD_CONTRACT) {

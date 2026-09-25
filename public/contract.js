@@ -110,6 +110,34 @@
     { endpoint: 'admin/account-patch', path: 'data.peakTier', use: '改档结果文案·段位峰值（证明峰值未被改写）' },
     { endpoint: 'admin/account-patch', path: 'data.points', use: '改档结果文案·积分（现值）' },
     { endpoint: 'admin/account-patch', path: 'data.peakPoints', use: '改档结果文案·积分峰值（证明峰值未被改写）' },
+    // POST /api/v1/quick/run（F6 快速对战；04 §5.1）
+    { endpoint: 'quick/run', path: 'data.battleId', use: '对局 id（无内联帧时用它读回放；也是唯一可复现句柄）' },
+    { endpoint: 'quick/run', path: 'data.winner', use: '结果行（绝对口径 p1|p2|draw → 你赢了/你输了/平局）' },
+    { endpoint: 'quick/run', path: 'data.ticks', use: '结果行·总 tick' },
+    { endpoint: 'quick/run', path: 'data.window', use: '抽池行·匹配窗口' },
+    { endpoint: 'quick/run', path: 'data.opponentWeight', use: '抽池行·对手冷却权重（D-168）' },
+    { endpoint: 'quick/run', path: 'data.recoveryHours', use: '抽池行·冷却回满小时（D-168）' },
+    { endpoint: 'quick/run', path: 'data.zeroSum', use: '抽池行·零和校验（D-133）' },
+    { endpoint: 'quick/run', path: 'data.duplicate', use: '抽池行·是否幂等重放（无内联帧时的判据）' },
+    { endpoint: 'quick/run', path: 'data.self.pointsBefore', use: '结果行·我的积分前值' },
+    { endpoint: 'quick/run', path: 'data.self.pointsAfter', use: '结果行·我的积分后值' },
+    { endpoint: 'quick/run', path: 'data.self.delta', use: '结果行·我的积分变化' },
+    { endpoint: 'quick/run', path: 'data.self.winProbability', use: '结果行·胜率预测（Elo 期望）' },
+    { endpoint: 'quick/run', path: 'data.opponent.publicId', use: '对手行·账号' },
+    { endpoint: 'quick/run', path: 'data.opponent.nickname', use: '对手行·昵称' },
+    { endpoint: 'quick/run', path: 'data.opponent.tier', use: '对手行·段位' },
+    { endpoint: 'quick/run', path: 'data.opponent.isBot', use: '对手行·是否调试 bot（D-166）' },
+    { endpoint: 'quick/run', path: 'data.opponent.pointsBefore', use: '对手行·积分前值' },
+    { endpoint: 'quick/run', path: 'data.opponent.pointsAfter', use: '对手行·积分后值' },
+    { endpoint: 'quick/run', path: 'data.opponent.delta', use: '对手行·积分变化（双向记账可见）' },
+    { endpoint: 'quick/run', path: 'data.replayId', use: '读回放用的 id（实测与 battleId 同值）' },
+    { endpoint: 'quick/run', path: 'data.frames', use: '内联完整战斗过程（逐帧查看器的唯一数据源，D-167）' },
+    // GET /api/v1/replay/:id（F6：无内联帧时的兜底来源；04 §5.1）
+    { endpoint: 'replay/:id', path: 'data.id', use: '回放头·对局 id' },
+    { endpoint: 'replay/:id', path: 'data.winner', use: '回放头·判决（绝对口径）' },
+    { endpoint: 'replay/:id', path: 'data.phase', use: '回放头·判决依据（base|role）' },
+    { endpoint: 'replay/:id', path: 'data.ticks', use: '回放头·总 tick' },
+    { endpoint: 'replay/:id', path: 'data.frames', use: '无内联帧时的帧来源' },
     // 任意端点：统一信封（server/index.js okEnvelope/errEnvelope）
     { endpoint: 'any', path: 'ok', use: '成功/失败判定（唯一分支依据）' },
     { endpoint: 'any', path: 'error.code', use: '错误分类与文案选择' },
@@ -158,6 +186,34 @@
   // AI 库条目上读的子对象字段（03 §5.2 的 `me/ai` 行：`data.items[].{aiId,name,program}`；同由 CF-8 核对）
   var AI_ITEM_FIELDS = ['aiId', 'name', 'program'];
 
+  /* ---------- F6：战斗帧与 AI 轨迹的子对象字段（04 §5.2） ----------
+   * 这些字段从 `data.frames[i]`（及 `diff` 内的子对象）上读取，**不含 `data.` 前缀** ——
+   * 故不参与 FC-2/FC-3 的信封级核对，而由 tests/frontend/quick-battle-flow.test.js 的 QB-6 三方核对：
+   *   本表 == 04 §5.2 的清单 == public/format.js 中出现的字段字面量，并在**真实帧**上逐字段验证存在。
+   * ⚠️ 字段名一旦漂移，帧投影会静默少打一行而机器断言仍全绿 —— 这就是 QB-6 存在的理由。
+   */
+  var FRAME_FIELDS = ['tick', 'diff'];
+  var FRAME_DIFF_FIELDS = ['players', 'bases', 'bullets', 'baseHits', 'bulletHits', 'damages', 'collision', 'verdict', 'aiTrace'];
+  var FRAME_SIDE_FIELDS = ['fromX', 'toX', 'facing', 'hp', 'mp', 'sp', 'maxHp', 'maxMp', 'maxSp', 'atk', 'def',
+    'defending', 'dodging', 'fullDodge', 'action', 'effects'];
+  var FRAME_ACTION_FIELDS = ['kind'];
+  // 可选字段：`dir` 只在 move/dodge/forced_move/displacement；`sid` 只在 cast/displacement；`cells` 只在 forced_move
+  var FRAME_ACTION_OPTIONAL_FIELDS = ['dir', 'sid', 'cells'];
+  var FRAME_EFFECT_FIELDS = ['uid', 'kind', 'stat', 'delta', 'displacement', 'remaining'];
+  var FRAME_BULLET_FIELDS = ['uid', 'owner', 'level', 'btype', 'dir', 'v', 'len', 'spawnX', 'endX', 'outcome',
+    'hitTarget', 'collideWith', 'collideWinner', 'collided', 'expired'];
+  // 可选字段：引擎只对"有衰减的弹幕"补 `falloffFactor`（实测：近战弹幕没有该键）→ 不作为必现字段核对
+  var FRAME_BULLET_OPTIONAL_FIELDS = ['falloffFactor'];
+  var FRAME_DAMAGE_FIELDS = ['target', 'amount', 'atX', 'kind', 'srcUid', 'attacker', 'crit', 'critM',
+    'backstab', 'backM', 'dodged'];
+  var FRAME_BASE_HIT_FIELDS = ['owner', 'by', 'atX'];
+  var FRAME_BULLET_HIT_FIELDS = ['uid', 'target', 'atX'];
+  var FRAME_COLLISION_FIELDS = ['contactX', 't'];
+  var FRAME_VERDICT_FIELDS = ['winner', 'phase'];
+  var FRAME_TRACE_FIELDS = ['tick', 'owner', 'seq', 'path', 'nodeType', 'phase', 'depth'];
+  // 可选字段：`result` **只有 action 节点**才有（值为该 action 名，见 systems/08-ai.md §3）
+  var FRAME_TRACE_OPTIONAL_FIELDS = ['result'];
+
   // 分册 §5 登记了、但**本批前端明确不读取**的路径（FC-3 的双向核对靠它闭合：
   //   documented == AUTH_FIELD_CONTRACT ∪ DOC_NOT_READ，且两者无交集）
   var DOC_NOT_READ = [
@@ -182,6 +238,22 @@
     CONFIG_SLOT_FIELDS: CONFIG_SLOT_FIELDS,
     CONFIG_LOADOUT_FIELDS: CONFIG_LOADOUT_FIELDS,
     AI_ITEM_FIELDS: AI_ITEM_FIELDS,
+    // F6：帧与轨迹子对象字段（04 §5.2；QB-6 三方核对）
+    FRAME_FIELDS: FRAME_FIELDS,
+    FRAME_DIFF_FIELDS: FRAME_DIFF_FIELDS,
+    FRAME_SIDE_FIELDS: FRAME_SIDE_FIELDS,
+    FRAME_ACTION_FIELDS: FRAME_ACTION_FIELDS,
+    FRAME_ACTION_OPTIONAL_FIELDS: FRAME_ACTION_OPTIONAL_FIELDS,
+    FRAME_EFFECT_FIELDS: FRAME_EFFECT_FIELDS,
+    FRAME_BULLET_FIELDS: FRAME_BULLET_FIELDS,
+    FRAME_BULLET_OPTIONAL_FIELDS: FRAME_BULLET_OPTIONAL_FIELDS,
+    FRAME_DAMAGE_FIELDS: FRAME_DAMAGE_FIELDS,
+    FRAME_BASE_HIT_FIELDS: FRAME_BASE_HIT_FIELDS,
+    FRAME_BULLET_HIT_FIELDS: FRAME_BULLET_HIT_FIELDS,
+    FRAME_COLLISION_FIELDS: FRAME_COLLISION_FIELDS,
+    FRAME_VERDICT_FIELDS: FRAME_VERDICT_FIELDS,
+    FRAME_TRACE_FIELDS: FRAME_TRACE_FIELDS,
+    FRAME_TRACE_OPTIONAL_FIELDS: FRAME_TRACE_OPTIONAL_FIELDS,
     DOC_NOT_READ: DOC_NOT_READ,
     UNUSED_FIELDS: UNUSED_FIELDS,
   };

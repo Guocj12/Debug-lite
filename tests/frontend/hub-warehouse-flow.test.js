@@ -69,6 +69,9 @@ function harness(baseUrl) {
     configs: counting(raw.configs),
     aiList: counting(raw.aiList),
     setNickname: counting(raw.setNickname),
+    // F6：快速对战与归档回放出口（新出口必须在此登记，否则动作调用 ctx.api.xxx 会 TypeError）
+    quickRun: counting(raw.quickRun),
+    replay: counting(raw.replay),
     admin: counting(raw.admin),
     box: (token, input) => {
       counter.n += 1;
@@ -152,13 +155,11 @@ test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 11 个按钮 ＋ �
 
 /* ---------- WH-2：四个空页 ---------- */
 
-test('WH-2 四个空页：标题 + 尚未实现（计划批次 F#）+ 返回主界面；不发任何请求', async () => {
+test('WH-2 剩余空页：标题 + 尚未实现（计划批次 F#）+ 返回主界面；不发任何请求', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh2user');
+    // F6 起 `quick` 已是真屏（04 分册），F7 将接 tournament/leaderboard；此处只核对**仍为空页**的
     const pages = [
-      ['goto-quick', '快速对战', 'F6'],
-      ['goto-tournament', '锦标赛', 'F7'],
-      ['goto-leaderboard', '排行榜', 'F7'],
       ['goto-ai-editor', 'AI 编辑', 'F5'],
     ];
     for (const [action, title, batch] of pages) {

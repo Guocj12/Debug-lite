@@ -104,6 +104,13 @@
         return call('POST', '/api/v1/me/configs/' + encodeURIComponent(String(slotId)) + '/activate', {}, token);
       },
       setNickname: function (token, input) { return call('PUT', '/api/v1/me/nickname', input, token); },
+      // F6（04 §1）：快速对战 + 归档回放。**开箱不传 seed，快速对战也不传 seed**（seed 由服务端生成并回带）。
+      quickRun: function (token, input) { return call('POST', '/api/v1/quick/run', input === undefined ? {} : input, token); },
+      // `query` = 已拼好的查询串（如 `frames=render`）；缺省不追加（= 服务端默认 render 口径）
+      replay: function (token, battleId, query) {
+        var qs = typeof query === 'string' && query !== '' ? '?' + query : '';
+        return call('GET', '/api/v1/replay/' + encodeURIComponent(String(battleId)) + qs, undefined, token);
+      },
       admin: admin,
     };
   }

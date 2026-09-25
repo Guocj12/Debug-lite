@@ -121,6 +121,7 @@
     ctx.dispatch({ type: 'box.result.set', result: null });
     ctx.dispatch({ type: 'configs.set', data: null });
     ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
+    ctx.dispatch({ type: 'viewer.clear' });   // F6：战斗态（对局/帧/游标）随会话一起清
     ctx.dispatch({ type: 'modal.close' });
   }
 
@@ -1194,8 +1195,50 @@
       },
     },
 
-    // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9 / FR-10）
-    //   提交③ 起弹窗内有**本地草稿**（state.configs.draft）→ 关闭必须一并丢弃，否则再打开会看到"上次没保存的改动"
+    /* ----- F6：快速对战 + 战斗查看器 + AI 逻辑查看器（04 §4；9 个动作） -----
+     * 动作层只做「预校验 → 发请求（唯一出口 api）→ dispatch → 经 format 取文案」；
+     * 所有响应字段读取都走 ctx.format.*（UI-9：本文件不得出现契约路径字面量）。
+     */
+    'quick-run': {
+      label: '开始快速对战',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        // 不传 seed：随机性归服务端（与开箱同口径；服务端回带本次对局 seed 供复现/排查）
+        return ctx.api.quickRun(token, {}).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.quickNoticeText(result.envelope));
+            return undefined;
+          }
+          ctx.dispatch({ type: 'quick.set', envelope: result.envelope });
+          ctx.dispatch({
+            type: 'viewer.set',
+            frames: ctx.format.quickFrames(result.envelope),
+            source: 'quick',
+            battleId: ctx.format.quickBattleId(result.envelope),
+          });
+          noticeNotice(ctx, 'info', ctx.format.quickOkText(result.envelope));
+          return undefined;
+        });
+      },
+    },
+
+    'viewer-first': { label: '第一帧', run: function (ctx) { return gotoFrame(ctx, 0); } },
+    'viewer-prev': { label: '上一帧', run: function (ctx) { return stepFrame(ctx, -1); } },
+    'viewer-next': { label: '下一帧', run: function (ctx) { return stepFrame(ctx, 1); } },
+    'viewer-last': { label: '最后一帧', run: function (ctx) { return gotoLastFrame(ctx); } },
+    'viewer-trace-p1': { label: '看我方(进攻方)轨迹', run: function (ctx) { return setTraceOwner(ctx, 'p1'); } },
+    'viewer-trace-p2': { label: '看对手(防守方)轨迹', run: function (ctx) { return setTraceOwner(ctx, 'p2'); } },
+    'viewer-ai-logic': { label: 'AI 逻辑查看器', run: function (ctx) { return openAiLogic(ctx); } },
+    'viewer-load-replay': { label: '读取本场回放', run: function (ctx) { return loadReplay(ctx); } },
+
+    // 关闭弹窗（背景 / 「关闭」/「取消」共用）：丢弃未提交输入（03 §3.8 / B-9 / FR-10）    //   提交③ 起弹窗内有**本地草稿**（state.configs.draft）→ 关闭必须一并丢弃，否则再打开会看到"上次没保存的改动"
     'modal-close': {
       label: '关闭',
       run: function (ctx) {
@@ -1248,6 +1291,108 @@
   function goView(ctx, view) {
     ctx.dispatch({ type: 'view.go', view: view });
     return Promise.resolve();
+  }
+
+  /* ---------- F6：战斗查看器的本地动作（不改服务端状态、不发请求） ---------- */
+
+  // 查看器状态的唯一访问口径（缺省值与 store.emptyViewer() 同形，防脏状态打崩投影）
+  function viewerOf(ctx) {
+    var v = ctx.state ? ctx.state.viewer : null;
+    return v && typeof v === 'object' ? v : { frames: null, index: 0, battleId: null, traceOwner: 'p1' };
+  }
+
+  // 跳到指定帧（越界夹取）。**无帧 = 空操作**：不写提示、不发请求（按钮在 UI 上已禁用）
+  function gotoFrame(ctx, index) {
+    if (ctx.state.busy) return Promise.resolve();
+    var frames = viewerOf(ctx).frames;
+    var total = Array.isArray(frames) ? frames.length : 0;
+    if (total === 0) return Promise.resolve();
+    var next = index;
+    if (next < 0) next = 0;
+    if (next > total - 1) next = total - 1;
+    ctx.dispatch({ type: 'viewer.frame.set', index: next });
+    return Promise.resolve();
+  }
+
+  function stepFrame(ctx, delta) {
+    var current = viewerOf(ctx).index;
+    return gotoFrame(ctx, (typeof current === 'number' && isFinite(current) ? current : 0) + delta);
+  }
+
+  // 「最后一帧」不是"负数"语义，必须显式取 total-1（否则 index=0 时 -1 会被当成末帧哨兵）
+  function gotoLastFrame(ctx) {
+    var frames = viewerOf(ctx).frames;
+    var total = Array.isArray(frames) ? frames.length : 0;
+    return total === 0 ? Promise.resolve() : gotoFrame(ctx, total - 1);
+  }
+
+  function setTraceOwner(ctx, owner) {
+    if (ctx.state.busy) return Promise.resolve();
+    ctx.dispatch({ type: 'viewer.trace.set', owner: owner });
+    return Promise.resolve();
+  }
+
+  // AI 逻辑查看器（04 §3.3）：取我方出战配置（程序正文）+ AI 库（把 aiId 显示成名字）。
+  //   两次都成功才打开弹窗 —— 失败时只写文案，**不打开空弹窗**（按钮永不无声）。
+  function openAiLogic(ctx) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    return ctx.api.configs(token).then(function (configs) {
+      if (configs.transport === 'error') { busy(ctx, false); return failFrom(ctx, configs); }
+      if (!ctx.format.isOk(configs.envelope)) {
+        busy(ctx, false);
+        if (ctx.format.isSessionError(configs.envelope)) return sessionLost(ctx, configs);
+        return failFrom(ctx, configs);
+      }
+      return ctx.api.aiList(token).then(function (ai) {
+        busy(ctx, false);
+        if (ai.transport === 'error') return failFrom(ctx, ai);
+        if (!ctx.format.isOk(ai.envelope)) {
+          if (ctx.format.isSessionError(ai.envelope)) return sessionLost(ctx, ai);
+          return failFrom(ctx, ai);
+        }
+        ctx.dispatch({ type: 'viewer.configs.set', envelope: configs.envelope });
+        ctx.dispatch({ type: 'viewer.ai.set', envelope: ai.envelope });
+        ctx.dispatch({ type: 'modal.set', modal: { kind: 'ai-logic' } });
+        noticeNotice(ctx, 'info', ctx.format.AI_LOGIC_OK_TEXT);
+        return undefined;
+      });
+    });
+  }
+
+  // 无内联帧时的兜底：按 battleId 读归档回放（04 §2 反驳 3）
+  function loadReplay(ctx) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    var battleId = viewerOf(ctx).battleId;
+    if (typeof battleId !== 'string' || battleId === '') {
+      noticeNotice(ctx, 'error', ctx.format.QUICK_NO_FRAMES_TEXT);
+      return Promise.resolve();
+    }
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    return ctx.api.replay(token, battleId).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        noticeNotice(ctx, 'error', ctx.format.quickNoticeText(result.envelope));
+        return undefined;
+      }
+      ctx.dispatch({ type: 'viewer.replay.set', envelope: result.envelope });
+      ctx.dispatch({
+        type: 'viewer.set',
+        frames: ctx.format.replayFrames(result.envelope),
+        source: 'replay',
+        battleId: battleId,
+      });
+      noticeNotice(ctx, 'info', ctx.format.replayOkText(result.envelope));
+      return undefined;
+    });
   }
 
   // 每页条数切换（§4：改 limit 并回到第 1 页）

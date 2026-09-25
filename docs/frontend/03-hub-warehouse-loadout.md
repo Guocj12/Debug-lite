@@ -40,8 +40,8 @@
 | 12 | `GET /api/v1/me/ai` | 配置弹窗·AI 位置的可选列表 | 🆕 新增 |
 | 13 | `POST /api/v1/me/ai` | （本批仅后端：命名保存） | 🆕 新增，前端不做 |
 | 14 | `DELETE /api/v1/me/ai/:aiId` | （本批仅后端：删除） | 🆕 新增，前端不做 |
-| 15 | `POST /api/v1/quick/run` | 快速对战屏 | ⛔ **空页**（F6） |
-| 16 | `POST /api/v1/ranked/run\|promote` | 锦标赛（=排位赛）屏 | ⛔ **空页**（F6/F7；`shortfall` 文案一并留到该批） |
+| 15 | `POST /api/v1/quick/run` | 快速对战屏 | ✅ **F6 已接 UI**（见 `04-quickmatch.md`） |
+| 16 | `POST /api/v1/ranked/run\|promote` | 锦标赛（=排位赛）屏 | ⛔ **空页**（F7；`shortfall` 文案一并留到该批） |
 | 17 | `GET /api/v1/leaderboard` | 排行榜屏 | ⛔ **空页**（F7） |
 | 18 | `POST /api/v1/ai/validate\|compile\|battle`、`GET /unlock`、`GET /data/:table` | AI 编辑屏 | ⛔ **空页**（F5） |
 | 19 | `GET /api/v1/health`、`GET/POST /api/v1/log-level` | — | ⛔ 非玩家动作（F1 §1 已登记） |
@@ -115,9 +115,10 @@
 - 按钮：`保存昵称`(settings-nickname-save)、`修改密码`(goto-password)、`登出`(logout)、`返回主界面`(goto-hub)。
 - 结果区：最近一次操作的结果文案。
 
-### 3.6 空页（4 个）：`quick` / `tournament` / `leaderboard` / `ai-editor`
+### 3.6 空页（F3 当时 4 个 → **F6 落地 `quick` 后剩 3 个**：`tournament` / `leaderboard` / `ai-editor`）
 
-- 统一结构：标题（`快速对战` / `锦标赛`（副标题 `= 排位赛`）/ `排行榜` / `AI 编辑`）+ 一行 `尚未实现（计划批次 F6/F7/F5）` + `返回主界面`(goto-hub)。
+- 统一结构：标题（`锦标赛`（副标题 `= 排位赛`）/ `排行榜` / `AI 编辑`）+ 一行 `尚未实现（计划批次 F7/F5）` + `返回主界面`(goto-hub)。
+- **`quick` 已由 F6 实现为真屏**（`docs/frontend/04-quickmatch.md`）；F6 同时把它从 `format.js` 的 `EMPTY_PAGES` 表里移除。
 - **不做**任何请求；**不渲染**任何其它按钮。
 
 ### 3.7 屏内弹窗：出战配置（`state.modal={kind:'config',slotId}`）
@@ -399,7 +400,7 @@ settings: { nickname: '', result: null },
 | 20 | 对**出战中**的配置点某位置 | 候选弹窗 | **没有「空」选项**，只能替换 |
 | 21 | 点「设置」→ 改昵称 → 保存 | 结果区 | `昵称已更新为 …`；主界面摘要同步 |
 | 22 | 设置点「修改密码」 | 屏 | 进 F1 的密码屏；改密成功后回设置 |
-| 23 | 主界面点「快速对战/锦标赛/排行榜/AI编辑」 | 空页 | 各自标题 + `尚未实现（计划批次 …）` + 返回键可用 |
+| 23 | 主界面点「锦标赛/排行榜/AI编辑」 | 空页 | 各自标题 + `尚未实现（计划批次 …）` + 返回键可用（「快速对战」自 F6 起为真屏） |
 | 24 | 设置点「登出」 | 登录屏 | `已登出`；刷新后仍在登录屏 |
 | 25 | **F2 既有 17 步**（`02-accounts.md` §11） | — | 一并走完 |
 
@@ -425,7 +426,7 @@ settings: { nickname: '', result: null },
 | K-3 | `usage` 的具体形状 | §5.2 为设计约定（`data.usage[uid].slotIds[]`）；落地后必须回填实测并纳入 UW-4 |
 | K-4 | 插槽类型 ↔ 插件类型的可读映射 | 实测已见 `def`/`sp`/`hp`/`atk`/`special`；完整枚举需从 `role-templates.json`/`skill-mechanics.json`/`plugins.json` 取（提交① 内确认） |
 | K-5 | 五屏渲染集合的断言口径 | F1 的 UI-2 断言"恰好 9"必须改写为"非管理动作集合"；F2 的 AU-1 同步 |
-| K-6 | 快速对战/锦标赛/排行榜/AI编辑 | 本批为空页；`shortfall` 文案、匹配结果文案、排行榜列定义全部留到 F6/F7 |
+| K-6 | 快速对战/锦标赛/排行榜/AI编辑 | F3 时为空页；**`quick` 已在 F6 落地**（`04-quickmatch.md`）；`tournament`/`leaderboard` 的 `shortfall` 文案与榜列定义留到 F7 |
 | K-7 | AI 编辑/管理界面 | 本批只做后端（D-161）；前端无入口（AI 位置只能从库里选） |
 | K-8 | O-9 管理员抢注提权 | 用户裁定**接受风险**，登记进 `security-backlog`（新增条目），不修 |
 | K-9 | `public/**` 未纳入 `check-arch.js` 分层 | 总纲 O-7 剩余部分，仍未裁定 |

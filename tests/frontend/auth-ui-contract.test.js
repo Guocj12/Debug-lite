@@ -98,6 +98,47 @@ function configEditorState(view, modal) {
   return state;
 }
 
+// F6（04 §5.2）：快速对战的真实响应形状（真起服务抓取过；帧字段与 docs/interfaces.md §4.3 一致）
+const QUICK_FRAME = {
+  tick: 1,
+  diff: {
+    tick: 1,
+    players: {
+      p1: { fromX: 224, toX: 288, facing: 1, hp: 89, mp: 39, sp: 53, maxHp: 89, maxMp: 39, maxSp: 53, atk: 10, def: 9, defending: false, dodging: false, fullDodge: false, action: { kind: 'move', dir: 1 }, effects: [] },
+      p2: { fromX: 800, toX: 736, facing: -1, hp: 100, mp: 40, sp: 60, maxHp: 100, maxMp: 40, maxSp: 60, atk: 10, def: 8, defending: false, dodging: false, fullDodge: false, action: { kind: 'move', dir: -1 }, effects: [] },
+    },
+    bullets: [],
+    bases: { p1: { hp: 100, maxHp: 100, def: 64 }, p2: { hp: 100, maxHp: 100, def: 64 } },
+    collision: null,
+    baseHits: [],
+    bulletHits: [],
+    damages: [],
+    verdict: { winner: 'p1', phase: 'role' },
+    aiTrace: [{ tick: 1, owner: 'p1', seq: 0, path: 'body.s[0]', nodeType: 'if', phase: 'eval', depth: 1 }],
+  },
+};
+const QUICK_FRAMES = [QUICK_FRAME];
+const QUICK_ENVELOPE = {
+  ok: true,
+  data: {
+    battleId: 'b_fe6', seed: 7, winner: 'p1', ticks: 1, window: 100, opponentWeight: 1, recoveryHours: 4,
+    zeroSum: true, duplicate: false,
+    self: { pointsBefore: 0, pointsAfter: 12, delta: 12, winProbability: 0.5 },
+    opponent: { publicId: 'u_foe', nickname: '对手', tier: 'common', isBot: true, pointsBefore: 0, pointsAfter: -6, delta: -6 },
+    replayId: 'b_fe6', frames: QUICK_FRAMES,
+  },
+};
+
+function quickState(opts) {
+  const state = stateFor('quick');
+  state.session = { token: 'token-for-test', publicId: 'u_me', nickname: '我', expiresAt: null, isAdmin: false };
+  state.quick.envelope = QUICK_ENVELOPE;
+  state.viewer.frames = opts.frames;
+  state.viewer.battleId = opts.battleId;
+  state.viewer.index = opts.index === undefined ? 0 : opts.index;
+  return state;
+}
+
 function nonAdminRenderings() {
   const list = store.VIEWS.map((view) => stateFor(view));
   const itemDetail = stateFor('warehouse');
@@ -110,6 +151,17 @@ function nonAdminRenderings() {
   list.push(configEditorState('hub', { kind: 'slot-pick', slotId: 'slot1', pos: 'role' }));
   list.push(configEditorState('hub', { kind: 'plugin-pick', slotId: 'slot1', pos: 'role', idx: 0 }));
   list.push(configEditorState('hub', { kind: 'ai-pick', slotId: 'slot1' }));
+  // F6（04 §4）：快速对战屏的**两种**可达态 —— 有内联帧（步进/轨迹/AI 查看器按钮）与
+  //   无内联帧但有对局 id（「读取本场回放」按钮）。二者互斥，故必须都纳入渲染集合，
+  //   否则 viewer-load-replay 会判成"注册了但没入口"。
+  list.push(quickState({ frames: QUICK_FRAMES, battleId: 'b_fe6', index: 0 }));
+  list.push(quickState({ frames: null, battleId: 'b_fe6', index: 0 }));
+  // F6：AI 逻辑查看器弹窗（只读；非管理员态也可打开）
+  const aiLogic = quickState({ frames: QUICK_FRAMES, battleId: 'b_fe6', index: 0 });
+  aiLogic.viewer.configs = CONFIGS_ENVELOPE;
+  aiLogic.viewer.ai = AI_ENVELOPE;
+  aiLogic.modal = { kind: 'ai-logic' };
+  list.push(aiLogic);
   return list;
 }
 

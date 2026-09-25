@@ -45,7 +45,10 @@
   var BOX_TIMES_DEFAULT = 1;
   // F3：屏内弹窗种类（03 §3.7/§3.8；至多一个）。
   //   提交③ 新增两级选择弹窗：slot-pick（角色/技能模板）· plugin-pick（某插槽的插件）· ai-pick（AI 库）
-  var MODAL_KINDS = Object.freeze(['item-detail', 'config', 'slot-pick', 'plugin-pick', 'ai-pick']);
+  //   F6 新增 ai-logic（AI 逻辑查看器：只读展示我方 AI 程序树 + 本帧执行轨迹；04 §3.3）
+  var MODAL_KINDS = Object.freeze(['item-detail', 'config', 'slot-pick', 'plugin-pick', 'ai-pick', 'ai-logic']);
+  // F6：战斗查看器的**侧位**（帧里 players.<side> / aiTrace[].owner 的取值；04 §3.2/§3.4）
+  var VIEWER_OWNERS = Object.freeze(['p1', 'p2']);
   // F3：配置弹窗里的**位置键**（03 §3.7 逐位置：角色模板 / 角色插槽 / 技能1..3 / 技能插槽 / 战斗AI）。
   //   `skillN` 表示第 N 个技能（0 起）；插件位置在 `pos` 之外另带 `idx`（插槽序号）。
   var CONFIG_POSITIONS = Object.freeze(['role', 'skill0', 'skill1', 'skill2', 'ai']);
@@ -75,6 +78,20 @@
     return { data: null, ai: null, draft: null, dirty: false };
   }
 
+  // F6：快速对战（04 §7）—— 只存**最近一次 POST /quick/run 的响应信封**（投影全在 format.js）
+  function emptyQuick() {
+    return { envelope: null };
+  }
+
+  // F6/F7 共用：战斗查看器（04 §7）—— `frames` = 帧数组（来自内联帧或 GET /replay/:id）、
+  //   `index` = 帧游标、`source` = 数据来源（`quick`/`tournament`/`replay`）、`battleId` = 当前对局 id、
+  //   `traceOwner` = 看哪一侧的 AI 轨迹、`configs` = AI 逻辑查看器专用的 GET /me/configs 信封
+  //   （**刻意不共用 `state.configs`**：那一份属于配置编辑器，写入会丢弃未保存的草稿，见 04 §2 反驳 3）、
+  //   `replay` = GET /replay/:id 的原样信封（无内联帧时的兜底来源）。
+  function emptyViewer() {
+    return { frames: null, index: 0, source: null, battleId: null, traceOwner: 'p1', configs: null, ai: null, replay: null };
+  }
+
   // 初始状态（01-auth.md §7.1 + 02-accounts.md §7 + 03 §7）
   function initialState() {
     return {
@@ -94,6 +111,8 @@
       box: { times: String(BOX_TIMES_DEFAULT), result: null },
       configs: emptyConfigs(),
       settings: { nickname: '', result: null },
+      quick: emptyQuick(),      // F6
+      viewer: emptyViewer(),    // F6（F7 共用）
     };
   }
 
@@ -242,6 +261,50 @@
         return Object.assign({}, state, {
           settings: { nickname: strOf(action.nickname), result: action.result || null },
         });
+      /* ----- F6：快速对战 + 战斗查看器（04 §7） ----- */
+      // 快速对战响应整包（POST /quick/run 的**响应信封**；投影全在 format.js）
+      case 'quick.set':
+        return Object.assign({}, state, { quick: { envelope: action.envelope || null } });
+      // 查看器换数据源（新对局/读回放）：游标归零，其余侧位与配置信封保持
+      case 'viewer.set':
+        return Object.assign({}, state, {
+          viewer: Object.assign({}, state.viewer, {
+            frames: Array.isArray(action.frames) ? action.frames : null,
+            index: 0,
+            source: action.source === undefined ? null : action.source,
+            battleId: action.battleId === undefined ? null : action.battleId,
+          }),
+        });
+      // 帧游标（动作层负责夹取范围；这里只做非负整数兜底，防止脏值把投影打崩）
+      case 'viewer.frame.set': {
+        var idx = intOr(action.index, state.viewer.index);
+        return Object.assign({}, state, { viewer: Object.assign({}, state.viewer, { index: idx < 0 ? 0 : idx }) });
+      }
+      // 轨迹侧位（只接受 p1/p2）
+      case 'viewer.trace.set':
+        return Object.assign({}, state, {
+          viewer: Object.assign({}, state.viewer, {
+            traceOwner: VIEWER_OWNERS.indexOf(action.owner) === -1 ? state.viewer.traceOwner : action.owner,
+          }),
+        });
+      // AI 逻辑查看器专用的配置信封（**不写 state.configs**：那一份属于配置编辑器）
+      case 'viewer.configs.set':
+        return Object.assign({}, state, {
+          viewer: Object.assign({}, state.viewer, { configs: action.envelope || null }),
+        });
+      // AI 逻辑查看器专用的 AI 库信封（把 aiId 显示成名字；同由 DB 之外的出口取）
+      case 'viewer.ai.set':
+        return Object.assign({}, state, {
+          viewer: Object.assign({}, state.viewer, { ai: action.envelope || null }),
+        });
+      // 读回放得到的信封（无内联帧时的兜底来源）
+      case 'viewer.replay.set':
+        return Object.assign({}, state, {
+          viewer: Object.assign({}, state.viewer, { replay: action.envelope || null }),
+        });
+      // 会话切换/登出：清空战斗态（不残留上一个账号的对局）
+      case 'viewer.clear':
+        return Object.assign({}, state, { quick: emptyQuick(), viewer: emptyViewer() });
       // 02-accounts.md §7：管理员令牌（仅内存；空串 = 未填）
       case 'admin.token.set':
         return Object.assign({}, state, { adminToken: strOf(action.value) });
@@ -319,6 +382,7 @@
     ADMIN_DEFAULT_COUNT: ADMIN_DEFAULT_COUNT,
     WAREHOUSE_BUCKETS: WAREHOUSE_BUCKETS,
     MODAL_KINDS: MODAL_KINDS,
+    VIEWER_OWNERS: VIEWER_OWNERS,
     CONFIG_POSITIONS: CONFIG_POSITIONS,
     SKILL_SLOTS: SKILL_SLOTS,
     BOX_TIMES_FIELD: BOX_TIMES_FIELD,
@@ -332,6 +396,8 @@
     emptyAdmin: emptyAdmin,
     emptyWarehouse: emptyWarehouse,
     emptyConfigs: emptyConfigs,
+    emptyQuick: emptyQuick,
+    emptyViewer: emptyViewer,
     reduce: reduce,
     createStore: createStore,
   };

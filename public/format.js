@@ -29,8 +29,8 @@
   // 每桶上限缺省值（正常一律以响应的 data.caps 为准；缺失时才回落，避免整屏崩）
   var CAP_FALLBACK = 500;
   // F3：四个空页的标题与计划批次（03 §3.6；FR-12）
+  //   F6 起 `quick` 已是真屏（04 分册）；`tournament`/`leaderboard` 留给 F7
   var EMPTY_PAGES = Object.freeze({
-    quick: { title: '快速对战', batch: 'F6' },
     tournament: { title: '锦标赛', sub: '= 排位赛', batch: 'F7' },
     leaderboard: { title: '排行榜', batch: 'F7' },
     'ai-editor': { title: 'AI 编辑', batch: 'F5' },
@@ -1108,6 +1108,513 @@
     };
   }
 
+  /* ---------- F6：快速对战 + 战斗查看器 + AI 逻辑查看器（04 §3/§5） ----------
+   *
+   * 本段是**帧 → 文字**的投影单一真源（总纲 §1.5）：只读服务端结果，不做任何命中/伤害/胜负推演。
+   * 所有信封级字段经本文件的字段读取原语读取（路径清单登记在 contract.AUTH_FIELD_CONTRACT）；
+   * 帧/AI 轨迹的子对象字段经同一原语读取（登记在 contract.FRAME_*，由 QB-6 三方核对）。
+   */
+
+  // AI 节点类型（16 类；与 `server/ai/ast.js` 的 `NODE_TYPES` 逐值相等 —— QB-7 机器核对）
+  var AI_NODE_TYPES = Object.freeze(['literal', 'get', 'var', 'set', 'getVar', 'arith', 'cmp', 'logic',
+    'random', 'if', 'loop', 'break', 'function', 'call', 'action', 'seq']);
+  // 程序树最大显示深度（防病态程序把屏幕打爆；04 §8 Q-11）
+  var AI_MAX_DEPTH = 32;
+
+  var QUICK_IDLE_TEXT = '（尚未发起对局：点「开始快速对战」）';
+  var QUICK_NO_FRAMES_TEXT = '（本场没有帧数据：点「读取本场回放」）';
+  var QUICK_NO_ID_TEXT = '（本场没有帧数据，且响应未带回对局 id：无法读取回放）';
+  var QUICK_NO_TRACE_TEXT = '（本帧无 AI 轨迹）';
+  var AI_LOGIC_TRACE_NOTE = '对手 AI 只提供执行轨迹、不提供源码（D-167 / SEC-33）';
+  var AI_LOGIC_NO_CONFIGS = '（尚未读取到出战配置：点「AI 逻辑查看器」重新读取）';
+  var AI_LOGIC_NO_AI = '（该配置没有 AI）';
+  var REPLAY_OK_TEXT = '已读取回放';
+  var AI_LOGIC_OK_TEXT = 'AI 逻辑查看器已就绪（只读：程序树 + 本帧执行轨迹）';
+
+  // 快速对战专属失败指引（04 §6）：补上"下一步怎么办"，其余 code 走 F1 的 HINTS
+  var QUICK_HINTS = Object.freeze({
+    no_opponent: '稍后再试（可先注入调试 bot 或注册更多账号）',
+    no_active_config: '先到「出战配置1」装配并激活',
+    loadout_invalid: '出战配置引用的物品可能已变动，请到配置屏重新保存',
+    replay_expired: '回放已过期（快照已淘汰或引擎/数据版本不符）',
+    replay_forbidden: '该回放只对参战双方开放',
+    store_not_found: '该账号档案不存在或已被删除',
+  });
+
+  function quickNoticeText(env) {
+    var code = errorCodeOf(env);
+    var extra = QUICK_HINTS[code] === undefined ? '' : QUICK_HINTS[code];
+    var base = noticeText(env);
+    return extra === '' || base.indexOf(extra) !== -1 ? base : base + '（' + extra + '）';
+  }
+
+  // 绝对口径 → 用户视角（快速对战/锦标赛里请求者恒为 p1：实测 data.opponent 即 p2）
+  function battleWinnerText(winner) {
+    if (winner === 'p1') return '你赢了';
+    if (winner === 'p2') return '你输了';
+    if (winner === 'draw') return '平局';
+    if (winner === 'invalid') return '无效对局（对手快照不可用）';
+    return '未知结果';
+  }
+
+  // 帧内一律用**绝对侧位**（p1=我方/进攻方，p2=对手/防守方），避免"镜像坐标系"误读
+  function absoluteWinnerText(winner) {
+    if (winner === 'p1') return 'p1（我方）';
+    if (winner === 'p2') return 'p2（对手）';
+    if (winner === 'draw') return '平局';
+    if (winner === 'invalid') return '无效';
+    return '未知';
+  }
+
+  function signedText(v) { return typeof v === 'number' && isFinite(v) ? (v >= 0 ? '+' : '') + String(v) : '—'; }
+  function percentText(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    return String(Math.round(v * 1000) / 10) + '%';
+  }
+  function dirText(dir) { return dir === 1 ? '右' : (dir === -1 ? '左' : '—'); }
+
+  function actionText(action) {
+    var kind = str(pick(action, 'kind'));
+    if (kind === null) return '未知';
+    var dir = pick(action, 'dir');
+    var sid = str(pick(action, 'sid'));
+    if (kind === 'move') return '移动' + dirText(dir);
+    if (kind === 'dodge') return '闪避' + dirText(dir);
+    if (kind === 'forced_move') return '被推' + dirText(dir) + '（' + num(pick(action, 'cells')) + ' 格）';
+    if (kind === 'cast') return '释放' + or(sid, '技能');
+    if (kind === 'displacement') return '位移' + or(sid, '技能') + ' ' + dirText(dir);
+    if (kind === 'defend') return '格挡';
+    if (kind === 'turn') return '转身';
+    if (kind === 'wait') return '待机';
+    return kind;
+  }
+
+  function effectsText(effects) {
+    var list = arrayOf(effects);
+    if (list.length === 0) return '无';
+    return list.map(function (effect) {
+      var displacement = pick(effect, 'displacement');
+      return or(pick(effect, 'kind'), '效果') + '（' + or(pick(effect, 'stat'), '?')
+        + signedText(pick(effect, 'delta'))
+        + (typeof displacement === 'number' && isFinite(displacement) && displacement !== 0
+          ? '，位移' + signedText(displacement) : '')
+        + '，剩' + num(pick(effect, 'remaining')) + '）';
+    }).join('、');
+  }
+
+  function stateTextOf(player) {
+    var flags = [];
+    if (pick(player, 'defending') === true) flags.push('格挡中');
+    if (pick(player, 'dodging') === true) flags.push('闪避中');
+    if (pick(player, 'fullDodge') === true) flags.push('完全闪避');
+    var eff = effectsText(pick(player, 'effects'));
+    return (flags.length === 0 ? '无' : flags.join('/')) + (eff === '无' ? '' : ' · buff ' + eff);
+  }
+
+  function sideLineText(label, player) {
+    return label + '：位置 ' + num(pick(player, 'fromX')) + '→' + num(pick(player, 'toX'))
+      + ' 朝向 ' + (pick(player, 'facing') === -1 ? '-1（向左）' : (pick(player, 'facing') === 1 ? '+1（向右）' : '—'))
+      + ' · hp ' + num(pick(player, 'hp')) + '/' + num(pick(player, 'maxHp'))
+      + ' · mp ' + num(pick(player, 'mp')) + '/' + num(pick(player, 'maxMp'))
+      + ' · sp ' + num(pick(player, 'sp')) + '/' + num(pick(player, 'maxSp'))
+      + ' · atk ' + num(pick(player, 'atk')) + ' · def ' + num(pick(player, 'def'))
+      + ' · 行动 ' + actionText(pick(player, 'action'))
+      + ' · 状态 ' + stateTextOf(player);
+  }
+
+  function baseLineText(base) {
+    return 'hp ' + num(pick(base, 'hp')) + '/' + num(pick(base, 'maxHp')) + '（def ' + num(pick(base, 'def')) + '）';
+  }
+
+  function bulletLineText(bullet) {
+    var outcome = str(pick(bullet, 'outcome'));
+    var tail = '';
+    if (outcome === 'hit') tail = '命中 ' + or(pick(bullet, 'hitTarget'), '?');
+    else if (outcome === 'collide') {
+      tail = '对撞 ' + or(pick(bullet, 'collideWith'), '?')
+        + (str(pick(bullet, 'collideWinner')) === null ? '' : '（胜者 ' + str(pick(bullet, 'collideWinner')) + '）');
+    } else if (outcome === 'expire') tail = '消散';
+    else tail = or(outcome, '未知结局');
+    if (pick(bullet, 'collided') === true) tail += '·已对撞';
+    if (pick(bullet, 'expired') === true && outcome !== 'expire') tail += '·已消散';
+    return '弹幕 ' + or(pick(bullet, 'uid'), '?') + '（' + or(pick(bullet, 'owner'), '?') + '，'
+      + or(pick(bullet, 'btype'), '?') + '，dir ' + dirText(pick(bullet, 'dir'))
+      + '，v ' + num(pick(bullet, 'v')) + '，长 ' + num(pick(bullet, 'len'))
+      + '，等级 ' + num(pick(bullet, 'level')) + '）'
+      + num(pick(bullet, 'spawnX')) + '→' + num(pick(bullet, 'endX')) + ' ' + tail
+      + (pick(bullet, 'falloffFactor') === undefined || pick(bullet, 'falloffFactor') === null
+        ? '' : '（衰减 ' + num(pick(bullet, 'falloffFactor')) + '）');
+  }
+
+  function damageLineText(damage) {
+    return '伤害：' + or(pick(damage, 'target'), '?') + ' -' + num(pick(damage, 'amount'))
+      + ' @' + num(pick(damage, 'atX')) + '（' + or(pick(damage, 'kind'), '?')
+      + '，来源 ' + or(pick(damage, 'attacker'), '?') + '/' + or(pick(damage, 'srcUid'), '?') + '）'
+      + (pick(damage, 'crit') === true ? ' 暴击×' + num(pick(damage, 'critM')) : '')
+      + (pick(damage, 'backstab') === true ? ' 背击×' + num(pick(damage, 'backM')) : '')
+      + (pick(damage, 'dodged') === true ? '（被闪避）' : '');
+  }
+
+  // 单帧 → 文字行数组（只读；末帧才有 verdict）
+  function frameLines(frame, index, total) {
+    if (frame === null || frame === undefined || typeof frame !== 'object') {
+      return ['第 ' + String(index + 1) + '/' + String(total) + ' 帧：数据缺失'];
+    }
+    var diff = pick(frame, 'diff');
+    var out = ['第 ' + String(index + 1) + '/' + String(total) + ' 帧（tick ' + num(pick(frame, 'tick')) + '）'];
+    var players = pick(diff, 'players');
+    out.push(sideLineText('我方 p1', pick(players, 'p1')));
+    out.push(sideLineText('对手 p2', pick(players, 'p2')));
+    var bases = pick(diff, 'bases');
+    out.push('基地：p1 ' + baseLineText(pick(bases, 'p1')) + ' · p2 ' + baseLineText(pick(bases, 'p2')));
+    arrayOf(pick(diff, 'bullets')).forEach(function (b) { out.push(bulletLineText(b)); });
+    var collision = pick(diff, 'collision');
+    if (collision !== null && collision !== undefined) {
+      out.push('碰撞：接触点 ' + num(pick(collision, 'contactX')) + '（t=' + num(pick(collision, 't')) + '）');
+    }
+    arrayOf(pick(diff, 'baseHits')).forEach(function (hit) {
+      out.push('撞基地：' + or(pick(hit, 'owner'), '?') + ' 被 ' + or(pick(hit, 'by'), '?')
+        + ' 撞 @' + num(pick(hit, 'atX')));
+    });
+    arrayOf(pick(diff, 'bulletHits')).forEach(function (hit) {
+      out.push('弹幕命中：' + or(pick(hit, 'uid'), '?') + ' → ' + or(pick(hit, 'target'), '?')
+        + ' @' + num(pick(hit, 'atX')));
+    });
+    arrayOf(pick(diff, 'damages')).forEach(function (d) { out.push(damageLineText(d)); });
+    var verdict = pick(diff, 'verdict');
+    if (verdict !== null && verdict !== undefined) {
+      out.push('判决：' + absoluteWinnerText(pick(verdict, 'winner')) + '（phase=' + or(pick(verdict, 'phase'), '?') + '）');
+    }
+    return out;
+  }
+
+  function traceEntriesOf(frame, owner) {
+    var list = arrayOf(pick(pick(frame, 'diff'), 'aiTrace'));
+    var out = [];
+    for (var i = 0; i < list.length; i++) if (str(pick(list[i], 'owner')) === owner) out.push(list[i]);
+    return out;
+  }
+
+  function traceEntryText(entry) {
+    var path = or(pick(entry, 'path'), '?');
+    var result = str(pick(entry, 'result'));
+    var depth = numOr(pick(entry, 'depth'), 1);
+    var pad = '';
+    for (var i = 1; i < depth && i < 8; i++) pad += '· ';
+    return pad + '#' + num(pick(entry, 'seq')) + ' ' + or(pick(entry, 'owner'), '?') + ' ' + path
+      + ' ' + or(pick(entry, 'nodeType'), '?') + (result === null ? '' : ' → ' + result);
+  }
+
+  function traceSummaryText(frame, owner) {
+    var label = owner === 'p2' ? '对手(防守方)' : '我方(进攻方)';
+    var list = frame === null || frame === undefined ? [] : traceEntriesOf(frame, owner);
+    if (list.length === 0) return label + ' AI 本帧轨迹：' + QUICK_NO_TRACE_TEXT;
+    return label + ' AI 本帧轨迹（' + String(list.length) + ' 条）：'
+      + list.map(traceEntryText).join(' ｜ ');
+  }
+
+  // 帧数组与游标（查看器唯一数据源 = state.viewer）
+  function viewerFrames(state) {
+    return state && state.viewer ? arrayOf(state.viewer.frames) : [];
+  }
+
+  function viewerIndex(state, total) {
+    if (total <= 0) return 0;
+    var raw = state && state.viewer ? numOr(state.viewer.index, 0) : 0;
+    if (raw < 0) return 0;
+    return raw > total - 1 ? total - 1 : raw;
+  }
+
+  function quickResultText(env) {
+    return '对手 ' + or(pick(env, 'data.opponent.nickname'), '（无昵称）')
+      + '（' + or(pick(env, 'data.opponent.publicId'), '未知账号')
+      + '，段位 ' + or(pick(env, 'data.opponent.tier'), '?')
+      + '，' + (pick(env, 'data.opponent.isBot') === true ? 'bot' : '玩家') + '）'
+      + ' · 结果 ' + battleWinnerText(pick(env, 'data.winner'))
+      + ' · 积分 ' + num(pick(env, 'data.self.pointsBefore')) + '→' + num(pick(env, 'data.self.pointsAfter'))
+      + '（' + signedText(pick(env, 'data.self.delta')) + '）'
+      + ' · 胜率预测 ' + percentText(pick(env, 'data.self.winProbability'))
+      + ' · 共 ' + num(pick(env, 'data.ticks')) + ' tick';
+  }
+
+  function quickPoolText(env) {
+    return '抽池窗口 ' + num(pick(env, 'data.window'))
+      + ' · 对手冷却权重 ' + num(pick(env, 'data.opponentWeight'))
+      + ' · 回满小时 ' + num(pick(env, 'data.recoveryHours'))
+      + ' · 零和 ' + yesNo(pick(env, 'data.zeroSum'), '是', '否')
+      + ' · 本次为重复对局 ' + yesNo(pick(env, 'data.duplicate'), '是', '否');
+  }
+
+  function quickOpponentPointsText(env) {
+    return '对手积分 ' + num(pick(env, 'data.opponent.pointsBefore')) + '→'
+      + num(pick(env, 'data.opponent.pointsAfter'))
+      + '（' + signedText(pick(env, 'data.opponent.delta')) + '）'
+      + ' · 对局 id ' + or(pick(env, 'data.battleId'), '—')
+      + '（回放 id ' + or(pick(env, 'data.replayId'), '—') + '）';
+  }
+
+  /* ---------- F6：AI 逻辑查看器（程序树 + 本帧执行标记） ---------- */
+
+  function indentOf(depth) {
+    var pad = '';
+    for (var i = 0; i < depth; i++) pad += '  ';
+    return pad;
+  }
+
+  // 表达式 → 文字（只覆盖 16 类节点里的表达式类；未知类型原样打印类型名）
+  function exprText(node) {
+    if (node === null || node === undefined || typeof node !== 'object') return '?';
+    var type = str(pick(node, 'type'));
+    if (type === 'literal') return JSON.stringify(pick(node, 'value'));
+    if (type === 'get') return or(pick(node, 'path'), '?');
+    if (type === 'getVar') return or(pick(node, 'name'), '?');
+    if (type === 'arith' || type === 'cmp' || type === 'logic') {
+      return '(' + exprText(pick(node, 'left')) + ' ' + or(pick(node, 'op'), '?') + ' '
+        + exprText(pick(node, 'right')) + ')';
+    }
+    if (type === 'random') return 'random(' + exprText(pick(node, 'prob')) + ')';
+    if (type === 'call') return or(pick(node, 'name'), '?') + '()';
+    return or(type, '未知节点');
+  }
+
+  // 语句节点 → 缩进文本行（`path` 与帧里 aiTrace[].path 同一语法；分支标题行 path=null 永不标记）
+  function walkProgramNode(node, path, depth, out) {
+    if (out.length > 200) return;
+    if (depth > AI_MAX_DEPTH) {
+      out.push({ path: null, text: indentOf(depth) + '…（超出显示深度）' });
+      return;
+    }
+    if (node === null || node === undefined || typeof node !== 'object') {
+      out.push({ path: null, text: indentOf(depth) + '(空)' });
+      return;
+    }
+    var type = str(pick(node, 'type'));
+    if (type === 'seq') {
+      var statements = arrayOf(pick(node, 'statements'));
+      if (statements.length === 0) out.push({ path: null, text: indentOf(depth) + '(空语句块)' });
+      for (var i = 0; i < statements.length; i++) {
+        walkProgramNode(statements[i], path + '.s[' + i + ']', depth, out);
+      }
+      return;
+    }
+    if (type === 'if') {
+      out.push({ path: path, text: indentOf(depth) + 'if ' + exprText(pick(node, 'cond')) });
+      out.push({ path: null, text: indentOf(depth) + '  then:' });
+      walkProgramNode(pick(node, 'then'), path + '.then', depth + 2, out);
+      var other = pick(node, 'else');
+      if (other !== null && other !== undefined) {
+        out.push({ path: null, text: indentOf(depth) + '  else:' });
+        walkProgramNode(other, path + '.else', depth + 2, out);
+      }
+      return;
+    }
+    if (type === 'random') {
+      out.push({ path: path, text: indentOf(depth) + 'random ' + exprText(pick(node, 'prob')) });
+      out.push({ path: null, text: indentOf(depth) + '  then:' });
+      walkProgramNode(pick(node, 'then'), path + '.then', depth + 2, out);
+      var rElse = pick(node, 'else');
+      if (rElse !== null && rElse !== undefined) {
+        out.push({ path: null, text: indentOf(depth) + '  else:' });
+        walkProgramNode(rElse, path + '.else', depth + 2, out);
+      }
+      return;
+    }
+    if (type === 'loop') {
+      var kind = str(pick(node, 'kind'));
+      out.push({
+        path: path,
+        text: indentOf(depth) + (kind === 'count'
+          ? 'loop count ×' + exprText(pick(node, 'times'))
+          : 'loop while ' + exprText(pick(node, 'cond'))),
+      });
+      walkProgramNode(pick(node, 'body'), path + '.body', depth + 1, out);
+      return;
+    }
+    if (type === 'function') {
+      out.push({ path: path, text: indentOf(depth) + 'function ' + or(pick(node, 'name'), '?') + ':' });
+      walkProgramNode(pick(node, 'body'), path + '.body', depth + 1, out);
+      return;
+    }
+    if (type === 'action') {
+      out.push({ path: path, text: indentOf(depth) + 'action ' + or(pick(node, 'name'), '?') });
+      return;
+    }
+    if (type === 'call') {
+      out.push({ path: path, text: indentOf(depth) + 'call ' + or(pick(node, 'name'), '?') + '()' });
+      return;
+    }
+    if (type === 'var') {
+      out.push({ path: path, text: indentOf(depth) + 'var ' + or(pick(node, 'name'), '?') + ' = ' + exprText(pick(node, 'value')) });
+      return;
+    }
+    if (type === 'set') {
+      out.push({ path: path, text: indentOf(depth) + 'set ' + or(pick(node, 'name'), '?') + ' = ' + exprText(pick(node, 'value')) });
+      return;
+    }
+    if (type === 'break') {
+      out.push({ path: path, text: indentOf(depth) + 'break' });
+      return;
+    }
+    // 兜底：类型名原样打印（**不隐藏**未知节点，便于发现契约漂移）
+    out.push({ path: path, text: indentOf(depth) + or(type, '未知节点') });
+  }
+
+  function programLines(program) {
+    var out = [];
+    if (program === null || program === undefined || typeof program !== 'object') return out;
+    walkProgramNode(pick(program, 'body'), 'body', 0, out);
+    return out;
+  }
+
+  // 本帧执行过的节点加标记（path 与 aiTrace[].path 同语法）
+  function markedProgramLines(program, executed) {
+    return programLines(program).map(function (line) {
+      if (line.path !== null && executed[line.path] === true) return line.text + '  ← 本帧执行';
+      return line.text;
+    });
+  }
+
+  function viewerConfigsEnvelope(state) {
+    return state && state.viewer ? state.viewer.configs : null;
+  }
+
+  function viewerAiEnvelope(state) {
+    return state && state.viewer ? state.viewer.ai : null;
+  }
+
+  function activeSlotOf(env) {
+    var slots = arrayOf(pick(env, 'data.slots'));
+    var activeId = str(pick(env, 'data.activeSlotId'));
+    for (var i = 0; i < slots.length; i++) {
+      if (str(pick(slots[i], 'slotId')) === activeId) return slots[i];
+    }
+    return slots.length > 0 ? slots[0] : null;
+  }
+
+  function aiNameOf(state, loadout) {
+    var aiId = loadout === null || loadout === undefined ? null : str(pick(loadout, 'aiId'));
+    var items = arrayOf(pick(viewerAiEnvelope(state), 'data.items'));
+    for (var i = 0; i < items.length; i++) {
+      if (str(pick(items[i], 'aiId')) === aiId) return or(pick(items[i], 'name'), aiId);
+    }
+    return aiId === null ? '（未登记 aiId）' : aiId;
+  }
+
+  function executedPathsOf(frame, owner) {
+    var out = {};
+    traceEntriesOf(frame, owner).forEach(function (entry) {
+      var path = str(pick(entry, 'path'));
+      if (path !== null) out[path] = true;
+    });
+    return out;
+  }
+
+  // AI 逻辑查看器弹窗（04 §3.3）：我方程序树（带本帧执行标记）+ 双方轨迹（对手只有轨迹）
+  function aiLogicLines(state) {
+    var out = [];
+    var env = viewerConfigsEnvelope(state);
+    var frames = viewerFrames(state);
+    var idx = viewerIndex(state, frames.length);
+    var frame = frames.length > 0 ? frames[idx] : null;
+    var mine = frame === null ? [] : traceEntriesOf(frame, 'p1');
+    var theirs = frame === null ? [] : traceEntriesOf(frame, 'p2');
+    if (env === null || !isOk(env)) {
+      out.push(AI_LOGIC_NO_CONFIGS);
+    } else {
+      var slot = activeSlotOf(env);
+      var loadout = slot === null ? null : pick(slot, 'loadout');
+      out.push('我方 AI：' + (loadout === null || loadout === undefined ? AI_LOGIC_NO_AI : aiNameOf(state, loadout)));
+      var program = loadout === null || loadout === undefined ? null : pick(loadout, 'ai');
+      if (program === null || program === undefined || typeof program !== 'object') {
+        out.push(AI_LOGIC_NO_AI);
+      } else {
+        out.push('出战槽：' + or(slot === null ? null : pick(slot, 'slotId'), '?')
+          + '　本帧：第 ' + String(idx + 1) + '/' + String(frames.length) + ' 帧');
+        out.push('程序（`← 本帧执行` = 该节点本帧被求值）：');
+        out = out.concat(markedProgramLines(program, executedPathsOf(frame, 'p1')));
+      }
+    }
+    out.push('本帧执行轨迹（我方 ' + String(mine.length) + ' 条 / 对手 ' + String(theirs.length) + ' 条）：');
+    if (mine.length + theirs.length === 0) out.push(QUICK_NO_TRACE_TEXT);
+    else mine.concat(theirs).forEach(function (entry) { out.push(traceEntryText(entry)); });
+    out.push(AI_LOGIC_TRACE_NOTE);
+    return out;
+  }
+
+  // 动作层需要的"取载荷 + 成功文案"投影（动作层不读响应字段：UI-9；故一律经这里）
+  function quickFrames(env) {
+    var frames = pick(env, 'data.frames');
+    return Array.isArray(frames) ? frames : null;
+  }
+
+  function quickBattleId(env) {
+    var id = str(pick(env, 'data.battleId'));
+    return id === null ? str(pick(env, 'data.replayId')) : id;
+  }
+
+  function quickOkText(env) {
+    return '快速对战完成：' + battleWinnerText(pick(env, 'data.winner'))
+      + '（积分 ' + signedText(pick(env, 'data.self.delta')) + '）';
+  }
+
+  function replayFrames(env) {
+    var frames = pick(env, 'data.frames');
+    return Array.isArray(frames) ? frames : null;
+  }
+
+  function replayOkText(env) {
+    var frames = replayFrames(env);
+    return REPLAY_OK_TEXT + ' ' + or(pick(env, 'data.id'), '?') + '：'
+      + String(frames === null ? 0 : frames.length) + ' 帧（'
+      + absoluteWinnerText(pick(env, 'data.winner')) + '，phase=' + or(pick(env, 'data.phase'), '?')
+      + '，共 ' + num(pick(env, 'data.ticks')) + ' tick）';
+  }
+
+  function quickViewModel(state, notice, busy) {
+    var env = state.quick ? state.quick.envelope : null;
+    var loaded = env !== null && isOk(env);
+    var frames = viewerFrames(state);
+    var total = frames.length;
+    var idx = viewerIndex(state, total);
+    var battleId = state.viewer ? str(state.viewer.battleId) : null;
+    var lines = [];
+    if (!loaded) {
+      lines.push(QUICK_IDLE_TEXT);
+    } else {
+      lines.push(quickPoolText(env));
+      lines.push(quickOpponentPointsText(env));
+      if (total === 0) lines.push(battleId === null ? QUICK_NO_ID_TEXT : QUICK_NO_FRAMES_TEXT);
+      else {
+        lines = lines.concat(frameLines(frames[idx], idx, total));
+        lines.push(traceSummaryText(frames[idx], state.viewer ? state.viewer.traceOwner : 'p1'));
+      }
+    }
+    var noFrames = total === 0;
+    var buttons = [
+      { action: 'quick-run', label: '开始快速对战', kind: 'button', disabled: busy },
+      { action: 'viewer-first', label: '第一帧', kind: 'button', disabled: busy || noFrames || idx === 0 },
+      { action: 'viewer-prev', label: '上一帧', kind: 'button', disabled: busy || noFrames || idx === 0 },
+      { action: 'viewer-next', label: '下一帧', kind: 'button', disabled: busy || noFrames || idx >= total - 1 },
+      { action: 'viewer-last', label: '最后一帧', kind: 'button', disabled: busy || noFrames || idx >= total - 1 },
+      { action: 'viewer-trace-p1', label: '看我方(进攻方)轨迹', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-trace-p2', label: '看对手(防守方)轨迹', kind: 'button', disabled: busy || noFrames },
+      { action: 'viewer-ai-logic', label: 'AI 逻辑查看器', kind: 'button', disabled: busy },
+    ];
+    if (noFrames && battleId !== null) {
+      buttons.push({ action: 'viewer-load-replay', label: '读取本场回放', kind: 'button', disabled: busy });
+    }
+    buttons.push({ action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy });
+    return vm('快速对战', {
+      notice: notice,
+      hint: '由服务端抽对手并内联完整战斗过程（D-167）；帧里 p1=我方(进攻方)、p2=对手(防守方)；'
+        + '玩家 AI 一律按 p1 坐标系书写，守方位由服务端镜像（D-164）',
+      result: loaded ? { kind: 'info', text: quickResultText(env) } : null,
+      lines: lines,
+      buttons: buttons,
+      modal: modalViewModel(state, busy),
+    });
+  }
+
   /* ---------- F3 §3.6：四个空页 ---------- */
 
   function emptyPageText(view) {
@@ -1167,6 +1674,15 @@
     if (modal.kind === 'slot-pick') return slotPickModal(state, modal, busy);
     if (modal.kind === 'plugin-pick') return pluginPickModal(state, modal, busy);
     if (modal.kind === 'ai-pick') return aiPickModal(state, modal, busy);
+    // F6：AI 逻辑查看器（只读；04 §3.3）
+    if (modal.kind === 'ai-logic') {
+      return {
+        title: 'AI 逻辑查看器',
+        hint: '只读：程序树 + 本帧执行轨迹（不提供编辑；AI 编辑见后续批次 F5）',
+        lines: aiLogicLines(state),
+        buttons: [closeButton(busy)],
+      };
+    }
     return configModal(state, modal, busy);
   }
 
@@ -1380,6 +1896,7 @@
     if (state.view === 'warehouse') return warehouseViewModel(state, notice, busy);
     if (state.view === 'box') return boxViewModel(state, notice, busy);
     if (state.view === 'settings') return settingsViewModel(state, notice, busy);
+    if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
     if (EMPTY_PAGES[state.view] !== undefined) return emptyPageViewModel(state, notice, busy);
 
     if (state.view === 'register') {
@@ -1529,6 +2046,38 @@
     configEditorRows: configEditorRows,
     emptyPageText: emptyPageText,
     emptyPageTitle: emptyPageTitle,
+    // F6：快速对战 + 战斗查看器 + AI 逻辑查看器（04 §3/§5；QB-1…QB-10 的断言对象）
+    battleWinnerText: battleWinnerText,
+    absoluteWinnerText: absoluteWinnerText,
+    quickNoticeText: quickNoticeText,
+    quickResultText: quickResultText,
+    quickPoolText: quickPoolText,
+    quickOpponentPointsText: quickOpponentPointsText,
+    frameLines: frameLines,
+    traceEntriesOf: traceEntriesOf,
+    traceEntryText: traceEntryText,
+    traceSummaryText: traceSummaryText,
+    viewerFrames: viewerFrames,
+    viewerIndex: viewerIndex,
+    programLines: programLines,
+    markedProgramLines: markedProgramLines,
+    aiLogicLines: aiLogicLines,
+    activeSlotOf: activeSlotOf,
+    aiNameOf: aiNameOf,
+    executedPathsOf: executedPathsOf,
+    AI_NODE_TYPES: AI_NODE_TYPES,
+    AI_MAX_DEPTH: AI_MAX_DEPTH,
+    AI_LOGIC_TRACE_NOTE: AI_LOGIC_TRACE_NOTE,
+    AI_LOGIC_OK_TEXT: AI_LOGIC_OK_TEXT,
+    quickFrames: quickFrames,
+    quickBattleId: quickBattleId,
+    quickOkText: quickOkText,
+    replayFrames: replayFrames,
+    replayOkText: replayOkText,
+    QUICK_IDLE_TEXT: QUICK_IDLE_TEXT,
+    QUICK_NO_FRAMES_TEXT: QUICK_NO_FRAMES_TEXT,
+    QUICK_NO_TRACE_TEXT: QUICK_NO_TRACE_TEXT,
+    REPLAY_OK_TEXT: REPLAY_OK_TEXT,
     modalViewModel: modalViewModel,
     viewModel: viewModel,
   };

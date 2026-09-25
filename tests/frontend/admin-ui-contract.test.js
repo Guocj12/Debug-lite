@@ -41,6 +41,9 @@ const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'g
   // 提交③：出战配置编辑器（03 §4）
   'config-save', 'config-activate', 'slot-pick', 'slot-set', 'ai-pick', 'ai-set',
   'plugin-pick', 'plugin-set', 'plugin-clear'];
+// F6（04 §4）：快速对战 + 战斗查看器 + AI 逻辑查看器 的 9 个非管理动作
+const F6_ACTIONS = ['quick-run', 'viewer-first', 'viewer-prev', 'viewer-next', 'viewer-last',
+  'viewer-trace-p1', 'viewer-trace-p2', 'viewer-ai-logic', 'viewer-load-replay'];
 
 const ROW = {
   playerId: 'pl_row0001', publicId: 'u_row0001', nickname: '行一', tier: 'common', points: 120,
@@ -111,6 +114,40 @@ function adminConfigState(modal) {
 
 function htmlFor(state) { return render.render(format.viewModel(state)); }
 
+// F6（04 §5.2）：快速对战屏的两种可达态（管理员态也要能渲染这些动作，AU-1 双向核对需要）
+const QUICK_FRAME = {
+  tick: 1,
+  diff: {
+    tick: 1,
+    players: {
+      p1: { fromX: 224, toX: 288, facing: 1, hp: 89, mp: 39, sp: 53, maxHp: 89, maxMp: 39, maxSp: 53, atk: 10, def: 9, defending: false, dodging: false, fullDodge: false, action: { kind: 'move', dir: 1 }, effects: [] },
+      p2: { fromX: 800, toX: 736, facing: -1, hp: 100, mp: 40, sp: 60, maxHp: 100, maxMp: 40, maxSp: 60, atk: 10, def: 8, defending: false, dodging: false, fullDodge: false, action: { kind: 'move', dir: -1 }, effects: [] },
+    },
+    bullets: [], bases: { p1: { hp: 100, maxHp: 100, def: 64 }, p2: { hp: 100, maxHp: 100, def: 64 } },
+    collision: null, baseHits: [], bulletHits: [], damages: [],
+    verdict: { winner: 'p1', phase: 'role' },
+    aiTrace: [{ tick: 1, owner: 'p1', seq: 0, path: 'body.s[0]', nodeType: 'if', phase: 'eval', depth: 1 }],
+  },
+};
+const QUICK_FRAMES = [QUICK_FRAME];
+const QUICK_ENVELOPE = {
+  ok: true,
+  data: {
+    battleId: 'b_fe6', seed: 7, winner: 'p1', ticks: 1, window: 100, opponentWeight: 1, recoveryHours: 4,
+    zeroSum: true, duplicate: false,
+    self: { pointsBefore: 0, pointsAfter: 12, delta: 12, winProbability: 0.5 },
+    opponent: { publicId: 'u_foe', nickname: '对手', tier: 'common', isBot: true, pointsBefore: 0, pointsAfter: -6, delta: -6 },
+    replayId: 'b_fe6', frames: QUICK_FRAMES,
+  },
+};
+
+function adminQuickState(opts) {
+  const state = adminState('quick');
+  state.quick.envelope = QUICK_ENVELOPE;
+  state.viewer.frames = opts.frames;
+  state.viewer.battleId = opts.battleId;
+  return state;
+}
 function attrValues(html, attr) {
   const out = new Set();
   for (const m of html.matchAll(new RegExp(attr + '="([^"]*)"', 'g'))) if (m[1] !== '') out.add(m[1]);
@@ -133,12 +170,15 @@ function adminRenderings() {
   list.push(htmlFor(adminConfigState({ kind: 'slot-pick', slotId: 'slot1', pos: 'role' })));
   list.push(htmlFor(adminConfigState({ kind: 'plugin-pick', slotId: 'slot1', pos: 'role', idx: 0 })));
   list.push(htmlFor(adminConfigState({ kind: 'ai-pick', slotId: 'slot1' })));
+  // F6（04 §4）：快速对战屏的两种互斥可达态（有内联帧 / 无内联帧但有对局 id）
+  list.push(htmlFor(adminQuickState({ frames: QUICK_FRAMES, battleId: 'b_fe6' })));
+  list.push(htmlFor(adminQuickState({ frames: null, battleId: 'b_fe6' })));
   return list;
 }
 
 test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交③后按实际值核对）', () => {
-  // F1 + F2 + F3（提交②/③）的三段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS])].sort();
+  // F1 + F2 + F3（提交②/③）+ F6 的四段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();
