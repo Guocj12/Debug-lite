@@ -36,7 +36,9 @@
   // F3：非 form 的屏内输入框（开箱次数 / 新昵称）—— 由 app.js 的 input 委托按名字路由到各自 reducer
   var BOX_TIMES_FIELD = 'boxTimes';
   var NICKNAME_FIELD = 'settingsNickname';
-  var SCREEN_FIELDS = Object.freeze([BOX_TIMES_FIELD, NICKNAME_FIELD]);
+  // F5/D-172：AI 编辑器的名称输入框（同样是非 form 的屏内输入框）
+  var AI_NAME_FIELD = 'aiName';
+  var SCREEN_FIELDS = Object.freeze([BOX_TIMES_FIELD, NICKNAME_FIELD, AI_NAME_FIELD]);
 
   // F3：仓库四桶（与 GET /me/warehouse 的 data.buckets 键逐条相等；03 §5.2）
   var WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
@@ -50,7 +52,16 @@
   // F6：战斗查看器的**侧位**（帧里 players.<side> / aiTrace[].owner 的取值；04 §3.2/§3.4）
   var VIEWER_OWNERS = Object.freeze(['p1', 'p2']);
   // F6：查看器里这帧"是哪来的"（必须被读取：跨屏残留时**不能**把别屏的帧当成本场 —— 审查 F6-1）
+  //   注：F5 的 AI 编辑器**不入此白名单**——试打已由用户裁决不做（裁决 ⑦），编辑器没有帧来源，
+  //   故"编辑器里的本帧执行标记"不适用（06-ai-editor.md §10 R-9）。
   var VIEWER_SOURCES = Object.freeze(['quick', 'tournament', 'replay']);
+
+  // F5/D-172：AI 编辑器的输入框命名前缀。字段名形如 `ai.<编辑器地址>.<字段键>`
+  //   （地址自带点与方括号，故字段键一律取**最后一段**；见 actions.js 的 aiFieldCommit）
+  var AI_FIELD_PREFIX = 'ai.';
+  function isAiField(name) {
+    return typeof name === 'string' && name.indexOf(AI_FIELD_PREFIX) === 0;
+  }
 
   // F7：锦标赛每页场次（总 10 场 → 2 页；05 §3.1）与排行榜每页人数（≤ 服务端单页上限 100；05 §3.2）
   var TOURNAMENT_PAGE_SIZE = 5;
@@ -113,6 +124,26 @@
     return { envelope: null, board: 'points', scope: 'global', offset: 0, limit: BOARD_PAGE_SIZE };
   }
 
+  // F5/D-172：AI 编辑器（06-ai-editor.md §4.1）—— 列表信封 + 编辑态（草稿/游标/未提交文本/校验结果）
+  //   `draft` 只在内存（不落 localStorage）；`validate` 是**服务端唯一判据**的回执（前端不做合法性判决）
+  function emptyAiEditor() {
+    return {
+      list: null,        // GET /me/ai 的完整信封
+      mode: 'list',      // 'list' | 'edit'
+      aiId: null,        // 正在编辑的库条目；null = 新建
+      status: 'ready',   // 条目状态（'ready' | 'draft'）
+      name: '',          // 名称输入（仅内存）
+      draft: null,       // 程序草稿（深拷贝；结构操作就地改的就是它）
+      cursor: 'body',    // 编辑器地址（当前选中节点）
+      texts: {},         // 未提交的输入框文本：字段名 → 字符串（提交后清）
+      validate: null,    // 校验信封（POST /me/ai/validate）
+      importOpen: false, // 「导入 JSON」屏内区块（FR-10）
+      importText: '',    // 导入用的多行文本（**唯一** textarea 用途，裁决 ③）
+      dirty: false,      // 有未保存改动
+      confirm: null,     // 屏内二次确认 {kind:'delete'|'discard', aiId?}
+    };
+  }
+
   // 初始状态（01-auth.md §7.1 + 02-accounts.md §7 + 03 §7）
   function initialState() {
     return {
@@ -136,6 +167,7 @@
       viewer: emptyViewer(),    // F6（F7 共用）
       tournament: emptyTournament(),  // F7
       board: emptyBoard(),            // F7
+      aiEditor: emptyAiEditor(),     // F5/D-172
     };
   }
 
@@ -173,11 +205,16 @@
         (action.fields || []).forEach(function (f) { if (FORM_FIELDS.indexOf(f) !== -1) form2[f] = ''; });
         return Object.assign({}, state, { form: form2 });
       }
-      // F3：非 form 的屏内输入框（开箱次数 / 新昵称）
+      // F3：非 form 的屏内输入框（开箱次数 / 新昵称）；F5：AI 编辑器名称
       case 'screen.form.set': {
         if (SCREEN_FIELDS.indexOf(action.field) === -1) return state;
         if (action.field === BOX_TIMES_FIELD) {
           return Object.assign({}, state, { box: Object.assign({}, state.box, { times: boxTimesOf(action.value) }) });
+        }
+        if (action.field === AI_NAME_FIELD) {
+          return Object.assign({}, state, {
+            aiEditor: Object.assign({}, state.aiEditor, { name: strOf(action.value), dirty: true }),
+          });
         }
         return Object.assign({}, state, { settings: Object.assign({}, state.settings, { nickname: strOf(action.value) }) });
       }
@@ -374,6 +411,72 @@
             offset: 0,
           }),
         });
+      // ---------- F5/D-172：AI 编辑器 ----------
+      // 列表（GET /me/ai 信封；投影在 format.js）
+      case 'ai.list.set':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { list: action.envelope || null }) });
+      // 打开编辑器：新建（aiId=null）或打开库内条目（带 name/program/status 初值）
+      case 'ai.editor.open':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, emptyAiEditor(), {
+            list: state.aiEditor.list,
+            mode: 'edit',
+            aiId: action.aiId === undefined ? null : action.aiId,
+            status: action.status === 'draft' ? 'draft' : 'ready',
+            name: strOf(action.name),
+            draft: action.program ? JSON.parse(JSON.stringify(action.program)) : null,
+            cursor: 'body',
+            dirty: action.dirty === true,
+          }),
+        });
+      // 关闭编辑器（回列表态；草稿丢弃——丢弃确认由 actions 层负责）
+      case 'ai.editor.close':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, emptyAiEditor(), { list: state.aiEditor.list }),
+        });
+      // 草稿整体替换（结构操作 / 导入 JSON 都走这条；一并清掉未提交文本）
+      case 'ai.draft.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, {
+            draft: action.program === undefined ? state.aiEditor.draft : action.program,
+            cursor: action.cursor === undefined ? state.aiEditor.cursor : action.cursor,
+            texts: {},
+            dirty: true,
+            // 草稿一变，上一次的校验结论就作废（避免"过期绿灯"）
+            validate: action.keepValidate === true ? state.aiEditor.validate : null,
+          }),
+        });
+      case 'ai.cursor.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { cursor: strOf(action.addr) || 'body' }),
+        });
+      case 'ai.name.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { name: strOf(action.value), dirty: true }),
+        });
+      case 'ai.status.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { status: action.status === 'draft' ? 'draft' : 'ready', dirty: true }),
+        });
+      // 未提交的输入框文本（输入时不重绘、也不提交；提交走 actions 的 ai-field-commit）
+      case 'ai.text.set': {
+        if (typeof action.field !== 'string' || action.field === '') return state;
+        var texts = Object.assign({}, state.aiEditor.texts);
+        texts[action.field] = strOf(action.value);
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { texts: texts }) });
+      }
+      case 'ai.validate.set':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { validate: action.envelope || null }) });
+      case 'ai.import.open':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { importOpen: true, importText: strOf(action.value) }),
+        });
+      case 'ai.import.set':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { importText: strOf(action.value) }) });
+      case 'ai.import.close':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { importOpen: false, importText: '' }) });
+      case 'ai.confirm.set':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { confirm: action.confirm || null }) });
       // 02-accounts.md §7：管理员令牌（仅内存；空串 = 未填）
       case 'admin.token.set':
         return Object.assign({}, state, { adminToken: strOf(action.value) });
@@ -457,6 +560,7 @@
     SKILL_SLOTS: SKILL_SLOTS,
     BOX_TIMES_FIELD: BOX_TIMES_FIELD,
     NICKNAME_FIELD: NICKNAME_FIELD,
+    AI_NAME_FIELD: AI_NAME_FIELD,
     SCREEN_FIELDS: SCREEN_FIELDS,
     BOX_TIMES_MAX: BOX_TIMES_MAX,
     BOX_TIMES_DEFAULT: BOX_TIMES_DEFAULT,
@@ -470,6 +574,9 @@
     emptyViewer: emptyViewer,
     emptyTournament: emptyTournament,
     emptyBoard: emptyBoard,
+    emptyAiEditor: emptyAiEditor,
+    AI_FIELD_PREFIX: AI_FIELD_PREFIX,
+    isAiField: isAiField,
     TOURNAMENT_PAGE_SIZE: TOURNAMENT_PAGE_SIZE,
     BOARD_PAGE_SIZE: BOARD_PAGE_SIZE,
     BOARD_ORDERS: BOARD_ORDERS,

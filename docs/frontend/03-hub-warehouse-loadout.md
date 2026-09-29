@@ -115,11 +115,14 @@
 - 按钮：`保存昵称`(settings-nickname-save)、`修改密码`(goto-password)、`登出`(logout)、`返回主界面`(goto-hub)。
 - 结果区：最近一次操作的结果文案。
 
-### 3.6 空页（F3 当时 4 个 → **F6 落地 `quick` 后剩 3 个**：`tournament` / `leaderboard` / `ai-editor`）
+### 3.6 空页（**F5 起已全部落地 → 占位页不再存在**）
 
-- 统一结构：标题（`锦标赛`（副标题 `= 排位赛`）/ `排行榜` / `AI 编辑`）+ 一行 `尚未实现（计划批次 F7/F5）` + `返回主界面`(goto-hub)。
-- **`quick` 已由 F6 实现为真屏**（`docs/frontend/04-quickmatch.md`）；F6 同时把它从 `format.js` 的 `EMPTY_PAGES` 表里移除。
-- **不做**任何请求；**不渲染**任何其它按钮。
+- 历史：F3 当时有 4 个空页（`quick`/`tournament`/`leaderboard`/`ai-editor`），结构 = 标题 + 一行
+  `尚未实现（计划批次 F#）` + `返回主界面`(goto-hub)，**不做任何请求**。
+- **`quick` 由 F6 落地**（`docs/frontend/04-quickmatch.md`）、**`tournament`/`leaderboard` 由 F7 落地**
+  （`docs/frontend/05-tournament.md`）、**`ai-editor` 由 F5 落地**（`docs/frontend/06-ai-editor.md`）。
+- 因此 `format.js` 的 `EMPTY_PAGES` 现在**为空对象**；`tests/frontend/hub-warehouse-flow.test.js` 的 WH-2
+  相应改为"空页已清零 + `ai-editor` 是真屏（进屏会取一次 `GET /me/ai`）"。
 
 ### 3.7 屏内弹窗：出战配置（`state.modal={kind:'config',slotId}`）
 
@@ -241,7 +244,7 @@
 | `me/warehouse` | `data.usage[uid].slotIds[]` | 仓库行"装配于配置几"（可多处引用） |
 | `me/warehouse` | `data.caps.{role,skill,rolePlugin,skillPlugin}` | 容量行 `n/500` |
 | `me/box` | `data.items[]` / `data.times` / `data.seed`（服务端生成，仅审计用） | 开箱结果 |
-| `me/ai` | `data.items[].{aiId,name,program}` / `data.caps.max=100` | AI 位置候选列表 |
+| `me/ai` | `data.items[].{aiId,name,program,status,updatedAt}` / `data.caps.max=100` | AI 位置候选列表（`status`/`updatedAt` 由 **F5/D-172** 追加：F5 的 AI 编辑器读它们做"草稿/正式"与"更新时间"展示；F3 的 ai-pick 只用 `aiId`+`name`） |
 | `me/warehouse/assemble` | `data.warehouse` / `data.usage` | 装配后回带 |
 | `me/configs/:id/activate` | `data.activeSlotId` | 出战标记更新 |
 

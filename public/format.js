@@ -12,11 +12,15 @@
  *   · 仓库四桶容量行 / 物品行（名字 + `[装配于配置N]`）/ 物品详情各行（03 §5.3 字段）；
  *   · 开箱结果逐件行（**不读也不显示 `data.seed`**，D-162）；
  *   · 屏内弹窗视图模型（FR-10：弹窗 = 屏内区块，标题 + 文字行 + 按钮）。
+ *
+ * F5/D-172 新增投影：
+ *   · AI 编辑器两态（列表 / 编辑）视图模型：程序树行（带**编辑器地址**）、当前节点表单、
+ *     表达式槽与语句块行、校验结果与逐条错误定位、草稿标记、被引用提示（06-ai-editor.md §3）。
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else { root.DL = root.DL || {}; root.DL.format = factory(); }
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'));
+  else { root.DL = root.DL || {}; root.DL.format = factory(root.DL.aiEditor); }
+})(typeof self !== 'undefined' ? self : this, function (aiEd) {
   'use strict';
 
   var PAGE_TITLE = 'Debug-Lite v3 · 账号';
@@ -28,12 +32,10 @@
   var BUCKET_ORDER = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
   // 每桶上限缺省值（正常一律以响应的 data.caps 为准；缺失时才回落，避免整屏崩）
   var CAP_FALLBACK = 500;
-  // F3：四个空页的标题与计划批次（03 §3.6；FR-12）
-  //   F6 起 `quick` 已是真屏（04 分册）；F7 起 `tournament`/`leaderboard` 已是真屏（05 分册）；
-  //   仅剩 `ai-editor`（F5：AI 编辑器）
-  var EMPTY_PAGES = Object.freeze({
-    'ai-editor': { title: 'AI 编辑', batch: 'F5' },
-  });
+  // F3：空页的标题与计划批次（03 §3.6；FR-12）
+  //   F6 起 `quick` 已是真屏；F7 起 `tournament`/`leaderboard` 已是真屏；
+  //   **F5 起 `ai-editor` 已是真屏 → 本表为空**（四个空页全部落地，FR-12 的占位页不再存在）
+  var EMPTY_PAGES = Object.freeze({});
   // 提交③（出战配置编辑器）的文案常量见下方 §3.7 段（CONFIG_ACTIVE_HINT / CONFIG_DRAFT_HINT …）
   var ITEM_GONE_TEXT = '（仓库中已找不到该物品，可能已被清理：点「刷新」重新读取）';
   var NO_DATA_TEXT = '（尚未读取到档案数据）';
@@ -785,9 +787,16 @@
   }
 
   // `ai-pick` 候选（GET /me/ai 的 data.items）
+  //   D-172/审查 F5-A：**必须**带上 `status` —— 否则草稿与正式条目在配置弹窗里长得一模一样、
+  //   都能点，用户要到"保存配置"时才吃 409（`ai_is_draft`）。带出来后由 `aiPickModal` 标灰并写明原因。
   function aiCandidatesOf(env) {
     return arrayOf(pick(env, 'data.items')).map(function (ai) {
-      return { aiId: str(pick(ai, 'aiId')), name: str(pick(ai, 'name')), program: pick(ai, 'program') };
+      return {
+        aiId: str(pick(ai, 'aiId')),
+        name: str(pick(ai, 'name')),
+        program: pick(ai, 'program'),
+        status: pick(ai, 'status') === 'draft' ? 'draft' : 'ready',
+      };
     });
   }
 
@@ -1081,15 +1090,22 @@
     if (env === null) lines.push(CONFIG_NO_AI_TEXT);
     else {
       var items = aiCandidatesOf(env);
+      var draftCount = 0;
       for (var i = 0; i < items.length; i += 1) {
+        // D-172/审查 F5-A：草稿**标灰 + 写明原因**（点了必然 409 `ai_is_draft`），不留给用户去撞
+        var isDraft = items[i].status === 'draft';
+        if (isDraft) draftCount += 1;
         rows.push({
           text: '',
           buttons: [{
-            action: 'ai-set', label: items[i].name === null ? '（未命名 AI）' : items[i].name, kind: 'button',
-            disabled: busy, slot: slotId, aiId: items[i].aiId,
+            action: 'ai-set',
+            label: (items[i].name === null ? '（未命名 AI）' : items[i].name) + (isDraft ? '（草稿：校验未通过，不能被出战配置选中）' : ''),
+            kind: 'button',
+            disabled: busy || isDraft, slot: slotId, aiId: items[i].aiId,
           }],
         });
       }
+      if (draftCount > 0) lines.push('其中 ' + String(draftCount) + ' 条是草稿（已标灰）：请到「AI编辑」里让它们通过校验后再选。');
     }
     if (active) lines.push(CONFIG_ACTIVE_HINT + '：候选里没有「' + EMPTY_LABEL + '」');
     else {
@@ -2052,6 +2068,428 @@
     return configModal(state, modal, busy);
   }
 
+  /* ---------- F5/D-172：AI 编辑器（06-ai-editor.md §3） ---------- */
+
+  var AI_LIST_IDLE_TEXT = '（尚未读取 AI 库：点「刷新」或「新建 AI」）';
+  var AI_LIST_HINT_TEXT = '「正式」的 AI 可以被出战配置选中；「草稿」是校验没通过时的暂存，不能被选中。';
+  var AI_EMPTY_LIST_TEXT = '（库里还没有 AI，点「新建 AI」开始）';
+  var AI_NO_DRAFT_TEXT = '（还没有打开任何 AI：从列表「打开」一条，或点「新建 AI」）';
+  var AI_EDIT_HINT_TEXT = '改一下就自动校验一次；校验不通过只能「存为草稿」。程序最外层是引擎自带的 while(true)，不用自己写。';
+  var AI_TREE_HEADING = '程序结构（每行的「│ 」表示它属于上一层的括号内；点右侧「选中」编辑该节点）：';
+  var AI_TREE_LEGEND = '图例：「那么：/否则：/循环体：」是分支与循环体的开头，其下缩进的就是里面的语句；「← 当前选中」= 你正在编辑的节点。';
+  var AI_ROOT_LABEL = 'while(true) 引擎隐式主循环（不可删除）';
+  var AI_NAME_LABEL = '名称（1~24 字符）';
+
+  function aiEditorOf(state) { return state.aiEditor ? state.aiEditor : null; }
+  function aiItemsOf(env) {
+    var items = pick(env, 'data.items');
+    return Array.isArray(items) ? items : [];
+  }
+  function aiCountText(env) {
+    if (env === null) return AI_LIST_IDLE_TEXT;
+    return 'AI 库：' + num(pick(env, 'data.count')) + '/' + num(pick(env, 'data.max'))
+      + '（草稿 ' + num(pick(env, 'data.draftCount')) + ' 条）';
+  }
+  function aiUsageSlots(env, aiId) {
+    var usage = pick(env, 'data.usage');
+    if (!usage || typeof usage !== 'object' || typeof aiId !== 'string' || aiId === '') return [];
+    var slots = usage[aiId];
+    return Array.isArray(slots) ? slots : [];
+  }
+  function aiUsageText(env, aiId) {
+    var slots = aiUsageSlots(env, aiId);
+    return slots.length === 0 ? '未被配置引用' : '被配置 ' + slots.join('、') + ' 引用';
+  }
+  function aiItemStatusText(aiItem) { return pick(aiItem, 'status') === 'draft' ? '草稿' : '正式'; }
+  function aiStatusTextOf(status) { return status === 'draft' ? '草稿' : '正式'; }
+
+  function aiValidateEnv(state) {
+    var ed = aiEditorOf(state);
+    return ed === null ? null : ed.validate;
+  }
+  function aiValidateOk(state) {
+    var env = aiValidateEnv(state);
+    return env !== null && isOk(env) && pick(env, 'data.ok') === true;
+  }
+  function aiValidateErrors(state) {
+    var env = aiValidateEnv(state);
+    if (env === null || isOk(env)) return [];
+    var details = pick(env, 'error.details');
+    return Array.isArray(details) ? details : [];
+  }
+  function aiValidateWarnings(state) {
+    var env = aiValidateEnv(state);
+    if (env === null || !isOk(env)) return [];
+    var w = pick(env, 'data.warnings');
+    return Array.isArray(w) ? w : [];
+  }
+  function aiValidateText(state) {
+    var env = aiValidateEnv(state);
+    if (env === null) return '校验：修改后会自动校验一次';
+    if (isOk(env)) {
+      var used = pick(env, 'data.stats.usedNodeTypes');
+      return '校验：通过 · 节点 ' + num(pick(env, 'data.stats.nodes'))
+        + ' · 深度 ' + num(pick(env, 'data.stats.depth'))
+        + ' · 用到 ' + (Array.isArray(used) && used.length > 0 ? used.join('、') : '—')
+        + ' · 指纹 ' + or(pick(env, 'data.programHash'), '—');
+    }
+    return '校验：不通过（' + errorCodeOf(env) + '，' + String(aiValidateErrors(state).length) + ' 处问题）';
+  }
+
+  // 校验错误 → 可点击定位的行（addr 由编辑器地址反查；服务端 path 带 .expr/.op 等字段后缀）
+  function aiErrorRows(state) {
+    var ed = aiEditorOf(state);
+    var draft = ed === null ? null : ed.draft;
+    var out = [];
+    aiValidateErrors(state).forEach(function (d, i) {
+      var path = or(pick(d, 'path'), '');
+      var addr = aiEd.addrOfRuntimeErrorPath(draft, path);
+      out.push({
+        index: String(i),
+        addr: addr,
+        text: '· ' + (path === '' ? '（整程序）' : path) + ' — ' + or(pick(d, 'message'), or(pick(d, 'code'), '校验失败')),
+      });
+    });
+    return out;
+  }
+
+  // AI 编辑器输入框的字段名（与 app.js 的 `ai.` 前缀路由一一对应）
+  function aiFieldNameOf(addr, key) { return 'ai.' + addr + '.' + key; }
+
+  // 写操作结果文案（POST 新建 / PUT 编辑 / DELETE）
+  function aiSaveTarget(env) {
+    var aiSaved = pick(env, 'data.ai');
+    return {
+      aiId: or(pick(env, 'data.aiId'), null),
+      name: or(pick(aiSaved, 'name'), ''),
+      status: pick(aiSaved, 'status') === 'draft' ? 'draft' : 'ready',
+    };
+  }
+  // 列表里按 aiId 找一条（「打开」用；含 program 正文）
+  function aiItemOf(env, aiId) {
+    var items = aiItemsOf(env);
+    for (var i = 0; i < items.length; i += 1) {
+      var aiItem = items[i];
+      if (pick(aiItem, 'aiId') === aiId) {
+        return {
+          aiId: aiId,
+          name: or(pick(aiItem, 'name'), ''),
+          status: pick(aiItem, 'status') === 'draft' ? 'draft' : 'ready',
+          program: pick(aiItem, 'program'),
+        };
+      }
+    }
+    return null;
+  }
+  function aiSavedText(env, isNew) {
+    var aiSaved = pick(env, 'data.ai');
+    var name = or(pick(aiSaved, 'name'), '（未命名）');
+    var status = aiStatusTextOf(pick(aiSaved, 'status'));
+    var refs = pick(env, 'data.referencedBy');
+    var tail = Array.isArray(refs) && refs.length > 0 ? '；被配置 ' + refs.join('、') + ' 引用（改完需在配置编辑器里重新选一次才生效）' : '';
+    return (isNew ? '已新建：' : '已保存：') + name + '（' + status + '）' + tail;
+  }
+  function aiDeleteOkText(env) {
+    var refs = pick(env, 'data.referencedBy');
+    var tail = Array.isArray(refs) && refs.length > 0 ? '（曾被配置 ' + refs.join('、') + ' 引用）' : '';
+    return '已删除 ' + or(pick(env, 'data.deleted'), '该 AI') + tail;
+  }
+  // 保存被服务端拒绝时的可读文案（409 ai_in_use / ai_limit / ai_is_draft 等）
+  function aiWriteFailText(env) {
+    var code = errorCodeOf(env);
+    if (code === 'ai_in_use') return '这个 AI 正被出战配置引用：请先在配置编辑器里换掉它，再存为草稿。';
+    // 审查 F5-B：**不写死 100** —— 上限来自 `service-config.ai.maxPerPlayer`（可配），
+    //   同屏列表头用的也是响应里的真实 `data.max`；此处直接引用服务端 message（它带真实上限）。
+    if (code === 'ai_limit') return '先删掉不用的 AI 再保存：' + or(pick(env, 'error.message'), 'AI 库已满');
+    if (code === 'ai_is_draft') return '草稿 AI 不能被出战配置引用：请先编辑并让它通过校验。';
+    if (code === 'ai_invalid') return 'AI 程序不合法：' + noticeText(env) + '（也可以先「存为草稿」）';
+    if (code === 'store_not_found') return '这条 AI 已经不在了：请刷新列表。';
+    return noticeText(env);
+  }
+
+  function aiListViewModel(state, notice, busy) {
+    var ed = aiEditorOf(state);
+    var env = ed.list;
+    var lines = [aiCountText(env), AI_LIST_HINT_TEXT];
+    var items = aiItemsOf(env);
+    if (env !== null && items.length === 0) lines.push(AI_EMPTY_LIST_TEXT);
+    var rows = items.map(function (aiItem) {
+      var aiId = or(pick(aiItem, 'aiId'), '');
+      return {
+        text: or(pick(aiItem, 'name'), '（未命名）') + ' · ' + aiItemStatusText(aiItem)
+          + ' · ' + aiUsageText(env, aiId) + ' · 更新 ' + stamp(pick(aiItem, 'updatedAt')),
+        buttons: [
+          { action: 'ai-open', label: '打开', kind: 'button', disabled: busy, aiId: aiId },
+          { action: 'ai-delete', label: '删除', kind: 'button', disabled: busy, aiId: aiId },
+        ],
+      };
+    });
+    var buttons = [
+      { action: 'ai-new', label: '新建 AI', kind: 'button', disabled: busy },
+      { action: 'ai-refresh', label: '刷新', kind: 'button', disabled: busy },
+      { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
+    ];
+    var confirm = null;
+    if (ed.confirm && ed.confirm.kind === 'delete') {
+      confirm = {
+        text: '确认删除这个 AI？删除后无法恢复。',
+        buttons: [
+          { action: 'ai-confirm-yes', label: '确认删除', kind: 'button', disabled: busy },
+          { action: 'ai-confirm-no', label: '取消', kind: 'button', disabled: busy },
+        ],
+      };
+    }
+    return vm('AI 编辑', { notice: notice, hint: '查看 / 新建 / 编辑 / 删除你自己的 AI 程序', lines: lines, rows: rows, buttons: buttons, confirm: confirm });
+  }
+
+  // 树行前缀（用户实测反馈：U+3000 全角空格在浏览器里几乎看不出层级）——
+  //   改用**可见导轨** `│ ` 每层一个，配合「那么：/否则：/循环体：」标签，读起来像 Python 的缩进。
+  function aiTreeIndentOf(depth) {
+    var out = '';
+    for (var i = 0; i < depth; i += 1) out += '│ ';
+    return out;
+  }
+
+  // F5：AI 编辑器**编辑态**（06 §3.2）。
+  //   ⚠️ 这里必须用**有序区块** `blocks`：旧的扁平 vm 会让 render 把"所有文字行"先渲染、"所有行（含程序树）"
+  //   后渲染，于是「程序」标题与程序树被拆到屏幕两端、分支标签与节点表单也各归各块 —— 用户实测反馈
+  //   "几乎看不出各逻辑之间的关系"。blocks 让"小节标题 → 紧随其后的内容"按声明顺序出现。
+  function aiEditViewModel(state, notice, busy) {
+    var ed = aiEditorOf(state);
+    var draft = ed.draft;
+    var cursor = ed.cursor || 'body';
+    var blocks = [];
+    var bottom = [];
+
+    if (draft === null) {
+      return vm('AI 编辑', {
+        notice: notice,
+        lines: [AI_NO_DRAFT_TEXT],
+        buttons: [
+          { action: 'ai-new', label: '新建 AI', kind: 'button', disabled: busy },
+          { action: 'ai-close', label: '返回列表', kind: 'button', disabled: busy },
+        ],
+      });
+    }
+
+    // ① 名称（最上方）
+    blocks.push({ kind: 'fields', fields: [{ name: 'aiName', label: AI_NAME_LABEL, type: 'text', value: ed.name }] });
+
+    // ② 档案信息
+    var head = [];
+    head.push('编号：' + (ed.aiId === null ? '（未保存）' : ed.aiId));
+    head.push('状态：' + aiStatusTextOf(ed.status) + (ed.dirty ? '（有未保存改动）' : '（已保存）'));
+    if (ed.aiId !== null) head.push('引用：' + aiUsageText(ed.list, ed.aiId) + '（改完需在配置编辑器里重新选一次才会生效）');
+    head.push(aiValidateText(state));
+    aiValidateWarnings(state).forEach(function (w) {
+      head.push('· 提示：' + or(pick(w, 'message'), or(pick(w, 'code'), '非阻断提示')));
+    });
+    var dup = aiEd.duplicateFunctionNames(draft);
+    dup.forEach(function (d) {
+      head.push('· 函数名重复：' + d.name + '（出现在 ' + d.addrs.join('、') + '）—— 请改名后再保存');
+    });
+    blocks.push({ kind: 'lines', lines: head });
+
+    // ③ 校验错误（标题 + 逐条，紧跟其后）
+    var errs = aiErrorRows(state);
+    if (errs.length > 0) {
+      blocks.push({ kind: 'lines', lines: ['校验发现 ' + String(errs.length) + ' 处问题（点「定位」跳到该节点）：'] });
+      blocks.push({
+        kind: 'rows',
+        rows: errs.map(function (e) {
+          return {
+            text: e.text,
+            buttons: [{ action: 'ai-select-node', label: '定位', kind: 'button', disabled: busy, addr: e.addr }],
+          };
+        }),
+      });
+    }
+
+    // ④ 程序树（标题 + 图例 + 树；缩进用可见导轨）
+    //   最外层先画**隐式主循环**（它才是所有语句的容器），其余语句一律缩进在它里面 ——
+    //   这样"谁在谁里面"一眼可见（Python 式缩进）。
+    blocks.push({ kind: 'lines', lines: [AI_TREE_HEADING, AI_TREE_LEGEND] });
+    var treeRows = [{
+      text: AI_ROOT_LABEL + (cursor === 'body' ? '　← 当前选中' : ''),
+      buttons: [{ action: 'ai-select-node', label: '选中', kind: 'button', disabled: busy, addr: 'body' }],
+    }];
+    aiEd.treeLines(draft).forEach(function (node) {
+      var mark = node.addr === cursor ? '　← 当前选中' : '';
+      treeRows.push({
+        text: aiTreeIndentOf(node.depth + 1) + node.text + mark,
+        buttons: [{ action: 'ai-select-node', label: node.kind === 'block-label' ? '进入' : '选中', kind: 'button', disabled: busy, addr: node.addr }],
+      });
+    });
+    blocks.push({ kind: 'rows', rows: treeRows });
+
+    // ⑤ 当前节点表单（标题 + 说明 + 该节点的字段/选项，全部紧跟标题）
+    var form = aiEd.formOf(draft, cursor);
+    var formHead = ['—— 当前节点：' + form.typeLabel + '（' + cursor + '）——'];
+    form.hints.forEach(function (h) { formHead.push('说明：' + h); });
+    if (form.duplicateFunction) formHead.push('⚠️ 这个函数名和别的函数重复了，请改名。');
+    blocks.push({ kind: 'lines', lines: formHead });
+
+    var textFields = [];
+    form.fields.forEach(function (f) {
+      var name = aiFieldNameOf(cursor, f.key);
+      var shown = ed.texts && ed.texts[name] !== undefined ? ed.texts[name] : f.value;
+      if (f.kind === 'text' || f.kind === 'path' || f.kind === 'literal') {
+        textFields.push({ name: name, label: f.label + '（改完点别处生效）', type: 'text', value: shown });
+      }
+      if (f.kind === 'enum' || f.kind === 'action') {
+        blocks.push({ kind: 'lines', lines: [f.label + '：当前 ' + or(f.value, '（未设置）')] });
+        blocks.push({
+          kind: 'buttons',
+          buttons: f.options.map(function (o) {
+            return { action: 'ai-set-field', label: o.label, kind: 'button', disabled: busy || o.value === f.value, addr: cursor, field: f.key, value: o.value };
+          }),
+        });
+      }
+      if (f.kind === 'literal') {
+        blocks.push({
+          kind: 'lines',
+          lines: ['值类型：' + (f.literalType === 'number' ? '数字' : f.literalType === 'string' ? '文本' : '真/假') + '（改类型会按新类型解释上面的值）'],
+        });
+        blocks.push({
+          kind: 'buttons',
+          buttons: f.options.map(function (o) {
+            return { action: 'ai-set-literal-type', label: '设为' + o.label, kind: 'button', disabled: busy || o.value === f.literalType, addr: cursor, value: o.value };
+          }),
+        });
+      }
+      if (f.kind === 'path') {
+        blocks.push({ kind: 'lines', lines: ['可选读取项（服务端白名单；也可在输入框里手写）：'] });
+        blocks.push({
+          kind: 'buttons',
+          buttons: (function () {
+            var out = [];
+            f.groups.forEach(function (g) {
+              g.paths.forEach(function (p) {
+                out.push({ action: 'ai-set-field', label: p.label, kind: 'button', disabled: busy || p.value === f.value, addr: cursor, field: f.key, value: p.value });
+              });
+            });
+            return out;
+          })(),
+        });
+      }
+    });
+    if (textFields.length > 0) blocks.push({ kind: 'fields', fields: textFields });
+
+    // ⑥ 表达式槽 / 语句块（各自带标题）
+    if (form.slots.length > 0) {
+      blocks.push({ kind: 'lines', lines: ['表达式槽（点「选中」把光标移进该表达式，之后「＋…」就插在它里面）：'] });
+      blocks.push({
+        kind: 'rows',
+        rows: form.slots.map(function (s) {
+          return {
+            text: '· ' + s.label + '：' + s.summary + (s.present ? '（' + s.typeLabel + '）' : ''),
+            buttons: [
+              { action: 'ai-select-node', label: '选中', kind: 'button', disabled: busy, addr: s.addr },
+              { action: 'ai-slot-clear', label: '清空', kind: 'button', disabled: busy || !s.canDelete, addr: s.addr },
+            ],
+          };
+        }),
+      });
+    }
+    if (form.blocks.length > 0) {
+      blocks.push({ kind: 'lines', lines: ['语句块（点「进入」把光标移进该块，之后「＋…」就插在它里面）：'] });
+      blocks.push({
+        kind: 'rows',
+        rows: form.blocks.map(function (b) {
+          return {
+            text: '· ' + b.label + '：' + (b.present ? String(b.count) + ' 条语句' : '（空）'),
+            buttons: [
+              { action: 'ai-select-node', label: '进入', kind: 'button', disabled: busy, addr: b.addr },
+              { action: 'ai-block-remove', label: '移除', kind: 'button', disabled: busy || !b.canRemove, addr: b.addr },
+            ],
+          };
+        }),
+      });
+    }
+
+    // ⑦ 结构操作（插入 / 替换 / 上下移 / 包裹 / 删除）
+    blocks.push({ kind: 'lines', lines: ['插入（按当前选中位置自动决定：插到语句后面 / 放进语句块 / 填进表达式槽）：'] });
+    blocks.push({
+      kind: 'buttons',
+      buttons: aiEd.NODE_TYPES.map(function (t) {
+        return { action: 'ai-insert', label: '＋' + aiEd.NODE_LABELS[t], kind: 'button', disabled: busy, value: t };
+      }),
+    });
+    if (!form.isRoot) {
+      blocks.push({ kind: 'lines', lines: ['把当前节点换成（内容会重设为该类型的默认值）：'] });
+      blocks.push({
+        kind: 'buttons',
+        buttons: aiEd.NODE_TYPES.map(function (t) {
+          return { action: 'ai-replace', label: '换为' + aiEd.NODE_LABELS[t], kind: 'button', disabled: busy, value: t };
+        }),
+      });
+      blocks.push({
+        kind: 'buttons',
+        buttons: [
+          { action: 'ai-move-up', label: '上移', kind: 'button', disabled: busy },
+          { action: 'ai-move-down', label: '下移', kind: 'button', disabled: busy },
+          { action: 'ai-wrap-if', label: '包裹进「如果」', kind: 'button', disabled: busy },
+          { action: 'ai-delete-node', label: '删除这个节点', kind: 'button', disabled: busy },
+        ],
+      });
+    }
+
+    // ⑧ 导入区（textarea）与其按钮
+    if (ed.importOpen) {
+      blocks.push({ kind: 'lines', lines: ['导入 JSON：粘贴一段 AI 程序（会替换当前草稿；合法性仍由服务端校验）'] });
+      blocks.push({ kind: 'textarea', textarea: { name: 'aiImport', label: '程序 JSON', value: ed.importText } });
+      blocks.push({
+        kind: 'buttons',
+        buttons: [
+          { action: 'ai-import-apply', label: '应用导入', kind: 'button', disabled: busy },
+          { action: 'ai-import-close', label: '取消导入', kind: 'button', disabled: busy },
+        ],
+      });
+    }
+
+    // ⑨ 底部操作
+    var canSave = aiValidateOk(state) && dup.length === 0;
+    var saveLabel = ed.status === 'draft' ? '保存（转为正式）' : '保存';
+    if (!canSave) {
+      bottom.push('保存按钮不可用：' + (dup.length > 0 ? '函数名重复' : aiValidateOk(state) ? '（正常）' : '校验未通过（可先「存为草稿」）'));
+    }
+    bottom.push('保存 = 把草稿写成「正式」条目（校验必须已通过）；「存为草稿」= 先放着，之后再回来改。');
+    blocks.push({ kind: 'lines', lines: bottom });
+    blocks.push({
+      kind: 'buttons',
+      buttons: [
+        { action: 'ai-save', label: saveLabel, kind: 'button', disabled: busy || !canSave },
+        { action: 'ai-save-draft', label: '存为草稿', kind: 'button', disabled: busy },
+        { action: 'ai-save-as', label: '另存为新的 AI', kind: 'button', disabled: busy || !canSave },
+        { action: 'ai-validate', label: '重新校验', kind: 'button', disabled: busy },
+        { action: 'ai-import-open', label: '导入 JSON', kind: 'button', disabled: busy },
+        { action: 'ai-close', label: '关闭编辑', kind: 'button', disabled: busy },
+      ],
+    });
+
+    var confirm = null;
+    if (ed.confirm && ed.confirm.kind === 'discard') {
+      confirm = {
+        text: '有未保存改动，确认丢弃并关闭？',
+        buttons: [
+          { action: 'ai-discard-yes', label: '确认丢弃', kind: 'button', disabled: busy },
+          { action: 'ai-discard-no', label: '取消', kind: 'button', disabled: busy },
+        ],
+      };
+    }
+    return vm(ed.aiId === null ? '新建 AI' : '编辑 AI', {
+      notice: notice, hint: AI_EDIT_HINT_TEXT, blocks: blocks, buttons: [],
+      confirm: confirm,
+    });
+  }
+
+  // 列表态 / 编辑态的分派（编辑态的导入按钮已在 blocks 内就地渲染，无需再拼一份）
+  function aiEditorViewModel(state, notice, busy) {
+    var ed = aiEditorOf(state);
+    if (ed === null || ed.mode !== 'edit') return aiListViewModel(state, notice, busy);
+    return aiEditViewModel(state, notice, busy);
+  }
+
   /* ---------- 各屏视图模型 ---------- */
 
   // F3 §3.1：hub（登录/注册成功后的落点；FR-11）
@@ -2265,6 +2703,7 @@
     if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
     if (state.view === 'tournament') return tournamentViewModel(state, notice, busy);   // F7（05 分册）
     if (state.view === 'leaderboard') return leaderboardViewModel(state, notice, busy); // F7（05 分册）
+    if (state.view === 'ai-editor') return aiEditorViewModel(state, notice, busy);      // F5（06 分册）
     if (EMPTY_PAGES[state.view] !== undefined) return emptyPageViewModel(state, notice, busy);
 
     if (state.view === 'register') {
@@ -2488,5 +2927,22 @@
     REPLAY_OK_TEXT: REPLAY_OK_TEXT,
     modalViewModel: modalViewModel,
     viewModel: viewModel,
+    // F5/D-172：AI 编辑器的动作层投影（动作层**不读响应字段**，一律经这里）
+    aiEditorOf: aiEditorOf,
+    aiItemsOf: aiItemsOf,
+    aiCountText: aiCountText,
+    aiUsageText: aiUsageText,
+    aiItemStatusText: aiItemStatusText,
+    aiStatusTextOf: aiStatusTextOf,
+    aiValidateOk: aiValidateOk,
+    aiValidateText: aiValidateText,
+    aiValidateErrors: aiValidateErrors,
+    aiErrorRows: aiErrorRows,
+    aiSavedText: aiSavedText,
+    aiSaveTarget: aiSaveTarget,
+    aiItemOf: aiItemOf,
+    aiDeleteOkText: aiDeleteOkText,
+    aiWriteFailText: aiWriteFailText,
+    aiDuplicateNames: function (draft) { return aiEd.duplicateFunctionNames(draft); },
   };
 });

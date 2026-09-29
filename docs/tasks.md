@@ -754,6 +754,7 @@ core 与 `shared/log.js` 不得 IO；core 只接受注入 logger；core 禁止 `
 
 - **F7（锦标赛屏 + 排行榜屏）前端已落地（2026-09-25）**：分册 `docs/frontend/05-tournament.md`；含后端 D-171（排行榜两张榜 + 分页 + 本人名次 + 索引迁移）；实现与机器核对见 §6「F7 锦标赛屏 + 排行榜屏」一段。**未完成项：浏览器人工走查**（§11 的 13 步）→ 待用户执行，记录落 `docs/reviews/F7.md`。
 - **F6（快速对战屏 + 战斗查看器 + AI 逻辑查看器）前端已落地（2026-09-25）**：分册 `docs/frontend/04-quickmatch.md`；实现与机器核对见 §6「F6 快速对战屏」一段。**未完成项：浏览器人工走查**（§11 的 12 步）→ 待用户执行，记录落 `docs/reviews/F6.md`。
+- **F5（AI 编辑器：查看 / 新建 / 编辑 / 删除）已落地（2026-09-25）**：分册 `docs/frontend/06-ai-editor.md`（含 §0.1 的 11 条用户裁决、§5.2 字段契约、§15 实现对账）；**后端契约 = D-172**（`PUT /me/ai/:aiId`、`POST /me/ai/validate`、`ai.items[].status`、`journal ai.updated`、草稿护栏、`duplicate_function` 附带修复）；**前端 = `public/` 由 9 文件变 10 文件**（新增 `public/ai-editor.js`，界面**全中文**），`EMPTY_PAGES` 清空。机器核对 `tests/frontend/ai-editor-flow.test.js`（AE-1…AE-12 核心 9 项）+ `tests/api/api-me-ai-edit.test.js`（AIE-1…AIE-10）。**未完成项：浏览器人工走查**（06 分册 §9 的 13 步）→ 待用户执行，记录落 `docs/reviews/F5.md`。**F5 同样不新增批次号**（§6 仍为 41 批）。
 
 ---
 

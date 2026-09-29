@@ -1230,12 +1230,57 @@ function createJsonAdapter(options) {
       }
       const record = ledger.buildAiRecord({
         playerId: o.playerId, op: 'create', aiId, name: o.name, program: o.program, at: nowFn(),
+        status: o.status,
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
       saveIndex();
       const updated = readArchiveRaw(o.playerId);
       return { archive: deepClone(updated), ai: deepClone(archiveMod.findAi(updated, aiId)) };
+    });
+  }
+
+  // D-172：编辑保存（**部分更新**：只改显式给出的字段；`aiId` **不变**）。约束：
+  //   · 条目不存在 → 404 `store_not_found`
+  //   · `status` 只接受 `ready` | `draft`（非法 → 400）
+  //   · 被**出战配置**引用时**禁止降级为草稿**（否则出战配置就引用了草稿）→ 409 `ai_in_use`
+  async function updateAi(input) {
+    const o = input || {};
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      const ai = archiveMod.findAi(archive, o.aiId);
+      if (!ai) {
+        throw new StoreError('store_not_found', `AI ${o.aiId} 不存在`, [
+          { path: 'aiId', code: 'store_not_found', message: 'AI 不存在' },
+        ]);
+      }
+      if (o.status !== undefined && !archiveMod.AI_STATUSES.includes(o.status)) {
+        throw new StoreError('bad_request', `非法 status ${JSON.stringify(o.status)}`, [
+          { path: 'status', code: 'bad_request', message: 'status 只能是 ready | draft' },
+        ]);
+      }
+      const slots = aiRefsOf(archive).get(o.aiId) || [];
+      const active = slots.includes(archive.configs.activeSlotId);
+      if (active && o.status === 'draft') {
+        throw new StoreError('ai_in_use', `AI ${o.aiId} 被出战配置引用，不能存为草稿`, [
+          { path: 'status', code: 'ai_in_use', message: `被出战配置 ${archive.configs.activeSlotId} 引用：请先在配置里换掉它再存草稿` },
+        ]);
+      }
+      const record = ledger.buildAiRecord({
+        playerId: o.playerId, op: 'update', aiId: o.aiId, at: nowFn(),
+        name: o.name, program: o.program, status: o.status,
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return {
+        archive: deepClone(updated),
+        ai: deepClone(archiveMod.findAi(updated, o.aiId)),
+        referencedBy: slots, active,
+        ...aiView(updated),
+      };
     });
   }
 
@@ -1338,9 +1383,10 @@ function createJsonAdapter(options) {
     getWarehouse,
     grantBox,
     applyWarehouseChange,
-    // D-161：AI 库
+    // D-161：AI 库；D-172：新增编辑保存
     listAi,
     createAi,
+    updateAi,
     deleteAi,
     // journal
     append: (record) => journal.append(record),

@@ -365,7 +365,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
   2. `starterIssued`：本档案是否发放过新手套装。**注册即 `true`**；`migrateV1toV2` 补的是**空仓库 + `false`**——**老账号保持空仓**（用户 2026-09-22 裁定：需删号重注册才拿到 starter，不做追溯补发）。
   3. `grantIds`：开箱幂等窗口（**环形 256**，`archive.js` 的 `GRANT_WINDOW`），每项 `{grantId, seq, at, count}`；`grantId = bx_<sha256(playerId|seed|tier|times)[0..16]>`（`ledger.js` 的 `boxGrantIdOf`）——**同一次开箱重放不会重复发放**（D-162 起 seed 服务端独占，故 `grantId` 天然唯一；仍内容寻址以便"同一记录重复出现在 journal/检查点"时可判定）。
   4. 物品正文直接落在桶里（含 `slots[].pluginUid` 的装配状态），**不再需要客户端提交整仓**；`usage`（被哪些出战配置引用）由服务端按 `configs.slots[].loadout` 现算，不落盘。
-- **`ai`（D-161 新增）**：`items[]` 每项 `{aiId, name, program, createdAt, updatedAt}`，上限 `service-config.json` 的 `ai.maxPerPlayer = 100`（**与物品分别计数**）；`name` 1~24 字符，`program.type === 'program'`（本批只做**结构检查**，完整 AST 合法性由前端编辑器保存前调 `POST /ai/validate`）。出战配置经 `loadout.aiId` 引用库内条目（starter 的默认 AI `name='新手AI'`）。
+- **`ai`（D-161 新增；D-172 扩展）**：`items[]` 每项 `{aiId, name, program, createdAt, updatedAt, status}`（**`status` 由 D-172 追加**，`ready`\|`draft`，**字段可缺省且缺省即 `ready`** ⇒ 存量档案**无需迁移**），上限 `service-config.json` 的 `ai.maxPerPlayer = 100`（**与物品分别计数**，**草稿占库位**）；`name` 1~24 字符，`program.type === 'program'`。**D-172 起保存路径分工**：`status='ready'`（缺省）时**服务端完整校验**（结构 + 合法性 + 段位门控；失败 400 `ai_invalid` + `details[].path`），`status='draft'` 只做结构检查（供编辑器"校验不过先暂存"）。出战配置经 `loadout.aiId` 引用库内条目（starter 的默认 AI `name='新手AI'`）；**草稿不得被出战配置引用**（409 `ai_is_draft`）。
 - `record.recent` 环形上限默认 100（`service-config.record.recentLimit`），超出丢弃最旧；**完整历史在 journal**（§9）。
 - **文档外补录字段（2026-09-19 实测档案结构，共 5 个；本表此前未登记）**：
   1. `auth.username`（用户输入的原大小写）/ `auth.usernameLower`（唯一索引键，**大小写不敏感**）——因 §5.2 档案顶层无 `username` 字段，登录凭据随 `auth` 落档（`server/auth.js`）。
@@ -525,7 +525,7 @@ POST /auth/password → 保持登录（撤销除当前外全部会话）
 | **`box.opened`** | **D-159/D-162** 服务端权威开箱（`POST /me/box`） | `playerId, grantId, seed, tier, times, items[]`（本次开出的物品正文，有界：`times ≤ 100`）。`grantId = bx_<sha256(...)[0..16]>`；**幂等靠档案 `warehouse.grantIds` 环形窗口 256**（重放时窗口内已见 → 视为已应用） |
 | **`warehouse.assemble`** | **D-159** 服务端态装配 | **增量**：`playerId, targetUid, slotIndex, pluginUid`（**不是整仓**——整仓体积会随每桶 500 上限膨胀，见 §11）。apply 时把 `pluginUid` 写进目标物品的第 `slotIndex` 个槽 |
 | **`warehouse.disassemble`** | **D-159** 服务端态拆卸 | **增量**：`playerId, targetUid, slotIndex`（`pluginUid` 置 `null`） |
-| **`ai.created` / `ai.deleted`** | **D-161** AI 库 | `playerId, aiId`（+ `ai.created` 带 `name/program` 正文，`ai.deleted` 带 `referencedBy` 快照用于审计） |
+| **`ai.created` / `ai.updated` / `ai.deleted`** | **D-161/D-172** AI 库 | `playerId, aiId`（`ai.created` 带 `name/program/status` 正文；**`ai.updated` 只带显式给出的字段**（部分更新）+ `status`，**幂等键 = 内容比对（name/status/program）且 `updatedAt === at`**——刻意不用纯时间键，否则同毫秒两次不同编辑会被误判"已应用"而丢第二次；`ai.deleted` 带 `referencedBy` 快照用于审计） |
 | `checkpoint` | journal 段压缩（§6.7） | `seq, at, perPlayer{…}`；**D-159 起额外物化 `warehouse`/`ai` 只作降级兜底**（见 §6.7） |
 | `player.removed` | **管理端墓碑删除**（P7-3 追加，2026-09-19） | `playerId, reason?`。**journal 是唯一真源**，故删除不能只删档案文件：apply 时删档案 + 摘索引 + 记墓碑水位（`removedAt`），**全量重放不复活已删玩家**；墓碑 seq 之后同名玩家再次注册 → 解禁（`adapter-json.js:245-297`、`ledger.js:232-236`）。日志事件 `store.player.removed`(info) |
 
@@ -866,9 +866,11 @@ GET /api/v1/replay/:battleId
 | POST | `/api/v1/me/warehouse/disassemble` | ✅ | **D-159 服务端态拆卸**：体 `{targetUid,slotIndex}` → 落 journal `warehouse.disassemble` 增量 | 404 `slot_empty`/`plugin_missing` |
 | PUT | `/api/v1/me/warehouse` | ✅ | **D-159 退役为"只校验形状"**：形状非法仍 400；引用不覆盖出战配置 → **200 + `verified:false`**（不再 409） | 400 |
 | POST | `/api/v1/me/box` | ✅ | **D-159/D-162 服务端权威开箱**：体 `{tier?,times?}`（**无 `seed` 入参**）→ 物品入档并回带 `{seed,tier,times,items,counts,caps,grantId}`；任一桶超限 → 409 **且不入档** | 409 `warehouse_full` / 400 `bad_tier`/`bad_times` |
-| GET | `/api/v1/me/ai` | ✅ | **D-161 AI 库列表**：`{items,count,max:100,usage}` | 401 |
-| POST | `/api/v1/me/ai` | ✅ | **D-161**：体 `{name,program}`（名称 1~24、`program.type='program'`）→ `{aiId,ai,count,max}`；满 100 → 409 | 409 `ai_limit` |
-| DELETE | `/api/v1/me/ai/:aiId` | ✅ | **D-161** 删除 → `{deleted,referencedBy,count,max}`；**被「出战配置」引用 → 409**（非出战配置引用只在 `referencedBy` 提示） | 409 `ai_in_use` |
+| GET | `/api/v1/me/ai` | ✅ | **D-161 AI 库列表**：`{items,count,max:100,usage}`；**D-172** 每条新增 `status`（`ready`\|`draft`，缺省视为 `ready`）+ 响应级 `draftCount` | 401 |
+| POST | `/api/v1/me/ai` | ✅ | **D-161**：体 `{name,program,status?}`（名称 1~24、`program.type='program'`）→ `{aiId,ai,count,max}`；满 100 → 409。**D-172 收紧**：`status` 缺省/`ready` 时**服务端完整校验必须通过**（失败 400 `ai_invalid` + `details[]`）；`status='draft'` 只做结构检查 | 400 `bad_request`/`ai_invalid`；409 `ai_limit` |
+| **PUT** | **`/api/v1/me/ai/:aiId`** | ✅ | **D-172 编辑保存**：体 `{name?,program?,status?}` **至少一项**（缺省字段不改、**部分更新**）；**`aiId` 不变**；`ready`（缺省）时按**结果态**完整校验；**被出战配置引用时禁止降级为 `draft`** → 409 `ai_in_use` | 400 `bad_request`/`ai_invalid`；404 `store_not_found`；409 `ai_in_use` |
+| **POST** | **`/api/v1/me/ai/validate`** | ✅ | **D-172 登录版实时校验**：体 `{program}`（`tier` **取调用者档案**，不接受客户端传）→ `{ok,warnings,programHash,stats{nodes,depth,usedNodeTypes}}`；失败 400 + `details[]`。**用途**：编辑器不再依赖遗留端点 `/ai/validate`、`/ai/compile`（后者在 `DL_LEGACY_STATELESS=0` 时 410） | 400 `ai_invalid`；401 |
+| DELETE | `/api/v1/me/ai/:aiId` | ✅ | **D-161** 删除 → `{deleted,referencedBy,count,max}`；**被「出战配置」引用 → 409**（非出战配置引用只在 `referencedBy` 提示）；D-172 起草稿与正式同权 | 409 `ai_in_use` |
 | GET | `/api/v1/me/records` | ✅ | 战绩（`?since=&limit=&role=`） | 401 |
 | POST | `/api/v1/me/records/seen` | ✅ | 推进未读游标 | 400 |
 | GET | `/api/v1/me/defense` | ✅ | 防守战绩汇总（被抽场次/胜负/最近列表） | 401 |
@@ -989,7 +991,9 @@ GET /api/v1/replay/:battleId
 | **`cannot_activate_incomplete`** | 409 | **D-160**：`activate` 的槽不完整（缺角色 / 技能不足恰 3 / 缺 AI）；**保存非出战槽时不产生**本码 |
 | **`warehouse_full`** | 409 | **D-159**：开箱会使某桶超过**每桶上限 500** → 拒绝且**不入档、不写 journal** |
 | **`ai_limit`** | 409 | **D-161**：AI 库已满（默认 100 条，与物品**分别计数**） |
-| **`ai_in_use`** | 409 | **D-161**：删除的 `aiId` 正被**出战配置**引用（`loadout.aiId` 命中 `activeSlotId`）；非出战配置的引用只出现在 `referencedBy` 提示里，不阻止删除 |
+| **`ai_in_use`** | 409 | **D-161**：删除的 `aiId` 正被**出战配置**引用（`loadout.aiId` 命中 `activeSlotId`）；非出战配置的引用只出现在 `referencedBy` 提示里，不阻止删除。**D-172 同码**：被出战配置引用的 AI **禁止降级为草稿** |
+| **`ai_is_draft`** | 409 | **D-172**：出战配置（`PUT /me/configs/:slotId` / `activate` / `POST /me/configs`）引用了**库内存在的草稿** AI（`status='draft'`）。**窄规则**：刻意不新增"`loadout.aiId` 必须存在于库"的要求（既存缺口，登记 `security-backlog`） |
+| **`ai_invalid`** | 400 | **D-172**：AI 程序不合法（结构 + 合法性 + 门控）；`details[]` 为逐条 `{path,code,message}`（供编辑器定位） |
 | **`item_missing`** / **`slot_type_mismatch`** / **`slot_occupied`** / **`points_exceeded`** / **`plugin_equipped`** | 409 | **D-159**：服务端态装配（`POST /me/warehouse/assemble`）的拒绝码，由 `core/items` 纯函数**单点**判定（与遗留无状态路径同一套规则） |
 | **`slot_empty`** / **`plugin_missing`** | 404 | **D-159**：服务端态拆卸（`POST /me/warehouse/disassemble`）——槽为空 / 悬挂引用 |
 | `no_opponent` | 409 | **快速对战**匹配不到对手（候选不足/窗口用尽） |
@@ -1180,7 +1184,7 @@ admin bot|rebuild-index …             # 请直接 POST /api/v1/admin/*
 | **T-WH-3** | **服务端态装配/拆卸**（D-159） | `GET /me/warehouse` 的 `usage[uid].slotIds` 正确反映**多配置引用同一物品**；装配/拆卸落 journal **增量**记录并可由重放还原；`PUT /me/warehouse` 引用不覆盖 → 200 + `verified:false`（**不再 409**） |
 | **T-WH-4** | **开箱入档与上限**（D-159/D-162） | `POST /me/box` 物品入档并回带 `grantId`；任一桶超 500 → 409 `warehouse_full` **且不入档、不写 journal**；**请求带 `seed` 被忽略**（无 `bad_seed`）；同 `grantId` 重放不重复发放（`tests/api/api-me-box.test.js`、`tests/unit/store-warehouse-recovery.test.js`） |
 | **T-AC-6** | **非出战槽允许不完整**（D-160） | `PUT /me/configs/slot2` 不完整正文 → 200 + `snapshot:null`/`complete:false`/`missing:[…]`；出战槽不完整 → 409 `loadout_invalid` 且 details 逐位置；`activate` 不完整 → 409 `cannot_activate_incomplete`；完整但缺快照 → 自愈冻结（`tests/api/api-configs-incomplete.test.js`） |
-| **T-AI-13** | **AI 库上限与引用保护**（D-161） | 名称 1~24、`program.type='program'` 结构检查；第 101 条 → 409 `ai_limit`；删除被**出战配置**引用的条目 → 409 `ai_in_use`（非出战配置引用只出现在 `referencedBy`）；`GET /me/ai` 的 `usage` 口径正确（`tests/api/api-me-ai.test.js`） |
+| **T-AI-13** | **AI 库上限与引用保护**（D-161；**D-172 扩展**） | 名称 1~24、`program.type='program'` 结构检查；第 101 条 → 409 `ai_limit`（**草稿占库位**）；删除被**出战配置**引用的条目 → 409 `ai_in_use`（非出战配置引用只出现在 `referencedBy`）；`GET /me/ai` 的 `usage` 口径正确（`tests/api/api-me-ai.test.js`）。**D-172 追加**：`PUT /me/ai/:aiId` 部分更新且 `aiId` 不变；`status='ready'`（缺省）时服务端完整校验、`draft` 只做结构检查；**核心不变量「库里 `ready` 的条目必过 `ast.validate`」**；被出战配置引用时禁止降级为草稿；草稿护栏覆盖 `POST /me/configs`/`PUT /me/configs/:slotId`/`activate` **三条写路径**；`ai.updated` 幂等（内容比对）与 journal 重放逐值一致（`tests/api/api-me-ai-edit.test.js` AIE-1…AIE-13） |
 | **T-QM-5** | **Elo 逐分对账**（D-133 性质 6 澄清） | 断言 `ΣΔ_公式 ≤ 0`、`ΣΔ_落盘 === ΣΔ_公式 + floorInjection`、逐侧 `appliedΔ === clamp(R+Δ) − R`；**禁止**再断言"全局 `ΣΔ ≤ 0`"（`tests/unit/quickmatch.test.js` 的 `assertEloRecomputable`、`tests/integration/quickmatch-invariants.test.js`） |
 
 **门禁扩展（`scripts/gate.js`）**：项 6 增加 `quick` 前缀；项 9 接口冒烟增加 `auth/register → me → configs → quick run → replay → records/seen` 闭环；项 5 D 落点自动覆盖 D-129…D-136（因它们已写入 `interfaces.md`，见附录 B）。**D-159…D-162 的 D 落点同样以 `docs/interfaces.md` §5 为准**（F3 前端契约见 `docs/frontend/03-hub-warehouse-loadout.md`）。

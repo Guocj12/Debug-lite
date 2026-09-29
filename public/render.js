@@ -100,6 +100,16 @@
     }).join('');
   }
 
+  // F5/D-172：多行输入（**唯一用途** = AI 编辑器「导入 JSON」，用户裁决 ③）
+  function textareaHtml(vm) {
+    if (!vm.textarea) return '';
+    return '<div class="field">'
+      + '<label for="input-' + esc(vm.textarea.name) + '">' + esc(vm.textarea.label) + '</label>'
+      + '<textarea id="input-' + esc(vm.textarea.name) + '" name="' + esc(vm.textarea.name) + '" rows="8">'
+      + esc(vm.textarea.value) + '</textarea>'
+      + '</div>';
+  }
+
   function targetAttrs(button) {
     var out = '';
     if (typeof button.playerId === 'string' && button.playerId !== '') out += ' data-player-id="' + esc(button.playerId) + '"';
@@ -114,6 +124,10 @@
     if (typeof button.aiId === 'string' && button.aiId !== '') out += ' data-ai-id="' + esc(button.aiId) + '"';
     // F7：排行榜的"范围"按钮（board-scope）用 data-tier 携带段位（'' = 全部）
     if (typeof button.tier === 'string' && button.tier !== '') out += ' data-tier="' + esc(button.tier) + '"';
+    // F5/D-172：AI 编辑器——节点地址 / 字段键 / 枚举取值（按钮即"设值"）
+    if (typeof button.addr === 'string' && button.addr !== '') out += ' data-addr="' + esc(button.addr) + '"';
+    if (typeof button.field === 'string' && button.field !== '') out += ' data-field="' + esc(button.field) + '"';
+    if (typeof button.value === 'string' && button.value !== '') out += ' data-value="' + esc(button.value) + '"';
     return out;
   }
 
@@ -127,6 +141,22 @@
     }).join('');
   }
 
+  // F5/D-172：**有序区块**（`vm.blocks`）—— 让"小节标题 → 紧随其后的内容"按声明顺序渲染。
+  //   背景（用户实测反馈）：扁平 vm 会把**所有 `lines` 先渲染、所有 `rows` 后渲染**，于是「程序结构」标题
+  //   与程序树被拆到屏幕两端、分支标签/节点表单各归各块 —— 读者看不出逻辑之间的层级关系。
+  //   未声明 `vm.blocks` 的屏走原路径（渲染结果逐字不变）。
+  function blocksHtml(vm) {
+    return (vm.blocks || []).map(function (b) {
+      if (!b || typeof b !== 'object') return '';
+      if (b.kind === 'lines') return linesHtml({ lines: b.lines });
+      if (b.kind === 'rows') return rowsHtml({ rows: b.rows });
+      if (b.kind === 'fields') return b.fields && b.fields.length > 0 ? '<div id="inputs">' + fieldsHtml({ fields: b.fields }) + '</div>' : '';
+      if (b.kind === 'buttons') return b.buttons && b.buttons.length > 0 ? '<div class="buttons">' + buttonsHtml(b.buttons) + '</div>' : '';
+      if (b.kind === 'textarea') return '<div id="inputs">' + textareaHtml({ textarea: b.textarea }) + '</div>';
+      return '';
+    }).filter(function (part) { return part !== ''; }).join('\n');
+  }
+
   function render(vm) {
     var parts = [];
     parts.push('<h2>' + esc(vm.title) + '</h2>');
@@ -135,14 +165,28 @@
     var result = resultHtml(vm);
     if (result !== '') parts.push(result);
     if (vm.hint) parts.push('<p class="hint">' + esc(vm.hint) + '</p>');
+
+    // 有序区块模式：标题与内容就地成对出现（F5 的 AI 编辑器用它把程序树贴回标题下面）
+    if (Array.isArray(vm.blocks) && vm.blocks.length > 0) {
+      parts.push(blocksHtml(vm));
+      parts.push(confirmHtml(vm));
+      parts.push(modalHtml(vm));
+      if (vm.buttons && vm.buttons.length > 0) parts.push('<div class="buttons">' + buttonsHtml(vm.buttons) + '</div>');
+      return parts.filter(function (part) { return part !== ''; }).join('\n');
+    }
+
+    var fields = fieldsHtml(vm) + textareaHtml(vm);
+    // 只有显式给了 enterAction 才包 <form>（回车提交那套）；否则是"纯输入区"——
+    //   F5 的 AI 编辑器属于后者：字段随打随存（input/change 事件），不需要表单提交语义。
+    var enterAction = typeof vm.enterAction === 'string' && vm.enterAction !== '' ? vm.enterAction : null;
     parts.push(linesHtml(vm));
     parts.push(rowsHtml(vm));
     parts.push(confirmHtml(vm));
     parts.push(modalHtml(vm));
-    var fields = fieldsHtml(vm);
-    if (fields !== '') {
-      parts.push('<form data-enter="' + esc(vm.enterAction) + '" autocomplete="off">' + fields + '<div class="buttons">' + buttonsHtml(vm.buttons) + '</div></form>');
+    if (enterAction !== null) {
+      parts.push('<form data-enter="' + esc(enterAction) + '" autocomplete="off">' + fields + '<div class="buttons">' + buttonsHtml(vm.buttons) + '</div></form>');
     } else {
+      if (fields !== '') parts.push('<div id="inputs">' + fields + '</div>');
       parts.push('<div class="buttons">' + buttonsHtml(vm.buttons) + '</div>');
     }
     return parts.filter(function (part) { return part !== ''; }).join('\n');

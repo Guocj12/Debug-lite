@@ -991,10 +991,20 @@ async function main() {
 
       const r2 = await request(port, 'POST', '/api/v1/ranked/run', { seed: 12 }, authed(state.facts.A.token));
       expect(r2.status === 200, `第二轮排位应 200，实得 ${r2.status}`, r2.raw);
-      expect(r2.body.data.matches === 0 && r2.body.data.shortfall === 10,
-        `24h 去重后应 0 场 / shortfall 10，实得 ${r2.body.data.matches} 场 / shortfall ${r2.body.data.shortfall}（D-136）`, r2.raw);
+      // ⚠️ 2026-09-25 修正（**D-168 的陈旧断言**，与 F5 无关）：D-136 的"24h 硬底线 ⇒ 第二轮 0 场"
+      //   已被 D-168 的**软冷却**取代 —— 候选**永不因冷却被硬拒**（权重 `clamp(已过小时/opponentRecoveryHours,0,1)`
+      //   加权轮盘；全员刚打过时取"最久未打"分组）。故第二轮**照常打满可用场次**才是现行正确行为。
+      //   本检查点的真实价值不变：**不得用 bot 凑满 10 场**（D-152）+ 不得抽自己 + 缺口如实回报。
+      //   （D-168 提交 `84f1c41` 更新了 `tests/integration/e2e-play.test.js`，漏改了本脚本 → 此处对齐。）
+      expect(r2.body.data.matches + r2.body.data.shortfall === r2.body.data.requested,
+        `matches+shortfall 应等于 requested：${r2.body.data.matches}+${r2.body.data.shortfall} ≠ ${r2.body.data.requested}`, r2.raw);
+      expect(r2.body.data.invalids === 0,
+        `第二轮不得出现 invalid 场次（实测 ${r2.body.data.invalids}）`, r2.raw);
+      const foes2 = r2.body.data.results.map((m) => m.opponentPublicId);
+      expect(!foes2.includes(state.facts.A.publicId), '第二轮抽池必须排除自己', r2.raw);
+      await assertReal(s.store, foes2, 'ranked/run(2)');
       state.facts.ranked2 = r2.body.data;
-      okLine(14, 'ranked/run 抽池与 shortfall', `第 1 轮：matches=${d.matches} shortfall=${d.shortfall}（对手 ${foes.join(',')} 全部回查档案库 OK，未抽自己）invalid=${d.invalids}；第 2 轮：matches=${r2.body.data.matches} shortfall=${r2.body.data.shortfall} → 24h 去重生效，**未用 bot 凑满 10 场**（D-152）；发起者 A 的配置含真实装配引用 ${rankedSide.refs} 处（镜像片段 ${rankedSide.whItems} 项，面板 ≡ 真镜像 hp${rankedSide.stats.hp}/sp${rankedSide.stats.sp}）→ 0 场 invalid`);
+      okLine(14, 'ranked/run 抽池与 shortfall', `第 1 轮：matches=${d.matches} shortfall=${d.shortfall}（对手 ${foes.join(',')} 全部回查档案库 OK，未抽自己）invalid=${d.invalids}；第 2 轮：matches=${r2.body.data.matches} shortfall=${r2.body.data.shortfall} → **D-168 软冷却下不再硬拒**（对手 ${foes2.join(',')} 亦全部回查档案库 OK），**未用 bot 凑满 10 场**（D-152）；发起者 A 的配置含真实装配引用 ${rankedSide.refs} 处（镜像片段 ${rankedSide.whItems} 项，面板 ≡ 真镜像 hp${rankedSide.stats.hp}/sp${rankedSide.stats.sp}）→ 0 场 invalid`);
       return `shortfall=${d.shortfall}`;
     });
 
@@ -1006,8 +1016,10 @@ async function main() {
       expect(meA.body.data.rating.points === 0, `排位不改积分（D-133 双轨），实得 ${meA.body.data.rating.points}`, meA.raw);
       const recA = await request(port, 'GET', '/api/v1/me/records?role=attack', undefined, authed(state.facts.A.token));
       const rankedRecA = recA.body.data.records.filter((x) => x.mode === 'ranked');
-      expect(rankedRecA.length === d.matches, `发起者排位战绩应 ${d.matches} 条（同步结算），实得 ${rankedRecA.length}`, recA.raw);
-      const foeIds = d.results.map((m) => m.opponentPublicId);
+      // D-168 起第二轮不再被冷却硬拒（见检查点 14 的说明）⇒ 发起者的排位战绩 = **两轮之和**
+      const rankedTotal = d.matches + state.facts.ranked2.matches;
+      expect(rankedRecA.length === rankedTotal, `发起者排位战绩应 ${rankedTotal} 条（两轮同步结算），实得 ${rankedRecA.length}`, recA.raw);
+      const foeIds = [...new Set([...d.results, ...state.facts.ranked2.results].map((m) => m.opponentPublicId))];
       const defenses = [];
       for (const publicId of foeIds) {
         // 防守战绩视图：夹具持有 token 时走 HTTP（端点），否则退回档案层同一视图
@@ -1070,7 +1082,7 @@ async function main() {
         { tag: 'B', publicId: state.facts.B.publicId },
         { tag: 'CLI 玩家', publicId: state.facts.cliPlayer.publicId },
       ];
-      for (const publicId of state.facts.ranked1.results.map((m) => m.opponentPublicId)) {
+      for (const publicId of [...new Set([...state.facts.ranked1.results, ...state.facts.ranked2.results].map((m) => m.opponentPublicId))]) {
         if (!subjects.some((x) => x.publicId === publicId)) subjects.push({ tag: `排位对手`, publicId });
       }
       const views = [];
@@ -1388,7 +1400,7 @@ async function main() {
       seen.add(p.playerId);
       out(`  · [${p.where}] ${p.publicId} → playerId=${p.playerId} nickname=${p.nickname} tier=${p.tier} points=${p.points} isBot=${p.isBot} snapshot=${short(p.snapshotHash, 26)}`);
     }
-    out(`  · 结算对局：quick ${state.facts.quickBattles.length} 场 + ranked ${state.facts.ranked1.matches} 场；双方 playerId 全部落在上述真实档案内（0 个 bot）`);
+    out(`  · 结算对局：quick ${state.facts.quickBattles.length} 场 + ranked ${state.facts.ranked1.matches + state.facts.ranked2.matches} 场（两轮批次之和）；双方 playerId 全部落在上述真实档案内（0 个 bot）`);
     out('');
     out('✅ 服务端权威仓库 + 装配引用端到端（D-159/D-162）：第 5 步 POST /me/box 开箱 '
       + state.facts.asmA.opened.length + '（A）/' + state.facts.asmB.opened.length + '（B）件 → **真源入档**；'

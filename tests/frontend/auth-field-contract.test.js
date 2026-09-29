@@ -17,13 +17,14 @@ const format = require('../../public/format.js');
 
 const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
-// F1 分册 + F2 分册 + F3 分册 + F6 分册 + F7 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
+// F1 分册 + F2 分册 + F3 分册 + F6 分册 + F7 分册 + F5 分册（§5 字段来源契约增量；FC-3 的并集口径见下）
 const DOC_PATHS = [
   path.join(REPO, 'docs', 'frontend', '01-auth.md'),
   path.join(REPO, 'docs', 'frontend', '02-accounts.md'),
   path.join(REPO, 'docs', 'frontend', '03-hub-warehouse-loadout.md'),
   path.join(REPO, 'docs', 'frontend', '04-quickmatch.md'),
   path.join(REPO, 'docs', 'frontend', '05-tournament.md'),
+  path.join(REPO, 'docs', 'frontend', '06-ai-editor.md'),
 ];
 
 const ENVELOPE_PATHS = new Set(contract.AUTH_FIELD_CONTRACT.map((entry) => entry.path));
@@ -99,6 +100,18 @@ async function capture() {
     assert.equal(boxResp.status, 200, boxResp.raw);
     const ai = await get('/api/v1/me/ai', token);
     assert.equal(ai.status, 200, ai.raw);
+    // F5/D-172：AI 编辑器的四个新端点（校验 / 新建 / 编辑保存 / 删除）—— 契约路径的宿主响应
+    const AI_OK_PROGRAM = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } };
+    const aiVal = await post('/api/v1/me/ai/validate', { program: AI_OK_PROGRAM }, token);
+    assert.equal(aiVal.status, 200, `AI 校验应 200：${aiVal.raw.slice(0, 200)}`);
+    const aiNew = await post('/api/v1/me/ai', { name: '契约AI', program: AI_OK_PROGRAM, status: 'draft' }, token);
+    assert.equal(aiNew.status, 200, `新建 AI 应 200：${aiNew.raw.slice(0, 200)}`);
+    const aiPut = await request(port, 'PUT', '/api/v1/me/ai/' + aiNew.body.data.aiId, { name: '契约AI改' },
+      { authorization: `Bearer ${token}` });
+    assert.equal(aiPut.status, 200, `编辑 AI 应 200：${aiPut.raw.slice(0, 200)}`);
+    const aiDel = await request(port, 'DELETE', '/api/v1/me/ai/' + aiNew.body.data.aiId, undefined,
+      { authorization: `Bearer ${token}` });
+    assert.equal(aiDel.status, 200, `删除 AI 应 200：${aiDel.raw.slice(0, 200)}`);
     const nick = await request(port, 'PUT', '/api/v1/me/nickname', { nickname: '契约昵称' },
       { authorization: `Bearer ${token}` });
     assert.equal(nick.status, 200, nick.raw);
@@ -179,6 +192,7 @@ async function capture() {
     return {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
+      aiValidate: aiVal.body, aiCreate: aiNew.body, aiUpdate: aiPut.body, aiDelete: aiDel.body,
       configs: configs.body, assemble: asm.body,
       quick: quick.body, replay: replayResp.body, ranked: ranked.body, board: boardResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
@@ -215,6 +229,11 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'me/warehouse': { envelopes: [real.warehouse], anyOf: false },
     'me/box': { envelopes: [real.box], anyOf: false },
     'me/ai': { envelopes: [real.ai], anyOf: false },
+    // F5/D-172：AI 编辑器的四个端点
+    'me/ai/validate': { envelopes: [real.aiValidate], anyOf: false },
+    'me/ai/create': { envelopes: [real.aiCreate], anyOf: false },
+    'me/ai/update': { envelopes: [real.aiUpdate], anyOf: false },
+    'me/ai/delete': { envelopes: [real.aiDelete], anyOf: false },
     'me/nickname': { envelopes: [real.nickname], anyOf: false },
     // 提交③：配置列表（编辑器）与装配回带（两步顺序第①步）
     'me/configs': { envelopes: [real.configs], anyOf: false },

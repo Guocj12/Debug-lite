@@ -30,7 +30,9 @@ const STATUS_BY_CODE = Object.freeze({
   warehouse_full: 409,               // 某分类已达上限（拒绝开箱；不写 journal）
   cannot_activate_incomplete: 409,   // 设为出战时配置不完整（保存非出战槽时不校验）
   ai_limit: 409,                     // AI 库已满（默认 100，与物品分别计数）
-  ai_in_use: 409,                    // 删除被出战配置引用的 AI
+  ai_in_use: 409,                    // 删除被出战配置引用的 AI；D-172：被引用的 AI 禁止降级为草稿
+  ai_is_draft: 409,                  // D-172：出战配置（保存/出战）引用了库内存在的**草稿** AI
+  ai_invalid: 400,                   // D-172：AI 程序不合法（结构/合法性/门控）；details 为逐条 {path,code,message}
   item_missing: 409,                 // 仓库内物品不存在（装配目标/插件）
   slot_type_mismatch: 409,           // 插件类型与插槽不匹配（core/items 装配拒绝）
   slot_occupied: 409,                // 插槽已占用

@@ -486,15 +486,28 @@ function makeAst(logger, unlockApi) {
   function checkLegality(program) {
     const errors = [];
     if (!program || !program.body) return { ok: false, errors };
-    // 函数名收集（hoisting，D-103：先调用后定义合法）
+    // 函数名收集（hoisting，D-103：先调用后定义合法）。
+    //   D-172（F5）：**重名函数一律拒绝**（`duplicate_function`）。修前两边取的不是同一个定义：
+    //   校验 `collectActionFns` 用 Map「后定义覆盖同名」，运行期 `runtime.findFunctionDef` 用 `if (found) return`「取首个」。
+    //   实测（F5 探针）：`function g(){} ; function g(){action wait}; while(true){call g}` 校验**通过**，
+    //   但运行期执行的是**空的第一个 g** ⇒ 每 tick 空转到步数上限（wait + 2000 条 trace 截断）；
+    //   反序（先有 action 的 g）则把一个本来能跑的程序**误拒**（branch_without_action）。
+    //   禁止重名后两种口径不再有分歧（既不误拒也不会空转）。
     const fns = new Set();
-    (function walk(n) {
-      if (!n || typeof n !== 'object') return;
-      if (n.type === 'function' && typeof n.name === 'string') fns.add(n.name);
-      const ch = childList(n);
-      for (const c of (Array.isArray(ch.list) ? ch.list : [])) walk(c);
-      for (const c of exprChildren(n)) walk(c);
-    })(program.body);
+    const fnPathOf = new Map();
+    walkNodes(program.body, (n, path) => {
+      if (n.type !== 'function' || typeof n.name !== 'string') return;
+      if (fnPathOf.has(n.name)) {
+        errors.push({
+          path,
+          code: 'duplicate_function',
+          message: `函数名 ${n.name} 重复定义（首次在 ${fnPathOf.get(n.name)}）：请改用不同函数名（D-172）`,
+        });
+        return;
+      }
+      fnPathOf.set(n.name, path);
+      fns.add(n.name);
+    });
     // 变量声明集（B26 保守检查）：**程序任何位置**被 var 声明过即算（含函数体内声明 → 与 call hoisting 同口径）；
     //   刻意不做词法作用域/语句顺序/分支可达性分析——"分支内声明、分支外使用""先读后声明"这类ordering 问题一律放过。
     const declared = new Set();

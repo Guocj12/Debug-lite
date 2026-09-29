@@ -117,6 +117,15 @@
         var qs = typeof query === 'string' && query !== '' ? '?' + query : '';
         return call('GET', '/api/v1/leaderboard' + qs, undefined, token);
       },
+      // F5/D-172：AI 库的编辑闭环（新建 / 编辑保存 / 删除）与**登录版实时校验**
+      aiCreate: function (token, input) { return call('POST', '/api/v1/me/ai', input, token); },
+      aiUpdate: function (token, aiId, input) {
+        return call('PUT', '/api/v1/me/ai/' + encodeURIComponent(String(aiId)), input, token);
+      },
+      aiDelete: function (token, aiId) {
+        return call('DELETE', '/api/v1/me/ai/' + encodeURIComponent(String(aiId)), undefined, token);
+      },
+      aiValidate: function (token, input) { return call('POST', '/api/v1/me/ai/validate', input, token); },
       admin: admin,
     };
   }

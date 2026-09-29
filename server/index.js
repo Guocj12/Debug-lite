@@ -1356,7 +1356,7 @@ function createHandler(logger, extraRoutes, runtime) {
         }));
       },
     },
-    // D-161：AI 库创建（命名保存；上限 100 → 409 ai_limit）
+    // D-161：AI 库创建（命名保存；上限 100 → 409 ai_limit）；D-172：`status` 缺省/ready 时服务端完整校验
     '/api/v1/me/ai': {
       auth: true,
       redact: true,
@@ -1364,7 +1364,7 @@ function createHandler(logger, extraRoutes, runtime) {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
         return respond(await rt.account.createAi({
-          playerId: ctx.player.playerId, name: body.name, program: body.program,
+          playerId: ctx.player.playerId, name: body.name, program: body.program, status: body.status,
         }));
       },
     },
@@ -1576,17 +1576,48 @@ function createHandler(logger, extraRoutes, runtime) {
     }
 
     // D-161：AI 库动态路由 DELETE /me/ai/:aiId（删除被出战配置引用者 → 409 ai_in_use）
+    // D-172：同段新增 PUT /me/ai/:aiId（编辑保存）与 POST /me/ai/validate（登录版实时校验）。
+    //   注意 `validate` 是**子路径而非 aiId**，必须在本块内先分流——静态路由表在动态块之后才查，
+    //   否则 `/me/ai/validate` 会被当成 aiId=validate 走进删除/更新分支。
     const aiPrefix = '/api/v1/me/ai/';
-    if (req.method === 'DELETE' && urlPath.startsWith(aiPrefix)) {
+    if (urlPath.startsWith(aiPrefix)) {
       const rest = urlPath.slice(aiPrefix.length);
-      if (rest !== '' && !rest.includes('/')) {
+      if (req.method === 'POST' && rest === 'validate') {
+        return runEntry({
+          auth: true,
+          handler: async (c) => {
+            const body = bodyOf(c);
+            if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+            return respond(await rt.account.validateAi({ playerId: c.player.playerId, program: body.program }));
+          },
+        }, ctx);
+      }
+      if (rest !== '' && !rest.includes('/') && (req.method === 'DELETE' || req.method === 'PUT')) {
         let aiId = null;
         try {
           aiId = decodeURIComponent(rest);
         } catch (e) {
           return failStatus(400, 'bad_request', `非法 aiId ${rest}`);
         }
-        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.deleteAi({ playerId: c.player.playerId, aiId })) }, ctx);
+        // 解码后**再查一次**分节符：`%2F` 解码成 `/` 的形态必须与 `/replay/:id`、`/data/:table` 同口径拒绝
+        //   （不构成越权——aiId 只作库内键——但"同一类输入走同一判据"是既有约定，避免审查期再补）
+        if (aiId === '' || aiId.includes('/') || aiId.includes('..')) {
+          return failStatus(400, 'bad_request', `非法 aiId ${rest}`);
+        }
+        if (req.method === 'DELETE') {
+          return runEntry({ auth: true, handler: async (c) => respond(await rt.account.deleteAi({ playerId: c.player.playerId, aiId })) }, ctx);
+        }
+        return runEntry({
+          auth: true,
+          handler: async (c) => {
+            const body = bodyOf(c);
+            if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+            return respond(await rt.account.updateAi({
+              playerId: c.player.playerId, aiId,
+              name: body.name, program: body.program, status: body.status,
+            }));
+          },
+        }, ctx);
       }
     }
 

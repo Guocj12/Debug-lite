@@ -28,7 +28,14 @@ const DEFAULT_AI_MAX_PER_PLAYER = 100;
 const GRANT_WINDOW = 256;
 // 这些记录改变的是**状态量**（仓库正文 / AI 库），无法由"段内增量"无损重建 →
 //   含它们的 journal 段**不参与 compact**（真源始终留在 journal；检查点里的物化态只作降级兜底）
-const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'ai.created', 'ai.deleted']);
+const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'ai.created', 'ai.updated', 'ai.deleted']);
+
+// D-172：AI 库条目的状态（`ready` = 正式、`draft` = 草稿）。**字段可缺省**（旧档案无该字段 → 视为 ready，
+//   因此不需要档案版本迁移）；非法取值一律按 ready 处理（写路径已挡，这里只做读路径兜底）。
+const AI_STATUSES = Object.freeze(['ready', 'draft']);
+function aiStatusOf(ai) {
+  return ai && ai.status === 'draft' ? 'draft' : 'ready';
+}
 
 function warehouseMaxPerBucketOf(config) {
   const v = config && config.warehouse && config.warehouse.maxPerBucket;
@@ -204,8 +211,9 @@ const RECORD_TYPES = Object.freeze([
   'box.opened',
   'warehouse.assemble',
   'warehouse.disassemble',
-  // D-161：AI 库
+  // D-161：AI 库；D-172：新增 `ai.updated`（编辑保存：`aiId` 不变、部分更新、含草稿状态）
   'ai.created',
+  'ai.updated',
   'ai.deleted',
   // D-170：管理员直接改账号段位/积分/入池（运维与验收用；写 journal 留痕、可重放）
   'account.patched',
@@ -493,6 +501,10 @@ function validateArchive(archive, options) {
         }
         if (seenAi.has(a.aiId)) pushError(errors, 'store_inconsistent', `aiId 重复 ${a.aiId}`, 'ai.items');
         seenAi.add(a.aiId);
+        // D-172：status 可缺省（缺省 = ready）；给了就必须是合法取值
+        if (a.status !== undefined && !AI_STATUSES.includes(a.status)) {
+          pushError(errors, 'store_inconsistent', `非法 ai.status ${JSON.stringify(a.status)}`, 'ai.items');
+        }
       }
     }
   }
@@ -827,6 +839,17 @@ function isRecordApplied(archive, record) {
     // D-161：AI 库
     case 'ai.created':
       return findAi(archive, record.aiId) !== null;
+    // D-172：编辑保存的幂等键 = **内容比对**（name/status/program 逐字段相等）且 `updatedAt` 已是记录时刻。
+    //   刻意不用纯时间键：同一毫秒内的两次不同编辑会因 `updatedAt === at` 被误判为"已应用"而**静默丢失第二次**；
+    //   先比内容就不会（内容不同 → 判未应用 → 正常 apply）。
+    case 'ai.updated': {
+      const ai = findAi(archive, record.aiId);
+      if (!ai) return false;
+      if (record.name !== undefined && ai.name !== record.name) return false;
+      if (record.status !== undefined && aiStatusOf(ai) !== record.status) return false;
+      if (record.program !== undefined && JSON.stringify(ai.program) !== JSON.stringify(record.program)) return false;
+      return Number.isInteger(record.at) ? ai.updatedAt === record.at : true;
+    }
     case 'ai.deleted':
       return findAi(archive, record.aiId) === null;
     case 'checkpoint':
@@ -1037,6 +1060,7 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
             program: deepClone(a.program),
             createdAt: at,
             updatedAt: at,
+            status: a.status === 'draft' ? 'draft' : 'ready',
           });
           changed = true;
         }
@@ -1220,7 +1244,7 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       }
       return { changed: true };
     }
-    // D-161：AI 库
+    // D-161：AI 库；D-172：`status`（缺省 = ready，旧记录无该字段照旧可用）
     case 'ai.created': {
       if (findAi(archive, record.aiId)) return { changed: false };
       archive.ai.items.push({
@@ -1229,8 +1253,29 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
         program: deepClone(record.program),
         createdAt: at,
         updatedAt: at,
+        status: record.status === 'draft' ? 'draft' : 'ready',
       });
       return { changed: true };
+    }
+    // D-172：编辑保存（**部分更新**：只改记录里给出的字段；`aiId` 不变；`updatedAt` 置为记录时刻）
+    case 'ai.updated': {
+      const ai = findAi(archive, record.aiId);
+      if (!ai) {
+        ctx.logger.warn('store', 'store.error', `ai.updated 指向不存在的 AI ${record.aiId}（跳过）`, { aiId: record.aiId, type: record.type });
+        return { changed: false };
+      }
+      let changed = false;
+      if (record.name !== undefined && ai.name !== record.name) { ai.name = record.name; changed = true; }
+      if (record.program !== undefined) {
+        const next = deepClone(record.program);
+        if (JSON.stringify(ai.program) !== JSON.stringify(next)) { ai.program = next; changed = true; }
+      }
+      if (record.status !== undefined) {
+        const next = record.status === 'draft' ? 'draft' : 'ready';
+        if (aiStatusOf(ai) !== next) { ai.status = next; changed = true; }
+      }
+      if (Number.isInteger(record.at) && ai.updatedAt !== record.at) { ai.updatedAt = record.at; changed = true; }
+      return { changed };
     }
     case 'ai.deleted': {
       const before = archive.ai.items.length;
@@ -1326,6 +1371,7 @@ function aggregateRecords(records) {
             program: deepClone(a.program),
             createdAt: record.at === undefined ? null : record.at,
             updatedAt: record.at === undefined ? null : record.at,
+            status: a.status === 'draft' ? 'draft' : 'ready',
           }));
       }
       continue;
@@ -1347,7 +1393,21 @@ function aggregateRecords(records) {
           program: deepClone(record.program),
           createdAt: record.at === undefined ? null : record.at,
           updatedAt: record.at === undefined ? null : record.at,
+          status: record.status === 'draft' ? 'draft' : 'ready',
         });
+      }
+      continue;
+    }
+    // D-172：编辑保存（聚合视图同样按"部分更新"叠加，供检查点降级态使用）
+    if (record.type === 'ai.updated') {
+      const t = ensure(record.playerId);
+      if (!t.ai) t.ai = [];
+      const item = t.ai.find((x) => x && x.aiId === record.aiId);
+      if (item) {
+        if (record.name !== undefined) item.name = record.name;
+        if (record.program !== undefined) item.program = deepClone(record.program);
+        if (record.status !== undefined) item.status = record.status === 'draft' ? 'draft' : 'ready';
+        if (record.at !== undefined) item.updatedAt = record.at;
       }
       continue;
     }
@@ -1524,6 +1584,8 @@ module.exports = {
   aggregateRecords,
   activeSlot,
   aiMaxPerPlayerOf,
+  AI_STATUSES,
+  aiStatusOf,
   archiveRelPath,
   assertArchiveInvariants,
   checkSlotDeletable,

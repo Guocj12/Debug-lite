@@ -111,8 +111,9 @@
 
     function dispatch(action) {
       store.dispatch(action);
-      // 输入不重绘，避免光标跳动（F1 表单 / F2 管理面板 / F3 开箱与设置输入框同理）
-      if (action && (action.type === 'form.set' || action.type === 'admin.form.set' || action.type === 'screen.form.set')) return;
+      // 输入不重绘，避免光标跳动（F1 表单 / F2 管理面板 / F3 开箱与设置输入框 / F5 AI 编辑器同理）
+      if (action && (action.type === 'form.set' || action.type === 'admin.form.set' || action.type === 'screen.form.set'
+        || action.type === 'ai.text.set' || action.type === 'ai.import.set')) return;
       mount();
     }
 
@@ -148,7 +149,7 @@
       var ds = el && el.dataset ? el.dataset : null;
       if (!ds) return null;
       var out = {};
-      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId', 'tier'];
+      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId', 'tier', 'addr', 'field', 'value'];
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;
@@ -180,6 +181,17 @@
     function onInput(ev) {
       var t = ev.target;
       if (!t || !t.name) return;
+      // F5/D-172：AI 编辑器的字段输入（`ai.<地址>.<字段键>`）——**只记文本、不重绘、不提交**；
+      //   提交发生在 change（失焦/回车）事件上 → 走 ai-field-commit 动作（改草稿 + 触发一次校验）
+      if (DL.store.isAiField && DL.store.isAiField(t.name)) {
+        dispatch({ type: 'ai.text.set', field: t.name, value: t.value });
+        return;
+      }
+      // F5：导入 JSON 的多行输入（唯一 textarea 用途，裁决 ③）
+      if (t.name === 'aiImport') {
+        dispatch({ type: 'ai.import.set', value: t.value });
+        return;
+      }
       // F2：管理面板输入框（adminToken/adminTarget/adminCount）走 admin.form.set（02-accounts.md §7）
       var isAdminField = DL.store.ADMIN_FIELDS && DL.store.ADMIN_FIELDS.indexOf(t.name) !== -1;
       // F3：开箱次数 / 新昵称走 screen.form.set（03 §7；各自落 state.box.times / state.settings.nickname）
@@ -189,6 +201,15 @@
         field: t.name,
         value: t.value,
       });
+    }
+
+    // F5：AI 编辑器字段「提交」（change = 失焦或回车）→ 写入草稿并自动校验一次（裁决 ⑨）
+    function onChange(ev) {
+      var t = ev.target;
+      if (!t || !t.name) return;
+      if (DL.store.isAiField && DL.store.isAiField(t.name)) {
+        run('ai-field-commit', { field: t.name });
+      }
     }
 
     // 启动自检（01-auth.md §7.3）：无 token → 登录屏；有 token → GET /me 判定会话真伪
@@ -245,13 +266,14 @@
       doc.addEventListener('click', onClick);
       doc.addEventListener('submit', onSubmit);
       doc.addEventListener('input', onInput);
+      doc.addEventListener('change', onChange);   // F5：AI 编辑器字段提交（失焦/回车）
       return boot();
     }
 
     return {
       store: store, api: api, storage: storage,
       mount: mount, dispatch: dispatch, run: run, boot: boot, start: start,
-      handlers: { onClick: onClick, onSubmit: onSubmit, onInput: onInput },
+      handlers: { onClick: onClick, onSubmit: onSubmit, onInput: onInput, onChange: onChange },
     };
   }
 

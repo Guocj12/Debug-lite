@@ -22,7 +22,7 @@ const appMod = require('../../public/app.js');
 const contract = require('../../public/contract.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
-const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
+const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
 // 02-accounts.md §4 的十七个管理动作（F2 十六 + D-170 一个；只在管理员态渲染，非管理员态**完全不出现**，A-1）
@@ -180,6 +180,61 @@ function boardState() {
   return state;
 }
 
+/* ---------- F5/D-172：AI 编辑器的测试夹具（06 §3） ---------- */
+
+const AI_LITERAL_PROGRAM = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'literal', value: 0 }] } };
+const AI_CMP_PROGRAM = {
+  type: 'program', version: 2,
+  body: { type: 'seq', statements: [{ type: 'if', cond: { type: 'cmp', op: '<', left: { type: 'get', path: 'self.hp' }, right: { type: 'literal', value: 30 } }, then: { type: 'seq', statements: [{ type: 'action', name: 'defend' }] }, else: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } }] },
+};
+const AI_LOOP_PROGRAM = {
+  type: 'program', version: 2,
+  body: { type: 'seq', statements: [{ type: 'loop', kind: 'count', times: { type: 'literal', value: 3 }, body: { type: 'seq', statements: [{ type: 'action', name: 'move_right' }] } }] },
+};
+const AI_MIXED_PROGRAM = {
+  type: 'program', version: 2,
+  body: {
+    type: 'seq',
+    statements: [
+      { type: 'function', name: 'g', body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } },
+      { type: 'call', name: 'g' },
+      { type: 'var', name: 'x', value: { type: 'literal', value: 0 } },
+      { type: 'set', name: 'x', value: { type: 'arith', op: '+', left: { type: 'getVar', name: 'x' }, right: { type: 'literal', value: 1 } } },
+      { type: 'if', cond: { type: 'logic', op: 'and', left: { type: 'cmp', op: '>', left: { type: 'get', path: 'self.hp' }, right: { type: 'literal', value: 50 } }, right: { type: 'random', prob: { type: 'literal', value: 0.5 }, then: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] }, else: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } } }, then: { type: 'seq', statements: [{ type: 'action', name: 'move_right' }] }, else: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } },
+      { type: 'break' },
+    ],
+  },
+};
+const AI_LIST_ENVELOPE = {
+  ok: true,
+  data: {
+    items: [{ aiId: 'ai_f5_1', name: '我的进攻AI', program: { type: 'program' }, createdAt: 1, updatedAt: 2, status: 'draft' }],
+    count: 1, max: 100, draftCount: 1, usage: { ai_f5_1: ['slot1'] },
+  },
+};
+
+function aiListState(extra) {
+  const state = stateFor('ai-editor');
+  state.aiEditor.list = AI_LIST_ENVELOPE;
+  Object.assign(state.aiEditor, extra || {});
+  return state;
+}
+function aiEditState(cursor, program, extra) {
+  const state = stateFor('ai-editor');
+  state.aiEditor.list = AI_LIST_ENVELOPE;
+  state.aiEditor.mode = 'edit';
+  state.aiEditor.aiId = 'ai_f5_1';
+  state.aiEditor.name = '我的进攻AI';
+  state.aiEditor.cursor = cursor;
+  state.aiEditor.draft = program === null ? null : JSON.parse(JSON.stringify(program === undefined ? AI_LITERAL_PROGRAM : program));
+  state.aiEditor.validate = {
+    ok: true,
+    data: { ok: true, warnings: [], programHash: 'a'.repeat(64), stats: { nodes: 3, depth: 1, usedNodeTypes: ['seq', 'action'] } },
+  };
+  Object.assign(state.aiEditor, extra || {});
+  return state;
+}
+
 function nonAdminRenderings() {
   const list = store.VIEWS.map((view) => stateFor(view));
   const itemDetail = stateFor('warehouse');
@@ -206,6 +261,18 @@ function nonAdminRenderings() {
   // F7（05 §4）：锦标赛屏（有批次 + 已载入某场）与排行榜屏（已加载榜单）
   list.push(tournamentState());
   list.push(boardState());
+  // F5/D-172（06 §3）：AI 编辑器的**六种可达态**——列表 / 列表+删除确认 / 编辑（缺省动作节点）/
+  //   编辑（字面量节点 → 值类型按钮）/ 编辑（比较节点 → 枚举按钮 + 路径候选）/ 导入区 + 丢弃确认。
+  //   这些是互斥的渲染分支，必须都纳入，否则 save/draft/import/confirm 之类会判成"注册了但没入口"。
+  list.push(aiListState());
+  list.push(aiListState({ confirm: { kind: 'delete', aiId: 'ai_f5_1' } }));
+  list.push(aiEditState('body.s[0]'));
+  list.push(aiEditState('body.s[0].value', AI_LITERAL_PROGRAM));
+  list.push(aiEditState('body.s[0].cond', AI_CMP_PROGRAM));
+  list.push(aiEditState('body.s[0]', AI_LOOP_PROGRAM));
+  list.push(aiEditState('body', AI_MIXED_PROGRAM, { importOpen: true }));
+  list.push(aiEditState('body', AI_MIXED_PROGRAM, { confirm: { kind: 'discard' } }));
+  list.push(aiEditState('body', null));
   return list;
 }
 
@@ -238,7 +305,10 @@ test('UI-2 非管理员态全部屏的 data-action 集合 == 注册表的非管�
   //     注册表 52 = F1 9 + F2 17（含 D-170 的 admin-account-patch）+ F3 提交② 17 + F3 提交③ 9
   //     非管理 35 = 52 − 17（管理动作）
   //   数字一律由**实际注册表**推出（不写死），失败时打印实际集合便于定位。
-  const managed = ACTION_NAMES.filter((a) => !ADMIN_ACTIONS.has(a));
+  //   F5/D-172：`ai-field-commit` 由输入框的 **change 事件**触发（不是按钮），故不计入"渲染集合"；
+  //   它仍必须存在于注册表（UI-3 检查 run + label），并在白名单对比里出现（下方 documented 那段）。
+  const EVENT_ONLY_ACTIONS = new Set(['ai-field-commit']);
+  const managed = ACTION_NAMES.filter((a) => !ADMIN_ACTIONS.has(a) && !EVENT_ONLY_ACTIONS.has(a));
   const expected = [...new Set(managed)].sort();
   const extra = expected.filter((a) => !rendered.has(a));
   assert.deepEqual(extra, [], `注册了非管理动作但没有入口（不可达）：${extra.join(', ')}`);

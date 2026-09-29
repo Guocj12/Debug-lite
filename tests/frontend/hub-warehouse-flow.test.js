@@ -156,27 +156,22 @@ test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 11 个按钮 ＋ �
   });
 });
 
-/* ---------- WH-2：四个空页 ---------- */
+/* ---------- WH-2：空页已全部落地（F5 起） ---------- */
 
-test('WH-2 剩余空页：标题 + 尚未实现（计划批次 F#）+ 返回主界面；不发任何请求', async () => {
+test('WH-2 四个空页已全部落地：EMPTY_PAGES 为空，ai-editor 是真屏（会发请求、有真按钮）', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh2user');
-    // F6 起 `quick` 已是真屏（04 分册），F7 将接 tournament/leaderboard；此处只核对**仍为空页**的
-    const pages = [
-      ['goto-ai-editor', 'AI 编辑', 'F5'],
-    ];
-    for (const [action, title, batch] of pages) {
-      const before = h.counter.n;
-      await h.run(action);
-      assert.equal(h.counter.n, before, `${action} 不得发任何请求（FR-12）`);
-      const html = h.html();
-      assert.ok(html.includes(title), `${action} 缺少标题 ${title}`);
-      assert.ok(html.includes('尚未实现（计划批次 ' + batch + '）'), `${action} 缺少计划批次行`);
-      assert.equal(buttonLabels(html).length, 1, `${action} 只应有一个按钮（返回主界面）`);
-      assert.deepEqual(buttonLabels(html), ['返回主界面']);
-      await h.run('goto-hub');
-      assert.equal(h.state().view, 'hub', '空页的返回键必须能回到主界面（B-13）');
-    }
+    // F6 落地 quick、F7 落地 tournament/leaderboard、F5 落地 ai-editor ⇒ 占位页表必须为空
+    assert.deepEqual(Object.keys(format.EMPTY_PAGES), [], 'F5 之后不应再有空页（FR-12 的占位页已全部落地）');
+    const before = h.counter.n;
+    await h.run('goto-ai-editor');
+    assert.equal(h.state().view, 'ai-editor');
+    assert.ok(h.counter.n > before, 'ai-editor 是真屏：进屏要拉一次 GET /me/ai（不再是"零请求"的空页）');
+    const labels = buttonLabels(h.html());
+    assert.ok(labels.includes('新建 AI') && labels.includes('返回主界面'), `真屏按钮缺失：${labels.join('、')}`);
+    assert.ok(!h.html().includes('尚未实现'), '真屏不应再出现「尚未实现」占位文案');
+    await h.run('goto-hub');
+    assert.equal(h.state().view, 'hub');
   });
 });
 

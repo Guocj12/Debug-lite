@@ -47,6 +47,14 @@ const F6_ACTIONS = ['quick-run', 'viewer-first', 'viewer-prev', 'viewer-next', '
 // F7（05 §4）：锦标赛 + 排行榜 的 10 个非管理动作
 const F7_ACTIONS = ['tournament-run', 'tournament-page-prev', 'tournament-page-next', 'tournament-open-battle',
   'board-points', 'board-tier', 'board-scope', 'board-prev', 'board-next', 'board-refresh'];
+// F5/D-172（06 §4）：AI 编辑器的 28 个非管理动作
+//   `ai-field-commit` 由输入框的 change 事件触发（不渲染为按钮）→ 见 EVENT_ONLY_ACTIONS
+const F5_ACTIONS = ['ai-refresh', 'ai-new', 'ai-open', 'ai-delete', 'ai-confirm-yes', 'ai-confirm-no',
+  'ai-select-node', 'ai-insert', 'ai-replace', 'ai-set-field', 'ai-set-literal-type', 'ai-field-commit',
+  'ai-move-up', 'ai-move-down', 'ai-wrap-if', 'ai-delete-node', 'ai-slot-clear', 'ai-block-remove',
+  'ai-validate', 'ai-save', 'ai-save-draft', 'ai-save-as', 'ai-import-open', 'ai-import-close', 'ai-import-apply',
+  'ai-close', 'ai-discard-yes', 'ai-discard-no'];
+const EVENT_ONLY_ACTIONS = new Set(['ai-field-commit']);
 
 const ROW = {
   playerId: 'pl_row0001', publicId: 'u_row0001', nickname: '行一', tier: 'common', points: 120,
@@ -116,6 +124,51 @@ function adminConfigState(modal) {
 }
 
 function htmlFor(state) { return render.render(format.viewModel(state)); }
+
+/* ---------- F5/D-172：AI 编辑器（06 §3）的可达态夹具 ---------- */
+
+const AI_F5_LITERAL = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'literal', value: 0 }] } };
+const AI_F5_CMP = {
+  type: 'program', version: 2,
+  body: {
+    type: 'seq',
+    statements: [{
+      type: 'if',
+      cond: { type: 'cmp', op: '<', left: { type: 'get', path: 'self.hp' }, right: { type: 'literal', value: 30 } },
+      then: { type: 'seq', statements: [{ type: 'action', name: 'defend' }] },
+      else: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] },
+    }],
+  },
+};
+const AI_F5_LIST = {
+  ok: true,
+  data: {
+    items: [{ aiId: 'ai_f5_1', name: '我的进攻AI', program: { type: 'program' }, createdAt: 1, updatedAt: 2, status: 'draft' }],
+    count: 1, max: 100, draftCount: 1, usage: { ai_f5_1: ['slot1'] },
+  },
+};
+
+function adminAiState(mode, extra) {
+  const state = adminState('ai-editor');
+  state.aiEditor.list = AI_F5_LIST;
+  if (mode !== 'list') {
+    state.aiEditor.mode = 'edit';
+    state.aiEditor.aiId = 'ai_f5_1';
+    state.aiEditor.name = '我的进攻AI';
+    state.aiEditor.validate = {
+      ok: true,
+      data: { ok: true, warnings: [], programHash: 'a'.repeat(64), stats: { nodes: 3, depth: 1, usedNodeTypes: ['seq', 'action'] } },
+    };
+    state.aiEditor.cursor = mode === 'edit-literal' ? 'body.s[0]'
+      : mode === 'edit-cmp' ? 'body.s[0].cond'
+        : mode === 'edit-if' ? 'body.s[0]'
+          : 'body';
+    state.aiEditor.draft = mode === 'edit-empty' ? null
+      : JSON.parse(JSON.stringify(mode === 'edit-literal' ? AI_F5_LITERAL : mode === 'edit-cmp' ? AI_F5_CMP : AI_F5_CMP));
+  }
+  Object.assign(state.aiEditor, extra || {});
+  return state;
+}
 
 // F6（04 §5.2）：快速对战屏的两种可达态（管理员态也要能渲染这些动作，AU-1 双向核对需要）
 const QUICK_FRAME = {
@@ -219,22 +272,32 @@ function adminRenderings() {
   // F7（05 §4）：锦标赛屏（有批次 + 已载入某场）与排行榜屏（已加载榜单）
   list.push(htmlFor(adminTournamentState()));
   list.push(htmlFor(adminBoardState()));
+  // F5/D-172（06 §3）：AI 编辑器的可达态（列表 / 删除确认 / 编辑各节点类型 / 导入 / 丢弃确认）
+  list.push(htmlFor(adminAiState('list')));
+  list.push(htmlFor(adminAiState('list', { confirm: { kind: 'delete', aiId: 'ai_f5_1' } })));
+  list.push(htmlFor(adminAiState('edit-action')));
+  list.push(htmlFor(adminAiState('edit-literal')));
+  list.push(htmlFor(adminAiState('edit-cmp')));
+  list.push(htmlFor(adminAiState('edit-if')));
+  list.push(htmlFor(adminAiState('edit-import', { importOpen: true })));
+  list.push(htmlFor(adminAiState('edit-discard', { confirm: { kind: 'discard' } })));
+  list.push(htmlFor(adminAiState('edit-empty')));
   return list;
 }
 
-test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F3 提交③后按实际值核对）', () => {
-  // F1 + F2 + F3（提交②/③）+ F6 + F7 的五段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS])].sort();
+test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F5 后按实际值核对）', () => {
+  // F1 + F2 + F3（提交②/③）+ F6 + F7 + F5 的六段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();
   for (const html of adminRenderings()) for (const a of attrValues(html, 'data-action')) rendered.add(a);
   const dead = [...rendered].filter((a) => ACTION_NAMES.indexOf(a) === -1);
-  const unreachable = ACTION_NAMES.filter((a) => !rendered.has(a));
+  const unreachable = ACTION_NAMES.filter((a) => !rendered.has(a) && !EVENT_ONLY_ACTIONS.has(a));
   assert.deepEqual(dead, [], `渲染出的按钮没有实现分支（死按钮）：${dead.join(', ')}`);
   assert.deepEqual(unreachable, [], `注册了动作但没有入口（不可达）：${unreachable.join(', ')}`);
-  assert.equal(rendered.size, ACTION_NAMES.length,
-    `管理员态动作数应等于注册表全集 ${ACTION_NAMES.length}，实际 ${rendered.size}`);
+  assert.equal(rendered.size, ACTION_NAMES.length - EVENT_ONLY_ACTIONS.size,
+    `管理员态动作数应等于注册表全集减事件型动作 ${ACTION_NAMES.length - EVENT_ONLY_ACTIONS.size}，实际 ${rendered.size}`);
 });
 
 test('AU-2 非管理员态完全不渲染管理入口（A-1）；admin/accounts 两屏兜底回主界面', () => {

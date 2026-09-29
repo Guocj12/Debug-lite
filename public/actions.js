@@ -10,9 +10,9 @@
  * 不读响应字段、不碰 DOM。
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else { root.DL = root.DL || {}; root.DL.actions = factory(); }
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'));
+  else { root.DL = root.DL || {}; root.DL.actions = factory(root.DL.aiEditor); }
+})(typeof self !== 'undefined' ? self : this, function (aiEd) {
   'use strict';
 
   var USERNAME_RE = /^[A-Za-z0-9_-]{3,24}$/;   // 与服务端 auth.js 同规则（3~24、[A-Za-z0-9_-]）
@@ -122,6 +122,7 @@
     ctx.dispatch({ type: 'configs.set', data: null });
     ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
     ctx.dispatch({ type: 'viewer.clear' });   // F6：战斗态（对局/帧/游标）随会话一起清
+    ctx.dispatch({ type: 'ai.editor.close' }); // F5：AI 编辑器（列表 + 草稿）随会话一起清
     ctx.dispatch({ type: 'modal.close' });
   }
 
@@ -237,7 +238,9 @@
     });
   }
 
-  // 取 AI 库（GET /me/ai）。ai-pick 的候选来源；config-open 也静默取一次（否则 AI 位置只能显示 aiId 而不是名字）。
+  // 取 AI 库（GET /me/ai）→ 落 `state.configs.ai`（配置编辑器的 ai-pick 候选来源）。
+  //   ⚠️ 命名注意：F5 的 AI 编辑器有**自己的**取数函数 `loadAiLibrary`（落 `state.aiEditor.list`）——
+  //   两者刻意分片（F6 已为"查看器 vs 配置编辑器"立过同样的规矩），**不要合并**。
   function loadAiList(ctx) {
     var token = ctx.state.session.token;
     if (!token) return sessionLost(ctx, null);
@@ -874,7 +877,11 @@
 
     'goto-ai-editor': {
       label: 'AI编辑',
-      run: function (ctx) { return goView(ctx, 'ai-editor'); },
+      run: function (ctx) {
+        // F5/D-172：进屏即拉一次列表（编辑态保留草稿：从别的屏回来不该丢未保存的改动）
+        ctx.dispatch({ type: 'view.go', view: 'ai-editor' });
+        return loadAiLibrary(ctx, true);
+      },
     },
 
     'goto-settings': {
@@ -1376,12 +1383,464 @@
         });
       },
     },
+    // ---------- F5/D-172：AI 编辑器（查看 / 新建 / 编辑 / 删除；06-ai-editor.md §3） ----------
+    'ai-refresh': { label: '刷新', run: function (ctx) { return loadAiLibrary(ctx, false); } },
+    'ai-new': {
+      label: '新建 AI',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        ctx.dispatch({
+          type: 'ai.editor.open', aiId: null, name: '我的AI',
+          program: aiEd.emptyProgram(), status: 'ready', dirty: true,
+        });
+        ctx.dispatch({ type: 'ai.import.close' });
+        return validateDraft(ctx, aiEd.emptyProgram());
+      },
+    },
+    'ai-open': {
+      label: '打开',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var ed = aiEdOf(ctx);
+        var aiId = payload !== null && payload && typeof payload.aiId === 'string' ? payload.aiId : '';
+        var item = aiId === '' || ed === null ? null : ctx.format.aiItemOf(ed.list, aiId);
+        if (item === null) {
+          noticeNotice(ctx, 'error', '这条 AI 已经不在库里了：请点「刷新」。');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        ctx.dispatch({
+          type: 'ai.editor.open', aiId: item.aiId, name: item.name,
+          program: item.program, status: item.status, dirty: false,
+        });
+        ctx.dispatch({ type: 'ai.import.close' });
+        return validateDraft(ctx, item.program);
+      },
+    },
+    'ai-delete': {
+      label: '删除',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var aiId = payload !== null && payload && typeof payload.aiId === 'string' ? payload.aiId : '';
+        if (aiId === '') return Promise.resolve();
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        ctx.dispatch({ type: 'ai.confirm.set', confirm: { kind: 'delete', aiId: aiId } });
+        return Promise.resolve();
+      },
+    },
+    'ai-confirm-yes': {
+      label: '确认删除',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var ed = aiEdOf(ctx);
+        var aiId = ed !== null && ed.confirm !== null && ed.confirm !== undefined ? ed.confirm.aiId : null;
+        if (!aiId) return Promise.resolve();
+        var token = aiTokenOf(ctx);
+        if (!token) return sessionLost(ctx, null);
+        busy(ctx, true);
+        return ctx.api.aiDelete(token, aiId).then(function (result) {
+          busy(ctx, false);
+          ctx.dispatch({ type: 'ai.confirm.set', confirm: null });
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            noticeNotice(ctx, 'error', ctx.format.aiWriteFailText(result.envelope));
+            return undefined;
+          }
+          noticeNotice(ctx, 'info', ctx.format.aiDeleteOkText(result.envelope));
+          return loadAiLibrary(ctx, true);
+        });
+      },
+    },
+    'ai-confirm-no': {
+      label: '取消',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'ai.confirm.set', confirm: null });
+        return Promise.resolve();
+      },
+    },
+    'ai-select-node': {
+      label: '选中',
+      run: function (ctx, payload) {
+        ctx.dispatch({ type: 'ai.cursor.set', addr: aiAddrOf(payload) });
+        return Promise.resolve();
+      },
+    },
+    'ai-insert': {
+      label: '插入节点',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return insertContextual(ctx, aiAddrOf(payload), aiValueOf(payload));
+      },
+    },
+    'ai-replace': {
+      label: '替换节点',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return aiReplace(ctx, aiValueOf(payload));
+      },
+    },
+    'ai-set-field': {
+      label: '设置字段',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return aiSetField(ctx, aiAddrOf(payload), aiFieldKeyOf(payload), aiValueOf(payload));
+      },
+    },
+    'ai-set-literal-type': {
+      label: '设值类型',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return aiSetLiteralType(ctx, aiAddrOf(payload), aiValueOf(payload));
+      },
+    },
+    // 由输入框的 change 事件触发（不是按钮）——注册表仍必须登记它
+    'ai-field-commit': {
+      label: '提交字段',
+      run: function (ctx, payload) {
+        var field = payload !== null && payload && typeof payload.field === 'string' ? payload.field : '';
+        if (field === '') return Promise.resolve();
+        return aiFieldCommit(ctx, field);
+      },
+    },
+    'ai-move-up': { label: '上移', run: function (ctx) { return aiMoveUp(ctx); } },
+    'ai-move-down': { label: '下移', run: function (ctx) { return aiMoveDown(ctx); } },
+    'ai-wrap-if': { label: '包裹进如果', run: function (ctx) { return aiWrapIf(ctx); } },
+    'ai-delete-node': { label: '删除节点', run: function (ctx) { return aiDeleteNode(ctx); } },
+    'ai-slot-clear': {
+      label: '清空表达式',
+      run: function (ctx, payload) { return aiSlotClear(ctx, aiAddrOf(payload)); },
+    },
+    'ai-block-remove': {
+      label: '移除语句块',
+      run: function (ctx, payload) { return aiBlockRemove(ctx, aiAddrOf(payload)); },
+    },
+    'ai-validate': { label: '重新校验', run: function (ctx) { return validateDraft(ctx); } },
+    'ai-save': { label: '保存', run: function (ctx) { return saveAi(ctx, 'save'); } },
+    'ai-save-draft': { label: '存为草稿', run: function (ctx) { return saveAi(ctx, 'draft'); } },
+    'ai-save-as': { label: '另存为新的 AI', run: function (ctx) { return saveAi(ctx, 'saveAs'); } },
+    'ai-import-open': {
+      label: '导入 JSON',
+      run: function (ctx) {
+        var ed = aiEdOf(ctx);
+        ctx.dispatch({ type: 'ai.import.open', value: ed === null || ed.draft === null ? '' : aiEd.exportProgramText(ed.draft) });
+        return Promise.resolve();
+      },
+    },
+    'ai-import-close': {
+      label: '取消导入',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'ai.import.close' });
+        return Promise.resolve();
+      },
+    },
+    'ai-import-apply': {
+      label: '应用导入',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        var ed = aiEdOf(ctx);
+        var parsed = aiEd.importProgram(ed === null ? '' : ed.importText);
+        if (!parsed.ok) {
+          noticeNotice(ctx, 'error', parsed.error);
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'ai.import.close' });
+        noticeNotice(ctx, 'info', '已导入程序，正在校验…');
+        return commitDraft(ctx, parsed.program, 'body');
+      },
+    },
+    'ai-close': {
+      label: '关闭编辑',
+      run: function (ctx) {
+        var ed = aiEdOf(ctx);
+        if (ed !== null && ed.dirty === true) {
+          ctx.dispatch({ type: 'ai.confirm.set', confirm: { kind: 'discard' } });
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'ai.editor.close' });
+        return Promise.resolve();
+      },
+    },
+    'ai-discard-yes': {
+      label: '确认丢弃',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'ai.confirm.set', confirm: null });
+        ctx.dispatch({ type: 'ai.editor.close' });
+        return Promise.resolve();
+      },
+    },
+    'ai-discard-no': {
+      label: '取消',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'ai.confirm.set', confirm: null });
+        return Promise.resolve();
+      },
+    },
   };
 
   // F3：切屏（view.go 已负责清提示与弹窗；此处只补"切屏不需要请求"这一语义）
   function goView(ctx, view) {
     ctx.dispatch({ type: 'view.go', view: view });
     return Promise.resolve();
+  }
+
+  /* ---------- F5/D-172：AI 编辑器 ---------- */
+
+  // 校验请求的序号：只让**最后一次**校验的响应落地（改得快时避免"旧响应盖掉新结论"）
+  var aiValidateSeq = 0;
+
+  function aiEdOf(ctx) {
+    var ed = ctx.state ? ctx.state.aiEditor : null;
+    return ed && typeof ed === 'object' ? ed : null;
+  }
+  function aiDraftOf(ctx) {
+    var ed = aiEdOf(ctx);
+    return ed === null ? null : ed.draft;
+  }
+  function aiTokenOf(ctx) { return ctx.state.session.token; }
+
+  // 载入 AI 库列表（GET /me/ai）→ 落 `state.aiEditor.list`（**AI 编辑器专用**）。
+  //   quiet = 不写成功提示（用于"进屏即拉"与"改完刷新"）。
+  //   注意：F3 的 `loadAiList`（落 `state.configs.ai`）是**另一个数据源**，两者不可互相替代。
+  function loadAiLibrary(ctx, quiet) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = aiTokenOf(ctx);
+    if (!token) return sessionLost(ctx, null);
+    busy(ctx, true);
+    if (!quiet) ctx.dispatch({ type: 'notice.set', notice: null });
+    return ctx.api.aiList(token).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      ctx.dispatch({ type: 'ai.list.set', envelope: result.envelope });
+      return undefined;
+    });
+  }
+
+  // 自动校验一次（裁决 ⑨：有修改就校验一次）。**不置 busy**（校验是后台动作，不该锁住界面）。
+  //   ⚠️ `ctx.state` 是动作开始时的快照（dispatch 不回写）——凡"刚 dispatch 完新草稿"的调用方
+  //   必须把 program 显式传进来，否则会读到旧草稿（F5 首版即栽在这里）。
+  function validateDraft(ctx, programArg) {
+    var ed = aiEdOf(ctx);
+    var token = aiTokenOf(ctx);
+    var program = programArg !== undefined ? programArg : (ed === null ? null : ed.draft);
+    if (program === null || program === undefined || !token) return Promise.resolve();
+    aiValidateSeq += 1;
+    var seq = aiValidateSeq;
+    return ctx.api.aiValidate(token, { program: program }).then(function (result) {
+      if (seq !== aiValidateSeq) return undefined;         // 已有更新的校验在途 → 丢弃本次响应
+      if (result.transport === 'error') {
+        ctx.dispatch({ type: 'ai.validate.set', envelope: null });
+        noticeNotice(ctx, 'error', ctx.format.networkText(result.message));
+        return undefined;
+      }
+      if (!ctx.format.isOk(result.envelope) && ctx.format.isSessionError(result.envelope)) {
+        return sessionLost(ctx, result);
+      }
+      ctx.dispatch({ type: 'ai.validate.set', envelope: result.envelope });
+      return undefined;
+    });
+  }
+
+  // 把改好的草稿写回状态并自动校验（cursor 可一并更新）
+  function commitDraft(ctx, program, cursor) {
+    ctx.dispatch({ type: 'ai.draft.set', program: program, cursor: cursor });
+    return validateDraft(ctx, program);
+  }
+
+  // 在草稿副本上做一次结构操作（改副本 → 提交 → 校验）
+  function mutateDraft(ctx, fn, cursor) {
+    var draft = aiEd.cloneProgram(aiDraftOf(ctx));
+    if (draft === null) return Promise.resolve();
+    var ok = fn(draft);
+    if (ok !== true) return Promise.resolve();
+    var target = cursor === undefined ? aiEdOf(ctx).cursor : cursor;
+    // 插入/替换后按当前程序补齐默认名（call/getVar/set），避免"一插入就报错"
+    aiEd.contextualizeNode(draft, target);
+    return commitDraft(ctx, draft, target);
+  }
+
+  // 当前选中节点的"上下文插入"：语句后 / 语句块里 / 表达式槽 —— 三选一，由地址形态决定
+  function insertContextual(ctx, addr, type) {
+    var draft = aiEd.cloneProgram(aiDraftOf(ctx));
+    if (draft === null) return Promise.resolve();
+    var node = aiEd.nodeAt(draft, addr);
+    var done = false;
+    var newCursor = addr;
+    if (node && node.type === 'seq') {
+      done = aiEd.appendIntoBlock(draft, addr, type);
+      newCursor = addr + '.s[' + (node.statements.length - 1) + ']';
+    } else if (aiEd.isExprAddr(addr)) {
+      done = aiEd.setAt(draft, addr, aiEd.defaultNodeOf(type === 'literal' || type === 'get' || type === 'getVar'
+        || type === 'arith' || type === 'cmp' || type === 'logic' || type === 'random' ? type : 'literal'));
+      newCursor = addr;
+    } else if (aiEd.isStatementAddr(addr)) {
+      done = aiEd.insertAfter(draft, addr, type);
+      newCursor = addr.replace(/s\[(\d+)\]$/, function (m, i) { return 's[' + (Number(i) + 1) + ']'; });
+    } else if (addr === 'body') {
+      done = aiEd.appendIntoBlock(draft, 'body', type);
+      newCursor = 'body.s[' + (draft.body.statements.length - 1) + ']';
+    }
+    if (!done) {
+      noticeNotice(ctx, 'error', '这个位置不能插入该节点（表达式槽只能放表达式节点）。');
+      return Promise.resolve();
+    }
+    aiEd.contextualizeNode(draft, newCursor);
+    return commitDraft(ctx, draft, newCursor);
+  }
+
+  // 提交一个文本输入框（`ai.<地址>.<字段键>`）：解析 → 写草稿 → 自动校验
+  function aiFieldCommit(ctx, fieldName) {
+    var parsed = aiEd.parseFieldName(fieldName);
+    if (!parsed) return Promise.resolve();
+    var ed = aiEdOf(ctx);
+    var draft = aiEd.cloneProgram(aiDraftOf(ctx));
+    if (draft === null) return Promise.resolve();
+    var node = aiEd.nodeAt(draft, parsed.addr);
+    if (!node || typeof node !== 'object') return Promise.resolve();
+    var raw = ed.texts && ed.texts[fieldName] !== undefined ? ed.texts[fieldName] : '';
+    var key = parsed.key;
+    if (key === 'value' && node.type === 'literal') {
+      node.value = aiEd.parseTypedField('literal', raw, { literalType: aiEd.literalKindOf(node.value) });
+    } else if (key === 'name' || key === 'path') {
+      // 名称/路径一律按字符串写；空串会让服务端报 bad_field / bad_path（如实呈现，不替用户兜底）
+      node[key] = String(raw);
+    } else {
+      return Promise.resolve();
+    }
+    return commitDraft(ctx, draft, parsed.addr);
+  }
+
+  // 保存（新建 / 编辑 / 另存为 / 存为草稿）：**服务端是唯一判据**（ready 时服务端会完整校验）
+  function saveAi(ctx, mode) {
+    if (ctx.state.busy) return Promise.resolve();
+    var ed = aiEdOf(ctx);
+    if (ed === null || ed.draft === null) {
+      noticeNotice(ctx, 'error', '还没有可保存的内容：请先「新建 AI」或「打开」一条。');
+      return Promise.resolve();
+    }
+    var token = aiTokenOf(ctx);
+    if (!token) return sessionLost(ctx, null);
+    // 禁用按钮时点不到；但键盘/脚本仍可能触发 → 客户端再拦一次（文案与按钮禁用原因一致）
+    var dup = ctx.format.aiDuplicateNames(ed.draft);
+    if (dup.length > 0) {
+      noticeNotice(ctx, 'error', '函数名重复（' + dup.map(function (d) { return d.name; }).join('、') + '）：请先改名。');
+      return Promise.resolve();
+    }
+    if (mode !== 'draft' && !ctx.format.aiValidateOk(ctx.state)) {
+      noticeNotice(ctx, 'error', '校验未通过，不能保存为正式条目（可以先「存为草稿」）。');
+      return Promise.resolve();
+    }
+    var name = String(ed.name === undefined || ed.name === null ? '' : ed.name).trim();
+    if (name === '') {
+      noticeNotice(ctx, 'error', '请先填写名称（1~24 字符）。');
+      return Promise.resolve();
+    }
+    var status = mode === 'draft' ? 'draft' : 'ready';
+    var body = { name: name, program: ed.draft, status: status };
+    var isCreate = mode === 'saveAs' || ed.aiId === null;
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    var call = isCreate ? ctx.api.aiCreate(token, body) : ctx.api.aiUpdate(token, ed.aiId, body);
+    return call.then(function (result) {
+      if (result.transport === 'error') { busy(ctx, false); return failFrom(ctx, result); }
+      if (!ctx.format.isOk(result.envelope)) {
+        busy(ctx, false);
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        if (result.status === 401) return sessionLost(ctx, result);
+        noticeNotice(ctx, 'error', ctx.format.aiWriteFailText(result.envelope));
+        return undefined;
+      }
+      var saved = ctx.format.aiSaveTarget(result.envelope);
+      noticeNotice(ctx, 'info', ctx.format.aiSavedText(result.envelope, isCreate));
+      // 保存成功后：留在编辑态、刷新列表、重新校验一次（让"已保存"与校验结论都新鲜）
+      ctx.dispatch({
+        type: 'ai.editor.open', aiId: saved.aiId, name: saved.name,
+        program: ed.draft, status: saved.status, dirty: false,
+      });
+      return loadAiLibrary(ctx, true).then(function () { return validateDraft(ctx, ed.draft); }).then(function () {
+        busy(ctx, false);
+        return undefined;
+      });
+    });
+  }
+
+  /* ---------- F5：AI 编辑器的本地动作（不发请求；结构操作走 mutateDraft） ---------- */
+
+  function aiAddrOf(payload) {
+    var v = payload !== null && payload && typeof payload.addr === 'string' && payload.addr !== '' ? payload.addr : null;
+    return v === null ? 'body' : v;
+  }
+  function aiValueOf(payload) {
+    return payload !== null && payload && typeof payload.value === 'string' ? payload.value : '';
+  }
+  function aiFieldKeyOf(payload) {
+    return payload !== null && payload && typeof payload.field === 'string' ? payload.field : '';
+  }
+
+  function aiMoveUp(ctx) {
+    var addr = aiEdOf(ctx).cursor;
+    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, -1); }, addr);
+  }
+  function aiMoveDown(ctx) {
+    var addr = aiEdOf(ctx).cursor;
+    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, 1); }, addr);
+  }
+  function aiWrapIf(ctx) {
+    var addr = aiEdOf(ctx).cursor;
+    if (addr === 'body') { noticeNotice(ctx, 'error', '最外层不用包「如果」：它是引擎自带的 while(true)。'); return Promise.resolve(); }
+    return mutateDraft(ctx, function (d) { return aiEd.wrapInIf(d, addr); }, addr);
+  }
+  function aiDeleteNode(ctx) {
+    var addr = aiEdOf(ctx).cursor;
+    if (addr === 'body') { noticeNotice(ctx, 'error', '最外层的主循环不能删除。'); return Promise.resolve(); }
+    return mutateDraft(ctx, function (d) { return aiEd.removeNode(d, addr); }, aiEd.parentAddrOf(addr) || 'body');
+  }
+  function aiSlotClear(ctx, addr) {
+    return mutateDraft(ctx, function (d) { return aiEd.removeNode(d, addr); }, addr);
+  }
+  function aiBlockRemove(ctx, addr) {
+    return mutateDraft(ctx, function (d) { return aiEd.removeNode(d, addr); }, aiEd.parentAddrOf(addr) || 'body');
+  }
+  function aiReplace(ctx, type) {
+    var addr = aiEdOf(ctx).cursor;
+    if (addr === 'body') { noticeNotice(ctx, 'error', '最外层是隐式主循环，不能替换类型。'); return Promise.resolve(); }
+    return mutateDraft(ctx, function (d) { return aiEd.replaceNode(d, addr, type); }, addr);
+  }
+  function aiSetField(ctx, addr, key, value) {
+    return mutateDraft(ctx, function (d) {
+      var node = aiEd.nodeAt(d, addr);
+      if (!node || typeof node !== 'object') return false;
+      if (key === 'kind' && node.type === 'loop') {
+        // 切换循环类型时补齐另一侧的必填字段（否则立刻 bad_enum/bad_field，用户不知道为什么）
+        node.kind = value;
+        if (value === 'count' && node.times === undefined) node.times = aiEd.defaultNodeOf('literal');
+        if (value === 'while' && node.cond === undefined) node.cond = aiEd.defaultNodeOf('cmp');
+        return true;
+      }
+      node[key] = value;
+      return true;
+    }, addr);
+  }
+  function aiSetLiteralType(ctx, addr, type) {
+    return mutateDraft(ctx, function (d) {
+      var node = aiEd.nodeAt(d, addr);
+      if (!node || node.type !== 'literal') return false;
+      var cur = node.value;
+      if (type === 'number') {
+        var n = typeof cur === 'number' ? cur : Number(cur);
+        node.value = isFinite(n) ? n : 0;
+      } else if (type === 'boolean') {
+        node.value = typeof cur === 'boolean' ? cur : String(cur) === 'true';
+      } else {
+        node.value = typeof cur === 'string' ? cur : String(cur === undefined || cur === null ? '' : cur);
+      }
+      return true;
+    }, addr);
   }
 
   /* ---------- F6：战斗查看器的本地动作（不改服务端状态、不发请求） ---------- */

@@ -21,6 +21,7 @@ const { StoreError, STATUS_BY_CODE } = require('./store/errors.js');
 const { deepClone, contentHash } = require('./store/canonical.js');
 const archiveMod = require('./store/archive.js');
 const loadoutMod = require('./loadout.js');
+const astMod = require('./ai/ast.js');   // D-172：AI 程序完整校验（结构 + 合法性 + 段位门控）
 const starterMod = require('./starter.js');
 const itemsMod = require('./core/items.js');
 
@@ -460,6 +461,9 @@ function createAccount(options) {
         // D-163：先按 uid 从权威仓库解析（身份/数值），再判结构；落盘的永远是**解析后**的正文
         const r = await resolveLoadoutOf(o.playerId, o.loadout, o.warehouse);
         if (!r.ok) return fail('loadout_invalid', '出战配置含无效物品引用（物品必须来自本人仓库）', r.details);
+        // D-172 ④：草稿 AI 不得被配置引用（窄规则）
+        const draftDetails = draftAiDetails(archive, r.loadout);
+        if (draftDetails.length > 0) return fail('ai_is_draft', '草稿 AI 不能被出战配置引用', draftDetails);
         const missing = archiveMod.loadoutMissingOf(r.loadout);
         if (missing.length > 0) {
           return fail('loadout_invalid', '新槽可留空（不传 loadout 即建空槽）；要写入的内容必须完整',
@@ -512,6 +516,9 @@ function createAccount(options) {
       const r = await resolveLoadoutOf(o.playerId, o.loadout, o.warehouse);
       if (!r.ok) return fail('loadout_invalid', '出战配置含无效物品引用（物品必须来自本人仓库）', r.details);
       const resolvedLoadout = r.loadout;
+      // D-172 ④：草稿 AI 不得被配置引用（保存与出战两条路径都拦）
+      const draftDetails = draftAiDetails(archive, resolvedLoadout);
+      if (draftDetails.length > 0) return fail('ai_is_draft', '草稿 AI 不能被出战配置引用', draftDetails);
       const dup = exclusivityDetails(archive, slot.slotId, resolvedLoadout);
       if (dup.length > 0) return fail('item_in_use', '物品已被其它配置使用', dup);
       const missing = archiveMod.loadoutMissingOf(resolvedLoadout);
@@ -571,6 +578,9 @@ function createAccount(options) {
       const archive = await requireArchive(o.playerId);
       const slot = archiveMod.findSlot(archive, o.slotId);
       if (!slot) return fail('slot_not_found', `槽 ${o.slotId} 不存在`);
+      // D-172 ④：出战前再判一次"引用了草稿 AI"（历史数据可能是在草稿态之前存下的）
+      const draftDetails = draftAiDetails(archive, slot.loadout);
+      if (draftDetails.length > 0) return fail('ai_is_draft', '草稿 AI 不能被设为出战', draftDetails);
       // D-163：出战前再判一次跨配置独占（历史数据可能是在独占规则生效前存下的）
       const dup = exclusivityDetails(archive, slot.slotId, slot.loadout);
       if (dup.length > 0) return fail('item_in_use', '物品已被其它配置使用', dup);
@@ -691,7 +701,7 @@ function createAccount(options) {
     }
   }
 
-  /* ---------- D-161：AI 库（本批仅后端；前端只用 list） ---------- */
+  /* ---------- D-161：AI 库；D-172：可编辑 + 草稿态 + 双校验 ---------- */
 
   function aiBrief(ai) {
     return {
@@ -700,7 +710,34 @@ function createAccount(options) {
       program: deepClone(ai.program),
       createdAt: ai.createdAt === undefined ? null : ai.createdAt,
       updatedAt: ai.updatedAt === undefined ? null : ai.updatedAt,
+      // D-172：`ready`（正式，可被配置选中）| `draft`（草稿，校验未通过时暂存；旧档案无该字段 → ready）
+      status: archiveMod.aiStatusOf(ai),
     };
+  }
+
+  // D-172：程序对象的最低结构检查（名称/type 之外的第一道）——完整校验见 validateProgramOf
+  function programShapeDetails(program) {
+    if (!program || typeof program !== 'object' || Array.isArray(program) || program.type !== 'program') {
+      return [detailOf('bad_request', 'program 必须是 {type:"program", version, body}', 'program')];
+    }
+    return null;
+  }
+  function aiNameDetails(name) {
+    if (typeof name !== 'string' || name.trim() === '' || name.trim().length > AI_NAME_MAX) {
+      return [detailOf('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, 'name')];
+    }
+    return null;
+  }
+
+  // D-172：**服务端唯一判据**——结构 + 合法性 + 段位门控（tier 取调用者档案，不接受客户端传，防伪造门控）
+  //   返回 { ok:true, warnings, stats, programHash } | { ok:false, warnings, details }
+  function validateProgramOf(program, tier) {
+    const v = astMod.validate(program, tier);
+    const warnings = Array.isArray(v.warnings) ? v.warnings : [];
+    if (!v.ok) {
+      return { ok: false, warnings, details: (v.errors || []).map((e) => detailOf(e.code, e.message, e.path)) };
+    }
+    return { ok: true, warnings, stats: astMod.statsOf(program), programHash: astMod.programHash(program) };
   }
 
   // GET /me/ai：库内条目 + 上限 + 被哪些配置引用（usage: aiId → [slotId]）
@@ -708,11 +745,13 @@ function createAccount(options) {
     try {
       const view = await store.listAi(playerId);
       log.trace('store', 'store.read', 'account.listAi', { playerId });
+      const items = (view.items || []).map(aiBrief);
       return ok({
-        items: (view.items || []).map(aiBrief),
-        count: (view.items || []).length,
+        items,
+        count: items.length,
         max: view.max,
         usage: view.usage || {},
+        draftCount: items.filter((x) => x.status === 'draft').length, // D-172：界面直接显示草稿数
       });
     } catch (err) {
       return toFailure(err, log, 'listAi');
@@ -720,30 +759,103 @@ function createAccount(options) {
   }
 
   // POST /me/ai：命名保存（上限 100 → 409 ai_limit）。
-  //   注：**本批只做结构检查**（program 必须是对象且 type=program）；完整 AST 校验由 F5 编辑器在保存前
-  //   调 `POST /ai/validate` 完成（见分册 §13 K-7）。
+  //   D-172 收紧：`status` 缺省 / `ready` 时**必须完整校验通过**（失败 400 ai_invalid + details），
+  //   这样库里不可能存进"校验不通过却标成正式"的 AI；`status='draft'` 只做结构检查（供编辑器暂存）。
   async function createAi(input) {
     const o = input || {};
     try {
-      const name = typeof o.name === 'string' ? o.name.trim() : '';
-      if (name === '' || name.length > AI_NAME_MAX) {
-        return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, [
-          detailOf('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, 'name'),
-        ]);
+      const status = o.status === 'draft' ? 'draft' : 'ready';
+      const nameDetails = aiNameDetails(o.name);
+      if (nameDetails) return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, nameDetails);
+      const shapeDetails = programShapeDetails(o.program);
+      if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
+      const archive = await requireArchive(o.playerId);
+      let check = null;
+      if (status === 'ready') {
+        check = validateProgramOf(o.program, archive.progress.tier);
+        if (!check.ok) return fail('ai_invalid', 'AI 程序不合法，无法保存为正式条目（可先「存为草稿」）', check.details);
       }
-      const program = o.program;
-      if (!program || typeof program !== 'object' || Array.isArray(program) || program.type !== 'program') {
-        return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', [
-          detailOf('bad_request', 'program 必须是 {type:"program", version, body}', 'program'),
-        ]);
-      }
-      await requireArchive(o.playerId);
-      const res = await store.createAi({ playerId: o.playerId, name, program });
-      logWrite('createAi', { playerId: o.playerId, aiId: res.ai.aiId });
+      const res = await store.createAi({
+        playerId: o.playerId, name: o.name.trim(), program: o.program, status,
+      });
+      logWrite('createAi', { playerId: o.playerId, aiId: res.ai.aiId, status });
       const view = await store.listAi(o.playerId);
-      return ok({ aiId: res.ai.aiId, ai: aiBrief(res.ai), count: view.items.length, max: view.max });
+      return ok({
+        aiId: res.ai.aiId, ai: aiBrief(res.ai), count: (view.items || []).length, max: view.max,
+        warnings: check ? check.warnings : [],
+      });
     } catch (err) {
       return toFailure(err, log, 'createAi');
+    }
+  }
+
+  // PUT /me/ai/:aiId：**编辑保存**（D-172）。`aiId` 不变；`{name?,program?,status?}` 至少给一项，缺省字段不改。
+  //   判定"结果态"：把入参与档案现值合并后，若结果为 `ready` → 用**结果程序**做完整校验（保证库里 ready 恒合法）。
+  async function updateAi(input) {
+    const o = input || {};
+    try {
+      const hasName = o.name !== undefined;
+      const hasProgram = o.program !== undefined;
+      const hasStatus = o.status !== undefined;
+      if (!hasName && !hasProgram && !hasStatus) {
+        return fail('bad_request', '至少给出 name / program / status 之一', [
+          detailOf('bad_request', 'PUT /me/ai/:aiId 是部分更新，至少给一项', 'name|program|status'),
+        ]);
+      }
+      if (hasName) {
+        const nameDetails = aiNameDetails(o.name);
+        if (nameDetails) return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, nameDetails);
+      }
+      if (hasProgram) {
+        const shapeDetails = programShapeDetails(o.program);
+        if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
+      }
+      if (hasStatus && o.status !== 'ready' && o.status !== 'draft') {
+        return fail('bad_request', "status 只能是 'ready' | 'draft'", [
+          detailOf('bad_request', "status 只能是 'ready' | 'draft'", 'status'),
+        ]);
+      }
+      const archive = await requireArchive(o.playerId);
+      const current = archiveMod.findAi(archive, o.aiId);
+      if (!current) return fail('store_not_found', `AI ${o.aiId} 不存在`, [detailOf('store_not_found', 'AI 不存在', 'aiId')]);
+      const nextStatus = hasStatus ? o.status : archiveMod.aiStatusOf(current);
+      const nextProgram = hasProgram ? o.program : current.program;
+      let check = null;
+      if (nextStatus === 'ready') {
+        check = validateProgramOf(nextProgram, archive.progress.tier);
+        if (!check.ok) return fail('ai_invalid', 'AI 程序不合法，无法保存为正式条目（可先「存为草稿」）', check.details);
+      }
+      const res = await store.updateAi({
+        playerId: o.playerId, aiId: o.aiId,
+        name: hasName ? o.name.trim() : undefined,
+        program: hasProgram ? o.program : undefined,
+        status: hasStatus ? o.status : undefined,
+      });
+      logWrite('updateAi', { playerId: o.playerId, aiId: o.aiId, status: nextStatus, fields: { name: hasName, program: hasProgram, status: hasStatus } });
+      return ok({
+        aiId: o.aiId, ai: aiBrief(res.ai), count: (res.items || []).length, max: res.max,
+        referencedBy: res.referencedBy || [], active: !!res.active,
+        warnings: check ? check.warnings : [],
+      });
+    } catch (err) {
+      return toFailure(err, log, 'updateAi');
+    }
+  }
+
+  // POST /me/ai/validate：**登录版实时校验**（D-172）。编辑器"改一下就校验一次"用它，
+  //   从而**不依赖**任何遗留无状态端点（`/ai/validate`、`/ai/compile` 在 DL_LEGACY_STATELESS=0 时 410）。
+  //   成功一并回带 `programHash` 与统计（前端不再需要 /ai/compile）。
+  async function validateAi(input) {
+    const o = input || {};
+    try {
+      const shapeDetails = programShapeDetails(o.program);
+      if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
+      const archive = await requireArchive(o.playerId);
+      const check = validateProgramOf(o.program, archive.progress.tier);
+      if (!check.ok) return fail('ai_invalid', 'AI 程序不合法', check.details);
+      return ok({ ok: true, warnings: check.warnings, stats: check.stats, programHash: check.programHash });
+    } catch (err) {
+      return toFailure(err, log, 'validateAi');
     }
   }
 
@@ -758,6 +870,17 @@ function createAccount(options) {
     } catch (err) {
       return toFailure(err, log, 'deleteAi');
     }
+  }
+
+  // D-172 ④（**窄规则**）：出战配置不得引用**库内存在的草稿** AI。
+  //   刻意不新增"loadout.aiId 必须存在于库中"的要求——服务端当前根本不校验 aiId 成员资格
+  //   （resolveLoadoutOf 只解析物品），那是**既存缺口**，不在本批扩大（见 decisions.md D-172 ④）。
+  function draftAiDetails(archive, loadout) {
+    const aiId = loadout && typeof loadout.aiId === 'string' ? loadout.aiId : '';
+    if (aiId === '') return [];
+    const item = archiveMod.findAi(archive, aiId);
+    if (!item || archiveMod.aiStatusOf(item) !== 'draft') return [];
+    return [detailOf('ai_is_draft', `AI「${item.name}」还是草稿（校验未通过），不能被出战配置引用：请先编辑并通过校验`, 'aiId')];
   }
 
   /* ---------- 仓库镜像（D-130 遗留 / D-159 起已退役：服务端有真源） ---------- */
@@ -984,6 +1107,8 @@ function createAccount(options) {
     // D-161：AI 库
     listAi,
     createAi,
+    updateAi,
+    validateAi,
     deleteAi,
     // 仓库镜像（D-130 遗留：只做引用校验）
     saveWarehouseMirror,

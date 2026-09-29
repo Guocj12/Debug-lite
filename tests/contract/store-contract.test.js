@@ -543,6 +543,14 @@ const CASES = [
     assert.equal(made.ai.name, '我的AI');
     assert.ok((await store.readRecords({})).some((r) => r.type === 'ai.created' && r.aiId === made.ai.aiId));
     assert.equal((await store.listAi(pid)).items.length, 1);
+    // D-172：编辑保存（部分更新 / 草稿态 / `ai.updated` 记录 / `aiId` 不变）
+    const upd = await store.updateAi({ playerId: pid, aiId: made.ai.aiId, name: '改名后', status: 'draft' });
+    assert.equal(upd.ai.aiId, made.ai.aiId, '编辑不换 aiId');
+    assert.equal(upd.ai.name, '改名后');
+    assert.equal(upd.ai.status, 'draft');
+    assert.ok((await store.readRecords({})).some((r) => r.type === 'ai.updated' && r.aiId === made.ai.aiId));
+    assert.equal((await store.listAi(pid)).items[0].status, 'draft', 'status 落档且列表可见');
+    assert.equal((await store.listAi(pid)).items[0].name, '改名后');
     const delAi = await store.deleteAi({ playerId: pid, aiId: made.ai.aiId });
     assert.deepEqual(delAi.referencedBy, []);
     assert.deepEqual(delAi.items, []);
@@ -629,7 +637,7 @@ test('CN-12 契约：json 适配器方法齐备（供 auth/account/quickmatch/ra
       'accountPatch',
       'saveConfigSlot', 'createConfigSlot', 'activateConfigSlot', 'deleteConfigSlot', 'freezeSnapshot',
       // D-159/D-161：服务端权威仓库 + AI 库
-      'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'deleteAi',
+      'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'updateAi', 'deleteAi',
       'append', 'appendMany', 'applyRecord', 'applyRecords', 'settleBattle', 'readRecords', 'findBattleRecord',
       // P7-6 修复 1/2 追加的结算原语：批量结算 + 参与集合结算锁 + 锁内单场 + 索引立即落盘
       'settleBatch', 'settleBattleLocked', 'withSettlementLock', 'flushIndex',

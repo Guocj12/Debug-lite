@@ -69,6 +69,11 @@ function harness(baseUrl) {
     box: counting(raw.box),
     configs: counting(raw.configs),
     aiList: counting(raw.aiList),
+    // F5/D-172（审查 F5-A）：配置弹窗必须能看出"哪条是草稿" → 用例需要造一条草稿
+    aiCreate: counting(raw.aiCreate),
+    aiUpdate: counting(raw.aiUpdate),
+    aiDelete: counting(raw.aiDelete),
+    aiValidate: counting(raw.aiValidate),
     setNickname: counting(raw.setNickname),
     admin: counting(raw.admin),
     assemble: (token, input) => { counter.n += 1; assembleCalls.push(input); return raw.assemble(token, input); },
@@ -680,11 +685,16 @@ test('CF-8 契约：槽级/AI 条目字段三方一致（contract == 分册 §5 
       assert.notStrictEqual(value, undefined, `真实配置的角色物品缺少字段 ${field}`);
     }
     const aiEnv = await h.api.aiList(h.state().session.token);
-    for (const ai of format.aiCandidatesOf(aiEnv.envelope)) {
+    // D-172（F5）口径修正：`AI_ITEM_FIELDS` 是"前端从**AI 库条目**上读的字段"的并集，
+    //   F5 的编辑器读 `status`/`updatedAt`，而 F3 的 ai-pick **投影**（`aiCandidatesOf`）只保留
+    //   `{aiId,name,program}`。故此处核对的是**真实响应条目**（契约针对响应字段），
+    //   投影保真性仍由本用例末尾的"无 undefined 泄漏"断言兜底。
+    for (const ai of aiEnv.envelope.data.items) {
       for (const field of contract.AI_ITEM_FIELDS) {
         assert.notStrictEqual(format.pick(ai, field), undefined, `真实 AI 条目缺少字段 ${field}`);
       }
     }
+    assert.ok(format.aiCandidatesOf(aiEnv.envelope).length > 0, 'ai-pick 候选投影必须非空（F3 行为不变）');
     const vm = format.viewModel(h.state());
     for (const line of vm.modal.lines) assert.ok(!String(line).includes('undefined'), `状态行泄漏：${line}`);
     for (const row of vm.modal.rows) {
@@ -914,4 +924,40 @@ test('CF-11 F-1 回归：等待响应期间点弹窗外关闭 → 弹窗不得�
     await inflightAi;
     assert.equal(h.state().modal, null, 'F-1：ai-pick 同样不得复活弹窗');
   }, 'cfe11user');
+});
+
+/* ---------- CF-12（F5/D-172；独立审查 F5-A）：草稿 AI 在配置弹窗里必须标灰 + 写明原因 ---------- */
+
+test('CF-12 ai-pick 候选：草稿 AI 标灰（disabled）+ 行内写明原因 + 弹窗提示草稿条数；正式条目可选', async () => {
+  await withHarness(async (h) => {
+    await h.signUp('cfe12user');
+    const token = h.state().session.token;
+    // 造一条草稿（非法程序 → 只能以 draft 存下）
+    const bad = { type: 'program', version: 2, body: { type: 'seq', statements: [] } };
+    const created = await h.api.aiCreate(token, { name: '半成品AI', program: bad, status: 'draft' });
+    assert.equal(format.isOk(created.envelope), true, JSON.stringify(created.envelope));
+    const draftId = created.envelope.data.aiId;
+
+    // 打开配置编辑器（弹窗 A）后才能进二级候选弹窗（`modal.setIfOpen` 语义：不得凭空复活弹窗）
+    await h.run('config-open', { slot: 'slot2' });
+    await h.run('ai-pick', { slot: 'slot2' });
+    const html = h.html();
+    assert.deepEqual(h.state().modal, { kind: 'ai-pick', slotId: 'slot2' });
+    // ① 草稿候选：标签带"草稿"与原因，且**必须 disabled**（点了必然 409 ai_is_draft）
+    const draftBtn = html.match(new RegExp('<button[^>]*data-ai-id="' + draftId + '"[^>]*>[^<]*</button>'));
+    assert.ok(draftBtn, '草稿条目必须出现在候选里（只是不可点）');
+    assert.ok(draftBtn[0].includes('disabled'), `草稿候选必须禁用：${draftBtn[0]}`);
+    assert.match(draftBtn[0], /草稿/, '草稿候选的标签必须写明它是草稿');
+    assert.match(draftBtn[0], /不能被出战配置选中/, '草稿候选必须写明原因');
+    // ② 弹窗正文给出草稿条数提示
+    assert.match(h.html(), /1 条是草稿/, '弹窗必须提示有几条草稿被标灰');
+    // ③ 正式条目仍然可选（starter 的默认 AI）
+    const env = await h.api.aiList(token);
+    const ready = format.aiCandidatesOf(env.envelope).find((x) => x.status === 'ready');
+    assert.ok(ready, '应至少有一条正式条目');
+    const readyBtn = html.match(new RegExp('<button[^>]*data-ai-id="' + ready.aiId + '"[^>]*>'));
+    assert.ok(readyBtn && !readyBtn[0].includes('disabled'), `正式条目必须可选：${readyBtn && readyBtn[0]}`);
+    // ④ 投影带 status（审查 F5-A 的根因：不带 status 时草稿与正式长得一样）
+    assert.equal(format.aiCandidatesOf(env.envelope).find((x) => x.aiId === draftId).status, 'draft');
+  }, 'cfe12user');
 });

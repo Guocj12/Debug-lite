@@ -71,8 +71,29 @@
     // POST /api/v1/me/box（F3 开箱；D-162：**没有 seed 入参**，响应里的 seed 前端不读不显示）
     { endpoint: 'me/box', path: 'data.items', use: '开箱结果逐件行（名字/分类/品质）' },
     { endpoint: 'me/box', path: 'data.times', use: '结果区「本次获得 <n> 件」' },
-    // GET /api/v1/me/ai（F3 只用列表；提交③ 的配置弹窗消费 ai-pick 候选）
-    { endpoint: 'me/ai', path: 'data.items', use: 'AI 库列表（ai-pick 候选：名字 + aiId + program）' },
+    // GET /api/v1/me/ai（F3 只用列表；提交③ 的配置弹窗消费 ai-pick 候选；F5 起是 AI 编辑器的主数据源）
+    { endpoint: 'me/ai', path: 'data.items', use: 'AI 库列表（ai-pick 候选 + 编辑器列表行：名字/状态/更新时间/被引用）' },
+    { endpoint: 'me/ai', path: 'data.count', use: 'F5：列表头「AI 库：n/100」' },
+    { endpoint: 'me/ai', path: 'data.max', use: 'F5：列表头容量上限' },
+    { endpoint: 'me/ai', path: 'data.draftCount', use: 'F5：列表头「草稿 n 条」' },
+    { endpoint: 'me/ai', path: 'data.usage', use: 'F5：条目行/编辑器头部的「被配置 N 引用」（改完需重新选一次才生效）' },
+    // POST /api/v1/me/ai（F5 新建与「另存为」）
+    { endpoint: 'me/ai/create', path: 'data.aiId', use: 'F5：新建成功后重新打开该条目' },
+    { endpoint: 'me/ai/create', path: 'data.ai', use: 'F5：新建成功后的条目正文（名称/状态回显）' },
+    // PUT /api/v1/me/ai/:aiId（F5 编辑保存；D-172）
+    { endpoint: 'me/ai/update', path: 'data.aiId', use: 'F5：编辑保存后重新打开同一条（**aiId 不变**）' },
+    { endpoint: 'me/ai/update', path: 'data.ai', use: 'F5：编辑保存后的条目正文（名称/状态回显）' },
+    { endpoint: 'me/ai/update', path: 'data.referencedBy', use: 'F5：保存后回带「被哪些配置引用，需重新选一次」提示' },
+    // DELETE /api/v1/me/ai/:aiId（F5 删除）
+    { endpoint: 'me/ai/delete', path: 'data.deleted', use: 'F5：删除成功文案回显 aiId' },
+    { endpoint: 'me/ai/delete', path: 'data.referencedBy', use: 'F5：删除回带「曾被哪些配置引用」' },
+    // POST /api/v1/me/ai/validate（F5 登录版实时校验；D-172）
+    { endpoint: 'me/ai/validate', path: 'data.ok', use: 'F5：保存按钮可用性的唯一判据（校验是否通过）' },
+    { endpoint: 'me/ai/validate', path: 'data.warnings', use: 'F5：非阻断提示（如动作名不在引擎词汇表）' },
+    { endpoint: 'me/ai/validate', path: 'data.programHash', use: 'F5：编辑器头部显示的程序指纹' },
+    { endpoint: 'me/ai/validate', path: 'data.stats.nodes', use: 'F5：编辑器头部「节点 N」' },
+    { endpoint: 'me/ai/validate', path: 'data.stats.depth', use: 'F5：编辑器头部「深度 D」' },
+    { endpoint: 'me/ai/validate', path: 'data.stats.usedNodeTypes', use: 'F5：编辑器头部「用到 …」' },
     // GET /api/v1/me/configs（提交③ 的出战配置编辑器；03 §5.1/§5.2）
     { endpoint: 'me/configs', path: 'data.slots', use: '三套配置的槽正文（loadout/slotId）——编辑器逐位置显示' },
     { endpoint: 'me/configs', path: 'data.activeSlotId', use: '出战标记（状态行「出战中/非出战」+ B-5 门控：出战中的配置不提供「空」）' },
@@ -211,7 +232,9 @@
   var CONFIG_LOADOUT_FIELDS = ['role', 'skills', 'ai', 'aiId'];
 
   // AI 库条目上读的子对象字段（03 §5.2 的 `me/ai` 行：`data.items[].{aiId,name,program}`；同由 CF-8 核对）
-  var AI_ITEM_FIELDS = ['aiId', 'name', 'program'];
+  //   F5/D-172 追加 `status`（正式/草稿）与 `updatedAt`（列表行的更新时间）——由
+  //   tests/frontend/ai-editor-flow.test.js 的 AE-2 三方核对（本表 == 06 §5.2 == format.js 实读）。
+  var AI_ITEM_FIELDS = ['aiId', 'name', 'program', 'status', 'updatedAt'];
 
   /* ---------- F6：战斗帧与 AI 轨迹的子对象字段（04 §5.2） ----------
    * 这些字段从 `data.frames[i]`（及 `diff` 内的子对象）上读取，**不含 `data.` 前缀** ——

@@ -228,14 +228,23 @@ function buildWarehouseRecord(input) {
 }
 
 // D-161：AI 库增删（program 正文随记录携带，有界：单条 AI 程序体积受 ast 校验上限约束）
+// D-172：新增编辑保存（op:'update'）——`aiId` 不变、**部分更新**（只写显式给出的字段）、可带 `status`（草稿/正式）
 function buildAiRecord(input) {
   const o = input || {};
   if (o.op === 'delete') {
     return { type: 'ai.deleted', v: RECORD_VERSION, at: o.at, playerId: o.playerId, aiId: o.aiId };
   }
+  if (o.op === 'update') {
+    const rec = { type: 'ai.updated', v: RECORD_VERSION, at: o.at, playerId: o.playerId, aiId: o.aiId };
+    if (o.name !== undefined) rec.name = o.name;
+    if (o.program !== undefined) rec.program = deepClone(o.program);
+    if (o.status !== undefined) rec.status = o.status === 'draft' ? 'draft' : 'ready';
+    return rec;
+  }
   return {
     type: 'ai.created', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
     aiId: o.aiId, name: o.name === undefined ? null : o.name, program: deepClone(o.program),
+    status: o.status === 'draft' ? 'draft' : 'ready',
   };
 }
 
