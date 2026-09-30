@@ -409,15 +409,14 @@
     });
   }
 
-  // costDeltaByTier：`sp=2/4/6`（角色插件无此字段 → 返回空数组）
-  function costDeltaLines(item) {
-    var table = pick(item, 'costDeltaByTier');
-    if (!table || typeof table !== 'object') return [];
-    var parts = Object.keys(table).map(function (key) {
-      var v = table[key];
-      return key + '=' + (Array.isArray(v) ? v.join('/') : num(v));
-    });
-    return parts.length === 0 ? [] : ['各段位消耗：' + parts.join(' · ')];
+  // 专属插件形态（2026-09-28 §6.2）：`forTypes` 绑定技能类型、`exclusive{}` 为声明式覆盖
+  //   （推/拉/眩晕/DoT/增益等附加效果与数值全在 `exclusive` 内；通用插件无此字段 → 返回空数组）
+  function exclusiveLines(item) {
+    var forTypes = arrayOf(pick(item, 'forTypes'));
+    if (forTypes.length === 0) return [];
+    var ex = pick(item, 'exclusive');
+    var keys = ex !== null && typeof ex === 'object' ? Object.keys(ex) : [];
+    return ['适用技能类型：' + forTypes.join('/') + (keys.length === 0 ? '' : ' · 专属覆盖：' + keys.join('/'))];
   }
 
   // 物品详情（03 §5.3 的字段清单，逐条来自实测响应）
@@ -443,14 +442,16 @@
       lines.push('消耗：hp ' + num(pick(item, 'params.cost.hp')) + ' · mp ' + num(pick(item, 'params.cost.mp'))
         + ' · sp ' + num(pick(item, 'params.cost.sp')));
       lines.push('插槽数：' + num(pick(item, 'slotCount')));
+      // 展示键（§6.2）：基础模板自带；装上专属插件后被覆盖（帧 action 同步暴露）
+      lines.push('动画：' + or(pick(item, 'animKey'), '无') + ' · 音效：' + or(pick(item, 'sfxKey'), '无'));
     } else {
       lines.push('插件 id：' + or(pick(item, 'id'), '未知'));
       lines.push('说明：' + or(pick(item, 'desc'), '无'));
       lines.push('目标槽类型：' + or(pick(item, 'slot'), '未知'));
       lines.push('分类：' + or(pick(item, 'category'), '未知') + ' · 等级：' + num(pick(item, 'tier')));
       if (kind === 'rolePlugin') lines.push('点数：' + num(pick(item, 'pointCost')));
-      var costDeltas = costDeltaLines(item);
-      for (var i = 0; i < costDeltas.length; i++) lines.push(costDeltas[i]);
+      var exclusives = exclusiveLines(item);
+      for (var i = 0; i < exclusives.length; i++) lines.push(exclusives[i]);
     }
     var slots = slotLines(item);
     for (var j = 0; j < slots.length; j++) lines.push(slots[j]);

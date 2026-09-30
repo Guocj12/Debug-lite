@@ -137,47 +137,49 @@ test('DS-6 unlock 与三表 unlockTier 交叉不一致 → fail（防双源漂�
   });
 });
 
-test('DS-7 T-DC-2：插件缺失 / 技能数值改动 → consistency fail', () => {
-  withRoot((root) => {
-    const p = readJSON(root, 'plugins.json');
-    p.plugins = p.plugins.filter((x) => x.id !== 'rp_atk_pct');
-    writeJSON(root, 'plugins.json', p);
-  }, (root) => {
-    const r = schema.validateConsistency(root);
-    assert.equal(r.ok, false);
-    assert.ok(r.detail.includes('rp_atk_pct'), r.detail);
-  });
+test('DS-7 T-DC-2：标 `_sample` 的表逐值比对（技能）→ fail；正式内容表不再逐值比对', () => {
+  // ① 技能表标 `_sample` → 期望表逐值比对有效（定点模板倍率应为 1.0）
   withRoot((root) => {
     const t = readJSON(root, 'skill-templates.json');
-    t.skillTemplates[2].baseMultiplier = 2.0; // 精准射击应为 0.9
+    t._sample = true;
+    t.skillTemplates[2].baseMultiplier = 2.0;
     writeJSON(root, 'skill-templates.json', t);
   }, (root) => {
     const r = schema.validateConsistency(root);
     assert.equal(r.ok, false);
     assert.ok(r.detail.includes('baseMultiplier'), r.detail);
   });
-});
-
-test('DS-7b T-DC-2：插件词条基础值改动 / sp_buff duration 改动 → fail（审查 P2-1）', () => {
+  // ② 真实表（无 `_sample`）：删除条目 / 改词条值都不再触发 T-DC-2（结构校验仍由 T-DC-1 负责）
   withRoot((root) => {
     const p = readJSON(root, 'plugins.json');
-    const plug = p.plugins.find((x) => x.id === 'rp_atk_pct');
-    plug.affixes[0].params.v = 0.09; // items-data §5 应为 0.08
+    p.plugins = p.plugins.filter((x) => x.id !== 'rp_atk_pct');
+    p.plugins.find((x) => x.id === 'rp_atk_flat').affixes[0].params.v = 0.5;
     writeJSON(root, 'plugins.json', p);
   }, (root) => {
     const r = schema.validateConsistency(root);
+    assert.equal(r.ok, true, r.detail);
+    assert.doesNotMatch(r.detail, /rp_atk_pct|词条基础值/, '正式化的插件表不再逐值比对');
+  });
+});
+
+test('DS-7b 插件结构新规（2026-09-28）：pointCost 正整数必填；pointCostByTier 退役', () => {
+  withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    delete p.plugins.find((x) => x.id === 'rp_atk_pct').pointCost;
+    writeJSON(root, 'plugins.json', p);
+  }, (root) => {
+    const r = schema.validateStructure(root, path.join(root, 'assets'));
     assert.equal(r.ok, false);
-    assert.ok(r.detail.includes('词条基础值'), r.detail);
+    assert.ok(r.detail.includes('pointCost'), r.detail);
   });
   withRoot((root) => {
     const p = readJSON(root, 'plugins.json');
-    const plug = p.plugins.find((x) => x.id === 'sp_buff');
-    plug.affixes[0].params.duration = 3;
+    p.plugins.find((x) => x.id === 'rp_atk_pct').pointCostByTier = [1, 2, 3];
     writeJSON(root, 'plugins.json', p);
   }, (root) => {
-    const r = schema.validateConsistency(root);
+    const r = schema.validateStructure(root, path.join(root, 'assets'));
     assert.equal(r.ok, false);
-    assert.ok(r.detail.includes('duration'), r.detail);
+    assert.ok(r.detail.includes('pointCostByTier'), r.detail);
   });
 });
 
@@ -217,17 +219,25 @@ test('DS-9 门禁项 4/5 接线：真实仓库 checkSchema → pass；T-DC-2 子
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-  // 项 5 全过分支：interfaces + decisions + schema stub（T-DC-8/T-DC-2 双过）
+  // 项 5 全过分支：interfaces + decisions + schema stub + 内容复算 stub（T-DC-8/T-DC-2/内容复算 三过）
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-data-'));
   try {
     fs.mkdirSync(path.join(root2, 'server/data'), { recursive: true });
     fs.mkdirSync(path.join(root2, 'docs'), { recursive: true });
+    fs.mkdirSync(path.join(root2, '.audit'), { recursive: true });
     fs.writeFileSync(path.join(root2, 'docs/interfaces.md'), '## D-001 落点\n', 'utf8');
     fs.writeFileSync(path.join(root2, 'docs/decisions.md'), '# D-001 决策\n', 'utf8');
     fs.writeFileSync(path.join(root2, 'server/data/schema.js'),
       "module.exports = { validateConsistency: () => ({ ok: true, detail: '一致' }) };", 'utf8');
+    fs.writeFileSync(path.join(root2, '.audit/content-design.js'),
+      "module.exports = { audit: () => ({ ok: true, problems: [], roleChecked: 0, rows: [] }) };", 'utf8');
     const all = gate.checkDocData({ projectRoot: root2 });
     assert.equal(all.status, 'pass', all.detail);
+    assert.ok(all.detail.includes('内容复算(pass)'), '项 5 应含内容数值复算子检查');
+    // 缺 `.audit/content-design.js` → 该子检查 pending（不静默当成 pass）
+    fs.rmSync(path.join(root2, '.audit/content-design.js'));
+    const noAudit = gate.checkContentDesign({ projectRoot: root2 });
+    assert.equal(noAudit.status, 'pending', noAudit.detail);
   } finally {
     fs.rmSync(root2, { recursive: true, force: true });
   }
@@ -239,26 +249,29 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
     ['角色 type 非法', 'role-templates.json', (t) => { t.roleTemplates[0].type = 'wizard'; }, 'type 非法'],
     ['特化无 highStat', 'role-templates.json', (t) => { delete t.roleTemplates[1].highStat; }, 'highStat'],
     ['baseStats 缺键', 'role-templates.json', (t) => { delete t.roleTemplates[0].baseStats.mp; }, 'baseStats'],
-    ['slotWeights 键缺失', 'role-templates.json', (t) => { delete t.roleTemplates[0].slotWeights.special; }, 'slotWeights'],
+    ['角色 slotWeights 退役字段', 'role-templates.json', (t) => { t.roleTemplates[0].slotWeights = { hp: 1 }; }, 'slotWeights'],
     ['技能 type 非法', 'skill-templates.json', (t) => { t.skillTemplates[0].type = 'gun'; }, 'type 非法'],
     ['冷却为负', 'skill-templates.json', (t) => { t.skillTemplates[0].cooldown = -1; }, 'cooldown'],
     ['bulletLevel 越界', 'skill-templates.json', (t) => { t.skillTemplates[0].bulletLevel = 5; }, 'bulletLevel'],
-    ['平射 range=0', 'skill-templates.json', (t) => { t.skillTemplates[2].range = 0; }, 'straight'],
-    ['位移 distance=0', 'skill-templates.json', (t) => { t.skillTemplates[8].distance = 0; }, 'distance'],
-    ['位移开关非布尔', 'skill-templates.json', (t) => { t.skillTemplates[8].dealDamage = 'yes'; }, 'dealDamage'],
+    ['平射 range=0', 'skill-templates.json', (t) => { t.skillTemplates[1].range = 0; }, 'straight'],
+    ['位移 distance=0', 'skill-templates.json', (t) => { t.skillTemplates[3].distance = 0; }, 'distance'],
+    ['位移开关非布尔', 'skill-templates.json', (t) => { t.skillTemplates[3].dealDamage = 'yes'; }, 'dealDamage'],
     ['插件 kind 非法', 'plugins.json', (p) => { p.plugins[0].kind = 'weapon'; }, 'kind 非法'],
-    ['插件 pointCostByTier 错', 'plugins.json', (p) => { p.plugins[0].pointCostByTier = [2, 3]; }, 'pointCostByTier'],
-    ['costDeltaByTier 空对象', 'plugins.json', (p) => { p.plugins[14].costDeltaByTier = {}; }, 'costDeltaByTier'],
-    ['costDeltaByTier 非 3 元', 'plugins.json', (p) => { p.plugins[14].costDeltaByTier = { mp: [2, 4] }; }, 'costDeltaByTier'],
+    ['插件 pointCost 缺失', 'plugins.json', (p) => { delete p.plugins[0].pointCost; }, 'pointCost'],
+    ['插件 pointCostByTier 退役', 'plugins.json', (p) => { p.plugins[0].pointCostByTier = [2, 3]; }, 'pointCostByTier'],
+    ['costDeltaByTier 退役（通用插件）', 'plugins.json', (p) => { p.plugins.find((x) => x.id === 'sk_mult').costDeltaByTier = {}; }, 'costDeltaByTier'],
+    ['技能插件槽位非法', 'plugins.json', (p) => { p.plugins.find((x) => x.id === 'sk_mult').slot = 'weapon'; }, 'skillPlugin 槽位非法'],
+    ['专属插件缺 exclusive 声明', 'plugins.json', (p) => { delete p.plugins.find((x) => x.id === 'ex_bash').exclusive; }, 'exclusive{} 声明'],
+    ['专属插件 forTypes 为空', 'plugins.json', (p) => { p.plugins.find((x) => x.id === 'ex_bash').forTypes = []; }, 'forTypes'],
     ['品质 id 非法', 'qualities.json', (q) => { q.qualities[0].id = 'epix'; }, '品质 id'],
     ['品质 statRange 倒置', 'qualities.json', (q) => { q.qualities[0].statRange = [1.05, 0.80]; }, 'statRange'],
     ['解锁缺段位', 'unlock.json', (u) => { u.unlocks = u.unlocks.filter((x) => x.tier !== 'epic'); }, '缺段位 epic'],
     ['解锁 aiNodes 非数组', 'unlock.json', (u) => { u.unlocks.find((x) => x.tier === 'rare').aiNodes = { if: true }; }, 'aiNodes 必须是数组'],
     ['角色 unlockTier 非法', 'role-templates.json', (t) => { t.roleTemplates[0].unlockTier = 'gold'; }, 'unlockTier 非法'],
-    ['技能 slotWeights 缺失', 'skill-templates.json', (t) => { delete t.skillTemplates[0].slotWeights; }, 'slotWeights'],
+    ['技能 slotWeights 退役', 'skill-templates.json', (t) => { t.skillTemplates[0].slotWeights = { basic: 2, special: 1 }; }, 'slotWeights'],
     ['近战 range 非法', 'skill-templates.json', (t) => { t.skillTemplates[0].range = [2, 1]; }, 'melee'],
-    ['垂直 range=0', 'skill-templates.json', (t) => { t.skillTemplates[6].range = 0; }, 'vertical'],
-    ['垂直 area 非法', 'skill-templates.json', (t) => { t.skillTemplates[6].area = 3; }, 'area'],
+    ['垂直 range=0', 'skill-templates.json', (t) => { t.skillTemplates[2].range = 0; }, 'vertical'],
+    ['垂直 area 非法', 'skill-templates.json', (t) => { t.skillTemplates[2].area = 3; }, 'area'],
     ['插件槽位非法', 'plugins.json', (p) => { p.plugins[0].slot = 'weapon'; }, '槽位非法'],
     ['插件 affixes 空', 'plugins.json', (p) => { p.plugins[0].affixes = []; }, 'affixes'],
     ['品质 tiers 非 3 段', 'qualities.json', (q) => { q.qualities[0].tiers = [[1, 2]]; }, 'tiers 须 3 段'],
@@ -274,7 +287,15 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
     ['dropWeight 非正数', 'plugins.json', (p) => { p.plugins[0].dropWeight = 0; }, 'dropWeight 必须是正数'],
     ['技能 dropWeight 非数值', 'skill-templates.json', (t) => { t.skillTemplates[0].dropWeight = 'x'; }, 'dropWeight 必须是正数'],
     ['基地缺失', 'battle-config.json', (b) => { delete b.bases.p2; }, 'bases.p2 缺失'],
-    ['costDelta 维度键非法', 'plugins.json', (p) => { p.plugins[14].costDeltaByTier = { x: [1, 2, 3] }; }, 'costDeltaByTier'],
+    // 2026-09-28 新结构校验
+    ['品质插件点数区间倒置', 'qualities.json', (q) => { q.qualities[0].pluginPointsRange = [3, 2]; }, 'pluginPointsRange'],
+    ['品质点数标量退役', 'qualities.json', (q) => { q.qualities[0].pluginPoints = 3; }, 'pluginPoints 标量已退役'],
+    ['消耗补偿基数退役', 'qualities.json', (q) => { q.costDeltaBase = { common: 2 }; }, 'costDeltaBase 已退役'],
+    ['槽类型权重和 ≠ 1', 'qualities.json', (q) => { q.slotTypeWeights.any = 0.5; }, 'slotTypeWeights 之和'],
+    ['槽类型未登记', 'qualities.json', (q) => { q.slotTypeWeights.weapon = 0.1; }, '未登记槽类型'],
+    ['重复槽衰减越界', 'qualities.json', (q) => { q.slotRepeatDecay = 1.5; }, 'slotRepeatDecay'],
+    ['专家修饰乘性不守恒', 'role-templates.json', (t) => { t.typeModifiers.expert.high = 1.7; }, 'typeModifiers'],
+    ['角色插件点数标量退役', 'role-templates.json', (t) => { t.roleTemplates[0].pluginPoints = 3; }, 'pluginPoints 已退役'],
   ];
   for (const [label, file, mutate, keyword] of cases) {
     withRoot((root) => {
@@ -290,7 +311,7 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
 });
 
 test('DS-12 typeModifiers 入表（B5 审查 P1）：漂移 → fail；roles.js 读取表值', () => {
-  // 漂移检测（真实表通过由 DS-1 覆盖）
+  // 漂移检测（真实表通过由 DS-1 覆盖）：特化 high 漂移会破坏乘性守恒 → fail
   withRoot((root) => {
     const t = readJSON(root, 'role-templates.json');
     t.typeModifiers.specialized.high = 1.20;
@@ -308,10 +329,11 @@ test('DS-12 typeModifiers 入表（B5 审查 P1）：漂移 → fail；roles.js 
     'rare', { float: () => 1.0, int: () => 0, pick: () => 0 }
   );
   assert.equal(base.type, 'balanced');
+  // 2026-09-28：特化 high 取表值 1.30（乘性守恒：high×low = 1）→ 10×1.30 = 13
   assert.equal(rolesMod.applyTypeModifier(
     { type: 'specialized', highStat: 'atk', baseStats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 } },
     { int: () => 3 }
-  ).atk, 11.5, '修饰系数取表值：10×1.15（high 漂移会被 schema 拦）');
+  ).atk, 13, '修饰系数取表值：10×1.30（high 漂移会被 schema 拦）');
 });
 
 test('DS-11 assets 占位表（P0-9；2026-09-16 拍板 A：允许多余条目 / 不锁形状枚举 / 缺失不阻塞）', () => {
@@ -430,7 +452,7 @@ test('DS-13 扩展性：+1 角色 / +1 技能 / +1 插件 / +1 技能类型 均�
   // ② +1 技能模板（已登记类型）
   const addSkill = withRoot((root) => {
     const t = readJSON(root, 'skill-templates.json');
-    t.skillTemplates.push({ ...t.skillTemplates[2], id: 'skill_new_straight', name: '新平射', unlockTier: 'common', drop: true, dropWeight: 1 });
+    t.skillTemplates.push({ ...t.skillTemplates[1], id: 'skill_new_straight', name: '新平射', unlockTier: 'common', drop: true, dropWeight: 1 });
     writeJSON(root, 'skill-templates.json', t);
     const u = readJSON(root, 'unlock.json');
     u.unlocks.find((x) => x.tier === 'common').skills.push('skill_new_straight');
@@ -455,7 +477,7 @@ test('DS-13 扩展性：+1 角色 / +1 技能 / +1 插件 / +1 技能类型 均�
     t.skillTemplates.push({
       id: 'skill_beam_new', name: '光束', type: 'beam',
       baseMultiplier: 1.0, baseCost: { hp: 0, mp: 5, sp: 0 }, cooldown: 2, bulletLevel: 2,
-      falloff: 0, slotWeights: { basic: 2, special: 1 }, unlockTier: 'common', drop: true, dropWeight: 1,
+      falloff: 0, unlockTier: 'common', drop: true, dropWeight: 1,
     });
     writeJSON(root, 'skill-templates.json', t);
     const u = readJSON(root, 'unlock.json');
@@ -477,49 +499,62 @@ test('DS-13 扩展性：+1 角色 / +1 技能 / +1 插件 / +1 技能类型 均�
   assert.match(badType.detail, /ghost_type/);
 });
 
-test('DS-14 `_sample` 语义（逐表开关）：带标记的表逐值比对；去掉标记的表跳过（数量从不比对）', () => {
-  // ① 四表都去掉 _sample → T-DC-2 整体跳过（结构/机制仍由 T-DC-1 负责）
+test('DS-14 `_sample` 语义（逐表开关）：带标记的表逐值比对；未标标记的表跳过（数量从不比对）', () => {
+  // 2026-09-28：四张内容表（roles/skills/qualities/plugins）均为**正式内容**（无 `_sample`）——
+  //   本用例按此现状验证开关语义：真实表跳过逐值比对；显式标记后逐值比对恢复（防检查空转）。
+  // ① 真实表（均未标 _sample）→ T-DC-2 整体跳过
   const noSample = withRoot((root) => {
-    for (const f of ['role-templates.json', 'skill-templates.json', 'qualities.json', 'plugins.json']) {
-      const o = readJSON(root, f);
-      delete o._sample;
-      writeJSON(root, f, o);
-    }
-  }, (root) => schema.validateConsistency(root));
-  assert.equal(noSample.ok, true, noSample.detail);
-  assert.match(noSample.detail, /未标 _sample|非示例内容/);
-
-  // ② 去掉 plugins 的 _sample 后，即使词条基础值偏离示例期望也不再 FAIL（该表跳过逐值比对）
-  const pluginOff = withRoot((root) => {
-    const p = readJSON(root, 'plugins.json');
-    delete p._sample;
-    p.plugins.find((x) => x.id === 'rp_atk_pct').affixes[0].params.v = 0.5;
-    writeJSON(root, 'plugins.json', p);
-  }, (root) => schema.validateConsistency(root));
-  assert.equal(pluginOff.ok, true, `plugins 去标记后不再逐值比对：${pluginOff.detail}`);
-
-  // ③ 逐表独立：只保留 plugins 的 _sample，则角色表随便改也不 FAIL，但插件表偏离仍 FAIL
-  const mixed = withRoot((root) => {
-    const r = readJSON(root, 'role-templates.json');
-    delete r._sample;
-    r.roleTemplates[0].name = '改名了';
-    writeJSON(root, 'role-templates.json', r);
-    const p = readJSON(root, 'plugins.json');
-    p.plugins.find((x) => x.id === 'rp_atk_pct').affixes[0].params.v = 0.5;
-    writeJSON(root, 'plugins.json', p);
-  }, (root) => schema.validateConsistency(root));
-  assert.equal(mixed.ok, false, '仍带 _sample 的表继续逐值比对');
-  assert.match(mixed.detail, /rp_atk_pct/);
-  assert.doesNotMatch(mixed.detail, /改名了|名称\/类型应为/, '去标记的角色表不再比对');
-
-  // ④ 示例期望表的 id 缺失 → FAIL（数量不比对，但"该 id 若在则应…"仍有效）
-  const missing = withRoot((root) => {
     const p = readJSON(root, 'plugins.json');
     p.plugins = p.plugins.filter((x) => x.id !== 'rp_atk_pct');
     writeJSON(root, 'plugins.json', p);
   }, (root) => schema.validateConsistency(root));
+  assert.equal(noSample.ok, true, noSample.detail);
+  assert.match(noSample.detail, /未标 _sample|非示例内容/);
+
+  // ② 正式内容表（plugins/qualities/roles）不受示例期望约束：删条目 / 改数值都不 FAIL
+  const formal = withRoot((root) => {
+    const p = readJSON(root, 'plugins.json');
+    p.plugins = p.plugins.filter((x) => x.id !== 'rp_atk_pct');
+    p.plugins.find((x) => x.id === 'rp_atk_flat').affixes[0].params.v = 0.5;
+    writeJSON(root, 'plugins.json', p);
+    const q = readJSON(root, 'qualities.json');
+    q.qualities[0].name = '改名了';
+    writeJSON(root, 'qualities.json', q);
+    const r = readJSON(root, 'role-templates.json');
+    r.roleTemplates[0].name = '改名了';
+    writeJSON(root, 'role-templates.json', r);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(formal.ok, true, `正式内容不逐值比对：${formal.detail}`);
+
+  // ③ 逐表独立：显式给技能表打 `_sample` → 技能名称偏离仍 FAIL
+  const skillDrift = withRoot((root) => {
+    const t = readJSON(root, 'skill-templates.json');
+    t._sample = true;
+    t.skillTemplates[0].name = '改名了';
+    writeJSON(root, 'skill-templates.json', t);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(skillDrift.ok, false, '带 _sample 的表继续逐值比对');
+  assert.match(skillDrift.detail, /名称\/类型应为/);
+
+  // ④ 示例期望表的 id 缺失 → FAIL（数量不比对，但"该 id 若在则应…"仍有效）
+  const missing = withRoot((root) => {
+    const t = readJSON(root, 'skill-templates.json');
+    t._sample = true;
+    t.skillTemplates = t.skillTemplates.filter((x) => x.id !== 'skill_melee');
+    writeJSON(root, 'skill-templates.json', t);
+  }, (root) => schema.validateConsistency(root));
   assert.equal(missing.ok, false);
-  assert.match(missing.detail, /rp_atk_pct/);
+  assert.match(missing.detail, /skill_melee/);
+
+  // ⑤ 角色表打 `_sample` → 角色名称偏离 FAIL（角色/技能各有期望表；qualities/plugins 已无期望表）
+  const roleDrift = withRoot((root) => {
+    const t = readJSON(root, 'role-templates.json');
+    t._sample = true;
+    t.roleTemplates[0].name = '改名了';
+    writeJSON(root, 'role-templates.json', t);
+  }, (root) => schema.validateConsistency(root));
+  assert.equal(roleDrift.ok, false, '角色表带 _sample → 逐值比对');
+  assert.match(roleDrift.detail, /名称\/类型应为/);
 });
 
 test('DS-15 掉落字段（drop / dropWeight）结构校验 + 全表显式携带', () => {

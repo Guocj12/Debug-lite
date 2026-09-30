@@ -4,7 +4,7 @@
   "version": 1,
 
   "costDims": ["hp", "mp", "sp"],
-  "precision": { "stat": 2, "multiplier": 3 },
+  "precision": { "stat": 3, "multiplier": 3 },
   "bounds": {
     "minStat": 1,
     "minSlotCount": 1,
@@ -12,14 +12,16 @@
     "minBulletCount": 1,
     "minDistance": 1,
     "minBulletLevel": 1,
-    "minCooldown": 0
+    "minCooldown": 0,
+    "minCooldownReduced": 1
   },
 
   "_paramsModes": {
     "pair": "数值对，原样拷贝（闭区间）",
-    "intMin": "×品质系数后四舍五入取整，下限 bounds.min<字段>",
-    "copy": "布尔/标量原样拷贝"
+    "intMin": "×品质系数后四舍五入取整，下限 bounds.min<字段>（**当前无类型使用**：2026-09-28 内容设计起，射程/弹幕数/位移距离改为 copy；该模式保留供未来类型使用）",
+    "copy": "布尔/标量原样拷贝（**不随品质浮动**：射程/弹幕数/位移距离/范围/弹幕等级/消耗/开关类）"
   },
+  "_boundsNote": "minStat/minSlotCount/minRange/minBulletCount/minDistance 目前无消费方（随 intMin 一起休眠）；minCooldown 仍在 generateSkillItem 使用（冷却下限 0）；minCooldownReduced = 减冷却**百分比**词条（scaleCooldownPct）的下限 1（避免把冷却压到 0）。插槽数下限已作废（允许 0 槽，见 docs/content-design.md §3.3）。",
   "_slots": "词条作用的语义槽位 → 该类型下真实字段名；槽位缺席 = 该词条对本类型无效",
   "_emitPatterns": {
     "cellsFromRange": "覆盖格 = 以施法者格心为基准、range 为闭区间偏移（melee）",
@@ -47,7 +49,7 @@
     },
 
     "straight": {
-      "params": { "range": "intMin", "bulletCount": "intMin" },
+      "params": { "range": "copy", "bulletCount": "copy" },
       "slots": { "range": "range", "bulletCount": "bulletCount" },
       "emit": {
         "pattern": "repeatCount",
@@ -63,7 +65,7 @@
     },
 
     "vertical": {
-      "params": { "range": "intMin", "area": "pair" },
+      "params": { "range": "copy", "area": "pair" },
       "slots": { "range": "range" },
       "emit": {
         "pattern": "impactCells",
@@ -81,7 +83,7 @@
 
     "displacement": {
       "params": {
-        "distance": "intMin",
+        "distance": "copy",
         "passThroughEnemy": "copy",
         "dealDamage": "copy",
         "fullDodgeDuring": "copy"

@@ -17,7 +17,7 @@ const { createLogger } = require('../../shared/log.js');
 const LD = require('../fixtures/loadout-ok.json');
 
 const STUB = { float: () => 1, int: () => 0, pick: () => 0 };
-const TPL = 'skill_straight_precise';
+const TPL = 'skill_straight';
 
 function skillOf(overrides) {
   return Object.assign(skillsMod.instantiateSkill(TPL, 'common', STUB), { cooldown: 3, cost: { hp: 0, mp: 0, sp: 0 } }, overrides || {});

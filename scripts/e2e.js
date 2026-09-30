@@ -544,11 +544,15 @@ async function main() {
       expect(d.activeSlotId === 'slot1', `出战槽应为 slot1，实得 ${d.activeSlotId}`, me.raw);
       expect(typeof d.record.unread.attack === 'number' && typeof d.record.unread.defense === 'number', '/me 应含 unread 计数', me.raw);
       expect(!me.raw.includes('pl_'), '/me 不得回带 playerId（§4.5）', me.raw);
-      // D-159：仓库为服务端权威（真源）——注册即发放 starter 且**已装配**（1 角色 + 3 技能 + ≥1 角色插件 + 1 技能插件）
+      // D-159：仓库为服务端权威（真源）——注册即发放 starter 且**已装配**（1 角色 + 3 技能 + ≥1 角色插件 + 恒 2 技能插件 = 1 专属 + 1 通用）
       const wh = await warehouseOf(port, state.facts.A.token, 'A');
       expect(wh.starterIssued === true, 'A 的 starter 应已发放（starterIssued=true）', short(wh ? j(wh.counts) : '', 200));
-      expect(wh.counts.role === 1 && wh.counts.skill === 3 && wh.counts.rolePlugin >= 1 && wh.counts.skillPlugin === 1,
-        `starter 应为 1 角色 + 3 技能 + 1~2 角色插件 + 1 技能插件，实得 ${j(wh.counts)}`, j(wh.counts));
+      expect(wh.counts.role === 1 && wh.counts.skill === 3 && wh.counts.rolePlugin >= 1 && wh.counts.skillPlugin === 2,
+        `starter 应为 1 角色 + 3 技能 + 1~2 角色插件 + 2 技能插件（1 专属 + 1 通用），实得 ${j(wh.counts)}`, j(wh.counts));
+      // 技能插件形态：恰 1 专属 + 1 通用，且专属插件已装入类型匹配的技能
+      const spSlots = wh.buckets.skillPlugin.map((p) => p.slot).sort();
+      expect(JSON.stringify(spSlots) === JSON.stringify(['exclusive', 'general']),
+        `starter 技能插件应为 1 专属 + 1 通用，实得 ${JSON.stringify(spSlots)}`, j(wh.counts));
       const whEquipped = wh.buckets.rolePlugin.concat(wh.buckets.skillPlugin).filter((p) => p.equipped === true).length;
       expect(whEquipped >= 2, `starter 的插件应**已装配**进槽（equipped=true ≥2），实得 ${whEquipped}`, j(wh.counts));
       const cfg0 = await request(port, 'GET', '/api/v1/me/configs', undefined, authed(state.facts.A.token));

@@ -48,7 +48,7 @@ async function activeOf(fx, playerId) {
  * 另：D-163 跨配置独占（一件物品同时只能被一份配置引用）→ 需要两套互不相交的夹具时用 set 序号区分。
  * 物品形状与 tests/unit/warehouse-invariants.test.js 的 fixtureWarehouse() 同形（模板/品质取自数据表）。
  */
-const FIX_SKILL_TEMPLATES = ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'];
+const FIX_SKILL_TEMPLATES = ['skill_melee', 'skill_straight', 'skill_displace'];
 
 function fixtureItems(set) {
   const tag = `acc_fix${set}`;
@@ -61,14 +61,14 @@ function fixtureItems(set) {
   };
   const skills = FIX_SKILL_TEMPLATES.map((templateId, i) => ({
     uid: `${tag}_skill${i}`, kind: 'skill', templateId, name: `夹具技能${set}-${i}`, quality: 'common',
-    slotCount: 1, slots: [{ type: 'basic', pluginUid: i === 0 ? skillPluginUid : null }],
+    slotCount: 1, slots: [{ type: 'general', pluginUid: i === 0 ? skillPluginUid : null }],
     // skills[0].params.cooldown = 3 —— ACC-4 的"客户端改写正文不影响已冻结快照"断言依赖该仓库基准值
     params: { multiplier: 1 + i / 10, cost: { hp: 0, mp: 8 + i, sp: 0 }, cooldown: 3 - i, bulletLevel: 2 + i },
     unlockTier: 'common',
   }));
   const skillPlugin = {
-    uid: skillPluginUid, kind: 'skillPlugin', id: 'sp_mult', name: '倍率提升', slot: 'basic',
-    quality: 'common', tier: 2, affixes: [], costDeltaByTier: { mp: [2, 4, 6] }, equipped: true, unlockTier: 'common',
+    uid: skillPluginUid, kind: 'skillPlugin', id: 'sk_mult', name: '增伤', slot: 'general',
+    quality: 'common', tier: 2, affixes: [], equipped: true, unlockTier: 'common',
   };
   return { role, skills, skillPlugin };
 }

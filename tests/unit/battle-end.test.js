@@ -10,7 +10,7 @@ const engine = require('../../server/core/engine.js');
 const CONFIG = {
   cellPx: 64, fieldPx: 1024, actorHalfPx: 32, minGapPx: 64, movePx: 64, dodgePx: 128,
   collisionDmgMul: 0.8, baseHitMul: 1.0, baseDef: 64, defendDefMul: 1.6,
-  dodgeChanceBonus: 0.2, backstab: 1.5, crit: 1.5,
+  dodgeChanceBonus: 0.2, backstab: 1.5, critBonus: 1.0,
   overtimeStart: 48, overtimeRatio: 0.0625, hardCapTick: 64,
   startX: { p1: 224, p2: 800 }, startFacing: { p1: 1, p2: -1 },
   bases: { p1: { hp: 100, maxHp: 100, def: 64 }, p2: { hp: 100, maxHp: 100, def: 64 } },

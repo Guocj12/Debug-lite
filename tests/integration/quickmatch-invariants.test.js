@@ -222,7 +222,11 @@ test('INV-4 排位 ↔ 快速对战双轨：排位批次不改积分，快速对
   assert.equal(after.progress.tier, mid.progress.tier, '快速对战不改变段位');
   // 同分 0 分对局的平局 Δ 恰好为 0（公式边界）→ 断言"积分按 Δ 变化"，而非"必然不同"
   assert.equal(after.rating.points, mid.rating.points + quickRes.data.self.delta, '快速对战按 Δ 改变积分');
-  if (quickRes.data.winner !== 'draw') assert.notEqual(after.rating.points, mid.rating.points, '分出胜负时积分必变');
+  // 0 分玩家输球受**下限保护**（D-133 §8.3 性质 4：clamp 到 0，Δ = 0）→ 该情形不算"积分未变"的违约
+  const floored = mid.rating.points === 0 && quickRes.data.self.delta === 0 && quickRes.data.winner !== 'win';
+  if (quickRes.data.winner !== 'draw' && !floored) {
+    assert.notEqual(after.rating.points, mid.rating.points, '分出胜负时积分必变（0 分下限保护除外）');
+  }
   assert.equal(after.rating.games, mid.rating.games + 1);
 });
 

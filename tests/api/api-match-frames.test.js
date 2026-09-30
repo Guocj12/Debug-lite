@@ -117,7 +117,8 @@ test('MF-3 内联帧足以表现战斗：伤害/弹幕/碰撞都带位置与结�
     const damages = frames.flatMap((f) => f.diff.damages);
     assert.ok(damages.length > 0, '本局应有伤害（否则用例空转）');
     for (const dm of damages) {
-      assert.ok(['bullet', 'collision', 'base', 'overtime'].includes(dm.kind), `伤害来源非法: ${dm.kind}`);
+      // 2026-09-28（D-173）：新增 `thorns`（荆棘反伤）为合法伤害来源，与 .audit/replay-audit.js 的 DMG_KINDS 同集
+      assert.ok(['bullet', 'collision', 'base', 'overtime', 'thorns'].includes(dm.kind), `伤害来源非法: ${dm.kind}`);
       assert.ok(dm.target === 'p1' || dm.target === 'p2');
       assert.ok(Number.isInteger(dm.amount) && dm.amount >= 0);
     }

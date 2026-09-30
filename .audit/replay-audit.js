@@ -13,7 +13,7 @@ function auditFrames(frames) {
   // D-167：对外帧的字段契约（events 可选——日志走 POST /admin/replay-frames；缺失时跳过 ④ cid 检查）
   const need = ['players', 'bullets', 'bases', 'aiTrace', 'collision', 'bulletHits', 'baseHits', 'damages', 'verdict'];
   const OUTCOMES = new Set(['hit', 'collide', 'expire']);
-  const DMG_KINDS = new Set(['bullet', 'collision', 'base', 'overtime']);
+  const DMG_KINDS = new Set(['bullet', 'collision', 'base', 'overtime', 'thorns']);
   let events = 0;
   let collisions = 0;
   let hits = 0;

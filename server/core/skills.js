@@ -1,13 +1,14 @@
 'use strict';
 /* server/core/skills.js —— 技能系统（P1 B6，契约 docs/interfaces.md §1）
- * 依据：systems/03-skills.md；examples/03-skills.md S-1..S-9（数值期望唯一出处）；decisions D-07/D-15/D-18/D-21/D-22/D-25/D-29/D-113/D-115/D-118。
- * 纯函数内核（L11）：随机走注入 rng；canCast/applySkillPlugins 不改入参（纯函数，返回新对象）；日志经 withLogger 注入。
+ * 依据：systems/03-skills.md；**docs/content-design.md §6（技能数值唯一权威）**；decisions D-07/D-15/D-18/D-21/D-22/D-25/D-29/D-113/D-115/D-118/D-173。
+ * 纯函数内核（L11）：随机走注入 rng；canCast/applySkillPlugins/applyExclusive 不改入参（纯函数，返回新对象）；日志经 withLogger 注入。
  * 事件：skill.instantiate(debug) / skill.plugin.apply(debug) / skill.cast(info) / skill.reject(warn)（§4.6）。
  *
  * 【数据驱动改造（2026-09-16）】本模块不再按技能类型/词条 id 写死分支：
  *   - 类型机制（参数滚动、语义槽位、弹幕发射模式与常量）→ server/data/skill-mechanics.json
  *   - 词条语义（skillOp 算子 / hitEffect / castEffect）      → server/data/affix-registry.json
- *   代码只解释表里声明的 pattern / op 名称；新增类型或词条 = 改表，不改此处（未登记项由 gate 拦下）。
+ *   - 专属插件形态（overrides / specials / hitEffects / castEffects / 名称与动画键） → server/data/plugins.json
+ *   代码只解释表里声明的 pattern / op 名称；新增类型、词条或专属插件 = 改表，不改此处（未登记项由 gate 拦下）。
  * 语义（B6 登记，未变）：
  *   - sid = templateId（技能**模板**身份；实例化时写入，日志与拒绝原因用）。
  *   - **冷却键 = 槽位键（P1-4 裁定，2026-09-19）**：`canCast(skill, caster, cooldownKey)` 的第三个入参
@@ -17,11 +18,11 @@
  *     未传第三参时回落到 `skill.sid || skill.templateId`（纯函数单测/旧调用点语义不变）。
  *     旧快照/旧帧里的 `cooldowns` 键读不到 → 视作 0（缺键判定，永不抛错）。
  *   - instantiateSkill 复用 items.generateSkillItem 的参数随机（同构，避免双实现）。
- *   - 消耗补偿：costDeltaByTier 按**插件品质**的 costDeltaBase 缩放：档位 i 增量 = costDeltaBase[quality] × (i+1)（D-113，S-2b rare tier1=mp+3）。
- *   - 减耗类（costDeltaByTier=null）：cost × (1−v) 后 **ceil**（S-3）。
- *   - 命中类词条（stun/knockback/pull/dot/true_dmg）登记进 skill.affixes，由 engine 步骤 9 结算；
- *     释放类词条（cast_buff）登记进 skill.castEffects，由 engine 步骤 6 入效果队列；
- *     概率类词条（crit_chance/lifesteal）登记进 skill.specials，随弹幕 payload 传给命中结算（B9）。
+ *   - **插件顺序（2026-09-28 冻结）**：专属插件（`slot:'exclusive'`，声明式覆盖形态/名称/动画音效）→ 通用插件（纯词条加成）。
+ *   - **通用插件零代价**（D-173）：旧的 costDeltaByTier / costDeltaBase 消耗补偿已退役；只有减耗词条会降低消耗（`ceil(cost×(1−v))`）。
+ *   - 命中类效果（专属插件的内联 hitEffects、以及注册表登记的 stun/knockback/pull/dot）登记进 skill.affixes，由 engine 步骤 9 结算；
+ *     释放类效果登记进 skill.castEffects，由 engine 步骤 6 入效果队列；
+ *     概率类词条（crit_chance/lifesteal/critMul）登记进 skill.specials，随弹幕 payload 传给命中结算（B9）。
  */
 const { nullLogger } = require('../../shared/log.js');
 const items = require('./items.js');
@@ -72,6 +73,11 @@ function makeSkills(logger, tables) {
       bulletLevel: p.bulletLevel,
       range: p.range, bulletCount: p.bulletCount, area: p.area, distance: p.distance,
       passThroughEnemy: p.passThroughEnemy, dealDamage: p.dealDamage, fullDodgeDuring: p.fullDodgeDuring,
+      moveDir: p.moveDir === undefined ? 'forward' : p.moveDir, // 'backward' = 背向位移（2026-09-28 §6.4 后撤）
+      trueDamage: p.trueDamage === true,                        // 整次命中改真伤（专属/通用插件的 setTrueDamage）
+      animKey: t.animKey === undefined ? null : t.animKey,       // 动画键（专属插件可覆盖；帧 action 暴露）
+      sfxKey: t.sfxKey === undefined ? null : t.sfxKey,
+      exclusiveId: null,                                        // 已装专属插件 id（至多 1 个）
       falloff: p.falloff, affixes: [], specials: {}, castEffects: [],
     };
     L.debug('skills', 'skill.instantiate', `skill ${t.id} ${qualityId}`, { templateId: t.id, quality: qualityId });
@@ -79,7 +85,7 @@ function makeSkills(logger, tables) {
   }
 
   // 词条算子解释器（op 名称取自词条注册表；未知 op → warn 并跳过）
-  function applySkillOp(skill, op, v, pluginCtx) {
+  function applySkillOp(skill, op, v, pluginCtx, affixDef) {
     switch (op.op) {
       case 'scalePct': {
         const digits = P[op.round] === undefined ? P.stat : P[op.round];
@@ -103,17 +109,31 @@ function makeSkills(logger, tables) {
         return { ...skill, [target]: skill[target] + v };
       }
       case 'addSpecial': {
-        const cap = REGISTRY_.caps.probability;
+        // 概率类（cap:'probability'）封顶 1；非概率类（critMul）不封顶（与 items.applyAffixes 同口径，2026-09-28）
+        const cap = affixDef && affixDef.cap === 'probability' ? REGISTRY_.caps.probability : Infinity;
         const cur = (skill.specials && skill.specials[op.field]) || 0;
         return { ...skill, specials: { ...(skill.specials || {}), [op.field]: Math.min(cap, cur + v) } };
       }
+      case 'scaleCooldownPct': {
+        // 百分比减冷却（`sk_cd_down`：−25%）：向下取整，下限 = bounds.minCooldownReduced（1）
+        const min = op.min === undefined ? 1 : (B[op.min] === undefined ? 1 : B[op.min]);
+        return { ...skill, [op.field]: Math.max(min, Math.floor(skill[op.field] * (1 - v))) };
+      }
       case 'scaleCostCeil': {
-        if (pluginCtx && pluginCtx.costDeltaByTier !== null) return skill; // 非减耗类不应用（S-3 只对减耗类）
         const factor = 1 - v;
         const cost = {};
         for (const dim of MECHANICS_.costDims) cost[dim] = Math.ceil(skill.cost[dim] * factor);
         return { ...skill, cost };
       }
+      case 'scaleCostCeilByDim': {
+        // 单维减耗（`sk_sp_down` / `sk_mp_down`）：只作用于 op.dim 声明的资源维度
+        const dim = op.dim;
+        if (!dim || skill.cost[dim] === undefined) return skill;
+        return { ...skill, cost: { ...skill.cost, [dim]: Math.ceil(skill.cost[dim] * (1 - v)) } };
+      }
+      case 'setTrueDamage':
+        // 整次命中改为真实伤害（无视 def；倍率下调由同一插件的 scalePct 负值承担）
+        return { ...skill, trueDamage: true };
       default:
         L.warn('skills', 'skill.plugin.unknown', `未登记算子 ${op.op}（affix-registry.json）`, { op: op.op });
         return skill;
@@ -129,15 +149,63 @@ function makeSkills(logger, tables) {
     return eff;
   }
 
+  // 专属插件应用（2026-09-28 §6.2）：**声明式覆盖**（不随品质浮动）+ 技能级 specials + 内联命中/释放效果 + 展示字段。
+  //   `forTypes` 绑定技能类型；每个技能至多 1 个（`assemble` 保证；此处只应用第一个匹配的专属）。
+  function applyExclusive(skill, plugin) {
+    const ex = plugin.exclusive || {};
+    const forTypes = Array.isArray(ex.forTypes) ? ex.forTypes : [];
+    if (forTypes.length > 0 && !forTypes.includes(skill.type)) return skill; // 类型不符 → 不生效（装配层已拦）
+    let out = {
+      ...skill,
+      cost: { ...skill.cost },
+      specials: { ...(skill.specials || {}) },
+      affixes: [...skill.affixes],
+      castEffects: [...(skill.castEffects || [])],
+    };
+    for (const [k, val] of Object.entries(ex.overrides || {})) {
+      if (k === 'cost') { out.cost = { hp: 0, mp: 0, sp: 0, ...val }; continue; }
+      if (k === 'range' || k === 'area') { out[k] = Array.isArray(val) ? [val[0], val[1]] : val; continue; }
+      out[k] = val;
+    }
+    // 逐品质覆盖（`qualityOverrides`）：按插件自身品质取一套覆盖值，用于"随品质变化"的非浮动字段（如连射弹幕数）
+    const byQ = ex.qualityOverrides && ex.qualityOverrides[plugin.quality];
+    for (const [k, val] of Object.entries(byQ || {})) {
+      if (k === 'cost') { out.cost = { hp: 0, mp: 0, sp: 0, ...val }; continue; }
+      if (k === 'range' || k === 'area') { out[k] = Array.isArray(val) ? [val[0], val[1]] : val; continue; }
+      out[k] = val;
+    }
+    for (const [k, val] of Object.entries(ex.specials || {})) {
+      out.specials[k] = Math.min(REGISTRY_.caps.probability, (out.specials[k] || 0) + val);
+    }
+    // 内联命中/释放效果：`{effect: <规格>, params: {v}}`（值内联，不经词条注册表）
+    for (const spec of (ex.hitEffects || [])) {
+      const { params, ...rest } = spec;
+      out.affixes = [...out.affixes, { effect: rest, params: params || { v: 1 } }];
+    }
+    for (const spec of (ex.castEffects || [])) {
+      const { params, ...rest } = spec;
+      out.castEffects = [...out.castEffects, rest];
+    }
+    out.exclusiveId = plugin.id;
+    out.name = plugin.name || out.name;                     // 技能显示名 = 专属插件名
+    out.animKey = plugin.animKey === undefined ? out.animKey : plugin.animKey;
+    out.sfxKey = plugin.sfxKey === undefined ? out.sfxKey : plugin.sfxKey;
+    return out;
+  }
+
   // 插件叠加（S-2/S-3/S-4；纯函数返回新实例）——循环体内无 id/type 分支
+  //   顺序（2026-09-28 冻结）：**专属插件（改形态）→ 通用插件（词条加成）**；通用插件零代价（D-173 取消 costDeltaByTier）。
   function applySkillPlugins(skill, plugins) {
     let out = {
       ...skill, cost: { ...skill.cost }, affixes: [...skill.affixes],
       specials: { ...(skill.specials || {}) },
       castEffects: [...(skill.castEffects || [])],
     };
-    const costBaseOf = QUALITIES.costDeltaBase;
-    for (const p of (plugins || [])) {
+    const list = (plugins || []).filter(Boolean);
+    const excl = list.find((p) => p.slot === 'exclusive');
+    if (excl) out = applyExclusive(out, excl);
+    for (const p of list) {
+      if (p === excl) continue;
       for (const a of (p.affixes || [])) {
         const def = AFFIXES_[a.id];
         const v = (a.params && a.params.v) || 0;
@@ -145,20 +213,11 @@ function makeSkills(logger, tables) {
           L.warn('skills', 'skill.plugin.unknown', `未登记词条 ${a.id}（affix-registry.json）`, { affixId: a.id });
           continue;
         }
-        if (def.skillOp) out = applySkillOp(out, def.skillOp, v, p);
+        if (def.skillOp) out = applySkillOp(out, def.skillOp, v, p, def);
         if (def.hitEffect) out = { ...out, affixes: [...out.affixes, { id: a.id, params: a.params }] };
         if (def.castEffect) out = { ...out, castEffects: [...out.castEffects, buildCastEffect(def.castEffect, a.params)] };
       }
-      // 消耗补偿（D-113）：非减耗类 + costDeltaBase[quality]×tier（缺失品质 = common 基准，L9 读表）
-      if (p.costDeltaByTier !== null && p.tier) {
-        const base = costBaseOf[p.quality] ?? costBaseOf.common;
-        const delta = base * p.tier;
-        const dims = p.costDeltaByTier || {};
-        for (const dim of MECHANICS_.costDims) {
-          if (Array.isArray(dims[dim])) out.cost = { ...out.cost, [dim]: out.cost[dim] + delta };
-        }
-      }
-      L.debug('skills', 'skill.plugin.apply', `plugin ${p.id || '?'} tier ${p.tier || 1}`, { pluginId: p.id, tier: p.tier });
+      L.debug('skills', 'skill.plugin.apply', `plugin ${p.id || '?'}`, { pluginId: p.id, slot: p.slot || null });
     }
     return out;
   }
@@ -210,13 +269,16 @@ function makeSkills(logger, tables) {
     const mech = MECHANICS_.types[skill.type];
     const payload = {
       multiplier: skill.multiplier, falloff: skill.falloff, affixes: skill.affixes,
-      specials: skill.specials || {},
+      specials: skill.specials || {}, trueDamage: skill.trueDamage === true,
     };
     const action = { type: 'cast', skill, bullets: [], castEffects: skill.castEffects || [] };
     if (mech && mech.move) {
+      const raw = skill[mech.move.cellsFrom];
+      // 背向位移（2026-09-28 §6.4 后撤）：`moveDir === 'backward'` 或 distance 为负 → 方向取反、格数取绝对值
+      const backward = skill.moveDir === 'backward' || raw < 0;
       action.move = {
-        dir: caster.facing,
-        cells: skill[mech.move.cellsFrom],
+        dir: backward ? -caster.facing : caster.facing,
+        cells: Math.abs(raw),
         passThroughEnemy: skill.passThroughEnemy,
         dealDamage: skill.dealDamage,
         fullDodgeDuring: skill.fullDodgeDuring,
@@ -235,7 +297,7 @@ function makeSkills(logger, tables) {
     return action;
   }
 
-  return { instantiateSkill, applySkillPlugins, canCast, buildSkillAction, coveredCellRanges };
+  return { instantiateSkill, applySkillPlugins, applyExclusive, canCast, buildSkillAction, coveredCellRanges };
 }
 
 // 弹幕构造：所有常量/字段名来自 skill-mechanics.json 的 bullet 描述

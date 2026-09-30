@@ -96,7 +96,7 @@ const baseSkill = () => ({
   multiplier: 1, cost: { hp: 0, mp: 0, sp: 0 }, cooldown: 1, bulletLevel: 3,
   range: 8, bulletCount: 1, falloff: 0, affixes: [], specials: {}, castEffects: [],
 });
-const skillPlugin = (affix) => ({ id: 'p', tier: 1, quality: 'rare', costDeltaByTier: { mp: [2, 4, 6] }, affixes: [affix], kind: 'skillPlugin' });
+const skillPlugin = (affix) => ({ id: 'p', tier: 1, quality: 'rare', slot: 'general', affixes: [affix], kind: 'skillPlugin' });
 
 test('词条注册表：crit_chance / lifesteal 进 skill.specials（此前只登记不消费）', () => {
   const s1 = skills.applySkillPlugins(baseSkill(), [skillPlugin({ id: 'crit_chance', params: { v: 0.1 } })]);
@@ -118,7 +118,8 @@ test('技能词条 crit_chance：随 payload.specials 进入命中结算并真�
   const withCrit = b.dealDamage(atk, def, { mult: 1, critRng: critAlways(), specials: s.specials });
   assert.equal(noCrit.crit, false, '无词条：critChance=0 → 不暴击（crit 流即使为真也不消费）');
   assert.equal(withCrit.crit, true, '有词条：critChance=1 → 必暴击');
-  assert.equal(withCrit.dmg, Math.floor(noCrit.dmg * CONFIG.crit), '暴击倍率来自 battle-config.crit');
+  assert.equal(withCrit.critM, 1 + CONFIG.critBonus, '暴击倍率 = 1 + battle-config.critBonus（2026-09-28 起 2.0）');
+  assert.equal(withCrit.dmg, Math.max(1, Math.floor(noCrit.raw * (1 + CONFIG.critBonus))), '暴击伤害 = floor(raw × 倍率)');
 });
 
 test('技能词条 lifesteal：命中后按 floor(D×v) 回复攻击者（maxHp 封顶）', () => {
@@ -157,7 +158,7 @@ test('hp_regen 词条：每 tick 回复 hp（步骤 10），且不在 hp≤0 时
 test('loadout.buildPanel 投影必须保留 specials/castEffects/affixes 与插件 regen（否则 API 战斗静默丢失机制）', () => {
   const loadoutApi = require('../../server/loadout.js');
   const mkSkill = (i, pluginUid) => ({
-    uid: `sk${i}`, kind: 'skill', templateId: i === 0 ? 'skill_straight_precise' : 'skill_melee_whirl', quality: 'common',
+    uid: `sk${i}`, kind: 'skill', templateId: i === 0 ? 'skill_straight' : 'skill_melee', quality: 'common',
     params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 0 }, cooldown: 1, bulletLevel: 3, range: 3, bulletCount: 1, falloff: 0 },
     slots: [{ type: 'special', pluginUid }],
   });
@@ -168,9 +169,9 @@ test('loadout.buildPanel 投影必须保留 specials/castEffects/affixes 与插�
   };
   const AI = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } };
   const P_REGEN = { uid: 'rpRegen', kind: 'rolePlugin', id: 'rp_regen', slot: 'special', quality: 'common', tier: 1, pointCost: 1, equipped: true, affixes: [{ id: 'hp_regen', params: { v: 1 } }] };
-  const P_CRIT = { uid: 'spCrit', kind: 'skillPlugin', id: 'sp_crit', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'crit_chance', params: { v: 0.1 } }] };
-  const P_BUFF = { uid: 'spBuff', kind: 'skillPlugin', id: 'sp_buff', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'cast_buff', params: { v: 2, duration: 2 } }] };
-  const P_STUN = { uid: 'spStun', kind: 'skillPlugin', id: 'sp_stun', slot: 'special', quality: 'common', tier: 1, equipped: true, costDeltaByTier: { mp: [2, 4, 6] }, affixes: [{ id: 'stun', params: { v: 1 } }] };
+  const P_CRIT = { uid: 'spCrit', kind: 'skillPlugin', id: 'sk_crit', slot: 'general', quality: 'common', tier: 1, equipped: true, affixes: [{ id: 'crit_chance', params: { v: 0.1 } }] };
+  const P_BUFF = { uid: 'spBuff', kind: 'skillPlugin', id: 'sk_buff', slot: 'general', quality: 'common', tier: 1, equipped: true, affixes: [{ id: 'cast_buff', params: { v: 2, duration: 2 } }] };
+  const P_STUN = { uid: 'spStun', kind: 'skillPlugin', id: 'sk_stun', slot: 'general', quality: 'common', tier: 1, equipped: true, affixes: [{ id: 'stun', params: { v: 1 } }] };
   // D-163：`buildPanel` 也按 uid 从仓库解析物品（身份/数值一律取仓库副本）→ 桩仓库必须**完整**
   //   （角色 + 恰 3 个技能都在桶里），否则报 `物品不在仓库: sk0`。又因面板读的是"仓库里那一份"，
   //   每次要换技能插槽时，仓库里的技能必须与 loadout 引用同形（故用工厂同时产出两者）。

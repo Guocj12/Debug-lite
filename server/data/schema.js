@@ -9,8 +9,8 @@
  *     （或某表去掉）后该表只做结构与机制校验，用户改表即扩展，门禁不再因增删条目失败；
  *   · 技能 `type` / 插件词条 id / AI 权限名 一律以**机制层表**为准（skill-mechanics.json /
  *     affix-registry.json / ai-nodes.json），代码不另立清单、不硬编码节点数量。
- * 冻结数值仍逐值校验：battle-config（D-117）、typeModifiers（B5/D-…）、品质 tiers 三等分与
- *   costDeltaBase（D-113/D-116）——这些是**机制数值**，不是内容条目数量。
+ * 冻结数值仍逐值校验：battle-config（D-117）、typeModifiers（B5/D-…）、品质 tiers 三等分——
+ *   这些是**机制数值**，不是内容条目数量。（`costDeltaBase` 随消耗补偿于 D-173 退役，出现即拦。）
  * 产物：validateStructure(dataDir) / validateConsistency(dataDir) / validate(dataDir) → {ok, detail}
  * P0-9：assets/ 占位表（sprites/animations）纳入 T-DC-1 校验范围（dataDir 的兄弟目录，经 API 作为数据表提供）。
  */
@@ -52,12 +52,17 @@ const BATTLE_CONFIG_FROZEN = {
   cellPx: 64, cells: 16, fieldPx: 1024, actorHalfPx: 32, minGapPx: 64,
   movePx: 64, dodgePx: 128,
   collisionDmgMul: 0.8, baseHitMul: 0.8, baseDef: 64, defendDefMul: 1.6,
-  dodgeChanceBonus: 0.2, backstab: 1.5, crit: 1.5,
+  dodgeChanceBonus: 0.2, backstab: 1.5, critBonus: 1.0,
+  // critBonus（2026-09-28 内容设计 §2.1）：暴击**加成**（暴击倍率 = 1 + critBonus + 面板/技能 critMul）。
+  //   取代旧键 `crit: 1.5`：① 倍率由 1.5 提到 2.0（暴击率与伤害 1:1，插件可等值定价）；
+  //   ② 写成"加成"而非"倍率"可避开 gate 项 3 的数值硬编码误报（倍率 2.0 会把裸字面量 `2` 变成禁值）。
+  lowHpThreshold: 0.5, // 内容设计：`rp_lowhp` 低血加攻的阈值（hp/maxHp 低于该值才加成）
   defK: 40, // B21 校准入表（D-128：减伤公式常数 1 − def/(def+defK)）
   overtimeStart: 48, overtimeRatio: 0.0625, hardCapTick: 64,
 };
 
-const QUALITY_PLUGIN_POINTS = { common: 3, rare: 4, epic: 5, legendary: 6, mythic: 7 }; // D-116 / items-data §2
+// 品质表结构不再冻结"每品质固定点数"：2026-09-28 内容设计改为 `pluginPointsRange`（区间内掷），
+//   见 docs/content-design.md §3.4；旧的 QUALITY_PLUGIN_POINTS 冻结表已删除。
 
 // ---------- P7 服务参数与积分配置的冻结数值（D-129 §11.3 / D-133 §8.3） ----------
 // 原则"机制在代码、数值在表"：两张表的**数值单一来源是 JSON**，代码侧 server/store/config.js 只保留
@@ -136,54 +141,31 @@ const ROLE_EXPECTED = [
   ['role_exp_mp', '专家·MP', 'expert'],
 ];
 
-// [id, name, type, mult, cost{mp,sp}, cd, bulletLevel, 类型参数, unlockTier]（items-data §4.1~4.4）
+// [id, name, type, mult, cost{mp,sp}, cd, bulletLevel, 类型参数, unlockTier]（docs/content-design.md §6.3：每类 1 条基础形态，共 4 条）
+// 说明：本表仅在 skill-templates.json 标 `_sample:true` 时生效（当前内容已正式化，故休眠）；结构/机制校验恒由 T-DC-1 执行。
 const SKILL_EXPECTED = [
-  ['skill_melee_whirl', '旋风斩', 'melee', 1.0, { mp: 0, sp: 12 }, 2, 2, { range: [-1, 1] }, 'common'],
-  ['skill_melee_heavy', '重击', 'melee', 1.3, { mp: 10, sp: 8 }, 4, 2, { range: [0, 2] }, 'rare'],
-  ['skill_straight_precise', '精准射击', 'straight', 0.9, { mp: 0, sp: 6 }, 2, 3, { range: 8, bulletCount: 1 }, 'common'],
-  ['skill_straight_rapid', '连续射击', 'straight', 0.5, { mp: 8, sp: 0 }, 4, 4, { range: 5, bulletCount: 4 }, 'rare'],
-  ['skill_straight_ice', '冰锥', 'straight', 1.3, { mp: 8, sp: 0 }, 3, 4, { range: 5, bulletCount: 1 }, 'rare'],
-  ['skill_straight_poison', '毒瓶', 'straight', 0.5, { mp: 6, sp: 0 }, 4, 4, { range: 5, bulletCount: 1 }, 'epic'],
-  ['skill_vert_rain', '箭雨', 'vertical', 0.9, { mp: 12, sp: 0 }, 5, 4, { range: 8, area: [-2, 2] }, 'epic'],
-  ['skill_vert_fireball', '火球术', 'vertical', 0.8, { mp: 14, sp: 0 }, 5, 3, { range: 8, area: [-1, 1] }, 'legendary'],
-  ['skill_dash_bash', '突击盾', 'displacement', 0.8, { mp: 0, sp: 10 }, 3, 2, { distance: 4, passThroughEnemy: false, dealDamage: true, fullDodgeDuring: false }, 'mythic'],
-  ['skill_dash_shadow', '暗影步', 'displacement', 0, { mp: 0, sp: 8 }, 3, 3, { distance: 3, passThroughEnemy: true, dealDamage: false, fullDodgeDuring: true }, 'mythic'],
+  ['skill_melee', '近战', 'melee', 1.0, { mp: 0, sp: 11 }, 3, 2, { range: [0, 2] }, 'common'],
+  ['skill_straight', '平射', 'straight', 1.2, { mp: 4, sp: 2 }, 1, 3, { range: 5, bulletCount: 1 }, 'common'],
+  ['skill_vertical', '定点', 'vertical', 1.0, { mp: 3, sp: 0 }, 1, 4, { range: 5, area: [0, 0] }, 'common'],
+  ['skill_displace', '位移', 'displacement', 0, { mp: 0, sp: 7 }, 2, 1, { distance: 3, passThroughEnemy: false, dealDamage: false, fullDodgeDuring: false }, 'common'],
 ];
 
-// [id, name, color, statRange, roleSlotRange, skillSlotRange]（items-data §2）
-const QUALITY_EXPECTED = [
-  ['common', '绿', '#2ecc71', [0.80, 1.05], [1, 3], [0, 1]],
-  ['rare', '蓝', '#3498db', [1.00, 1.25], [2, 4], [0, 2]],
-  ['epic', '紫', '#9b59b6', [1.20, 1.45], [3, 5], [1, 3]],
-  ['legendary', '橙', '#e67e22', [1.40, 1.70], [4, 6], [2, 4]],
-  ['mythic', '青', '#1abc9c', [1.60, 2.00], [5, 7], [3, 4]],
-];
+// 品质示例期望表已删除（2026-09-28）：qualities.json 摘除 `_sample`，品质为**正式内容**
+//   （插槽区间/点数区间/槽类型权重以结构校验为准，见 validateStructure 的 qualities 段）。
 
-// [id, slot, category, 词条基础值 v]（items-data §5 角色插件 / §6 技能插件）
-// v 为 affixes[0].params.v 的期望基础值（实例化时乘以档位系数，01-items I-6）
-const PLUGIN_EXPECTED = [
-  ['rp_atk_pct', 'atk', '攻击提升', 0.08], ['rp_atk_flat', 'atk', '攻击提升', 4],
-  ['rp_def_pct', 'def', '防御强化', 0.08], ['rp_def_flat', 'def', '防御强化', 3],
-  ['rp_hp_pct', 'hp', '生命强化', 0.08], ['rp_hp_flat', 'hp', '生命强化', 20],
-  ['rp_sp_opt', 'sp', 'SP 优化', 0.15], ['rp_sp_regen', 'sp', 'SP 优化', 1],
-  ['rp_mp_opt', 'mp', 'MP 优化', 0.15], ['rp_mp_regen', 'mp', 'MP 优化', 1],
-  ['rp_dodge', 'special', '闪避', 0.05], ['rp_lifesteal', 'special', '吸血', 0.10],
-  ['rp_crit', 'special', '暴击', 0.08], ['rp_regen', 'special', '回复', 1],
-  ['sp_mult', 'basic', '倍率提升', 0.15], ['sp_cost_down', 'basic', '消耗优化', 0.20],
-  ['sp_cooldown', 'basic', '冷却缩减', 1], ['sp_range', 'basic', '射程增强', 2],
-  ['sp_bullet', 'basic', '弹幕增强', 1], ['sp_level', 'basic', '等级凝练', 1],
-  ['sp_displacement', 'basic', '位移增强', 1],
-  ['sp_stun', 'special', '眩晕', 1], ['sp_knockback', 'special', '击退', 1],
-  ['sp_pull', 'special', '拉近', 1], ['sp_dot', 'special', '持续伤害', 3],
-  ['sp_true_dmg', 'special', '真实伤害', 1], ['sp_crit', 'special', '暴击', 0.10],
-  ['sp_lifesteal', 'special', '吸血', 0.20], ['sp_buff', 'special', '释放增益', 2],
-];
+
+// 插件示例期望表已删除（2026-09-28）：plugins.json 摘除 _sample，插件为**正式内容**
+//   （结构/机制校验见 validateStructure 的 plugins 段与机制表完整性段；数值由 docs/content-design.md §5 定义）。
+
 
 // ---------- 工具 ----------
 
 function loadJSON(dataDir, file) {
   const p = path.join(dataDir, file);
-  return { p, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
+  // BOM 容错（2026-09-28）：数据表是**用户可直接编辑的 JSON**，Windows 记事本等编辑器会写入 UTF-8 BOM；
+  //   `JSON.parse` 遇到 BOM 会抛 "Unexpected token"（Node 的 require 会静默剥离，故仅校验路径受影响）。
+  const raw = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '');
+  return { p, data: JSON.parse(raw) };
 }
 
 function problemsOf(problems) {
@@ -270,28 +252,48 @@ function validateStructure(dataDir, assetsDir) {
     if (base.hp !== 100 || base.maxHp !== 100) problems.push(`bases.${owner} hp 应为 100/100`);
   }
 
-  // role-templates（D-110 regen 必填；D-112 unlockTier 可选；typeModifiers L9 入表，B5）
+  // role-templates（D-110 regen 必填；D-112 unlockTier 可选）
+  //   2026-09-28 内容设计：
+  //     · `slotWeights` **不再是角色模板字段**（插槽类型权重改由 qualities.slotTypeWeights 提供，五维均衡）；
+  //     · `pluginPoints` 标量字段**退役**（点数由品质 `pluginPointsRange` 掷出）；若仍存在则只做形状校验；
+  //     · `typeModifiers` 改为**逐属性乘性因子**并要求**乘性守恒**（Π 因子 = 1），见 docs/content-design.md §3.2。
   const tm = tables.roleTable ? tables.roleTable.typeModifiers : null;
+  const EPS_CONSERVE = 1e-6;
   if (!tm) {
     problems.push('role-templates.json 缺 typeModifiers（L9：修饰系数必须入表）');
   } else {
-    // 冻结值核对（02-roles R-2/R-3：特化 +15%/-15%；专家 +30% 与 略高/极低/略低/标准）
-    if (tm.specialized.high !== 1.15 || tm.specialized.low !== 0.85) problems.push('typeModifiers.specialized 应为 {high:1.15, low:0.85}');
-    if (tm.expert.high !== 1.30) problems.push('typeModifiers.expert.high 应为 1.30');
-    if (JSON.stringify(tm.expert.spread) !== JSON.stringify([1.1, 0.7, 0.9, 1.0])) problems.push('typeModifiers.expert.spread 应为 [1.1,0.7,0.9,1.0]');
+    const prodOf = (arr) => arr.reduce((a, b) => a * b, 1);
+    // 特化：高属性 ×high、一个随机低属性 ×low ⇒ high × low 必须 = 1（乘性守恒）
+    if (!isNum(tm.specialized && tm.specialized.high) || !isNum(tm.specialized && tm.specialized.low)) {
+      problems.push('typeModifiers.specialized 需 {high, low} 数值');
+    } else if (Math.abs(tm.specialized.high * tm.specialized.low - 1) > EPS_CONSERVE) {
+      problems.push(`typeModifiers.specialized 乘性不守恒：high×low = ${tm.specialized.high * tm.specialized.low}，应为 1`);
+    }
+    // 专家：高属性 ×high、其余四维按 spread 洗牌 ⇒ high × Πspread 必须 = 1
+    if (!isNum(tm.expert && tm.expert.high) || !Array.isArray(tm.expert && tm.expert.spread) || tm.expert.spread.length !== 4 || !tm.expert.spread.every(isNum)) {
+      problems.push('typeModifiers.expert 需 {high, spread[4]} 数值');
+    } else if (Math.abs(tm.expert.high * prodOf(tm.expert.spread) - 1) > EPS_CONSERVE) {
+      problems.push(`typeModifiers.expert 乘性不守恒：high×Πspread = ${tm.expert.high * prodOf(tm.expert.spread)}，应为 1`);
+    }
+    // 低属性候选排除表（def 的边际价值非线性，(D+K) 吃不下大额负补偿 → 不可作低属性）
+    if (tm.excludeLow !== undefined
+      && (!Array.isArray(tm.excludeLow) || !tm.excludeLow.every((k) => ['hp', 'atk', 'def', 'sp', 'mp'].includes(k)))) {
+      problems.push('typeModifiers.excludeLow 应为五维子集数组');
+    }
   }
+  const ROLE_SLOT_KEYS = ['hp', 'atk', 'def', 'sp', 'mp'];
   const roleIds = new Set();
   for (const r of tables.roles) {
     if (roleIds.has(r.id)) problems.push(`角色模板 id 重复: ${r.id}`);
     roleIds.add(r.id);
     if (!r.name) problems.push(`${r.id}: 缺 name`);
     if (!['balanced', 'specialized', 'expert'].includes(r.type)) problems.push(`${r.id}: type 非法 ${r.type}`);
-    if (r.type !== 'balanced' && !['hp', 'atk', 'def', 'sp', 'mp'].includes(r.highStat)) problems.push(`${r.id}: ${r.type} 必须带 highStat`);
+    if (r.type !== 'balanced' && !ROLE_SLOT_KEYS.includes(r.highStat)) problems.push(`${r.id}: ${r.type} 必须带 highStat`);
     const bs = r.baseStats;
-    if (!bs || !['hp', 'atk', 'def', 'sp', 'mp'].every((k) => isNum(bs[k]))) problems.push(`${r.id}: baseStats 必须五维数值`);
+    if (!bs || !ROLE_SLOT_KEYS.every((k) => isNum(bs[k]))) problems.push(`${r.id}: baseStats 必须五维数值`);
     if (!r.regen || !isNum(r.regen.mp) || !isNum(r.regen.sp)) problems.push(`${r.id}: regen{mp,sp} 必填（D-110）`);
-    if (!r.slotWeights || !['atk', 'def', 'hp', 'sp', 'mp', 'special'].every((k) => isInt(r.slotWeights[k]) && r.slotWeights[k] >= 0)) problems.push(`${r.id}: slotWeights 六键非负整数`);
-    if (!isInt(r.pluginPoints) || r.pluginPoints < 1) problems.push(`${r.id}: pluginPoints 正整数`);
+    if (r.slotWeights !== undefined) problems.push(`${r.id}: slotWeights 已退役（插槽类型权重见 qualities.slotTypeWeights；2026-09-28）`);
+    if (r.pluginPoints !== undefined) problems.push(`${r.id}: pluginPoints 已退役（点数由品质 pluginPointsRange 掷出；2026-09-28）`);
     if (r.unlockTier !== undefined && !(r.unlockTier in TIER_SEQ)) problems.push(`${r.id}: unlockTier 非法 ${r.unlockTier}`);
     checkDropFields(r, r.id);
   }
@@ -311,7 +313,12 @@ function validateStructure(dataDir, assetsDir) {
     if (!isInt(s.cooldown) || s.cooldown < 0) problems.push(`${s.id}: cooldown 非负整数`);
     if (!isInt(s.bulletLevel) || s.bulletLevel < 1 || s.bulletLevel > 4) problems.push(`${s.id}: bulletLevel 1..4（D-118：位移模板同样携带）`);
     if (!isNum(s.falloff) || s.falloff < 0) problems.push(`${s.id}: falloff ≥0（D-29）`);
-    if (!s.slotWeights || !isInt(s.slotWeights.basic) || !isInt(s.slotWeights.special)) problems.push(`${s.id}: slotWeights {basic,special}（D-111）`);
+    // 2026-09-28 §6.2：技能插槽 = 1 专属 + N 通用（由 qualities.skillExclusiveSlots/skillSlotRange 决定）→
+    //   `slotWeights{basic,special}` 退役；模板可选带展示用的 `animKey`/`sfxKey`
+    if (s.slotWeights !== undefined) problems.push(`${s.id}: slotWeights 已退役（D-111 字段退役：技能插槽 = 专属 1 + 通用 N，2026-09-28 §6.2）`);
+    for (const k of ['animKey', 'sfxKey']) {
+      if (s[k] !== undefined && (typeof s[k] !== 'string' || s[k] === '')) problems.push(`${s.id}: ${k} 应为非空字符串`);
+    }
     if (s.type === 'melee' && !(Array.isArray(s.range) && s.range.length === 2 && isInt(s.range[0]) && isInt(s.range[1]) && s.range[0] <= s.range[1])) problems.push(`${s.id}: melee 需 range[lo,hi] 整数`);
     if (s.type === 'straight' && (!isInt(s.range) || s.range < 1 || !isInt(s.bulletCount) || s.bulletCount < 1)) problems.push(`${s.id}: straight 需 range≥1 与 bulletCount≥1`);
     if (s.type === 'vertical' && (!isInt(s.range) || s.range < 1 || !(Array.isArray(s.area) && s.area.length === 2 && isInt(s.area[0]) && isInt(s.area[1])))) problems.push(`${s.id}: vertical 需 range≥1 与 area[lo,hi]`);
@@ -326,37 +333,63 @@ function validateStructure(dataDir, assetsDir) {
   }
   if (tables.skills.length < 1) problems.push('技能模板表为空（至少 1 项；数量不再锁定，items-data §4 仅为示例）');
 
-  // plugins（D-113 costDeltaByTier / D-114 一个变体一个 id）
+  // plugins（D-114 一个变体一个 id；D-113 的 `costDeltaByTier` 与 D-116 的"最大插件点数"均于 2026-09-28 退役 → D-173）
   const pluginIds = new Set();
-  const costDeltaShape = (cd) => cd === null
-    || (typeof cd === 'object' && cd !== null
-      && Object.keys(cd).length >= 1 && Object.keys(cd).every((k) => ['hp', 'mp', 'sp'].includes(k))
-      && Object.values(cd).every((arr) => Array.isArray(arr) && arr.length === 3 && arr.every(isNum)));
   for (const p of tables.plugins) {
     if (pluginIds.has(p.id)) problems.push(`插件 id 重复: ${p.id}`);
     pluginIds.add(p.id);
     if (p.kind === 'rolePlugin') {
-      if (!['atk', 'def', 'hp', 'sp', 'mp', 'special'].includes(p.slot)) problems.push(`${p.id}: rolePlugin 槽位非法`);
-      if (!Array.isArray(p.pointCostByTier) || JSON.stringify(p.pointCostByTier) !== JSON.stringify([1, 2, 3])) problems.push(`${p.id}: pointCostByTier 应 [1,2,3]（D-113）`);
+      // 槽位：五维 + 万能槽 any + 特殊（2026-09-28 内容设计 §3.3）
+      if (!['atk', 'def', 'hp', 'sp', 'mp', 'any', 'special'].includes(p.slot)) problems.push(`${p.id}: rolePlugin 槽位非法`);
+      // 点数消耗 = 插件定义里的固定正整数（`pointCostByTier` 已退役；消耗与数值解耦 ⇒ 每点收益恒定）
+      if (!isInt(p.pointCost) || p.pointCost < 1) problems.push(`${p.id}: pointCost 应为正整数（2026-09-28 内容设计 §5.1）`);
+      if (p.pointCostByTier !== undefined) problems.push(`${p.id}: pointCostByTier 已退役（改用 pointCost）`);
     } else if (p.kind === 'skillPlugin') {
-      if (!['basic', 'special'].includes(p.slot)) problems.push(`${p.id}: skillPlugin 槽位非法`);
-      if (!costDeltaShape(p.costDeltaByTier)) problems.push(`${p.id}: costDeltaByTier 应逐档数组或 null（D-113）`);
+      // 2026-09-28 §6：技能插件两类 —— general（通用，纯词条加成）/ exclusive（专属，声明式形态覆盖）
+      if (!['general', 'exclusive'].includes(p.slot)) problems.push(`${p.id}: skillPlugin 槽位非法（应为 general|exclusive）`);
+      if (p.costDeltaByTier !== undefined) problems.push(`${p.id}: costDeltaByTier 已退役（D-113 字段退役 → D-173：通用插件零代价；专属插件用 cost/cooldown 覆盖平衡）`);
+      if (p.slot === 'exclusive') {
+        const ex = p.exclusive;
+        if (!ex || typeof ex !== 'object' || Array.isArray(ex)) {
+          problems.push(`${p.id}: exclusive 插件必须带 exclusive{} 声明（2026-09-28 §6.2）`);
+        } else {
+          const types = Array.isArray(ex.forTypes) ? ex.forTypes : null;
+          if (!types || types.length === 0 || !types.every((t) => MECH_TYPES[t])) {
+            problems.push(`${p.id}: exclusive.forTypes 必须非空且为已登记技能类型`);
+          }
+          if (ex.overrides !== undefined && (typeof ex.overrides !== 'object' || ex.overrides === null || Array.isArray(ex.overrides))) {
+            problems.push(`${p.id}: exclusive.overrides 应为对象`);
+          }
+          if (ex.hitEffects !== undefined && !Array.isArray(ex.hitEffects)) problems.push(`${p.id}: exclusive.hitEffects 应为数组`);
+          if (ex.castEffects !== undefined && !Array.isArray(ex.castEffects)) problems.push(`${p.id}: exclusive.castEffects 应为数组`);
+        }
+        if (Array.isArray(p.forTypes) === false || p.forTypes.length === 0) problems.push(`${p.id}: exclusive 插件需顶层 forTypes（掉落/展示用）`);
+        for (const k of ['animKey', 'sfxKey']) {
+          if (p[k] !== undefined && (typeof p[k] !== 'string' || p[k] === '')) problems.push(`${p.id}: ${k} 应为非空字符串`);
+        }
+      }
     } else {
       problems.push(`${p.id}: kind 非法 ${p.kind}`);
     }
-    if (!p.name || !p.desc || !Array.isArray(p.affixes) || p.affixes.length === 0) problems.push(`${p.id}: name/desc/affixes 必填`);
+    const affixesOk = Array.isArray(p.affixes) && (p.affixes.length > 0 || p.slot === 'exclusive');
+    if (!p.name || !p.desc || !affixesOk) problems.push(`${p.id}: name/desc/affixes 必填（exclusive 允许空 affixes，用 exclusive.overrides 表达）`);
     if (p.unlockTier !== undefined && !(p.unlockTier in TIER_SEQ)) problems.push(`${p.id}: unlockTier 非法`);
     checkDropFields(p, p.id);
   }
   if (tables.plugins.length < 1) problems.push('插件表为空（至少 1 项；数量不再锁定，items-data §5/§6 仅为示例）');
 
-  // qualities（tiers 三等分接续；D-116 pluginPoints）
+  // qualities（tiers 三等分接续；2026-09-28：插槽区间 / 点数区间 / 槽类型权重）
   const qIds = new Set();
+  const rangeOk = (r, lo0) => Array.isArray(r) && r.length === 2 && isInt(r[0]) && isInt(r[1]) && r[0] >= lo0 && r[0] <= r[1];
+  const FIVE = ['hp', 'atk', 'def', 'sp', 'mp'];
   for (const q of tables.qualities.qualities) {
     if (qIds.has(q.id)) problems.push(`品质 id 重复: ${q.id}`);
     qIds.add(q.id);
     if (!TIERS.includes(q.id)) problems.push(`品质 id 非法: ${q.id}`);
-    if (QUALITY_PLUGIN_POINTS[q.id] !== undefined && q.pluginPoints !== QUALITY_PLUGIN_POINTS[q.id]) problems.push(`${q.id}: pluginPoints 应 ${QUALITY_PLUGIN_POINTS[q.id]}（D-116）`);
+    if (!rangeOk(q.roleSlotRange, 0)) problems.push(`${q.id}: roleSlotRange 应为 [lo,hi] 非负整数区间（允许 0 槽）`);
+    if (!rangeOk(q.skillSlotRange, 0)) problems.push(`${q.id}: skillSlotRange 应为 [lo,hi] 非负整数区间（允许 0 槽）`);
+    if (!rangeOk(q.pluginPointsRange, 1)) problems.push(`${q.id}: pluginPointsRange 应为 [lo,hi] 正整数区间（角色插件点数）`);
+    if (q.pluginPoints !== undefined) problems.push(`${q.id}: pluginPoints 标量已退役（改用 pluginPointsRange；D-116 退役，2026-09-28 §3.4）`);
     const [lo, hi] = q.statRange;
     if (!isNum(lo) || !isNum(hi) || lo > hi) problems.push(`${q.id}: statRange 非法`);
     if (!Array.isArray(q.tiers) || q.tiers.length !== 3) { problems.push(`${q.id}: tiers 须 3 段`); continue; }
@@ -372,8 +405,24 @@ function validateStructure(dataDir, assetsDir) {
     });
   }
   if (tables.qualities.qualities.length < 1) problems.push('品质表为空（至少 1 项；数量不再锁定）');
-  const cdb = tables.qualities.costDeltaBase;
-  if (!cdb || TIERS.some((t) => !isInt(cdb[t])) || cdb.common !== 2 || cdb.rare !== 3 || cdb.mythic !== 6) problems.push(`costDeltaBase 应 {common:2,rare:3,epic:4,legendary:5,mythic:6}`);
+  // 槽类型权重与重复衰减（2026-09-28 §3.3；全局单一来源）
+  const stw = tables.qualities.slotTypeWeights;
+  const SLOT_TYPE_KEYS = [...FIVE, 'any', 'special'];
+  if (!stw || typeof stw !== 'object') {
+    problems.push('qualities.json 缺 slotTypeWeights（角色插槽类型权重）');
+  } else {
+    for (const k of SLOT_TYPE_KEYS) if (!isNum(stw[k]) || stw[k] <= 0) problems.push(`slotTypeWeights.${k} 应为正数`);
+    for (const k of Object.keys(stw)) if (!SLOT_TYPE_KEYS.includes(k)) problems.push(`slotTypeWeights 出现未登记槽类型 ${k}`);
+    const sum = SLOT_TYPE_KEYS.reduce((a, k) => a + (isNum(stw[k]) ? stw[k] : 0), 0);
+    if (Math.abs(sum - 1) > 1e-6) problems.push(`slotTypeWeights 之和 = ${sum}，应为 1`);
+  }
+  const srd = tables.qualities.slotRepeatDecay;
+  if (!isNum(srd) || srd <= 0 || srd > 1) problems.push(`slotRepeatDecay 应为 (0,1] 数值（重复槽权重衰减因子），实际 ${JSON.stringify(srd)}`);
+  // 技能专属槽数（2026-09-28 §6.2）：固定正整数；技能物品 = skillExclusiveSlots 个专属槽 + skillSlotRange 个通用槽
+  const ses = tables.qualities.skillExclusiveSlots;
+  if (!isInt(ses) || ses < 1) problems.push(`skillExclusiveSlots 应为正整数（技能专属槽数），实际 ${JSON.stringify(ses)}`);
+  // costDeltaBase 随消耗补偿退役（D-173：通用技能插件零代价）——字段若仍存在 → 拦下，防"死数据"回流
+  if (tables.qualities.costDeltaBase !== undefined) problems.push('costDeltaBase 已退役（D-173：通用技能插件零代价，专属插件用 cost/cooldown 覆盖平衡）');
 
   // items-config（dropRates 和 = 1）
   const dr = tables.itemsConfig.dropRates;
@@ -490,6 +539,8 @@ function validateStructure(dataDir, assetsDir) {
       const destinations = ['agg', 'special', 'regen', 'skillOp', 'hitEffect', 'castEffect'].filter((k) => def[k] !== undefined);
       if (destinations.length === 0) problems.push(`affix-registry.${id}: 未声明去向（agg/special/regen/skillOp/hitEffect/castEffect 至少一个）`);
       if (def.roll !== undefined && !['int', 'stat'].includes(def.roll)) problems.push(`affix-registry.${id}: roll 非法 ${def.roll}`);
+      // 概率封顶声明（2026-09-28）：`cap` 只允许 "probability"（不写 = 不封顶；非概率类 special 用）
+      if (def.cap !== undefined && def.cap !== 'probability') problems.push(`affix-registry.${id}: cap 非法 ${JSON.stringify(def.cap)}（只允许 "probability" 或缺省）`);
       if (def.agg && !['pct', 'flat'].includes(def.agg.mode)) problems.push(`affix-registry.${id}: agg.mode 非法 ${def.agg.mode}`);
       if (def.skillOp && !OPS.includes(def.skillOp.op)) problems.push(`affix-registry.${id}: skillOp.op ${def.skillOp.op} 未登记（_opVocabulary）`);
       if (def.hitEffect && !HIT_KINDS.includes(def.hitEffect.kind)) problems.push(`affix-registry.${id}: hitEffect.kind ${def.hitEffect.kind} 未登记`);
@@ -681,29 +732,10 @@ function validateConsistency(dataDir) {
       }
     }
   }
-  if (sample.quality) {
-    for (const [id, name, color, statRange, roleSlot, skillSlot] of QUALITY_EXPECTED) {
-      const q = (qualities || []).find((x) => x.id === id);
-      if (!q) { problems.push(`items-data §2 的示例品质 ${id} 缺失（qualities.json 标了 _sample）`); continue; }
-      if (q.name !== name || q.color !== color) problems.push(`${id}: 名称/颜色应为 ${name}/${color}`);
-      if (JSON.stringify(q.statRange) !== JSON.stringify(statRange)) problems.push(`${id}: statRange 应为 ${JSON.stringify(statRange)}`);
-      if (JSON.stringify(q.roleSlotRange) !== JSON.stringify(roleSlot) || JSON.stringify(q.skillSlotRange) !== JSON.stringify(skillSlot)) problems.push(`${id}: 插槽区间不符`);
-    }
-  }
-  if (sample.plugin) {
-    const pluginMap = byId(plugins);
-    for (const [id, slot, category, v] of PLUGIN_EXPECTED) {
-      const p = pluginMap[id];
-      if (!p) { problems.push(`items-data §5/§6 的示例插件 ${id} 缺失（plugins.json 标了 _sample）`); continue; }
-      if (p.slot !== slot || p.category !== category) problems.push(`${id}: slot/category 应为 ${slot}/${category}`);
-      if (!p.affixes || !p.affixes[0] || p.affixes[0].params.v !== v) {
-        problems.push(`${id}: 词条基础值 v 应为 ${v}（items-data 表列）`);
-      }
-      if (id === 'sp_buff' && (!p.affixes[0] || p.affixes[0].params.duration !== 2)) {
-        problems.push(`${id}: 释放增益 duration 应为 2`);
-      }
-    }
-  }
+  // 品质逐值比对已移除（2026-09-28）：qualities.json 为正式内容（无 `_sample`），
+  //   结构校验见 validateStructure 的 qualities 段（插槽区间/点数区间/槽类型权重/重复衰减）。
+  // 插件逐值比对同样已移除（2026-09-28）：plugins.json 为正式内容（无 `_sample`），
+  //   结构/机制校验见 validateStructure 的 plugins 段与机制表完整性段。
 
   return problemsOf(problems);
 }

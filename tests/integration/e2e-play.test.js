@@ -343,7 +343,8 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；starter 落档；GET /m
   assert.equal(wh0.counts.skill, 3, 'starter 恰 3 技能（D-159）');
   assert.ok(wh0.counts.rolePlugin >= 1 && wh0.counts.rolePlugin <= 2,
     `starter 角色插件 1~2 个（实得 ${wh0.counts.rolePlugin}，D-159）`);
-  assert.equal(wh0.counts.skillPlugin, 1, 'starter 技能插件恰 1 个（D-159）');
+  // 技能插件恒为 1 专属 + 1 通用（2026-09-28 §6.2 + starter 固定发放规则）
+  assert.equal(wh0.counts.skillPlugin, 2, `starter 恰 1 专属 + 1 通用技能插件（实得 ${wh0.counts.skillPlugin}）`);
   // caps 必须接线 service-config.warehouse.maxPerBucket（配置单一来源）
   for (const k of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
     assert.equal(wh0.caps[k], SERVICE_CONFIG.warehouse.maxPerBucket, `caps.${k} 取自 service-config.warehouse.maxPerBucket`);
@@ -379,7 +380,8 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；starter 落档；GET /m
   assert.equal(whB.body.data.starterIssued, true);
   assert.equal(whB.body.data.counts.role, 1);
   assert.equal(whB.body.data.counts.skill, 3);
-  assert.ok(whB.body.data.counts.rolePlugin >= 1 && whB.body.data.counts.skillPlugin === 1);
+  assert.ok(whB.body.data.counts.rolePlugin >= 1 && whB.body.data.counts.skillPlugin === 2,
+    `starter 插件（rolePlugin ≥1、skillPlugin 恒 2 = 1 专属 + 1 通用，实得 ${whB.body.data.counts.rolePlugin}/${whB.body.data.counts.skillPlugin}）`);
 
   // ---- PUT /me/warehouse：D-159 退役为"只做形状校验" ----
   // ① 覆盖出战配置引用的镜像 → 200 + saved:true + verified:true，且**不得改动真源**

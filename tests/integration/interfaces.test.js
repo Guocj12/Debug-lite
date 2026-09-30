@@ -45,8 +45,10 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-09-25：D-170——新增 admin op `account-patch`（改任意账号段位/积分/入池，写 journal、峰值只升不降）；
   //   2026-09-25：D-171——排行榜扩展（分页 offset/total/hasMore + 本人名次 self + 段位榜 order=arrival 按到达时间）；
   //   2026-09-25：D-172——AI 库可编辑 + 草稿状态 + 双校验（`PUT /me/ai/:aiId`、`POST /me/ai/validate`、`ai.items[].status`、`ai_is_draft`）；
+  //   2026-09-28：D-173——内容数值设计 v2 全量落地（等价点数配平 / 乘性守恒类型修饰 / 插槽 75-10-15 + 万能槽 + 0 槽 / 固定 pointCost /
+  //     thorns·critMul·lowHpAtk 三机制 / critBonus / range 不随品质浮动）；
   //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号））
-  assert.equal(decided.size, 124, `D 编号数量应为 124（decisions.md 无跳段之外的编号）`);
+  assert.equal(decided.size, 125, `D 编号数量应为 125（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

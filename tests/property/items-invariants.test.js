@@ -19,12 +19,13 @@ const TIERS = QUALITIES.map((q) => q.id);
 const QMAP = Object.fromEntries(QUALITIES.map((q) => [q.id, q]));
 const FIVE = ['hp', 'atk', 'def', 'sp', 'mp'];
 
-// 修饰后的**最大可能**系数（上界推导用）：特化高属性 ×1.15（低 0.85 不影响上界）；
-// 专家高属性 ×1.30、其余最多 ×1.1（spread 的四个取值里最大者）
+// 修饰后的**最大可能**系数（上界推导用）：特化高属性 ×high（低 <1 不影响上界）；
+// 专家高属性 ×high、其余最多 = max(spread) 与 1 的较大者（2026-09-28：spread 含 1 的中性项）
+const TM = require('../../server/data/role-templates.json').typeModifiers;
 function maxModifier(t, k) {
   const base = t.baseStats;
-  if (t.type === 'specialized') return k === t.highStat ? base[k] * 1.15 : base[k];
-  if (t.type === 'expert') return k === t.highStat ? base[k] * 1.30 : base[k] * 1.1;
+  if (t.type === 'specialized') return k === t.highStat ? base[k] * TM.specialized.high : base[k];
+  if (t.type === 'expert') return k === t.highStat ? base[k] * TM.expert.high : base[k] * Math.max(...TM.expert.spread, 1);
   return base[k];
 }
 
@@ -39,8 +40,12 @@ test('PT-IT-1 不变量：任意模板 × 任意品质，开箱角色五维 ∈ 
       const upper = Math.ceil(maxModifier(t, k) * q.statRange[1]) + 1; // +1 = 四舍五入容差
       assert.ok(item.stats[k] <= upper, `${t.id}/${q.id}: ${k}=${item.stats[k]} 超过上界 ${upper}（最大修饰 ${maxModifier(t, k)} × ${q.statRange[1]}）`);
     }
-    assert.ok(item.slots.length >= 1, '插槽数下限 1');
+    // 2026-09-28 §3.3：插槽数下限 1 已作废（允许 0 槽）→ 只断言区间内
+    const range = q.roleSlotRange;
+    assert.ok(item.slots.length >= range[0] && item.slots.length <= range[1], `插槽数 ${item.slots.length} 应在 ${JSON.stringify(range)}`);
     assert.ok(item.slots.every((s) => s.pluginUid === null), '新生成插槽未装配');
+    assert.ok(Number.isInteger(item.pluginPoints) && item.pluginPoints >= q.pluginPointsRange[0] && item.pluginPoints <= q.pluginPointsRange[1],
+      `插件点数 ${item.pluginPoints} 应在 ${JSON.stringify(q.pluginPointsRange)}`);
   }
 });
 
@@ -56,7 +61,8 @@ test('PT-IT-2 不变量：类型修饰确实生效 —— 同品质下特化/专
   const exp = lo(high('role_exp_atk'), 'rare');
   assert.ok(spc > bal, `特化 atk 下界 ${spc} 应 > 均衡 ${bal}`);
   assert.ok(exp > spc, `专家 atk 下界 ${exp} 应 > 特化 ${spc}`);
-  assert.deepEqual([bal, spc, exp], [10, 12, 13], '机器复算：10×1.00 / round(10×1.15×1.00) / round(10×1.30×1.00)');
+  // 机器复算（2026-09-28 B0=15 / 品质 rare 下界 1.00）：均衡 15；特化 15×1.30=19.5→20；专家 15×1.50=22.5→23
+  assert.deepEqual([bal, spc, exp], [15, 20, 23], '机器复算：15×1.00 / round(15×1.30×1.00) / round(15×1.50×1.00)');
 });
 
 test('PT-IT-3 不变量：掉落池 —— drop=false 永不出现在任何段位（与门控无关）；门控开启时 unlockTier 恒成立', () => {

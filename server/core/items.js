@@ -53,17 +53,19 @@ function affixDef(id) {
   return Object.prototype.hasOwnProperty.call(AFFIXES, id) ? AFFIXES[id] : null;
 }
 
-// 类型修饰（R-2/R-3；systems/02-roles.md §4.2）：只作用于基础值，返回修饰后五维（浮点）。
-// **单一实现**：roles.applyTypeModifier 委托本函数 —— 开箱生成（generateRoleItem）与角色实例化
-//   （roles.instantiateRole）不再各写一份；随机消耗顺序冻结为「修饰随机 → 品质系数 → 取整」：
-//   specialized 消耗 1 次 int（随机低属性索引）；expert 消耗 3 次 int（Fisher–Yates 洗牌）；
-//   balanced 不消耗随机（既有确定性测试的字节级行为由此保持）。
+// 类型修饰（2026-09-28 内容设计 §3.2；**乘性守恒** Π 因子 = 1，schema 强制校验）：
+//   特化 specialized：高属性 ×high，**一个随机低属性** ×low（high×low=1）；
+//   专家 expert：高属性 ×high，其余四维按 spread 洗牌（high×Πspread=1）；
+//   `excludeLow` = 不可作"低属性"的维度（def 的边际价值 ∝ 1/(D+K)，(D+K) 吃不下 <1 的大额补偿），
+//   专家若把 <1 的因子洗到 def → **确定性换位**到某个 ≥1 的维度（不额外消耗随机，守恒不变）。
+// 随机消耗顺序冻结：修饰随机（特化 1 int / 专家 3 int）→ 5 次品质系数 float → 插槽数 → 槽类型 → 点数。
 function applyTypeModifier(template, rng) {
   const base = template.baseStats;
   const stats = { hp: base.hp, atk: base.atk, def: base.def, sp: base.sp, mp: base.mp };
+  const excludeLow = new Set(TYPE_MODIFIERS.excludeLow || []);
   if (template.type === 'specialized') {
     stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.specialized.high;
-    const others = FLAT_STATS.filter((k) => k !== template.highStat);
+    const others = FLAT_STATS.filter((k) => k !== template.highStat && !excludeLow.has(k));
     const lowIdx = rng.int(0, others.length - 1);
     stats[others[lowIdx]] = base[others[lowIdx]] * TYPE_MODIFIERS.specialized.low;
   } else if (template.type === 'expert') {
@@ -76,6 +78,16 @@ function applyTypeModifier(template, rng) {
       const tmp = spread[i];
       spread[i] = spread[j];
       spread[j] = tmp;
+    }
+    // def 不可承担 <1 的因子：与某个 ≥1 的维度确定性换位（同一 multiset → 守恒不变）
+    const defIdx = others.indexOf('def');
+    if (defIdx !== -1 && excludeLow.has('def') && spread[defIdx] < 1) {
+      const swapIdx = spread.findIndex((f) => f >= 1);
+      if (swapIdx !== -1) {
+        const tmp = spread[defIdx];
+        spread[defIdx] = spread[swapIdx];
+        spread[swapIdx] = tmp;
+      }
     }
     others.forEach((k, idx) => {
       stats[k] = base[k] * spread[idx];
@@ -126,18 +138,93 @@ function makeItems(logger, gating) {
     return tail;
   }
 
-  // 插槽数（I-3）：闭区间均匀 + 下限 1（上限防御 v=1 越界，P2-1）
+  // 插槽数（I-3；**2026-09-28 修订**：下限 1 已作废——用户口径允许 0 槽，绿 0-2 / 技能 0-1）
   function rollSlotCount(kind, qualityId, rng) {
     const q = getQuality(qualityId);
     let range;
     if (kind === 'role') range = q.roleSlotRange;
     else if (kind === 'skill') range = q.skillSlotRange;
     else throw new RangeError(`未知物品类别 ${kind}`);
+    if (!Array.isArray(range) || range.length !== 2 || !Number.isInteger(range[0]) || !Number.isInteger(range[1]) || range[0] < 0 || range[0] > range[1]) {
+      throw new RangeError(`品质 ${qualityId} 的 ${kind} 插槽区间非法`);
+    }
     const v = rand(rng, 0, 1);
     let n = range[0] + Math.floor(v * (range[1] - range[0] + 1));
-    if (n < 1) n = 1; // 技能 common [0,1] → 下限 1（I-3c）
-    if (n > range[1]) n = range[1]; // v=1 防御（rng 产出 [0,1) 不到；stub 可触发）
+    if (n > range[1]) n = range[1];  // v=1 防御（rng 产出 [0,1) 不到；stub 可触发）
+    if (n < range[0]) n = range[0];
     return n;
+  }
+
+  // 角色模板插件点数（2026-09-28 内容设计 §3.4）：品质 `pluginPointsRange` 闭区间均匀取整。
+  //   消耗 1 次 float；调用方把它排在**插槽之后**，以保持既有随机序列前缀不变（修饰→5 系数→插槽数→槽类型→点数）。
+  function rollPluginPoints(qualityId, rng) {
+    const q = getQuality(qualityId);
+    const range = q.pluginPointsRange;
+    if (!Array.isArray(range) || range.length !== 2 || !Number.isInteger(range[0]) || !Number.isInteger(range[1]) || range[0] < 1 || range[0] > range[1]) {
+      throw new RangeError(`品质 ${qualityId} 的 pluginPointsRange 非法`);
+    }
+    const v = rand(rng, 0, 1);
+    let n = range[0] + Math.floor(v * (range[1] - range[0] + 1));
+    if (n > range[1]) n = range[1];
+    if (n < range[0]) n = range[0];
+    return n;
+  }
+
+  // 插槽类型权重来源（2026-09-28 §3.3）：角色 = qualities.slotTypeWeights（五维各 0.15 / 万能槽 any 0.10 / 特殊槽 special 0.15）。
+  // 技能不再是"按权重掷类型"：技能物品 = **1 个专属槽 + 品质区间的通用槽**（§6.2），类型确定、无随机。
+  function slotWeightsOf(kind) {
+    if (kind === 'role') {
+      const w = QUALITIES.slotTypeWeights;
+      if (!w || typeof w !== 'object') throw new RangeError('qualities.json 缺 slotTypeWeights（角色插槽类型权重）');
+      return w;
+    }
+    throw new RangeError(`未知插槽权重来源: ${kind}`);
+  }
+
+  // 插槽类型掷法（仅角色）：按权重逐槽掷，同一模板内某类型第 k 次出现时权重 × decay^k（重复槽概率较小）。
+  // 随机消耗 = 每槽恰好 1 次 float（与旧实现同数量）。万能槽 `any` 只接受五维插件（见 slotMatches）。
+  // 技能：1 个 `exclusive` + count 个 `general`（确定性，无随机消耗）。
+  function rollSlots(kind, qualityId, template, rng, count) {
+    if (kind === 'skill') {
+      const exSlots = Number.isInteger(QUALITIES.skillExclusiveSlots) ? QUALITIES.skillExclusiveSlots : 1;
+      const out = [];
+      for (let i = 0; i < exSlots; i += 1) out.push({ type: 'exclusive', pluginUid: null });
+      for (let i = 0; i < count; i += 1) out.push({ type: 'general', pluginUid: null });
+      return out;
+    }
+    const q = getQuality(qualityId);
+    const decay = typeof q.slotRepeatDecay === 'number' ? q.slotRepeatDecay
+      : (typeof QUALITIES.slotRepeatDecay === 'number' ? QUALITIES.slotRepeatDecay : 1);
+    const base = slotWeightsOf(kind);
+    const types = Object.keys(base);
+    const slots = [];
+    const seen = {};
+    while (slots.length < count) {
+      let total = 0;
+      const weighted = [];
+      for (const t of types) {
+        const f = base[t] * Math.pow(decay, seen[t] || 0);
+        weighted.push([t, f]);
+        total += f;
+      }
+      let r = rand(rng, 0, 1) * total;
+      let chosen = null;
+      for (const [t, f] of weighted) {
+        r -= f;
+        if (r < 0) { chosen = t; break; }
+      }
+      if (chosen === null) chosen = types[types.length - 1]; // rng 越界（≥1）防御
+      slots.push({ type: chosen, pluginUid: null });
+      seen[chosen] = (seen[chosen] || 0) + 1;
+    }
+    return slots;
+  }
+
+  // 槽位匹配（2026-09-28：新增五维万能槽 `any`）
+  //   `any` 接受五维任一插件（atk/def/hp/sp/mp），**不接受 special**（用户口径 G2）。
+  function slotMatches(pluginSlot, slotType) {
+    if (pluginSlot === slotType) return true;
+    return slotType === 'any' && FLAT_STATS.includes(pluginSlot);
   }
 
   // 档位（I-5）：U(statRange) 落在 tiers 三段中哪段（1/2/3）
@@ -172,21 +259,13 @@ function makeItems(logger, gating) {
       stats[k] = v < 1 ? 1 : v;
     }
     const slotCount = rollSlotCount('role', qualityId, rng);
-    const slots = [];
-    const totalWeight = Object.values(t.slotWeights).reduce((a, b) => a + b, 0);
-    while (slots.length < slotCount) {
-      let r = rand(rng, 0, 1) * totalWeight;
-      let chosen = null;
-      for (const [type, w] of Object.entries(t.slotWeights)) {
-        r -= w;
-        if (r < 0) { chosen = type; break; }
-      }
-      slots.push({ type: chosen || 'special', pluginUid: null });
-    }
+    const slots = rollSlots('role', qualityId, t, rng, slotCount);
+    // 插件点数：品质区间内掷（排在插槽之后，保持既有随机序列前缀）
+    const pluginPoints = rollPluginPoints(qualityId, rng);
     const item = {
       uid: `item_${uidSeq++}`, kind: 'role', templateId: t.id, name: t.name, quality: qualityId,
       slotCount, slots, stats, regen: { mp: t.regen.mp, sp: t.regen.sp },
-      unlockTier: t.unlockTier, pluginPoints: q.pluginPoints,
+      unlockTier: t.unlockTier, pluginPoints,
     };
     L.debug('items', 'items.generate', `role ${t.id} ${qualityId}`, { kind: 'role', templateId: t.id, quality: qualityId });
     return item;
@@ -223,20 +302,13 @@ function makeItems(logger, gating) {
     }
     params.falloff = t.falloff;
     const slotCount = rollSlotCount('skill', qualityId, rng);
-    const slots = [];
-    const totalWeight = Object.values(t.slotWeights).reduce((a, b) => a + b, 0);
-    while (slots.length < slotCount) {
-      let r = rand(rng, 0, 1) * totalWeight;
-      let chosen = null;
-      for (const [type, w] of Object.entries(t.slotWeights)) {
-        r -= w;
-        if (r < 0) { chosen = type; break; }
-      }
-      slots.push({ type: chosen || Object.keys(t.slotWeights)[0], pluginUid: null });
-    }
+    const slots = rollSlots('skill', qualityId, t, rng, slotCount);
     const item = {
       uid: `item_${uidSeq++}`, kind: 'skill', templateId: t.id, name: t.name, quality: qualityId,
       slotCount, slots, params, unlockTier: t.unlockTier,
+      // 展示字段（2026-09-28 §6.2）：基础模板的动画/音效键；装上专属插件后由插件覆盖（帧 action 暴露）
+      animKey: t.animKey === undefined ? null : t.animKey,
+      sfxKey: t.sfxKey === undefined ? null : t.sfxKey,
     };
     L.debug('items', 'items.generate', `skill ${t.id} ${qualityId}`, { kind: 'skill', templateId: t.id, quality: qualityId });
     return item;
@@ -273,8 +345,25 @@ function makeItems(logger, gating) {
       slot: def.slot, category: def.category, quality: qualityId,
       tier, affixes, unlockTier: def.unlockTier,
     };
-    if (kind === 'rolePlugin') plugin.pointCost = tier;
-    if (kind === 'skillPlugin') plugin.costDeltaByTier = def.costDeltaByTier === null ? null : def.costDeltaByTier;
+    if (kind === 'rolePlugin') {
+      // 点数消耗 = **插件定义里的固定 pointCost**（2026-09-28 内容设计 §5.1：与品质/档位解耦，
+      //   使"每点收益恒定"可实现；`tier` 仅保留为品质档位展示字段，不再决定消耗）
+      if (!Number.isInteger(def.pointCost) || def.pointCost < 1) {
+        throw new RangeError(`角色插件 ${def.id} 缺合法 pointCost（正整数）`);
+      }
+      plugin.pointCost = def.pointCost;
+    }
+    if (kind === 'skillPlugin') {
+      // 2026-09-28 §6：技能插件分两类 —— `general`（通用：纯词条加成，消耗补偿 costDeltaByTier 已退役）
+      //   与 `exclusive`（专属：声明式形态覆盖，**覆盖型字段不随品质浮动**，随实例整体带过去）。
+      //   两者**字段形状一致**（都带 tier，作品质档位展示字段；前端契约据此保持单表核对）。
+      if (def.slot === 'exclusive') {
+        plugin.exclusive = def.exclusive === undefined ? {} : def.exclusive;
+        plugin.forTypes = Array.isArray(def.forTypes) ? [...def.forTypes] : [];
+        plugin.animKey = def.animKey === undefined ? null : def.animKey;
+        plugin.sfxKey = def.sfxKey === undefined ? null : def.sfxKey;
+      }
+    }
     L.debug('items', 'items.generate', `plugin ${def.id} ${qualityId} tier ${tier}`, { kind, pluginId: def.id, quality: qualityId, tier });
     return plugin;
   }
@@ -351,7 +440,10 @@ function makeItems(logger, gating) {
         if (def.agg.mode === 'pct') pct[def.agg.target] = (pct[def.agg.target] || 0) + v;
         else flat[def.agg.target] = (flat[def.agg.target] || 0) + v;
       } else if (def.special) {
-        special[def.special] = Math.min(REGISTRY.caps.probability, (special[def.special] || 0) + v);
+        // 概率类词条按 caps.probability 封顶；非概率类（荆棘/暴击倍率/低血加攻）**不封顶**
+        //   （注册表 `cap` 字段声明；2026-09-28 内容设计 §5.4）
+        const cap = def.cap === 'probability' ? REGISTRY.caps.probability : Infinity;
+        special[def.special] = Math.min(cap, (special[def.special] || 0) + v);
       }
       // regen 词条（def.regen）由 roles 层叠加；技能词条（def.skillOp/hitEffect/castEffect）由技能链读取
     }
@@ -458,7 +550,17 @@ function makeItems(logger, gating) {
     const slots = Array.isArray(target.slots) ? target.slots : null;
     const slot = slots && Number.isInteger(slotIndex) && slotIndex >= 0 ? slots[slotIndex] : null;
     if (!slot) return rejectOut('slot_type_mismatch', `槽位不可用: ${slotIndex}`);
-    if (plugin.slot !== slot.type) return rejectOut('slot_type_mismatch', `插件槽 ${plugin.slot} ≠ 插槽 ${slot.type}`);
+    if (!slotMatches(plugin.slot, slot.type)) return rejectOut('slot_type_mismatch', `插件槽 ${plugin.slot} 不适用于插槽 ${slot.type}`);
+    // 专属插件的类型绑定（2026-09-28 §6.2）：`forTypes` 必须包含该技能模板的类型
+    if (plugin.slot === 'exclusive' && target.kind === 'skill') {
+      const tpl = skillMap[target.templateId];
+      const types = (Array.isArray(plugin.forTypes) && plugin.forTypes.length > 0)
+        ? plugin.forTypes
+        : ((plugin.exclusive && Array.isArray(plugin.exclusive.forTypes)) ? plugin.exclusive.forTypes : []);
+      if (tpl && types.length > 0 && !types.includes(tpl.type)) {
+        return rejectOut('slot_type_mismatch', `专属插件 ${plugin.id} 不适用于技能类型 ${tpl.type}`);
+      }
+    }
     // ④ 段位门控（I-10c）：插件与目标均须 ≤ tier——**由 validateUnlock 单点决定**：
     //   门控关闭（当前默认）→ validateUnlock 恒 true → 本行永不产生 tier_locked（装配不再因段位拒绝）
     if (!validateUnlock(plugin, tier) || !validateUnlock(target, tier)) return rejectOut('tier_locked', '物品解锁段位高于玩家段位');
@@ -504,7 +606,7 @@ function makeItems(logger, gating) {
   }
 
   return {
-    getQuality, rollQuality, rollSlotCount, tierOf,
+    getQuality, rollQuality, rollSlotCount, rollPluginPoints, rollSlots, slotMatches, tierOf,
     generateRoleItem, generateSkillItem, generatePlugin, openBox,
     applyAffixes, buildRolePanel, applyTypeModifier, dropPool, pickFromPool, validateUnlock,
     emptyWarehouse, assemble, disassemble,

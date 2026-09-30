@@ -210,8 +210,12 @@
     'stats.hp', 'stats.atk', 'stats.def', 'stats.sp', 'stats.mp',
     'params', 'params.multiplier', 'params.cost.hp', 'params.cost.mp', 'params.cost.sp',
     'params.cooldown', 'params.bulletLevel',
+    // 技能展示键（§6.2：基础模板自带；装专属插件后被覆盖，帧 action 同步暴露）
+    'animKey', 'sfxKey',
     // 角色插件 / 技能插件（§5.3 两行）
-    'id', 'desc', 'slot', 'category', 'tier', 'pointCost', 'costDeltaByTier', 'affixes',
+    'id', 'desc', 'slot', 'category', 'tier', 'pointCost', 'affixes',
+    // 技能专属插件（§6.2；通用/角色插件无此字段 → 读取方按"缺省即无专属"处理）
+    'forTypes', 'exclusive',
     // 插槽与词条：在 `slots[i]` / `affixes[i]` 子对象上读取（`slots[].{type,pluginUid}`、
     //   `affixes[].{id,desc,params.v}`）—— 故路径就是它在子对象内的相对位置
     'type', 'pluginUid', 'params.v',

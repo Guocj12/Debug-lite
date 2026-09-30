@@ -75,8 +75,8 @@ function buildScenario() {
   const p1 = mkPlayer('p1');
   const p2 = mkPlayer('p2');
   p1.special.critChance = 0.5; // 暴击流被真实消费（确定性由 seed 保证）
-  p1.skills = { precise: skillOf('skill_straight_precise', { multiplier: 1.0 }) };
-  p2.skills = { bash: skillOf('skill_dash_bash', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
+  p1.skills = { precise: skillOf('skill_straight', { multiplier: 1.0 }) };
+  p2.skills = { bash: skillOf('skill_displace', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
   return { p1, p2 };
 }
 
@@ -172,7 +172,7 @@ function compareWithGolden(run) {
 // 落点 = clampX(caster.x + caster.facing × range × 64)。P2 起点 800 / facing −1 与 P1 起点 224 / facing +1
 // 都算一遍（避免把"谁的技能"弄混）。
 function fireballCheck() {
-  const sk = skillsMod.instantiateSkill('skill_vert_fireball', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
+  const sk = skillsMod.instantiateSkill('skill_vertical', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
   const cast = (x, facing) => {
     const act = skillsMod.buildSkillAction(sk, { x, facing });
     const raw = x + facing * sk.range * field.CELL_PX;
@@ -211,9 +211,9 @@ function actionLegality() {
 function collisionExample() {
   const bulletsMod = require('../server/core/bullets.js');
   const cfg = require('../server/data/battle-config.json');
-  const dash = Object.assign(skillsMod.instantiateSkill('skill_dash_bash', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 }),
+  const dash = Object.assign(skillsMod.instantiateSkill('skill_displace', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 }),
     { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true });
-  const ball = skillsMod.instantiateSkill('skill_vert_fireball', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
+  const ball = skillsMod.instantiateSkill('skill_vertical', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
   const dashAct = skillsMod.buildSkillAction(dash, { x: 224, facing: 1 });
   const ballAct = skillsMod.buildSkillAction(ball, { x: 800, facing: -1 });
 
@@ -335,8 +335,8 @@ function main() {
       source: '.audit/golden-battle.js（gate 项 8 同源；§2 场景不可无歧义重建）',
       seed: run.summary.seed,
       players: {
-        p1: { id: 'A', x0: 224, facing0: 1, hp: 100, mp: 40, sp: 60, atk: 12, def: 8, critChance: 0.5, skill: 'skill_straight_precise（multiplier 1.0）', actionSource: '固定行动计划（p1 数组）' },
-        p2: { id: 'B', x0: 800, facing0: -1, hp: 100, mp: 40, sp: 60, atk: 19, def: 9, critChance: 0, skill: 'skill_dash_bash（multiplier 1.3 / distance 4 / passThroughEnemy false）', actionSource: '固定行动计划（p2 数组）' },
+        p1: { id: 'A', x0: 224, facing0: 1, hp: 100, mp: 40, sp: 60, atk: 12, def: 8, critChance: 0.5, skill: 'skill_straight（multiplier 1.0）', actionSource: '固定行动计划（p1 数组）' },
+        p2: { id: 'B', x0: 800, facing0: -1, hp: 100, mp: 40, sp: 60, atk: 19, def: 9, critChance: 0, skill: 'skill_displace（multiplier 1.3 / distance 4 / passThroughEnemy false）', actionSource: '固定行动计划（p2 数组）' },
       },
     },
     summary: Object.assign({}, run.summary, { collisions, bulletHits, bulletCollides, facingChanged }),
@@ -352,8 +352,8 @@ function main() {
   fs.writeFileSync(OUT_JSON, JSON.stringify(payload, null, 1) + '\n', 'utf8');
 
   console.log('=== [1] 场景基准 = 黄金战斗（.audit/golden-battle.js，seed 20260912）===');
-  console.log(`p1: x=224 f=+1 hp=100 mp=40 sp=60 atk=12 def=8 crit=0.5 技能 skill_straight_precise(mult 1.0)`);
-  console.log(`p2: x=800 f=-1 hp=100 mp=40 sp=60 atk=19 def=9 crit=0   技能 skill_dash_bash(mult 1.3 / dist 4)`);
+  console.log(`p1: x=224 f=+1 hp=100 mp=40 sp=60 atk=12 def=8 crit=0.5 技能 skill_straight(mult 1.0)`);
+  console.log(`p2: x=800 f=-1 hp=100 mp=40 sp=60 atk=19 def=9 crit=0   技能 skill_displace(mult 1.3 / dist 4)`);
   console.log(`双方行动 = 固定行动计划（脚本内 plan 数组，与 .audit/golden-battle.js 逐项一致）`);
   console.log('');
   console.log('=== [2] 逐 tick 轨迹（真实引擎输出）===');
@@ -366,7 +366,7 @@ function main() {
   console.log('=== [3] 与 .audit/golden-battle.json 比对（gate 项 8 同源）===');
   console.log(cmp.ok ? '[PASS] 逐字段一致（seed/ticks/winner/phase/每 tick x·hp·mp·sp/碰撞/命中）' : `[FAIL] ${cmp.reason}`);
   console.log('');
-  console.log('=== [4] 火球术落点复算（skill_vert_fireball，vertical 分支）===');
+  console.log('=== [4] 火球术落点复算（skill_vertical，vertical 分支）===');
   console.log(`${fb.name}（${fb.template}）：range=${fb.rangeCells} 格，area=[${fb.area}]，L${fb.bulletLevel}`);
   const p2c = fb.p2AtDocPosition;
   console.log(`施法者 = P2（${p2c.casterX}，facing ${p2c.casterFacing}）：落点 = ${p2c.expression} = ${p2c.unclamped}` +

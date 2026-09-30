@@ -122,9 +122,9 @@ test('U-5（门控开启）validateLoadout：角色/技能/插件门控（tier_l
   const loadout = {
     role: { templateId: 'role_bal' },
     skills: [
-      { sid: 'skill1', templateId: 'skill_melee_whirl' },
-      { sid: 'skill2', templateId: 'skill_melee_heavy' },
-      { sid: 'skill3', templateId: 'skill_dash_bash' },
+      { sid: 'skill1', templateId: 'skill_melee' },
+      { sid: 'skill2', templateId: 'skill_melee' },
+      { sid: 'skill3', templateId: 'skill_displace' },
     ],
     plugins: [{ uid: 'p1', id: 'rp_atk_pct' }],
   };
@@ -134,13 +134,18 @@ test('U-5（门控开启）validateLoadout：角色/技能/插件门控（tier_l
   assert.equal(badRole.ok, false);
   assert.equal(badRole.errors[0].code, 'tier_locked');
   assert.equal(badRole.errors[0].where, 'role', 'U-5b 角色定位');
-  const badSkill = gated.validateLoadout({
-    role: { templateId: 'role_bal' },
-    skills: [{ sid: 'skill1', templateId: 'skill_dash_bash' }],
-    plugins: [],
-  }, 'rare');
-  assert.equal(badSkill.ok, false);
-  assert.equal(badSkill.errors[0].where, 'skills[0]', 'U-5c 技能槽定位');
+  // 技能臂：技能基础模板全部 common（2026-09-28 §6.3 每类 1 条基础形态 + 用户决策"全部解锁"）
+  //   → 任意段位均通过；门控代码路径（skillMap 查表 → passes）保留，未来加高段位技能即生效
+  for (const t of ALL_TIERS) {
+    const v = gated.validateLoadout({
+      role: { templateId: 'role_bal' },
+      skills: SKILL_TEMPLATES.map((s, i) => ({ sid: `s${i}`, templateId: s.id })),
+      plugins: [],
+    }, t);
+    assert.equal(v.ok, true, `${t}：技能模板全 common → 不产生 tier_locked`);
+  }
+  const unknownSkill = gated.validateLoadout({ role: { templateId: 'role_bal' }, skills: [{ sid: 'x', templateId: 'no_such_skill' }], plugins: [] }, 'rare');
+  assert.equal(unknownSkill.ok, true, '未登记模板不误报（查表未命中 → 跳过）');
   // U-5d 插件门控（B20 真分支：rp_sp_opt 已带 unlockTier=legendary；此前 29 插件全无该字段）
   const badPlugin = gated.validateLoadout({
     role: { templateId: 'role_bal' },
@@ -152,7 +157,7 @@ test('U-5（门控开启）validateLoadout：角色/技能/插件门控（tier_l
   const okPlugin = gated.validateLoadout({
     role: { templateId: 'role_bal' },
     skills: [],
-    plugins: [{ uid: 'p1', id: 'sp_buff' }],
+    plugins: [{ uid: 'p1', id: 'sk_mult' }],
   }, 'common');
   assert.equal(okPlugin.ok, true, '无 unlockTier 插件不拒绝');
 });
@@ -162,11 +167,11 @@ test('U-5b（门控关闭·默认）validateLoadout 不再产生 tier_locked：{
   const loadout = {
     role: { templateId: 'role_exp_atk' }, // 需 legendary
     skills: [
-      { sid: 's1', templateId: 'skill_dash_bash' },      // 需 mythic
-      { sid: 's2', templateId: 'skill_vert_fireball' },  // 需 legendary
-      { sid: 's3', templateId: 'skill_melee_whirl' },
+      { sid: 's1', templateId: 'skill_displace' },
+      { sid: 's2', templateId: 'skill_vertical' },
+      { sid: 's3', templateId: 'skill_melee' },
     ],
-    plugins: [{ uid: 'p1', id: 'rp_sp_opt' }, { uid: 'p2', id: 'sp_displacement' }], // 均需 legendary
+    plugins: [{ uid: 'p1', id: 'rp_sp_opt' }, { uid: 'p2', id: 'sk_true' }], // rp_sp_opt 需 legendary
   };
   for (const t of ALL_TIERS) {
     assert.deepEqual(ul.validateLoadout(loadout, t), { ok: true, errors: [] }, `${t} 不因段位拒绝`);
@@ -194,8 +199,8 @@ test('UL-7（门控开启）T-IT-6 协同：filterByTier 与 items.validateUnloc
     else assert.equal(filtered.length, 0, `${t.id} common 剔除`);
   }
   // 门控插件与 filterByTier 同口径（T-PB-7）
-  assert.deepEqual(gated.filterByTier(PLUGINS, 'rare').map((x) => x.id).filter((id) => id === 'rp_sp_opt' || id === 'sp_displacement'), [], 'rare 剔除高段位插件');
-  assert.deepEqual(gated.filterByTier(PLUGINS, 'legendary').map((x) => x.id).filter((id) => id === 'rp_sp_opt' || id === 'sp_displacement'), ['rp_sp_opt', 'sp_displacement'], 'legendary 保留');
+  assert.deepEqual(gated.filterByTier(PLUGINS, 'rare').map((x) => x.id).filter((id) => id === 'rp_sp_opt'), [], 'rare 剔除高段位插件');
+  assert.deepEqual(gated.filterByTier(PLUGINS, 'legendary').map((x) => x.id).filter((id) => id === 'rp_sp_opt'), ['rp_sp_opt'], 'legendary 保留');
 });
 
 test('UL-7b 段位元数据保留（两模式共同事实）：模板/插件 unlockTier 覆盖五段位，数据不因关掉门控而丢失', () => {
@@ -207,8 +212,8 @@ test('UL-7b 段位元数据保留（两模式共同事实）：模板/插件 unl
   const skills = new Set(SKILL_TEMPLATES.map((x) => x.unlockTier || 'common'));
   const plugins = new Set(PLUGINS.map((x) => x.unlockTier || 'common'));
   assert.deepEqual([...roles].sort(), ['common', 'legendary', 'rare'], '角色覆盖 3 段');
-  assert.deepEqual([...skills].sort(), ['common', 'epic', 'legendary', 'mythic', 'rare'], '技能覆盖 5 段');
-  assert.deepEqual([...plugins].sort(), ['common', 'legendary'], 'B20：插件引入 unlockTier（rp_sp_opt/sp_displacement）——T-PB-7 真分支');
+  assert.deepEqual([...skills].sort(), ['common'], '技能基础模板全 common（§6.3：每类 1 条基础形态，无高段位元数据）');
+  assert.deepEqual([...plugins].sort(), ['common', 'legendary'], 'B20：插件引入 unlockTier（rp_sp_opt）——T-PB-7 真分支');
   // 段位树（unlock.json unlocks）与真实节点表仍在（仅作为进度/评分元数据）
   const data = require('../../server/data/unlock.json');
   assert.equal(data.unlocks.length, 5, '段位树保留 5 档');

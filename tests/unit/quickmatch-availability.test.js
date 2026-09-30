@@ -85,7 +85,7 @@ async function injectBareSet(store, playerId, tag) {
       slotCount: 0, slots: [], stats: { hp: 100, atk: 10, def: 8, sp: 60, mp: 40 },
       regen: { mp: 1, sp: 2 }, pluginPoints: 0, unlockTier: 'common',
     });
-    ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'].forEach((tid, i) => {
+    ['skill_melee', 'skill_straight', 'skill_displace'].forEach((tid, i) => {
       a.warehouse.buckets.skill.push({
         uid: skillUids[i], kind: 'skill', templateId: tid, name: `无槽技能${i + 1}（夹具）`, quality: 'common',
         slotCount: 0, slots: [], params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },

@@ -30,10 +30,10 @@
 | `ai-nodes.json` | **机制** | AI 真实节点类型（`base` 恒可用 + `nodes` 全量白名单；**数量以此表为准，schema 不硬编码**） | `systems/08-ai.md` §3 + `examples/09-unlock.md` §1 |
 | `service-config.json` | **参数** | 运行时参数：`auth`（scrypt 参数/用户名与密码长度/失败锁定/限速）、`session`、`config`（`maxSlots:3`）、`record`、`store`（缓存上限）、`journal`、`snapshot`、`replayCacheSize`、`pool`（`ttlDays` **无消费方**、`opponentCooldownHours`） | `systems/11-account-store.md` §10/§11 |
 | `rating-config.json` | **参数** | 积分与匹配参数（D-133）：`base/cap/scale/kBase/kMin/kMax/drawFactor/matchWindow*/opponentCooldownHours/dailyBattleLimit/rounding/promoteWins/batchSize` | `systems/11-account-store.md` §8.3 |
-| `role-templates.json` | 内容（示例） | 角色模板（D-110 必填 regen）+ `typeModifiers` + 每项 `drop`/`dropWeight` | `items-data.md` §3 |
-| `skill-templates.json` | 内容（示例） | 技能模板（D-111 slotWeights / D-118 bulletLevel；**无 bulletSpeed**）+ 每项 `drop`/`dropWeight` | `items-data.md` §4 |
-| `plugins.json` | 内容（示例） | 角色/技能插件（D-113 costDeltaByTier / D-114 独立 id）+ 每项 `drop`/`dropWeight` | `items-data.md` §5/§6 |
-| `qualities.json` | 内容（示例） | 5 品质（D-116 pluginPoints）+ tiers 三等分 + costDeltaBase | `items-data.md` §2 + `v3-design` §13.4 |
+| `role-templates.json` | **内容（正式，D-173）** | 角色模板（D-110 必填 regen）+ **`typeModifiers`（逐属性乘性守恒 + `excludeLow`）** + 每项 `drop`/`dropWeight`；`slotWeights`/`pluginPoints` 两字段**已退役** | `content-design.md` §2/§3 + `items-data.md` §2 |
+| `skill-templates.json` | **内容（正式，D-173）** | **4 条基础模板**（每类 1 条；D-118 bulletLevel；**无 bulletSpeed**）+ 每项 `drop`/`dropWeight`；`range`/`bulletCount`/`distance`/`area`/`cost`/`cooldown` 均为 `copy`（不随品质浮动）；带展示键 `animKey`/`sfxKey`；`slotWeights` 已退役 | `content-design.md` §6.3 + `items-data.md` §5 |
+| `plugins.json` | **内容（正式，D-173）** | 角色插件（**固定 `pointCost`**，`pointCostByTier` 退役）+ 技能插件（`slot:"general"` 通用 7 条 / `slot:"exclusive"` 专属 16 条，D-114 独立 id；`costDeltaByTier` 退役）+ 每项 `drop`/`dropWeight`；标准值口径见 `content-design.md` §5/§6 | `items-data.md` §3/§4 |
+| `qualities.json` | **内容（正式，D-173）** | 5 品质（`pluginPointsRange` 区间、`roleSlotRange` 允许 0）+ tiers 三等分 + **`slotTypeWeights`（75/10/15）+ `slotRepeatDecay: 0.35` + `skillExclusiveSlots`**（`costDeltaBase` 已退役） | `content-design.md` §3.3/§3.4 + `items-data.md` §1 |
 | `items-config.json` | 内容（示例） | 开箱概率 dropRates / 类别权重 kindWeights | `v3-design` §13.5 |
 | `unlock.json` | 内容（示例） | 段位解锁表（增量权限名 + 模板/技能清单 + `nodePermissions` 别名映射） | `examples/09-unlock.md` §1 |
 | `schema.js` | 校验器 | 见下 | 本 README |
@@ -42,7 +42,8 @@
 
 ### 词条 `domain` / `_domainOfKind` 语义（**已被真实消费**）
 
-- `affix-registry.json` 的每个词条带 `domain`（`role` / `skill` / `both`，当前 27 条 = 12 role + 13 skill + 2 `both`），表根另有 `_domainOfKind`（`{rolePlugin:'role', skillPlugin:'skill'}`）声明"某种 `kind` 的插件只该带哪个域的词条"。
+- `affix-registry.json` 的每个词条带 `domain`（`role` / `skill` / `both`，**当前 35 条 = 16 role + 16 skill + 3 `both`**；2026-09-28 技能系统新增 `cost_down_sp`/`cost_down_mp`/`true_convert`），表根另有 `_domainOfKind`（`{rolePlugin:'role', skillPlugin:'skill'}`）声明"某种 `kind` 的插件只该带哪个域的词条"。
+- **`cap` 字段（2026-09-28，D-173）**：`special` 类词条可声明 `cap: "probability"` → 累加后按 `caps.probability` 封顶（`dodge_chance`/`crit_chance`/`lifesteal`）；**缺省 = 不封顶**（`thorns`/`critMul`/`lowHpAtk`，由 `core/items.applyAffixes` 单点判定）。
 - **消费方 = `server/core/items.js` 的 `generatePlugin`**：按 `kind` 取期望域，若词条 `domain` 与期望域不符（且不是 `both`）→ **记 `items.affix.domain`(warn) 并跳过该词条**（与"未登记词条 id"同一处理路径）；因此该字段**不是文档性声明**。
 - **静态镜像**：`schema.js` 同时校验 `domain` 取值合法，并对**内容层插件**做同样的域匹配检查（不符 → T-DC-1 **FAIL**）。回归用例 `tests/unit/affix-domain.test.js`。
 - **参数表口径**：`service-config.json` / `rating-config.json` 由 `server/store/config.js` 的 `loadConfigs` 读取（去掉 `_` 前缀元键后深合并到内置默认值之上）；**表为数值单一来源、代码默认值仅在缺表/缺键时兜底**；`schema.js` 的 `SERVICE_CONFIG_FROZEN`/`RATING_CONFIG_FROZEN` 做逐值冻结比对，并校验跨字段不变量（`session.maxTotalDays ≥ ttlDays`、`kMin ≤ kBase ≤ kMax`、`promoteWins < batchSize`、`matchWindowMax ≥ matchWindowStart`、`maxSlots ∈ 1..3`）；**缺表必 FAIL**，未知键亦 FAIL。
@@ -57,16 +58,16 @@
 
 ## 冻结的数值（T-DC-1 逐值校验；来源 `tasks.md` §2.5.7）
 
-`cellPx=64` `fieldPx=1024` `actorHalfPx=32` `movePx=64` `dodgePx=128` `collisionDmgMul=0.8` `baseHitMul=0.8`（**撞基地伤害倍率用 `baseHitMul`**；此前引擎误用 `collisionDmgMul`——真值表两者同为 0.8，故线上无差异，B8/后续修正）`baseDef=64` `defendDefMul=1.6` `dodgeChanceBonus=0.20`（占位，B21 校准）`backstab=1.5` `crit=1.5` `defK=40` `overtimeStart=48` `overtimeRatio=0.0625` `hardCapTick=64`；`minGapPx=64`、`startX{p1:224,p2:800}`、`startFacing{p1:1,p2:-1}`、基地 `hp100/def64`（`06-field` §3）；`bases.*.def === baseDef` 交叉一致。
+`cellPx=64` `fieldPx=1024` `actorHalfPx=32` `movePx=64` `dodgePx=128` `collisionDmgMul=0.8` `baseHitMul=0.8`（**撞基地伤害倍率用 `baseHitMul`**；此前引擎误用 `collisionDmgMul`——真值表两者同为 0.8，故线上无差异，B8/后续修正）`baseDef=64` `defendDefMul=1.6` `dodgeChanceBonus=0.20`（占位，B21 校准）`backstab=1.5` `critBonus=1.0` `lowHpThreshold=0.5` `defK=40` `overtimeStart=48` `overtimeRatio=0.0625` `hardCapTick=64`；`minGapPx=64`、`startX{p1:224,p2:800}`、`startFacing{p1:1,p2:-1}`、基地 `hp100/def64`（`06-field` §3）；`bases.*.def === baseDef` 交叉一致。
 
 ## 冻结的语义要点（P0-6，实现依据）
 
 1. **品质 tiers 三等分**（4 位小数、段间接续、首尾 = statRange 边界）：common 显式 `[0.80,0.88]/[0.88,0.97]/[0.97,1.05]`（items-data §2.1 用户指定）；其余品质同法三等分（rare `[1.0000,1.0833]/[1.0833,1.1667]/[1.1667,1.2500]` 等）。
-2. **插件词条存"基础值"**：实例化时按注册表 `roll` 滚动——`int` → `round(基础值 × 档位系数)`、`stat` → 保留 `precision.stat=2` 位（01-items I-5/I-6 + `affix-registry.json`）；`pointCostByTier=[1,2,3]`（角色）、`costDeltaByTier` 逐档数组（技能，减耗类 `null`；**数组只声明"哪个维度加消耗"**，逐档增量 = `costDeltaBase[quality] × tier`：S-2b rare tier1 = mp+3）。
-3. **`unlockTier` 可选**（缺省=已解锁）；分配（**示例数据，占位，待用户设计**）：技能 绿=旋风斩/精准射击、蓝=重击/连续射击/冰锥、紫=毒瓶/箭雨、橙=火球术、青=突击盾/暗影步；角色 绿=均衡、蓝=特化×5、橙=专家×5；AI 权限名 绿=`if`、蓝=`loop`/`while`/`break`、紫=`random`/`logic`/`arith_ext`、青=`function`/`call`（legendary 无语法新增）。**权限名 ≠ 节点类型**（真实节点数 10/12/14/14/16，见上节）。
-4. **`unlock.json` 与 角色/技能两表 `unlockTier` 交叉一致**（schema 校验二者集合相等，防双源漂移；插件表当前大部分无 `unlockTier`——即全体已解锁；已登记的两条示例为 `rp_sp_opt`/`sp_displacement` = legendary，不参与交叉）。
+2. **插件词条存"基础值"**：实例化时按注册表 `roll` 滚动——`int` → `round(基础值 × 档位系数)`、`stat` → 保留 `precision.stat=3` 位（01-items I-5/I-6 + `affix-registry.json`）；角色插件点数 = 定义里的固定 `pointCost`（`pointCostByTier` 退役）；**技能插件零代价**（`costDeltaByTier`/`costDeltaBase` 消耗补偿退役，D-173）。
+3. **`unlockTier` 可选**（缺省=已解锁）；当前（D-173）：角色 绿=均衡、蓝=特化×5、橙=专家×5；技能 4 条全绿；插件仅 `rp_sp_opt` = 橙（`legendary`）；AI 权限名 绿=`if`、蓝=`loop`/`while`/`break`、紫=`random`/`logic`/`arith_ext`、青=`function`/`call`（legendary 无语法新增；**段位分配待用户设计**，见 `content-design.md` §7-T8）。**权限名 ≠ 节点类型**（真实节点数 10/12/14/14/16，见上节）。
+4. **`unlock.json` 与 角色/技能两表 `unlockTier` 交叉一致**（schema 校验二者集合相等，防双源漂移；插件表当前大部分无 `unlockTier`——即全体已解锁；当前仅 `rp_sp_opt` = legendary，不参与交叉）。
 5. **掉落也完全是数据字段**（2026-09-16 拍板 A）：`role-templates.json` / `skill-templates.json` / `plugins.json` 的**每一条**都带 `drop`（`false` = 不进掉落池；缺省 `true`）与 `dropWeight`（同类池内相对权重；缺省 `1`）。开箱 = 品质（`dropRates`）× 类别（`kindWeights`）× 段位门控（`unlockTier`）× 池内权重（`dropWeight`）。示例内容全为 `true`/`1`（与旧行为一致）。
 6. 角色模板 `pluginPoints=3`（字面保留，v3-design §13.1）；**装配点数上限按物品品质的 `pluginPoints`**（01-items I-10d：rare=4 为唯一带数值证据；B18 复核模板字段去留）。
-7. 特化/专家模板 `regen` 占位 `{mp:1,sp:2}`（B21 按流派校准）；`slotWeights` 占位：高属性 2、其余 1、special 1（均衡全 1，I-4）；技能统一 `{basic:2, special:1}`；**类型修饰在开箱生成时即生效**（`items.applyTypeModifier` 同时服务 `items.generateRoleItem` 与 `roles.instantiateRole`）。
+7. 角色模板 `regen` 由模板字段给出（B0 = `{mp:2,sp:2}`）；`slotWeights`（角色/技能模板）**已退役**——角色插槽类型权重取 `qualities.slotTypeWeights`，技能插槽 = 1 专属 + N 通用；**类型修饰在开箱生成时即生效**（`items.applyTypeModifier` 同时服务 `items.generateRoleItem` 与 `roles.instantiateRole`）。
 8. **词条口径（机制层）**：概率类（`dodge_chance` / `crit_chance` / `lifesteal`）累加后按 `caps.probability=1` 封顶；`true_dmg` = **命中附加 v 点真实伤害（直扣）**，不是"改为真实伤害"（B21/D-128）；`cast_buff` = **释放时入效果队列、下一 tick 起效**（D-70）；`hp_regen` 由引擎步骤 10 逐 tick 回复（`hp≤0` 不复活）；regen 词条在**单一聚合实现** `items.buildRolePanel`（`roles.getFinalStats` 与 `loadout.buildPanel` 共用）里**只叠一次**。
 9. **内容正式化时"只改表"**（2026-09-16 拍板 A）：`schema.js` 只做结构与机制自洽校验，**不再比对数量**；T-DC-2 的示例期望表（`ROLE_EXPECTED` / `SKILL_EXPECTED` / `QUALITY_EXPECTED` / `PLUGIN_EXPECTED`）**仅当对应内容表保留 `_sample: true` 时**逐值比对——正式设计内容时逐表去掉 `_sample`（或整体去掉）即不再与示例文档耦合；保留 `_sample` 则需保持表与 `docs/items-data.md` 的示例期望一致。机制层仍强制：技能 `type` 必须在 `skill-mechanics.json` 登记、插件词条 id 必须在 `affix-registry.json` 登记、`unlock.json` 权限名必须在 `ai-nodes.json` 的 `nodes` 或 `nodePermissions` 中；sprites 允许多余条目、动画只强制 `role` 组基础六件套。

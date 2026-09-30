@@ -15,6 +15,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const h = require('../helpers/http.js');
+const itemsApi = require('../../server/core/items.js');
 
 const BUCKETS = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
 
@@ -65,7 +66,7 @@ test('WR-1/WR-2 档案丢失后仅靠 journal 重放即可恢复仓库与 AI 库
     for (const role of before.buckets.role) {
       const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
       if (idx < 0) continue;
-      const plugin = before.buckets.rolePlugin.find((x) => !used.has(x.uid) && x.slot === role.slots[idx].type);
+      const plugin = before.buckets.rolePlugin.find((x) => !used.has(x.uid) && itemsApi.slotMatches(x.slot, role.slots[idx].type));
       if (!plugin) continue;
       const usedPoints = (role.slots || []).reduce((sum, sl) => {
         if (!sl.pluginUid) return sum;

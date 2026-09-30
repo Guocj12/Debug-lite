@@ -99,13 +99,13 @@ test('T-BT-1 帧可重建状态：累积 diff 重建 == 逐步 step 的 battle.s
   }
 });
 
-test('battle.buildPlayer：面板聚合（角色 22/150 + 技能消耗补偿 mp16）进战斗运行时', () => {
+test('battle.buildPlayer：面板聚合（角色 22/150 + 技能词条聚合）进战斗运行时', () => {
   const r = battleApi.buildPlayer('p1', LD.loadout, LD.warehouse, 'mythic');
   assert.equal(r.ok, true, JSON.stringify(r.errors));
   const p = r.player;
   assert.equal(p.hp, 150, '角色面板 hp（hp_flat +50）');
   assert.equal(p.atk, 22, 'atk_pct 10% → 22');
-  assert.equal(p.skills.skill1.cost.mp, 16, '技能聚合参数（sp_mult rare tier2 → +6）');
+  assert.equal(p.skills.skill1.cost.mp, 10, '通用技能插件零代价（D-173）');
   assert.equal(p.skills.skill1.multiplier, 1.38);
   assert.equal(p.x, 224, 'startX 入位');
   const r2 = battleApi.runBattle({ p1: LD.loadout, p2: LD.loadout, warehouse: LD.warehouse, seed: 7, tier: 'mythic' });

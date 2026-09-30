@@ -214,7 +214,9 @@ test('T-RK-1h 档案驱动：某候选快照缺失 → 跳过（不占场次）�
 test('T-RK-4a 软冷却：权重 0（刚打过）在有其他已恢复候选时不被抽中；批次内不重复；回满后权重=1', async (t) => {
   const now = Date.now();
   const hour = 3600 * 1000;
-  const fx = await h.openFixture({ startAt: now });
+  // 本用例只测软冷却：`promoteWins` 拉到 99 关掉晋升——否则 r1 打满 10 场后升段，
+  //   r2 会换到高段位空池（段位内只剩自己），"回满后仍打满 10 场"就变成了段位问题而非冷却问题。
+  const fx = await h.openFixture({ startAt: now, storeOpts: { ratingConfig: { ...h.RATING, promoteWins: 99 } } });
   t.after(() => fx.cleanup());
   const players = await fx.registerPlayers(13); // me + 12 对手（>10 场，才能观察"谁被优先抽"）
   const me = players[0];

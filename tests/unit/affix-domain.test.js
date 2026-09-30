@@ -199,7 +199,7 @@ function PLUGIN_DEF(id, kind, affixId) {
   return {
     id, kind, slot: kind === 'rolePlugin' ? 'atk' : 'melee',
     name: id, desc: id, affixes: [{ id: affixId, desc: 'x', params: { v: 0.1 } }],
-    pointCostByTier: [1, 2, 3], drop: true,
+    pointCost: 2, drop: true, // 2026-09-28：角色插件点数消耗 = 固定 pointCost（pointCostByTier 已退役）
   };
 }
 

@@ -117,6 +117,20 @@
 
 ---
 
+## 0.2 内容数值设计 v2（`D-173`）—— **✅ 已落地（2026-09-28）**
+> **本次未新增批次号**（内容数值不是编号批次；与 §0.1 同一处置）：`docs/tasks.md`/`docs/progress.md` 的"**共 41 批**"**保持不变**（P0–P5 的 34 + P7/B27–B33 的 7）。设计权威 = `docs/content-design.md`；内容清单 = `docs/items-data.md`。
+
+- **设计口径（用户 2026-09-28 裁定，8 条）**：① 代码做不到的一律改代码、不许占位；② 插槽倾向均衡（五维各 15% + 万能槽 10% + 特殊槽 15%，同类型重复权重 ×0.35）；③ 数值不合理处改到合理，目标 = **同品质标准值下等贡献**；④ 未定义项统一列在文档中等用户填补；⑤ **v3 无职业**，均衡模板 = v2 四职业逐维均值，特化/专家仅在均衡上随机增减且**增减逐属性单独定义**；⑥ 同一物品（uid）只能装一处（**现机制已满足**），**同 id 的不同实例允许同装**；⑦ 段位门控保持全解锁；⑧ 冲突以本次口径为准。
+- **配平模型（本次新增，机器可复算）**：`P = A × H × (D + defK)` ⇒ 每点边际战力 atk 6.667% / def 2.083% / hp 1.053% ⇒ **1 atk ≡ 6.33 hp ≡ 3.20 def**；`B0 = {hp 95, atk 15, def 8, sp 73, mp 62}`（v2 均值）。
+- **机制/代码改动（10 项）**：乘性守恒类型修饰（`Π 因子 = 1` + `excludeLow:["def"]` + 专家确定性换位）；插槽权重/衰减/万能槽 `any`；**0 槽**（下限 1 作废）；点数由品质**区间**掷出；角色插件 **固定 `pointCost`**（`pointCostByTier` 退役）与"每点收益恒定"标准值；**def 以 `(def+defK)` 为基准**；技能 `range`/`bulletCount`/`distance` → `copy`；新增 `thorns`/`critMul`/`lowHpAtk` 三机制 + 注册表 `cap` 字段；`crit` → **`critBonus: 1.0`**（倍率 2.0）+ `lowHpThreshold: 0.5`（`defK` 保持 40）；`precision.stat` 2→3。
+- **实跑证据（2026-09-28 终态）**：`npm test` = **1144 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（项 5 已接入内容数值复算子检查）；`npm run check:docs` = PASS（批次仍 41）；`npm run e2e` = **22/22**；`node .audit/content-design.js` = PASS；**黄金战斗逐字段不变**（18 tick / p2 胜，该 seed 下 crit 流未触发 ⇒ crit 倍率改动零基线影响）。
+- **技能系统（2026-09-28 同一轮落地，`content-design.md` §6）**：4 条基础模板（近战/平射/定点/位移，每类 1 条）+ **16 条专属插件**（`slot:"exclusive"`，声明式 `exclusive{}` 覆盖形态/名称/动画音效，按 `forTypes` 绑定技能类型，每技能至多 1 个）+ **7 条通用插件**（`slot:"general"`，纯词条、**零代价**；`costDeltaByTier`/`costDeltaBase` 消耗补偿退役）。技能插槽 = 1 专属 + 品质区间的通用槽；η 配平模型（`hit=10`、p_pos、覆盖价值、等效收益、替代行动常数、CD 档位、资源拆分、SP/MP ≤35 上限）由 `.audit/content-design.js` 逐条复算（4 模板 + 16 专属的 adv/η/sp/mp/CD 全一致，η ∈ 0.391~0.408；`sp`/`mp`/`CD` 由模型**推导**并与表内值逐条相等）。代码侧：`skills.applyExclusive`、百分比减冷却算子 `scaleCooldownPct`（−25%／向下取整／下限 1）、背向位移（`moveDir:'backward'`）、技能级真伤（`sk_true`）、技能级暴击倍率（`critMul`）、内联命中/释放效果、帧 action 携带 `skillName`/`animKey`/`sfxKey`/`exclusiveId`、前端物品契约同步（新增 `animKey`/`sfxKey`/`forTypes`/`exclusive`，移除 `costDeltaByTier`）。
+- **技能系统收尾（同日，用户拍板后）**：① **starter 保证「1 专属 + 1 通用」**（`server/starter.js` 两轮确定性选择：先专属槽按 `forTypes` 选池、再通用槽；技能重掷条件改为"至少 1 个技能有通用槽"，300 身份抽样全部命中）；② **T9 占位素材补齐**：`assets/animations.json` 新增 `animations.skill`（4 模板 + 16 专属 = 20 条）与 `sounds.skill`（20 个 sfxKey），`assets/sprites.json` 的 `skillPlugins` 段同步为 23 条；③ 落地自检扩展为 30 项（新增素材齐备与 starter 形态核对），仍**不接入门禁**（用户裁定）。
+- **仍待用户填补**：无 —— `docs/content-design.md` §7 的 **T1~T9 与三项取舍已由用户 2026-09-28 全部拍板**（T1~T8 维持现状；T9 补占位动画/音效；starter 改为保证「1 专属 + 1 通用」；落地自检保持独立脚本）。
+- **已知取舍**：def 插件的品质浮动**暂按选项 (c) 落地**（青品质 EP 17%→27.2%，未豁免）；`docs/content-design.md` §5.3 与 §7-T5 记录裁决入口。技能侧的两条设计取舍：① 近战/平射/定点的**替代行动常数**（9.0 / 6.0 / 6.0）是为复现"多格覆盖"价值而定的设计常数，写死在 `content-design.md` §6.1 与复算脚本里；② 资源维超过 35 上限时**自动上调一档 CD**（火球由 CD5→CD6），该规则由复算脚本实现并被逐条比对。
+
+---
+
 ## 1. 文档体系（权威链）
 
 ```

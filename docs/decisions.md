@@ -331,6 +331,25 @@
 
 ---
 
+### 14.11 内容数值设计 v2 落地（2026-09-28 追加，D-173）
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-173** | ⚠️ **内容数值设计 v2 全量落地（设计依据见 `docs/content-design.md`）**：<br>① **等价点数（EP）模型**：战力 `P = A × H × (D + defK)` 由引擎伤害公式解析推导 ⇒ 每点边际战力 atk 6.667% / def 2.083% / hp 1.053% ⇒ **1 atk ≡ 6.33 hp ≡ 3.20 def**；同品质**标准值**（品质系数居中）下模板/插件等贡献；品质浮动是**刻意**的方差来源。<br>② **B0（绿品质标准均衡模板）= legacy v2 四职业逐维均值**：`{hp 95, atk 15, def 8, sp 73, mp 62}`、`regen {mp 2, sp 2}`（总量守恒 4）。**v3 无职业**：均衡即均值，特化/专家仅在 B0 上随机增减。<br>③ **类型修饰改为乘性守恒**（`Π 因子 = 1`，schema 强制）：特化 高 `×1.30` / 低 `×0.769231`；专家 高 `×1.50` / spread `[2/3,1,1,1]`；新增 **`excludeLow: ["def"]`**（def 边际价值 ∝ `1/(D+defK)`，`(D+defK)` 吃不下大额负补偿 ⇒ def 只能作高属性），专家若把 <1 因子洗到 def → **确定性换位**（不额外消耗随机、守恒不变）。旧口径 `Σ = 5`（加性守恒）作废。<br>④ **插槽系统重做**：类型权重移入 `qualities.slotTypeWeights`（**五维各 15% + 万能槽 `any` 10% + 特殊槽 15%**），同类型第 k 次出现权重 `× slotRepeatDecay^k`（0.35）；**插槽数下限 1 作废**（允许 0 槽：绿 0-2/蓝 1-3/紫 2-4/橙 3-5/青 4-6）；角色插件点数改为品质**区间** `pluginPointsRange`（2-3/4-6/6-9/8-12/10-15）内掷出；`role-templates.slotWeights` 与 `pluginPoints` 两字段**退役**。<br>⑤ **插件点数与数值解耦**：角色插件由"品质档位"（`pointCostByTier`）改为**插件定义里的固定 `pointCost`**；实例数值 = 标准值 × 品质系数（`precision.stat` 2→**3**）。<br>⑥ **五维插件标准值（每点收益恒定、零截距）**：pct = `0.085×cost`；flat = `0.085×cost×Ref_绿(stat)`，其中 **def 以 `(def+defK)` 为基准**（否则 def 类弱约 6 倍，且绿品质 cost1/2 取整后同值会撞 T-PB-4 单调性）。<br>⑦ **浮动字段收口**：技能 `range`/`bulletCount`/`distance` 由 `intMin`（随品质缩放）改 **`copy`**（不浮动）⇒"射程/弹幕/位移增强"三个技能插件成为唯一提升途径。<br>⑧ **新增 3 个角色特殊机制**（`affix-registry` + `core/engine.js`）：`thorns`（受击反弹 `v × 攻击者有效 atk`）、`critMul`（暴击倍率加成）、`lowHpAtk`（`hp/maxHp < battle-config.lowHpThreshold` 时 atk 加成）；注册表新增 **`cap` 字段**（只允许 `"probability"` = 按 `caps.probability` 封顶；缺省表示不封顶——荆棘/倍率/低血加攻不封顶）；回放帧 `damages[].kind` 新增 **`thorns`**。<br>⑨ **全局常数**：`crit: 1.5` 改名 **`critBonus: 1.0`**（暴击倍率 = `1 + critBonus + ΣcritMul` = 2.0；改名同时避开 gate 项 3 把裸字面量 `2` 误判为战斗数值硬编码）；新增 `lowHpThreshold: 0.5`；**`defK` 保持 40**（内容侧以 `(def+defK)` 基准精确补偿，不动既有基线）。<br>⑩ **示例开关退役**：`qualities.json`/`plugins.json`/`role-templates.json` 摘除 `_sample`；`schema.js` 删除 `QUALITY_PLUGIN_POINTS` 冻结表与 `QUALITY_/PLUGIN_EXPECTED` 逐值比对（`skill-templates.json` 仍为示例内容，保留 `_sample`）。<br>**证据**：`npm test` = 1136/1136、`npm run gate` = 9 PASS/0 FAIL/0 PEND（黄金战斗仍 18 tick / p2 胜 ⇒ crit 改动**零基线影响**）；`tests/unit/items.test.js`（0 槽 / 槽权重与 ×0.35 衰减 / 点数区间 / 标准值）、`tests/unit/roles.test.js`（乘性守恒 + def 换位）、`tests/unit/wh.test.js`+`b21.test.js`（点数区间单调）、`tests/integration/data-schema.test.js`（新结构破坏矩阵）、`tests/property/items-invariants.test.js`、`tests/unit/starter.test.js`（0 槽重掷）。<br>⑪ **技能系统落地（`content-design.md` §6，同一轮）**：4 条基础模板（近战/平射/定点/位移，每类 1 条）+ 16 条专属插件（`slot:"exclusive"`，声明式 `exclusive{}` 覆盖形态/名称/动画音效，按 `forTypes` 绑定技能类型，每技能至多 1 个）+ 7 条通用插件（`slot:"general"`，纯词条、**零代价**）；技能插槽 = 1 专属 + 品质区间通用槽；η 配平模型（`hit=10`、p_pos、覆盖价值、等效收益、替代行动常数、CD 档位、资源拆分、SP/MP ≤35 上限）由 **`.audit/content-design.js`** 逐条复算（4 模板 + 16 专属的 D/adv/η/sp/mp/CD 全一致，η ∈ 0.391~0.408）；代码新增 `skills.applyExclusive`、背向位移（`moveDir:"backward"`）、技能级真伤（`sk_true`）、技能级暴击倍率（`critMul`）、内联命中/释放效果、百分比减冷却算子（`scaleCooldownPct`）、帧 action 的 `skillName`/`animKey`/`sfxKey`/`exclusiveId`；前端物品契约同步（`animKey`/`sfxKey`/`forTypes`/`exclusive`，移除 `costDeltaByTier`）。**D-111/D-113/D-116 的字段与机制同时退役（见 §16）**。 | `server/data/{qualities,role-templates,plugins,battle-config,skill-mechanics,affix-registry,skill-templates,unlock}.json`、`server/data/schema.js`、`server/core/{items,roles,skills,engine,bullets}.js`、`server/{starter,ranked,loadout}.js`、`public/{contract,format}.js`、`tests/**`、`.audit/content-design.js`、`docs/content-design.md`、`docs/items-data.md`、`docs/interfaces.md` §1/§4/§5/§6、`docs/systems/03-skills.md`、`docs/examples/03-skills.md`、`docs/frontend/00-rules.md`、`docs/frontend/03-hub-warehouse-loadout.md`、`assets/sprites.json` |
+
+---
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 
-- 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`、`crit=1.5`——全部冻结于 `battle-config.json`，**不再开放**。
+- 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`——全部冻结于 `battle-config.json`。
+- **2026-09-28（D-173）变更**：`crit: 1.5` → **`critBonus: 1.0`**（暴击倍率 = `1 + critBonus + ΣcritMul` = 2.0）；新增 `lowHpThreshold: 0.5`（`rp_lowhp` 低血加攻阈值）。`defK` **保持 40 不变**。
+
+## 16. 被 D-173 取代的旧决策（字段/机制退役登记，2026-09-28）
+
+> 保留编号以便追溯（`interfaces.md` §5 仍按编号登记落点），但**其内容不再有效**；实现处一律改为"出现即被 schema 拦下"。
+
+| D | 原决策 | 现状 |
+|---|---|---|
+| D-111 | `skill-templates.json` 新增 `slotWeights`（basic/special 权重） | **字段退役**：技能插槽 = 1 专属槽 + 品质区间的通用槽（`qualities.skillExclusiveSlots` / `skillSlotRange`） |
+| D-113 | 技能插件消耗增量统一为逐档数组 `costDeltaByTier`；各品质基础值递增（绿 2 起） | **机制退役**：通用技能插件**零代价**（不加消耗/冷却）；专属插件用自身 `cost`/`cooldown` 覆盖配平；`qualities.costDeltaBase` 一并删除 |
+| D-116 | 最大插件点数按建议值（绿 3 / 蓝 4 / …） | **改为品质区间** `qualities.pluginPointsRange`（2-3/4-6/6-9/8-12/10-15），点数由区间掷出 |

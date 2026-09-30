@@ -153,7 +153,7 @@ test('AP-11 endpoint 覆盖：unlock?tier= 正常/400 bad_tier（B4 接入，L14
     assert.ok(ok.body.data.nodes.includes('random'), '门控关闭：common 也给 random');
     assert.ok(ok.body.data.nodes.includes('function') && ok.body.data.nodes.includes('call'), 'function/call 亦全解锁');
     assert.ok(ok.body.data.roleTemplates.includes('role_bal'), '均衡角色可用');
-    assert.ok(ok.body.data.skills.includes('skill_dash_bash'), '门控关闭：mythic 技能在 common 也可用');
+    assert.ok(ok.body.data.skills.includes('skill_displace'), '门控关闭：mythic 技能在 common 也可用');
     // 与最低段位相比无差异（段位不参与判定）
     const mythic = await request(port, 'GET', '/api/v1/unlock?tier=mythic');
     assert.deepEqual(mythic.body.data.nodes, ok.body.data.nodes, 'common 与 mythic 节点集相同');

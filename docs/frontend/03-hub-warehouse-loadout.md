@@ -234,7 +234,7 @@
 | `me/configs` | `data.slots[].loadout.aiId`（**库内引用**） | AI 位置的**显示名**来源（`aiId` → `GET /me/ai` 的条目名；取不到时回落裸 `aiId`）。服务端 `aiRefsOf` 也按此字段统计引用 → `DELETE /me/ai/:aiId` 的 409 `ai_in_use` 判据（审查 F-2 登记） |
 | `me/configs` | ~~`data.slots[].snapshot.hash`~~（**前端不读**） | 状态行的「已保存/未保存」由本地 `dirty` 标记决定，不读服务端快照；写出该行属设计稿笔误，实现不依赖它 |
 | `me/configs` | `data.activeSlotId` / `data.maxSlots` | 出战标记 / 槽位上限 |
-| `box`（遗留） | `data.items[]`（`uid`/`kind`/`name`/`quality`/`templateId`/`slotCount`/`slots`/`stats`/`params`/`affixes`/`pointCost`/`costDeltaByTier`） | 物品详情字段来源（与新增 `me/box` 同形） |
+| `box`（遗留） | `data.items[]`（`uid`/`kind`/`name`/`quality`/`templateId`/`slotCount`/`slots`/`stats`/`params`/`affixes`/`pointCost`/`animKey`/`sfxKey`/`forTypes`/`exclusive`） | 物品详情字段来源（与新增 `me/box` 同形） |
 
 ### 5.2 新增端点（**字段为设计约定，落地后必须用真实响应回填并纳入 FC-1**，总纲 §3.3/§4.2）
 
@@ -252,9 +252,10 @@
 
 - 共通：`name` / `kind` / `quality` / `uid`
 - 角色：`templateId` / `stats.{hp,atk,def,sp,mp}` / `regen.{mp,sp}` / `pluginPoints` / `slotCount` / `slots[].{type,pluginUid}`
-- 技能：`templateId` / `params.{multiplier,cost.{hp,mp,sp},cooldown,bulletLevel}` / `slotCount` / `slots[].{type,pluginUid}`
+- 技能：`templateId` / `params.{multiplier,cost.{hp,mp,sp},cooldown,bulletLevel}` / `slotCount` / `slots[].{type,pluginUid}` / `animKey` / `sfxKey`（展示键：基础模板自带，装专属插件后被覆盖）
 - 角色插件：`id` / `desc` / `slot` / `category` / `tier` / `pointCost` / `affixes[].{id,desc,params.v}`
-- 技能插件：`id` / `desc` / `slot` / `category` / `tier` / `costDeltaByTier` / `affixes[].{id,desc,params.v}`
+- 技能插件：`id` / `desc` / `slot`（general 通用 / exclusive 专属）/ `category` / `tier` / `affixes[].{id,desc,params.v}`
+- 技能**专属**插件追加（2026-09-28 §6.2；通用插件无此两字段 → 读取方按"缺省即无专属"处理）：`forTypes[]` / `exclusive{}`
 
 ---
 
@@ -670,15 +671,15 @@ settings: { nickname: '', result: null },
 | 项 | 草案 |
 |---|---|
 | 种子 | `seed = parseInt(sha256('starter|' + publicId).slice(0, 8), 16)` → **同账号永远同一套**（可测）、不同账号不同 |
-| 角色 ×1 | 模板 `role_bal`（均衡），品质 `common`。**实测 `qualities.json:6` 的 common `roleSlotRange = [1,3]` → 保证至少 1 个槽** |
-| 技能 ×3 | 模板 `skill_melee_whirl`（旋风斩）+ `skill_straight_precise`（精准射击）+ 二者之一重复一次（与当前默认配置同模板，便于对照），品质 `common`。⚠️ common 的 `skillSlotRange = [0,1]`（`qualities.json:6`）→ 可能 0 槽；草案要求**重掷直到 3 个技能中至少 1 个有槽**（上限 20 次；仍失败则接受全 0 槽并记日志） |
+| 角色 ×1 | 模板 `role_bal`（均衡），品质 `common`。common 的 `roleSlotRange = [0,2]`（2026-09-28 起允许 0 槽）→ **重掷直到 ≥1 槽**（上限 8 次） |
+| 技能 ×3 | 模板 `skill_melee`（近战）+ `skill_straight`（平射）+ `skill_vertical`（定点）——**三个不同基础模板**（2026-09-28 §6.3：每类 1 条基础形态），品质 `common`。技能物品恒有 **1 个专属槽**，通用槽数按品质（common `skillSlotRange = [0,1]`）→ 特殊槽位可能为 0，**重掷直到至少 1 个技能有通用槽**（上限 20 次） |
 | 角色插件 ×1~2 | 生成角色后读其**实际** `slots[].type`，从 `plugins.json` 筛 `kind==='rolePlugin' && drop!==false && slot ∈ 该集合` 生成（例：槽含 `atk` → `rp_atk_flat`/`rp_atk_pct`；含 `hp` → `rp_hp_pct`；含 `special` → `rp_crit`/`rp_dodge`）。**保证装得上**，避免实测过的 `插件槽 special ≠ 插槽 def` 409 |
-| 技能插件 ×1 | 同理按技能实际槽类型筛 `kind==='skillPlugin'`（`basic` → `sp_mult`；`special` → `sp_crit`） |
-| 点数约束 | 角色 `pluginPoints`（common=3）≥ 所装角色插件 `pointCost` 之和（实测 `pointCost = tier ∈ 1..3`） |
+| 技能插件 ×2（**恒 1 专属 + 1 通用**，用户 2026-09-28 裁定） | 两轮确定性选择：先 `exclusive` 槽（`slot:"exclusive"` 且 `forTypes` 含该技能类型），再 `general` 槽（任意 `slot:"general"` 通用插件，如 `sk_mult`/`sk_crit`/`sk_cd_down`）；技能生成重掷到**至少 1 个技能有通用槽** → 两件必发（上限 `SKILL_PLUGIN_MAX = 2`） |
+| 点数约束 | 角色 `pluginPoints`（common ∈ `pluginPointsRange = [2,3]`）≥ 所装角色插件 `pointCost` 之和（`pointCost` 取插件定义，∈ 1..3） |
 | AI | 沿用现有 `buildDefaultLoadout` 的预设 AI（variant 由 publicId 派生） |
 | 落库 | 物品写入服务端仓库四桶；`slot1` 的 loadout = 角色 + 3 技能 + AI（**已按槽装配插件**）→ 冻结快照 → 设为出战；`slot2`/`slot3` 建为空槽 |
 | 装配位置 | 按槽序装入第一个**类型匹配且空闲**的槽 |
 | 日志 | `store.starter.issued`(info)：`{playerId, seed, roleSlotCount, plugins, aiVariant}` |
-| 必测 | ① 同 publicId 两次生成逐值相同；② 角色 `slotCount ≥ 1`；③ 装入的每个插件 `slot === 目标槽.type`；④ 生成后对它们调用 `assemble` 不产生 409；⑤ 物品总数（1 + 3 + n）远低于 500/桶 |
+| 必测 | ① 同 publicId 两次生成逐值相同；② 角色 `slotCount ≥ 1`；③ 装入的每个插件与目标槽匹配（`items.slotMatches` + 专属插件的 `forTypes` 绑定）；④ 生成后对它们调用 `assemble` 不产生 409；⑤ 物品总数（1 + 3 + n）远低于 500/桶；⑥ **技能插件恰 1 专属 + 1 通用**（`tests/unit/starter.test.js` ST-10） |
 
 **备选（不推荐）**：手写固定物品对象——内容完全可控，但字段与生成路径易漂移，且品质/数值不再来自品质表。

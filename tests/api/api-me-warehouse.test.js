@@ -62,21 +62,21 @@ async function injectAssemblable(s, playerId) {
       category: '防御强化', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', pointCost: 1, equipped: true,
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX_SKILL, kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能', quality: 'common',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX_SKILL, kind: 'skill', templateId: 'skill_melee', name: '夹具技能', quality: 'common',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
     });
     // 第 2/3 个夹具技能：模板各不相同（同一份配置内 uid 必须两两不同，模板可重复但没必要）
     a.warehouse.buckets.skill.push({
-      uid: FIX_SKILL_IDS[1], kind: 'skill', templateId: 'skill_straight_precise', name: '夹具技能2', quality: 'common',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX_SKILL_IDS[1], kind: 'skill', templateId: 'skill_straight', name: '夹具技能2', quality: 'common',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1.1, cost: { hp: 0, mp: 8, sp: 0 }, cooldown: 3, bulletLevel: 3 },
       unlockTier: 'common',
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX_SKILL_IDS[2], kind: 'skill', templateId: 'skill_dash_bash', name: '夹具技能3', quality: 'common',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX_SKILL_IDS[2], kind: 'skill', templateId: 'skill_displace', name: '夹具技能3', quality: 'common',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1.2, cost: { hp: 0, mp: 10, sp: 0 }, cooldown: 4, bulletLevel: 2 },
       unlockTier: 'common',
     });
@@ -251,7 +251,7 @@ test('UWH-5 每桶上限 500：接近上限时超限请求 → 409 warehouse_ful
       const list = a.warehouse.buckets.skillPlugin;
       while (list.length < 499) {
         const n = list.length;
-        list.push({ uid: `filler_${n}`, kind: 'skillPlugin', id: 'sp_mult', name: 'filler', slot: 'basic', quality: 'common', tier: 1, affixes: [] });
+        list.push({ uid: `filler_${n}`, kind: 'skillPlugin', id: 'sk_mult', name: 'filler', slot: 'general', quality: 'common', tier: 1, affixes: [] });
       }
       return null;
     });
@@ -261,7 +261,7 @@ test('UWH-5 每桶上限 500：接近上限时超限请求 → 409 warehouse_ful
     // 单个技能插件开箱：1 件 → 500 恰好允许；2 件 → 501 超限被拒
     const r = await h.request(s.port, 'POST', '/api/v1/me/box', { times: 100 }, h.authed(p.token));
     // times=100 里技能插件数不可控 → 用"直接调用 grantBox"精确验证上限
-    const item = { uid: 'over_1', kind: 'skillPlugin', id: 'sp_mult', name: 'x', slot: 'basic', quality: 'common', tier: 1, affixes: [] };
+    const item = { uid: 'over_1', kind: 'skillPlugin', id: 'sk_mult', name: 'x', slot: 'general', quality: 'common', tier: 1, affixes: [] };
     const okFill = await s.store.grantBox({ playerId: p.playerId, seed: 1, tier: 'common', times: 1, items: [item] });
     assert.equal(okFill.counts.skillPlugin, 500, '第 500 件允许入账');
     await assert.rejects(

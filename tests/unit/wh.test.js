@@ -138,7 +138,7 @@ test('防御：环仓库不可序列化 → 兜底空仓库（item_missing，不
 test('B18 补充分支：技能目标装配/类别错配/目标门控/点数缺失兜底/拆卸槽越界/技能插件唯一性', () => {
   const src = wh();
   const srcS = wh();
-  srcS.buckets.skill[0].slots.push({ type: 'basic', pluginUid: null });
+  srcS.buckets.skill[0].slots.push({ type: 'general', pluginUid: null });
   const wA = items.assemble(srcS, { targetUid: 's1', slotIndex: 0, pluginUid: 'q1', tier: 'common' });
   assert.equal(wA.ok, true, '技能装配成功');
   assert.equal(wA.warehouse.buckets.skill[0].slots[0].pluginUid, 'q1');
@@ -175,15 +175,14 @@ test('T-PB-4 档位单调（数据表机器校验）：品质序号↑ → 区�
     // 数值区间允许重叠（common [0.80,1.05] vs rare [1.00,1.25]）——不变量是整体上移
     assert.ok(hi.statRange[0] >= lo.statRange[0], `${hi.id} 下限不减`);
     assert.ok(hi.statRange[1] > lo.statRange[1], `${hi.id} 上限严格增（数值↑）`);
-    assert.ok(hi.pluginPoints > lo.pluginPoints, '插件点数↑');
+    // 2026-09-28 §3.4：`pluginPoints` 标量 → `pluginPointsRange`（区间整体上移，下界不减、上界严格增）
+    assert.ok(hi.pluginPointsRange[0] >= lo.pluginPointsRange[0], '插件点数下界不减');
+    assert.ok(hi.pluginPointsRange[1] > lo.pluginPointsRange[1], '插件点数上界严格增');
     assert.ok(hi.roleSlotRange[0] >= lo.roleSlotRange[0] && hi.skillSlotRange[0] >= lo.skillSlotRange[0], '插槽数下限不减');
     assert.ok(hi.roleSlotRange[1] > lo.roleSlotRange[1] && hi.skillSlotRange[1] >= lo.skillSlotRange[1], '插槽数上限增');
   }
-  const cdb = require('../../server/data/qualities.json').costDeltaBase;
-  const cdbIds = ['common', 'rare', 'epic', 'legendary', 'mythic'];
-  for (let i = 1; i < cdbIds.length; i++) {
-    assert.ok(cdb[cdbIds[i]] > cdb[cdbIds[i - 1]], '消耗补偿基数↑（消耗↑）');
-  }
+  // D-173：消耗补偿退役 → qualities.json 不再有 costDeltaBase（死数据不留）
+  assert.equal(require('../../server/data/qualities.json').costDeltaBase, undefined, 'costDeltaBase 已退役（通用技能插件零代价）');
 });
 
 // P1-1/P1-2 回归（审查 docs/reviews/B18.md）：插件当目标、桶值非数组 → 业务码而非 TypeError 500

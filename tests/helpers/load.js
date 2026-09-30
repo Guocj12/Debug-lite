@@ -383,11 +383,26 @@ function usedRolePoints(wh, role) {
   return used;
 }
 
-function pickPlugin(wh, bucket, slotType) {
+// 插件是否适配某槽（2026-09-28 §6.2）：槽型匹配 + **专属插件的 forTypes 必须含目标技能类型**
+//   （旧实现只看槽型 → 专属插件会被塞进类型不符的技能 → 服务端必然 `slot_type_mismatch`，污染业务码分布）
+const SKILL_TYPE_OF = Object.fromEntries(skillTemplates.map((s) => [s.id, s.type]));
+function pluginFits(plugin, slotType, targetItem) {
+  if (!plugin || !itemsApi.slotMatches(plugin.slot, slotType)) return false;
+  if (plugin.slot !== 'exclusive') return true;
+  if (!targetItem || targetItem.kind !== 'skill') return false;
+  const types = (Array.isArray(plugin.forTypes) && plugin.forTypes.length > 0)
+    ? plugin.forTypes
+    : ((plugin.exclusive && Array.isArray(plugin.exclusive.forTypes)) ? plugin.exclusive.forTypes : []);
+  if (types.length === 0) return true;
+  const t = SKILL_TYPE_OF[targetItem.templateId];
+  return t !== undefined && types.includes(t);
+}
+
+function pickPlugin(wh, bucket, slotType, targetItem) {
   let best = null;
   for (const p of wh.buckets[bucket] || []) {
     if (!p || p.equipped === true) continue;
-    if (p.slot !== slotType) continue;
+    if (!pluginFits(p, slotType, targetItem)) continue; // 万能槽 any 收五维插件（2026-09-28）
     if (best === null || (p.pointCost || 0) < (best.pointCost || 0)) best = p;
   }
   return best;
@@ -425,7 +440,7 @@ function planLoadout(warehouse, options) {
       if (o.assignments && o.assignments.has(`${target.item.uid}#${i}`)) { stats.placed += 1; continue; }
       if (slot.pluginUid) { stats.placed += 1; continue; } // 已生效（assignments 叠加）
       const used = target.kind === 'role' ? usedRolePoints(wh, target.item) : 0;
-      const cand = pickPlugin(wh, target.bucket, slot.type);
+      const cand = pickPlugin(wh, target.bucket, slot.type, target.item);
       if (!cand) { stats.noCandidate += 1; continue; }
       if (target.kind === 'role' && used + (cand.pointCost || 0) > (target.item.pluginPoints || 0)) {
         stats.pointsExceeded += 1;
@@ -639,9 +654,12 @@ async function setupPlayer(ctx, p) {
       const slots = Array.isArray(target.slots) ? target.slots : [];
       for (let i = 0; i < slots.length; i += 1) {
         if (!slots[i] || slots[i].pluginUid) continue;
-        const plugin = plugins.find((pl) => pl.kind === want && pl.slot === slots[i].type
+        const plugin = plugins.find((pl) => pl.kind === want && pluginFits(pl, slots[i].type, target)
           && pl.equipped !== true && !usedPlugins.has(pl.uid));
         if (!plugin) continue;
+        // 点数预算预判（2026-09-28 §3.4：角色点数由品质区间掷出，可能小于插件 pointCost）
+        //   —— 装不下就跳过该候选，不制造必然 409 points_exceeded 的请求（LOAD-6 的白名单只允许 no_opponent）
+        if (target.kind === 'role' && (plugin.pointCost || 0) > (target.pluginPoints || 0)) continue;
         usedPlugins.add(plugin.uid);
         detail.deepPairsTried += 1;
         const body = { targetUid: target.uid, pluginUid: plugin.uid, slotIndex: i };
@@ -686,15 +704,20 @@ function nextCandidate(wh, loadout, slotsMax, usedPluginUids, assignments) {
   for (const target of targets) {
     const slots = Array.isArray(target.item.slots) ? target.item.slots : [];
     if (slots.length === 0) continue;
-    if (target.kind === 'role' && usedRolePoints(wh, target.item) >= (target.item.pluginPoints || 0)) continue;
+    // 点数预算：**逐插件**判定能否装下（2026-09-28 §3.4 点数改为品质区间掷出后，
+    //   "剩余预算 > 0" 不再等价于"这个插件装得下"——旧判定会提交必然 409 points_exceeded 的请求）
+    const budget = target.kind === 'role' ? (target.item.pluginPoints || 0) : Infinity;
+    const usedRole = target.kind === 'role' ? usedRolePoints(wh, target.item) : 0;
+    if (usedRole >= budget) continue;
     for (let i = 0; i < Math.min(slots.length, slotsMax); i += 1) {
       const slot = slots[i];
       if (!slot || slot.pluginUid) continue;
       if (occupied.has(`${target.item.uid}#${i}`)) continue;
       for (const p of wh.buckets[target.bucket] || []) {
         if (!p || p.equipped === true) continue;
-        if (p.slot !== slot.type) continue;
+        if (!pluginFits(p, slot.type, target.item)) continue;
         if (usedPluginUids.has(p.uid)) continue;
+        if (target.kind === 'role' && usedRole + (p.pointCost || 0) > budget) continue; // 装不下 → 试下一个候选
         return { targetUid: target.item.uid, slotIndex: i, pluginUid: p.uid, kind: target.kind, slotType: slot.type };
       }
       break; // 该槽无可用候选 → 换下一个目标物品（不跳过槽位序号，也不终止全局搜索）

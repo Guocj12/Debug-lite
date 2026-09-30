@@ -6,6 +6,12 @@
   "stats": ["hp", "atk", "def", "sp", "mp"],
   "caps": { "probability": 1 },
 
+  "_capVocabulary": {
+    "probability": "累加后按 caps.probability 封顶（概率类：闪避/暴击率/吸血）",
+    "（缺省）": "不封顶（非概率类 special：荆棘/暴击倍率/低血加攻）"
+  },
+  "_specialConsumers": "thorns（受击反伤）/ critMul（暴击倍率加成）/ lowHpAtk（低血加攻）三者由 core/engine.js 消费：前两个在 dealDamage、lowHpAtk 在 effectiveAtk（2026-09-28 内容设计 §5.4）。",
+
   "_domains": {
     "role": "角色插件词条：参与面板聚合（items.applyAffixes）与 regen 叠加（roles.equipPlugins）",
     "skill": "技能插件词条：参与技能实例改写（skills.applySkillPlugins）或命中/释放结算（engine）"
@@ -23,7 +29,7 @@
     "flat": "面板数值：base×(1+Σpct)+Σv"
   },
   "_opVocabulary": [
-    "scalePct", "sub", "add", "addSlot", "scaleCostCeil", "addSpecial"
+    "scalePct", "sub", "add", "addSlot", "scaleCostCeil", "scaleCostCeilByDim", "scaleCooldownPct", "setTrueDamage", "addSpecial"
   ],
   "_hitKindVocabulary": [
     "control", "continuous", "flatTrueDamage"
@@ -34,33 +40,44 @@
 
   "affixes": {
     "atk_pct": { "domain": "role", "roll": "stat", "agg": { "target": "atk", "mode": "pct" } },
-    "atk_flat": { "domain": "role", "roll": "int", "agg": { "target": "atk", "mode": "flat" } },
+    "atk_flat": { "domain": "role", "roll": "stat", "agg": { "target": "atk", "mode": "flat" } },
     "def_pct": { "domain": "role", "roll": "stat", "agg": { "target": "def", "mode": "pct" } },
-    "def_flat": { "domain": "role", "roll": "int", "agg": { "target": "def", "mode": "flat" } },
+    "def_flat": { "domain": "role", "roll": "stat", "agg": { "target": "def", "mode": "flat" } },
     "hp_pct": { "domain": "role", "roll": "stat", "agg": { "target": "hp", "mode": "pct" } },
-    "hp_flat": { "domain": "role", "roll": "int", "agg": { "target": "hp", "mode": "flat" } },
+    "hp_flat": { "domain": "role", "roll": "stat", "agg": { "target": "hp", "mode": "flat" } },
     "sp_cap": { "domain": "role", "roll": "stat", "agg": { "target": "sp", "mode": "pct" } },
     "mp_cap": { "domain": "role", "roll": "stat", "agg": { "target": "mp", "mode": "pct" } },
+    "sp_flat": { "domain": "role", "roll": "stat", "agg": { "target": "sp", "mode": "flat" } },
+    "mp_flat": { "domain": "role", "roll": "stat", "agg": { "target": "mp", "mode": "flat" } },
     "sp_regen": { "domain": "role", "roll": "int", "regen": "sp" },
     "mp_regen": { "domain": "role", "roll": "int", "regen": "mp" },
     "hp_regen": { "domain": "role", "roll": "int", "regen": "hp" },
-    "dodge_chance": { "domain": "role", "roll": "stat", "special": "dodgeChance" },
+    "dodge_chance": { "domain": "role", "roll": "stat", "special": "dodgeChance", "cap": "probability" },
     "crit_chance": {
-      "domain": "both", "roll": "stat", "special": "critChance",
+      "domain": "both", "roll": "stat", "special": "critChance", "cap": "probability",
       "skillOp": { "op": "addSpecial", "field": "critChance" }
     },
     "lifesteal": {
-      "domain": "both", "roll": "stat", "special": "lifesteal",
+      "domain": "both", "roll": "stat", "special": "lifesteal", "cap": "probability",
       "skillOp": { "op": "addSpecial", "field": "lifesteal" }
     },
+    "thorns": { "domain": "role", "roll": "stat", "special": "thorns" },
+    "critMul": {
+      "domain": "both", "roll": "stat", "special": "critMul",
+      "skillOp": { "op": "addSpecial", "field": "critMul" }
+    },
+    "lowHpAtk": { "domain": "role", "roll": "stat", "special": "lowHpAtk" },
 
     "mult_up": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scalePct", "field": "multiplier", "round": "multiplier" } },
-    "cooldown_down": { "domain": "skill", "roll": "int", "skillOp": { "op": "sub", "field": "cooldown", "min": "minCooldown" } },
+    "cooldown_down": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scaleCooldownPct", "field": "cooldown", "min": "minCooldownReduced" } },
     "range_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "addSlot", "slot": "range" } },
     "bullet_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "add", "field": "bulletCount", "min": "minBulletCount" } },
     "level_up": { "domain": "skill", "roll": "int", "skillOp": { "op": "sub", "field": "bulletLevel", "min": "minBulletLevel" } },
     "distance_plus": { "domain": "skill", "roll": "int", "skillOp": { "op": "addSlot", "slot": "range" } },
     "cost_down": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scaleCostCeil", "mode": "complement" } },
+    "cost_down_sp": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scaleCostCeilByDim", "dim": "sp", "mode": "complement" } },
+    "cost_down_mp": { "domain": "skill", "roll": "stat", "skillOp": { "op": "scaleCostCeilByDim", "dim": "mp", "mode": "complement" } },
+    "true_convert": { "domain": "skill", "roll": "int", "skillOp": { "op": "setTrueDamage" } },
 
     "stun": {
       "domain": "skill", "roll": "int",

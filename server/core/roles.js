@@ -39,22 +39,14 @@ function makeRoles(logger, itemsApi) {
       stats[k] = v < 1 ? 1 : v;
     }
     const slotCount = I.rollSlotCount('role', qualityId, rng);
-    const slots = [];
-    const totalWeight = Object.values(template.slotWeights).reduce((a, b) => a + b, 0);
-    while (slots.length < slotCount) {
-      let r = rng.float(0, 1) * totalWeight;
-      let chosen = 'special';
-      for (const [type, w] of Object.entries(template.slotWeights)) {
-        r -= w;
-        if (r < 0) { chosen = type; break; }
-      }
-      slots.push({ type: chosen, pluginUid: null });
-    }
+    const slots = I.rollSlots('role', qualityId, template, rng, slotCount);
+    // 插件点数：品质区间内掷（2026-09-28 §3.4；排在插槽之后，保持既有随机序列前缀）
+    const pluginPoints = I.rollPluginPoints(qualityId, rng);
     const role = {
       charId: `char_${template.id}_${qualityId}`,
       templateId: template.id, name: template.name, type: template.type, quality: qualityId,
       stats, regen: { mp: template.regen.mp, sp: template.regen.sp },
-      special: {}, slots, pluginPoints: q.pluginPoints, equipped: [],
+      special: {}, slots, pluginPoints, equipped: [],
     };
     L.debug('roles', 'role.instantiate', `role ${template.id} ${qualityId}`, { templateId: template.id, quality: qualityId });
     return role;
@@ -84,7 +76,7 @@ function makeRoles(logger, itemsApi) {
       const cost = Number.isFinite(p.pointCost) ? p.pointCost : 0;
       if (consumed.has(uid) || p.equipped === true) return { ok: false, error: 'already_equipped' }; // R-7d
       if (!I.validateUnlock(p, tier)) return { ok: false, error: 'tier_locked' }; // R-7c（items.validateUnlock 同 unlock 口径；门控关闭时恒放行）
-      const slotIdx = slots.findIndex((s, i) => s.type === p.slot && s.pluginUid === null && !usedSlots.has(i));
+      const slotIdx = slots.findIndex((s, i) => I.slotMatches(p.slot, s.type) && s.pluginUid === null && !usedSlots.has(i));
       if (slotIdx === -1) return { ok: false, error: 'slot_type_mismatch' }; // R-7a（含无空槽）
       if (spent + cost > budget) return { ok: false, error: 'points_exceeded' }; // R-7b
       plan.push({ p, slotIdx });

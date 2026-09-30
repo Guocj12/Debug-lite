@@ -349,13 +349,31 @@ function checkDocConsistency(options) {
 
 // ---------- 项 5：合并（fail > pend > pass） ----------
 
+// 内容数值复算（docs/content-design.md §1/§5/§6 ↔ server/data/*.json）：
+//   设计文档是内容数值的唯一权威；本子检查保证"文档写明的模型/数值"与数据表**不漂移**（D-173）。
+function checkContentDesign(options) {
+  const root = (options && options.projectRoot) || REPO;
+  const auditPath = path.join(root, '.audit', 'content-design.js');
+  if (!fs.existsSync(auditPath)) return resultOf('pending', '.audit/content-design.js 缺失（内容数值复算未接线）');
+  try {
+    // eslint-disable-next-line global-require
+    const mod = require(auditPath);
+    const r = mod.audit();
+    if (r.ok) return resultOf('pass', `内容数值复算一致（角色插件 ${r.roleChecked} 条 + 技能 ${r.rows.length} 条，η 全部 0.40±0.02）`);
+    return resultOf('fail', `内容数值漂移 ${r.problems.length} 处：${r.problems.slice(0, 5).join('；')}`);
+  } catch (e) {
+    return resultOf('fail', `内容数值复算抛错: ${e.message}`);
+  }
+}
+
 function checkDocData(options) {
   const a = checkDNumberLocations(options);
   const b = checkDocConsistency(options);
+  const c = checkContentDesign(options);
   const worst = (x, y) => (x.status === 'fail' || y.status === 'fail' ? 'fail'
     : x.status === 'pending' || y.status === 'pending' ? 'pending' : 'pass');
-  const status = worst(a, b);
-  const detail = `T-DC-8(${a.status}): ${a.detail}；T-DC-2(${b.status}): ${b.detail}`;
+  const status = worst(worst(a, b), c);
+  const detail = `T-DC-8(${a.status}): ${a.detail}；T-DC-2(${b.status}): ${b.detail}；内容复算(${c.status}): ${c.detail}`;
   return status === 'pass' ? resultOf('pass', detail) : resultOf(status, detail);
 }
 
@@ -489,8 +507,8 @@ async function checkLogSmoke(options) {
   const battleOf = (logger) => {
     const p1 = mk('p1');
     const p2 = mk('p2');
-    p1.skills = { precise: sk('skill_straight_precise', { multiplier: 1.0 }) };
-    p2.skills = { bash: sk('skill_dash_bash', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
+    p1.skills = { precise: sk('skill_straight', { multiplier: 1.0 }) };
+    p2.skills = { bash: sk('skill_displace', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
     return engine.createBattle({}, { seed: 20260912, logger, players: { p1, p2 } });
   };
   const actions = goldenActions();
@@ -627,7 +645,7 @@ async function runGate(options) {
       return resultOf('pass', `${res.files} 个文件无依赖违规`);
     } },
     { id: 4, name: '数据表 schema（T-DC-1）', fn: checkSchema },
-    { id: 5, name: '文档↔数据一致性 + D 编号落点（T-DC-2/8）', fn: checkDocData },
+    { id: 5, name: '文档↔数据一致性 + D 编号落点 + 内容数值复算（T-DC-2/8 + D-173）', fn: checkDocData },
     { id: 6, name: '日志事件命名 + 数值未硬编码（T-DC-6/7）', fn: async () => {
       const a = checkLogNaming({ projectRoot: root });
       const b = checkNumericHardcode({ projectRoot: root });
@@ -676,7 +694,7 @@ async function main(options) {
 
 module.exports = {
   REPO, checkStaticRandEval, checkStaticConsole, checkNumericHardcode,
-  checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency,
+  checkLogNaming, checkSchema, checkDocData, checkDNumberLocations, checkDocConsistency, checkContentDesign,
   checkTests, runSuite, judgeCoverage, aggregateCoverage, aggregateText,
   validateEvent, checkApiSmoke, checkLogSmoke, runGate, main,
 };

@@ -768,15 +768,17 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
     role: ['templateId', 'slotCount', 'slots', 'stats', 'stats.hp', 'stats.atk', 'stats.def', 'stats.sp', 'stats.mp',
       'regen.mp', 'regen.sp', 'pluginPoints'],
     skill: ['templateId', 'slotCount', 'slots', 'params', 'params.multiplier', 'params.cooldown', 'params.bulletLevel',
-      'params.cost.hp', 'params.cost.mp', 'params.cost.sp'],
+      'params.cost.hp', 'params.cost.mp', 'params.cost.sp', 'animKey', 'sfxKey'],
     rolePlugin: ['id', 'desc', 'slot', 'category', 'tier', 'pointCost', 'affixes'],
-    skillPlugin: ['id', 'desc', 'slot', 'category', 'tier', 'costDeltaByTier', 'affixes'],
+    skillPlugin: ['id', 'desc', 'slot', 'category', 'tier', 'affixes'],
+    // 技能**专属**插件追加字段（§6.2；通用插件没有这两个字段 → 按内容变体核对）
+    skillPluginExclusive: ['forTypes', 'exclusive'],
   };
   // 子对象字段（slots[i].type / slots[i].pluginUid / affixes[i].params.v）在上面的清单里由容器覆盖，
   //   这里显式断言它们也能解析，并顺带核对"契约里的每个字段都有宿主（不会漏检）"
   const SUB_FIELDS = ['type', 'pluginUid', 'params.v'];
   const covered = new Set([...COMMON_FIELDS, ...FIELDS_BY_KIND.role, ...FIELDS_BY_KIND.skill,
-    ...FIELDS_BY_KIND.rolePlugin, ...FIELDS_BY_KIND.skillPlugin, ...SUB_FIELDS]);
+    ...FIELDS_BY_KIND.rolePlugin, ...FIELDS_BY_KIND.skillPlugin, ...FIELDS_BY_KIND.skillPluginExclusive, ...SUB_FIELDS]);
   assert.deepEqual([...declared].filter((f) => !covered.has(f)), [], '契约字段没有对应的真实响应核对项');
 
   await withHarness(async (h) => {
@@ -794,7 +796,11 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
       const uid = format.pick(item, 'uid');
       kinds.add(kind);
       assert.ok(FIELDS_BY_KIND[kind], `未知物品类别 ${kind}`);
-      for (const field of COMMON_FIELDS.concat(FIELDS_BY_KIND[kind])) {
+      // 技能专属插件的追加字段按内容变体核对（通用插件不带 forTypes/exclusive；
+      //   starter 掷出的插件未必含专属 → 本核对是**条件式**的，见上方 covered 断言保证不漏检）
+      const extra = (kind === 'skillPlugin' && format.pick(item, 'slot') === 'exclusive')
+        ? FIELDS_BY_KIND.skillPluginExclusive : [];
+      for (const field of COMMON_FIELDS.concat(FIELDS_BY_KIND[kind], extra)) {
         assert.notStrictEqual(format.pick(item, field), undefined, `真实物品（${kind} ${uid}）缺少字段 ${field}`);
       }
       const slots = format.pick(item, 'slots') || [];

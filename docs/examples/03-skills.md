@@ -1,62 +1,70 @@
 # 示例集 · 技能系统（全分支）
 
-> 依据：`decisions.md`（D-07/D-15/D-18/D-19/D-21/D-22/D-25/D-29/D-43/D-70/D-115）；实现细则见 `systems/03-skills.md`。
-> 数值由 `.audit/verify-rest.js` 复算。位移技能的伤害分支见 `examples/07-movement-collision.md` §4。
+> 依据：**`docs/content-design.md` §6（技能数值唯一权威）**；机制细则见 `systems/03-skills.md`；决策见 `decisions.md`（D-07/D-15/D-18/D-19/D-21/D-22/D-25/D-29/D-43/D-70/D-115/D-118/D-173）。
+> 数值由 `.audit/content-design.js` 复算（EP + 4 模板 + 16 专属的 D/adv/η/sp/mp/CD 全量比对）。位移技能的伤害分支见 `examples/07-movement-collision.md` §4。
+> **2026-09-28 起**：技能 = 4 条基础模板（每类 1 条）+ 专属插件改形态 + 通用插件加词条；旧的 10 条示例技能与"消耗补偿（`costDeltaByTier`）"已删除。
 
 ---
 
 ## 1. 实例化（品质系数作用在哪）
 
-**可随机**：倍率、范围/射程、弹幕数量、位移距离、冷却。
-**不随品质**：`type`、`bulletLevel`、`cost` 结构、`falloff`、`slotWeights`、`passThroughEnemy/dealDamage/fullDodgeDuring`。
-**已删除**：`bulletSpeed`（D-21）。
+**可随机（×到品质系数 `k`）**：只有 `multiplier`。
+**不随品质（`copy`）**：`type`、`bulletLevel`、`range`/`area`/`bulletCount`/`distance`、`cost` 结构、`cooldown`（冷却**模板值**不浮动，随机只影响生成期取整）、`falloff`、`passThroughEnemy`/`dealDamage`/`fullDodgeDuring`、`animKey`/`sfxKey`。
+**已删除**：`bulletSpeed`（D-21）、技能模板的 `slotWeights`（D-111 字段退役）。
+
+以 **平射 `skill_straight`**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp4+sp2`）与 **近战 `skill_melee`**（`mult 1.0 / cd 3 / range [0,2] / L2 / cost sp11`）为例：
 
 | # | 字段 | 模板值 | 品质系数 | 计算 | 结果 | 说明 |
 |---|---|---|---|---|---|---|
-| S-1a | `multiplier` | 0.9 | 1.10 | 0.99 | **0.99** | — |
-| S-1b | `range`（平射） | 8 | 1.00 | 8 | **8** | — |
-| S-1c | `range`（平射） | 8 | 0.90 | 7.2 → 四舍五入 | **7** | 射程可变短 |
-| S-1d | `bulletCount` | 4 | 1.10 | 4.4 → 取整 | **4** | — |
-| S-1e | `bulletCount` | 1 | 0.80 | 0.8 → 取整 1 | **1** | **下限 1** |
-| S-1f | `cooldown` | 2 | 1.25 | 2.5 → 取整 | **3** | 冷却可被品质拉长 |
-| S-1g | `cooldown` | 2 | 0.50 | 1.0 → 取整 1 | **1** | — |
-| S-1h | `cooldown` | 1 | 0.10 | 0.1 → 取整 0 → **下限 0** | **0** | 冷却下限 0 |
-| S-1i | `distance`（位移） | 3 | 0.80 | 2.4 → 取整 2 | **2** | 下限 1 |
-| S-1j | `bulletLevel` | 3 | 1.25 | **不参与随机** | **3** | 只有"等级凝练"插件能改 |
-| S-1k | `cost` | `{mp:6}` | 1.25 | **不参与随机** | `{mp:6}` | 只有插件能改 |
-| S-1l | `falloff` | 0.2 | 任意 | **不参与随机** | **0.2** | AOE 衰减固定 |
+| S-1a | `multiplier`（平射） | 1.2 | 1.10 | 1.2×1.10 | **1.32** | 只有倍率随品质浮动 |
+| S-1b | `range`（平射） | 5 | 1.00 | copy | **5** | — |
+| S-1c | `range`（平射） | 5 | 0.90 | copy | **5** | **射程不随品质浮动**（唯一提升途径 = 通用/专属插件） |
+| S-1d | `bulletCount` | 1 | 1.10 | copy | **1** | — |
+| S-1e | `bulletCount`（下限） | 1 | 0.80 | copy | **1** | 下限 1（`bounds.minBulletCount`） |
+| S-1f | `cooldown`（近战） | 3 | 1.25 | 3.75 → 四舍五入 | **4** | 冷却随品质浮动（生成期） |
+| S-1g | `cooldown`（近战） | 3 | 0.50 | 1.5 → 取整 2 | **2** | — |
+| S-1h | `cooldown`（近战） | 3 | 0.10 | 0.3 → 取整 0 → **下限 0** | **0** | 冷却下限 0（`bounds.minCooldown`） |
+| S-1i | `distance`（位移） | 3 | 0.80 | copy | **3** | 位移距离不随品质浮动 |
+| S-1j | `bulletLevel` | 3 | 1.25 | copy | **3** | 不参与随机（专属插件可覆盖） |
+| S-1k | `cost`（平射） | `{mp 4, sp 2}` | 1.25 | copy | `{mp 4, sp 2}` | 只有减耗/专属插件能改 |
+| S-1l | `falloff` | 0 / 0.2 | 任意 | copy | **0 / 0.2** | AOE 衰减固定（定点基础模板 0.2） |
 
-## 2. 插件叠加（含消耗补偿，D-113）
+## 2. 插件叠加（专属改形态 → 通用加词条，通用**零代价**）
 
-以 **精准射击**（`mult 0.9 / cd 2 / range 8 / count 1 / L3 / cost sp6`，品质系数取 1.00）为例，按顺序装 4 个插件（rare 的 `costDeltaByTier` = `[3,6,9]`）：
+以 **平射**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp4+sp2`）为例：
 
-| 步骤 | 插件（档位） | 效果 | 倍率 | 冷却 | 射程 | 数量 | 等级 | 消耗 |
+| 步骤 | 插件 | 效果 | 倍率 | 冷却 | 射程 | 数量 | 等级 | 消耗 |
 |---|---|---|---|---|---|---|---|---|
-| S-2a | 起始 | — | 0.90 | 2 | 8 | 1 | 3 | `mp 0 / sp 6` |
-| S-2b | 倍率提升（tier1） | `×1.15`，**mp +3** | **1.035** | 2 | 8 | 1 | 3 | `mp 3 / sp 6` |
-| S-2c | 冷却缩减（tier2） | `−1`，**sp +6** | 1.035 | **1** | 8 | 1 | 3 | `mp 3 / sp 12` |
-| S-2d | 射程增强（tier1） | `+2`，**mp +3** | 1.035 | 1 | **10** | 1 | 3 | `mp 6 / sp 12` |
-| S-2e | 等级凝练（tier1） | `等级−1`（更高），**mp +3** | 1.035 | 1 | 10 | 1 | **2** | **`mp 9 / sp 12`** |
+| S-2a | 起始（基础模板） | — | 1.20 | 1 | 5 | 1 | 3 | `mp 4 / sp 2` |
+| S-2b | 「增伤 `sk_mult`」（通用） | `mult_up` +8.5% | **1.302** | 1 | 5 | 1 | 3 | `mp 4 / sp 2`（**不变**） |
+| S-2c | 「冷却缩减 `sk_cd_down`」（通用） | 冷却 −25%（向下取整，下限 1） | 1.302 | **1** | 5 | 1 | 3 | 不变 |
+| S-2d | 「射程增强」（通用词条 `range_plus` +2） | 射程 +2 | 1.302 | 1 | **7** | 1 | 3 | 不变 |
+| S-2e | 「等级凝练」（通用词条 `level_up` −1） | 弹幕等级 −1 | 1.302 | 1 | 7 | 1 | **2** | 不变 |
+| S-2f | 「穿甲 `ex_pierce`」（**专属**，先应用） | 等级 → 5、倍率 1.40、`mp 6 / sp 3`、CD 2 | **1.40** | **2** | 5 | 1 | **5** | **`mp 6 / sp 3`** |
 
-- **除减耗类外，每个插件都增加消耗**（S-2b~S-2e 共 `mp +9`）——这是"强度换代价"的机制。
-- **档位越高增量越大**：tier1 = 3、tier2 = 6、tier3 = 9（rare）。
+- **专属插件先应用**（`applyExclusive`）：它**整体覆盖**形态与代价（上表 S-2f 即"改装成穿甲"），随后通用插件在其之上加词条。
+- **通用插件零代价**（D-173）：`sk_mult` / `sk_crit` / `sk_critdmg` / `sk_cd_down` / `sk_sp_down` / `sk_mp_down` / `sk_true` **不加消耗、不加冷却**；只有 `*_down` 类词条会**降低**消耗。
+- 同一个技能**至多 1 个专属插件**（专属槽固定 1 个）；通用槽数按品质（0-1 / 0-2 / 1-3 / 2-4 / 3-4）。
 
-### S-3 减耗类（`costDeltaByTier = null`）
+### S-3 减耗类（`cost_down` / `cost_down_sp` / `cost_down_mp`）
 
-在 S-2e 结果上装「消耗优化」tier1（−20%）：
+在 S-2a 基础上装「SP 消耗 `sk_sp_down`」（`cost_down_sp` −20%）与「全维减耗」（`cost_down` −20%）：
 
 | 项 | 计算 | 结果 |
 |---|---|---|
-| mp | `ceil(9 × 0.8) = ceil(7.2)` | **8** |
-| sp | `ceil(12 × 0.8) = ceil(9.6)` | **10** |
-| 消耗增量 | 减耗类 **不加消耗** | `null` |
+| 平射 mp（全维减耗） | `ceil(4 × 0.8) = ceil(3.2)` | **4** |
+| 平射 sp（全维减耗） | `ceil(2 × 0.8) = ceil(1.6)` | **2** |
+| 近战 sp（SP 减耗） | `ceil(11 × 0.8) = ceil(8.8)` | **9** |
+| SP 减耗对 mp | 单维词条只作用声明的维度 | **不变** |
+| 消耗增量 | 通用插件 ≠ 旧的消耗补偿，**不增加任何维度** | — |
 
 ### S-4 下限 clamp 汇总（D-115）
 
 | 字段 | 下限 | 越界示例 |
 |---|---|---|
-| `bulletCount` / `range` / `distance` | **1** | 0.8 → 1 |
-| `cooldown` | **0** | 0.1 → 0 |
+| `bulletCount` / `range` / `distance` | **1** | 0.8 → 1（生成期） |
+| `cooldown`（生成期取整） | **0** | 0.3 → 0 |
+| `cooldown`（百分比减冷却词条） | **1** | `floor(1×0.75) = 0` → **1**（`bounds.minCooldownReduced`） |
 | `bulletLevel` | **1** | 连装两次等级凝练：3 → 2 → **1**（不再降） |
 | `multiplier` | 无下限（可为 0） | 位移技 `mult 0` = 无伤害位移 |
 
@@ -64,17 +72,19 @@
 
 | # | 场景 | 结果 | 日志 |
 |---|---|---|---|
-| S-5a | `cooldowns[sid] = 0` 且 `hp/mp/sp` 均 ≥ 消耗 | **成功**：扣资源 + 写 CD + 生成弹幕 | `skill.cast`(info) |
-| S-5b | 冷却中（`cooldowns[sid] = 2`） | **失败**：不扣资源、不产生效果 → 引擎视为空行动 `wait` | `skill.reject`(**warn**, reason=cooldown) |
-| S-5c | 资源不足（需 `mp 9`，只有 `mp 6`） | **失败**（同上） | `skill.reject`(**warn**, reason=resource) |
+| S-5a | `cooldowns[key] = 0` 且 `hp/mp/sp` 均 ≥ 消耗 | **成功**：扣资源 + 写 CD + 生成弹幕 | `skill.cast`(info) |
+| S-5b | 冷却中（`cooldowns[key] = 2`） | **失败**：不扣资源、不产生效果 → 引擎视为空行动 `wait` | `skill.reject`(**warn**, reason=cooldown) |
+| S-5c | 资源不足（平射需 `sp 2`，只有 `sp 1`） | **失败**（同上） | `skill.reject`(**warn**, reason=resource) |
 | S-5d | 冷却恰好在本 tick 递减到 0 | **成功**（递减发生在步骤 1，判定在步骤 6，D-82） | `skill.cast` |
-| S-5e | 资源恰等于消耗（`mp 9 / 需 9`） | **成功**（判定为 `≥`） | `skill.cast` |
+| S-5e | 资源恰等于消耗（`mp 4 / sp 2` 恰好用完） | **成功**（判定为 `≥`） | `skill.cast` |
+
+> **冷却键 = 槽位键**（P1-4）：`canCast(skill, caster, cooldownKey)` 的第三参由引擎传 `skill1..3` → 同一模板装两槽时两槽 CD 独立。
 
 ## 4. 四类型释放指令
 
 ### S-6 近战 `melee`（每格一枚 0 速弹幕，D-22/D-26）
 
-A 在 736（格 11）释放「重击」`range [0,2]`：
+A 在 736（格 11）释放近战 `range [0,2]`：
 
 | 覆盖格 | px | 独立弹幕 | 参与抵消 | 命中判定 |
 |---|---|---|---|---|
@@ -89,16 +99,17 @@ A 在 736（格 11）释放「重击」`range [0,2]`：
 | 项 | 值 |
 |---|---|
 | 生成位置 | **释放者所在格**（x0 = caster.x，D-22） |
-| 每枚飞行距离 | `range × 64px`（当 tick 飞完，D-20） |
-| 数量 | `bulletCount` 枚，**各算一次命中**（D-25） |
+| 每枚飞行距离 | `range × 64px`（当 tick 飞完，D-20）；基础模板 range 5 → **320px** |
+| 数量 | `bulletCount` 枚（基础 1；专属「连射/霰弹」覆盖为 3~5），**各算一次命中**（D-25） |
 | 命中 | 与目标轨迹解连续方程（见 `04-bullets` §1） |
 
 ### S-8 垂直 `vertical`
 
 | 项 | 计算 |
 |---|---|
-| 落点 | `clampX(caster.x + 朝向 × range × 64)`；A 在 224 朝右、range 8 → `224+512 = 736` |
-| 覆盖格 | 以落点为基准按 `area` 展开（A：`[-1,1]` → 格 10/11/12 → px 672/736/800） |
+| 落点 | `clampX(caster.x + 朝向 × range × 64)`；A 在 224 朝右、range 5 → `224+320 = 544`（格 8） |
+| 覆盖格 | 以落点为基准按 `area` 展开（基础 `[0,0]` → 仅落点格；专属「火球/诅咒」为 `[-1,1]`） |
+| 衰减 | `falloff` = 每向外一格 ×(1−falloff)（基础 0.2 → 外格 ×0.8） |
 | 判定基准 | **角色本 tick 位移后的位置**（D-24） |
 | 背击 | **永不触发**（D-51） |
 
@@ -106,10 +117,11 @@ A 在 736（格 11）释放「重击」`range [0,2]`：
 
 | 子项 | 规则 |
 |---|---|
-| 位移量 | `distance × 64px`（本 tick 一次到位，D-07） |
+| 位移量 | `distance × 64px`（本 tick 一次到位，D-07）；基础模板 3 格 |
+| 方向 | `moveDir: 'forward'`（默认，= `facing`）/ `'backward'`（专属「后撤」：**背向**，朝向不变） |
 | 可穿 | 由 `passThroughEnemy` 决定；普通 move 与控制位移不可穿（D-15） |
 | `fullDodgeDuring` | **整个位移 tick 免疫所有伤害来源**（D-70） |
-| 伤害 | 见下表 |
+| 伤害 | 见下表（基础模板 `dealDamage=false`；专属「盾突/突刺」为 true） |
 | 撞基地 | 停在原地 + `atk×0.8`（D-34） |
 
 **`dealDamage` × `passThroughEnemy` 四组合**（D-18 统一版，详见 `07-movement-collision` §4）：
@@ -124,8 +136,19 @@ A 在 736（格 11）释放「重击」`range [0,2]`：
 **统一性**：位移伤害**不再有独立代码路径**——它就是"沿声明路径放 0 速弹幕"，与近战/垂直 AOE 走**完全相同**的生成、抵消、命中判定流程。
 **边界（D-18⑤）**：`dealDamage=true` 但目标**恰好停在相邻格**（不在声明路径内）→ **不命中、无伤害**（由模型自然保证，无需特判）。
 
-## 5. 测试要点映射
+## 5. 专属插件（16 条）与 η 一览
 
-S-1 → T-SK-1 / T-SK-2 / D-115（下限）｜S-2/S-3 → T-SK-2 / T-PB-4 / T-PB-5｜S-4 → T-SK-2（clamp）｜S-5 → T-SK-4｜S-6 → T-BU-3 / T-BU-7｜S-7 → T-BU-5｜S-8 → T-BT-18｜S-9 → **T-BT-20/21/23**（D-18/D-19）
+| 技能类型 | 专属插件（id） | adv | η |
+|---|---|---|---|
+| 近战 | 长剑 `ex_longsword` / 匕首 `ex_dagger` / 旋风斩 `ex_whirl` / 重锤 `ex_hammer` | 16.00 / 4.85 / 8.00 / 19.00 | 0.400 / 0.404 / 0.400 / 0.396 |
+| 平射 | 穿甲 `ex_pierce` / 连射 `ex_rapid` / 霰弹 `ex_scatter` / 狙击 `ex_snipe` | 6.88 / 4.80 / 14.00 / 9.76 | 0.405 / 0.400 / 0.400 / 0.407 |
+| 定点 | 火球 `ex_fireball` / 箭雨 `ex_rain` / 藤蔓 `ex_vine` / 诅咒 `ex_curse` | 22.88 / 18.00 / 20.80 / 19.38 | 0.401 / 0.400 / 0.400 / 0.404 |
+| 位移 | 盾突 `ex_bash` / 瞬移 `ex_blink` / 突刺 `ex_thrust` / 后撤 `ex_retreat` | 19.07 / 25.00 / 13.45 / 9.00 | 0.397 / 0.397 / 0.396 / 0.391 |
+
+> 完整数值（覆盖项 / SP / MP / CD / 效果）见 `content-design.md` §6.4；复算命令 `node .audit/content-design.js`。
+
+## 6. 测试要点映射
+
+S-1 → T-SK-1（实例化）/ T-SK-2（下限）｜S-2/S-3 → T-SK-2（叠加与减耗）｜S-4 → T-SK-2（clamp）｜S-5 → T-SK-4（canCast）｜S-6 → T-BU-3 / T-BU-7｜S-7 → T-BU-5｜S-8 → T-BT-18｜S-9 → **T-BT-20/21/23**（D-18/D-19）｜专属插件 → `tests/unit/skills.test.js` S-9 段（盾突/瞬移/后撤）+ `.audit/content-design.js`
 
 > 本文件未引出新的待确认子项。

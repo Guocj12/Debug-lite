@@ -52,15 +52,15 @@ function main() {
   // 逐 tick 摘要走 stdout；日志级别仅影响日志子系统（trace 时会打印内部事件）
   const logger = createLogger({ level: args.level });
   const rng = createRng(args.seed);
-  const p1 = buildPlayer('p1', 'role_bal', ['skill_straight_precise', 'skill_melee_whirl'], args.quality, rng);
-  const p2 = buildPlayer('p2', 'role_bal', ['skill_dash_bash', 'skill_straight_precise'], args.quality, rng);
+  const p1 = buildPlayer('p1', 'role_bal', ['skill_straight', 'skill_melee'], args.quality, rng);
+  const p2 = buildPlayer('p2', 'role_bal', ['skill_displace', 'skill_straight'], args.quality, rng);
 
   // 确定性脚本 AI：每 4 tick 平射一次，其余接近
   const battle = engine.createBattle(undefined, { seed: args.seed, logger, players: { p1, p2 } });
   const result = battle.runFull({
     actions: {
-      p1: (state) => (state.tick % 4 === 0 ? 'skill:skill_straight_precise' : 'move_right'),
-      p2: (state) => (state.tick % 4 === 0 ? 'skill:skill_straight_precise' : 'move_left'),
+      p1: (state) => (state.tick % 4 === 0 ? 'skill:skill_straight' : 'move_right'),
+      p2: (state) => (state.tick % 4 === 0 ? 'skill:skill_straight' : 'move_left'),
     },
   });
 

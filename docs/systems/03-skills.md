@@ -16,7 +16,7 @@
 
 - `items.js`（调 `generateSkillItem` 做参数随机；二者同构，避免双实现）。
 - **机制层（机制词汇，不是内容）**：`skill-mechanics.json`（类型机制：参数滚动模式 / 语义槽位 / 弹幕发射模式与常量 / `costDims` / `precision` / `bounds`）、`affix-registry.json`（词条语义：`skillOp` / `hitEffect` / `castEffect`）。
-- **内容层（示例数据，待用户设计）**：`skill-templates.json`（模板固有数值）、`plugins.json`（插件与其词条基础值）。
+- **内容层（正式内容，D-173）**：`skill-templates.json`（4 条基础模板固有数值）、`plugins.json`（7 通用 + 16 专属技能插件及其词条基础值）；设计口径见 `../content-design.md` §6。
 - `field.js`（px 坐标、格区间、clamp）。
 - `battle-config.json`（速度/格宽）。
 
@@ -26,7 +26,7 @@
 |---|---|---|---|
 | **机制层** | `server/data/skill-mechanics.json` | "这个**类型**的参数怎么滚、词条打在哪个字段、弹幕怎么发、常量是什么" | 机制变更时由实现侧改表 |
 | **机制层** | `server/data/affix-registry.json` | "这个**词条**是什么、怎么滚动、聚合到哪、在技能链上做什么" | 同上 |
-| **内容层** | `server/data/skill-templates.json` / `plugins.json`（含 `role-templates.json` / `qualities.json` / `items-config.json` / `unlock.json`） | "具体有哪些技能/插件、标准数值与解锁段位" | **当前为示例数据，正式内容由用户设计后冻结** |
+| **内容层** | `server/data/skill-templates.json` / `plugins.json`（含 `role-templates.json` / `qualities.json` / `items-config.json` / `unlock.json`） | "具体有哪些技能/插件、标准数值与解锁段位" | **正式内容（D-173），数值唯一权威 = `../content-design.md`；复算 = `node .audit/content-design.js`** |
 | （机制层） | `server/data/ai-nodes.json` | AI 语言的真实节点类型清单 | 机制词汇，不是内容 |
 
 - **新增一个技能类型** = 在 `skill-mechanics.json` 的 `types` 里加一条（声明 `params` 滚动模式、`slots`、`emit.pattern` 与 `bullet` 描述）；**新增一个词条** = 在 `affix-registry.json` 的 `affixes` 里加一条（声明 `roll` 与去向）。两者都**不改本模块代码**。
@@ -35,22 +35,24 @@
 
 ## 3. 数据结构
 
-- 技能实例（`instantiateSkill` 产物）：`sid` / `templateId` / `name` / `type` / `multiplier` / `cost{hp,mp,sp}` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `affixes[]` / `specials{}` / `castEffects[]`。
+- 技能实例（`instantiateSkill` 产物）：`sid` / `templateId` / `name` / `type` / `multiplier` / `cost{hp,mp,sp}` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `moveDir` / `trueDamage` / `animKey` / `sfxKey` / `exclusiveId` / `affixes[]` / `specials{}` / `castEffects[]`。
   - `sid = templateId`（引擎冷却键用 `sid`；物品链 B20 可另分配实例 uid）。
-  - `specials{}`：技能插件携带的概率类词条（`critChance` / `lifesteal`）；由 `applySkillPlugins` 写入，随弹幕 `payload.specials` 参与命中结算。
-  - `castEffects[]`：技能插件携带的**释放类**词条（目前只有 `cast_buff`）；释放时入效果队列。
-  - `affixes[]`：技能插件携带的**命中类**词条（`stun` / `knockback` / `pull` / `dot` / `true_dmg`），由引擎步骤 9 结算。
+  - `specials{}`：技能插件携带的概率类词条（`critChance` / `lifesteal` / `critMul`）；由 `applySkillPlugins` 写入，随弹幕 `payload.specials` 参与命中结算（`critMul` 不封顶，概率类按 `caps.probability = 1` 封顶）。
+  - `castEffects[]`：技能专属插件携带的**释放类**效果（如盾突的 `def +4 × 2 tick`、后撤的 `atk +4.5 × 2 tick`）；释放时入效果队列。
+  - `affixes[]`：**命中类**效果（专属插件的内联 `hitEffects`，如眩晕/击退/持续伤害/减防）；由引擎步骤 9 结算。
+  - `moveDir`：`'forward'`（默认）/ `'backward'`（后撤：方向 = `−facing`，朝向不变）；`trueDamage`：整次命中无视 def（`sk_true`）。
+  - `animKey` / `sfxKey`：展示键（基础模板自带，装专属插件后被覆盖）；`exclusiveId`：已装专属插件 id（至多 1 个）。
 
 | 类型 | 类型参数 | 机制表 `params` 滚动模式 |
 |---|---|---|
 | `melee` | `range: [lo, hi]`（相对朝向的格区间） | `pair`（原样拷贝闭区间） |
-| `straight` | `range`（最远格数）、`bulletCount`、**无 `bulletSpeed`**（D-21） | `range`/`bulletCount` = `intMin` |
-| `vertical` | `range`（落点格数）、`area: [lo, hi]`（相对落点的格区间） | `range` = `intMin`、`area` = `pair` |
-| `displacement` | `distance`、`passThroughEnemy`、`dealDamage`、`fullDodgeDuring` | `distance` = `intMin`；三个开关 = `copy` |
+| `straight` | `range`（最远格数）、`bulletCount`、**无 `bulletSpeed`**（D-21） | `range`/`bulletCount` = `copy` |
+| `vertical` | `range`（落点格数）、`area: [lo, hi]`（相对落点的格区间） | `range` = `copy`、`area` = `pair` |
+| `displacement` | `distance`、`passThroughEnemy`、`dealDamage`、`fullDodgeDuring` | 全部 = `copy` |
 
 - **三种参数滚动模式（`skill-mechanics.json._paramsModes`）**：
   1. `pair`：数值对原样拷贝（闭区间，不乘品质系数、不取整）；
-  2. `intMin`：×品质系数后四舍五入取整，下限取 `bounds.min<字段名>`（如 `minRange` / `minBulletCount` / `minDistance`，缺省 1）；
+  2. `intMin`：×品质系数后四舍五入取整，下限取 `bounds.min<字段名>`（**当前无类型使用**，2026-09-28 起射程/弹幕数/位移距离改为 `copy`；保留供未来类型使用）；
   3. `copy`：布尔/标量原样拷贝（模板固有字段，不随品质随机）。
 - **语义槽位 `slots`**：类型机制表把"词条作用的**语义槽位**"映射到"该类型下的**真实字段名**"（如 `addSlot(range)` 在 `melee` 上缺席 → 近战射程不可增强，D-128③）。槽位缺席或目标字段不存在 = 该词条对本类型**不生效**。
 - **弹幕发射模式（`emit.pattern`，4 种）**：
@@ -65,15 +67,15 @@
 - `origin=caster` 用施法者当前 px 坐标；`origin=cellCenter` 用所在格中心 px（`field.xCenter`）。
 - `distCells` 语义：`fromOriginCell` = |格 − 施法者格|、`fromImpactCell` = |格 − 落点格|、`none` = 不写该字段（= 0，falloff 不衰减）。
 - **`falloff`（D-29）**：AOE 每向外一格减伤百分比，`0` = 不衰减；模板固有字段，**不随品质随机**。
-- **`costDims = ["hp","mp","sp"]`**：消耗维度与"消耗补偿"的叠加维度皆由此表声明，代码无字面量。
-- **`bounds`**：`minStat=1` / `minSlotCount=1` / `minRange=1` / `minBulletCount=1` / `minDistance=1` / `minBulletLevel=1` / `minCooldown=0`；**`precision.stat=2`**（面板与倍率保留 2 位小数）、`precision.multiplier=3`（`mult_up` 专用）。
+- **`costDims = ["hp","mp","sp"]`**：消耗维度皆由此表声明（减耗词条按维作用），代码无字面量。
+- **`bounds`**：`minStat=1` / `minSlotCount=1` / `minRange=1` / `minBulletCount=1` / `minDistance=1` / `minBulletLevel=1` / `minCooldown=0`；**`precision.stat=3`**（面板与倍率保留 3 位小数）、`precision.multiplier=3`（`mult_up` 专用）。
 
 ## 4. 核心流程（代码逻辑）
 
 ### 4.1 实例化 `instantiateSkill(template, quality, rng)`
 
-1. 拷贝模板固有字段（`type`、`bulletLevel`、`cost` 结构、`falloff`、`slotWeights`、`passThroughEnemy` / `dealDamage` / `fullDodgeDuring` 等）。
-2. 可随机数值参数**不在此处滚动**：`instantiateSkill` 直接复用 `items.generateSkillItem` 的产物（`multiplier` / `cost` / `cooldown` / `bulletLevel` / `range` / `bulletCount` / `area` / `distance` / 三个开关），滚动规则逐字段取自 `skill-mechanics.json` 的类型机制表（见 §3 的 `pair` / `intMin` / `copy`）：`multiplier` 按 `precision.stat` 保留 2 位；`弹幕数量/射程/位移距离` 下限取 `bounds.min*`（缺省 1）；`冷却` 下限 `minCooldown=0`。
+1. 拷贝模板固有字段（`type`、`bulletLevel`、`cost` 结构、`falloff`、`passThroughEnemy` / `dealDamage` / `fullDodgeDuring` 等），并写入展示键 `animKey` / `sfxKey` 与 `exclusiveId: null`（2026-09-28 技能内容设计 §6.2；技能模板**不再有** `slotWeights`——插槽 = 1 专属 + N 通用）。
+2. 可随机数值参数**不在此处滚动**：`instantiateSkill` 直接复用 `items.generateSkillItem` 的产物（`multiplier` / `cost` / `cooldown` / `bulletLevel` / `range` / `bulletCount` / `area` / `distance` / 三个开关 / `moveDir` / `trueDamage`），滚动规则逐字段取自 `skill-mechanics.json` 的类型机制表（见 §3 的 `pair` / `intMin` / `copy`）：`multiplier` 按 `precision.stat` 保留 3 位；射程/弹幕数/位移距离/范围/弹幕等级/消耗/冷却**均为 `copy`（不随品质浮动）**；`冷却` 下限 `minCooldown=0`。
 3. **`bulletLevel` 为模板固有字段**：`generateSkillItem` 原样拷贝，**不随品质系数缩放**（D-115/D-118；下限 1 由数据表校验保证）。
 4. **不再有 `bulletSpeed`**（已从模板与数据表删除，D-21）。
 5. 初始化 `affixes=[]`、`specials={}`、`castEffects=[]`（供 `applySkillPlugins` 写入）。
@@ -91,8 +93,10 @@
 | `sub` | `field ← max(bounds[op.min], field − v)` | `cooldown_down`（`cooldown`，`minCooldown=0`）、`level_up`（`bulletLevel`，`minBulletLevel=1`） |
 | `add` | `field ← max(bounds[op.min], field + v)`；**该类型无此字段则整条不生效** | `bullet_plus`（`bulletCount`；近战无此字段 → 不生效） |
 | `addSlot` | 语义槽位经类型机制表 `slots` 映射到真实字段后 `+ v`；**槽位缺席则不生效** | `range_plus` / `distance_plus`（同为槽位 `range`：平射/垂直→`range`，位移→`distance`，近战→缺席不生效） |
-| `scaleCostCeil` | 仅对减耗类（`costDeltaByTier === null`）生效：`cost[dim] ← ceil(cost[dim]×(1−v))`，维度取自 `costDims` | `cost_down` |
-| `addSpecial` | `skill.specials[field] ← min(caps.probability, 现值 + v)` | `crit_chance`（`critChance`）、`lifesteal` |
+| `scaleCostCeil` | 全维减耗：`cost[dim] ← ceil(cost[dim]×(1−v))`，维度取自 `costDims` | `cost_down` |
+| `scaleCostCeilByDim` | 单维减耗：只作用 `op.dim` 声明的资源维（其余维不变） | `cost_down_sp`（`sk_sp_down`）、`cost_down_mp`（`sk_mp_down`） |
+| `setTrueDamage` | `skill.trueDamage ← true`（整次命中无视 def；倍率下调由同一插件的 `scalePct` 负值承担） | `true_convert`（`sk_true`） |
+| `addSpecial` | `skill.specials[field] ← min(caps.probability, 现值 + v)` | `crit_chance`（`critChance`）、`lifesteal`、`critMul`（不封顶） |
 
 2. **命中类词条**（注册表 `hitEffect` 存在）：把 `{id, params}` **原样登记**进 `skill.affixes`，由引擎步骤 9 按注册表结算（本模块不做数值裁剪）。
 3. **释放类词条**（注册表 `castEffect` 存在）：按注册表生成**释放效果**条目压入 `skill.castEffects`：
@@ -100,8 +104,9 @@
    - `remaining` 取 `params[durationFrom]`（`cast_buff` 即 `params.duration`）；**缺省取注册表 `fallbackDuration=2`**；
    - 实际形态（注册表）为 `{kind:'continuous', stat:'atk', delta:v, remaining:duration}`。
 4. **概率类词条**（`domain` 含 `skill` 且带 `skillOp.addSpecial`）：进 `skill.specials`，**叠加在角色面板值之上**，并按 `caps.probability = 1` 封顶（见 §4.5）。
-5. **消耗补偿**（D-113）：除减耗类外，每个插件把消耗增量叠加到 `cost`：**每个维度 `delta = costDeltaBase[插件品质] × 插件档位 tier`**（如 rare tier1 = 3×1 = mp+3，I-6d）。**口径（B20 定稿，P2-1）**：数据表 `costDeltaByTier` 的数组值（如 `{mp:[2,4,6]}`，common 基准名义值）**仅作维度声明**、不参与计算——**声明了数组的维度**才加 `delta`（`sp_cooldown`/`sp_displacement` 声明的是 `sp`，多数插件声明 `mp`），逐档期望值由公式导出（rare=[3,6,9]、epic=[4,8,12]…）。
-6. **纯函数边界**：`canCast` / `applySkillPlugins` 均返回新对象，入参技能实例不被修改。
+5. **专属插件（`slot: 'exclusive'`）先应用**（2026-09-28 §6.2，D-173）：`applyExclusive` 按插件自带的声明式 `exclusive{}` 覆盖技能形态——`overrides`（`range`/`area`/`distance`/`bulletLevel`/`bulletCount`/`multiplier`/`falloff`/三个开关/`moveDir`/`cost`/`cooldown`）、逐品质 `qualityOverrides`、技能级 `specials`、内联 `hitEffects`/`castEffects`，并把插件名与 `animKey`/`sfxKey` 覆盖到技能实例（`exclusiveId` 记录来源）。每个技能至多 1 个（装配层保证）。
+6. **通用插件零代价**（D-173）：通用技能插件只提供词条加成，**不加消耗、不加冷却**（旧 `costDeltaByTier` / `costDeltaBase` 消耗补偿机制**已退役**，数据表出现即被 schema 拦下）。
+7. **纯函数边界**：`canCast` / `applySkillPlugins` / `applyExclusive` 均返回新对象，入参技能实例不被修改。
 
 ### 4.3 释放判定 `canCast(skill, caster)`
 
@@ -194,24 +199,32 @@
 
 ## 6. 对外接口
 
-- `instantiateSkill` / `applySkillPlugins`：装配与初始化（纯函数，入参不变）。
+- `instantiateSkill` / `applySkillPlugins` / `applyExclusive`：装配与初始化（纯函数，入参不变）。
 - `canCast` / `buildSkillAction` / `coveredCellRanges`：引擎每 tick 调用。
-- 模块内不导出"类型分支函数"——类型行为完全由 `skill-mechanics.json` + `EMITTERS` 发射器表解释。
+- 模块内不导出"类型分支函数"——类型行为完全由 `skill-mechanics.json` + `EMITTERS` 发射器表解释；
+  专属插件的形态覆盖是**数据声明式**的（`plugins.json` 的 `exclusive{}`），代码不带任何插件 id 分支。
 
 ## 7. 本模块消费的词条（技能链总览）
 
 | 词条 id | 注册表声明 | 消费点 | 落点字段 |
 |---|---|---|---|
 | `mult_up` | `skillOp.scalePct(multiplier)` | `applySkillPlugins` | `skill.multiplier` |
-| `cost_down` | `skillOp.scaleCostCeil(complement)` | 同上（仅减耗类） | `skill.cost[各维]` = `ceil(cost×(1−v))`；**`v` 随档位滚动，故不是恒定的 −20%** |
+| `cost_down` | `skillOp.scaleCostCeil(complement)` | 同上 | `skill.cost[各维]` = `ceil(cost×(1−v))` |
+| `cost_down_sp` / `cost_down_mp` | `skillOp.scaleCostCeilByDim(dim)` | 同上（单维减耗） | `skill.cost.sp` / `skill.cost.mp` |
+| `true_convert` | `skillOp.setTrueDamage` | 同上（`sk_true`） | `skill.trueDamage` |
 | `cooldown_down` | `skillOp.sub(cooldown)` | 同上 | `skill.cooldown` |
 | `range_plus` / `distance_plus` | `skillOp.addSlot(range)` | 同上（按类型槽位映射） | `range` / `distance` |
 | `bullet_plus` | `skillOp.add(bulletCount)` | 同上（无字段则不生效） | `skill.bulletCount` |
 | `level_up` | `skillOp.sub(bulletLevel)` | 同上 | `skill.bulletLevel` |
 | `crit_chance` | `skillOp.addSpecial(critChance)` | `applySkillPlugins` → 弹幕 payload → `dealDamage` | `skill.specials.critChance` |
 | `lifesteal` | `skillOp.addSpecial(lifesteal)` | 同上 | `skill.specials.lifesteal` |
-| `stun` / `knockback` / `pull` / `dot` / `true_dmg` | `hitEffect.*` | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
+| `critMul` | `skillOp.addSpecial(critMul)`（`domain: both`，不封顶） | 同上 | `skill.specials.critMul` |
+| 专属插件的内联 `hitEffects` | `exclusive.hitEffects[]`（不经注册表） | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
+| 专属插件的内联 `castEffects` | `exclusive.castEffects[]`（不经注册表） | 引擎步骤 6 入队 → 下一 tick 起效 | `skill.castEffects[]` |
+| `stun` / `knockback` / `pull` / `dot` | `hitEffect.*` | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
 | `cast_buff` | `castEffect.continuous(atk)` | 引擎步骤 6 入队 → 下一 tick 起效 | `skill.castEffects[]` |
+
+> 注册表仍保留 `stun` / `knockback` / `pull` / `dot` / `cast_buff` 等**通用词条语义**（通用插件可用、未来内容可复用）；当前 16 条专属插件改用内联 `hitEffects`/`castEffects` 直接声明数值。
 
 ## 8. 测试要点（对应 `docs/tasks.md` §3.2）
 

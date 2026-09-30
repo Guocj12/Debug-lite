@@ -24,14 +24,18 @@ const rankedMod = require('./ranked.js');
 const { nullLogger } = require('../shared/log.js');
 
 const STARTER_ROLE_TEMPLATE = 'role_bal';
-const STARTER_SKILL_TEMPLATES = Object.freeze(['skill_melee_whirl', 'skill_straight_precise', 'skill_melee_whirl']);
+// 2026-09-28 §6.3：技能基础模板每类 1 条；starter 给近战 + 平射 + 定点（三个不同模板，满足"同配置内模板不可重复"）
+const STARTER_SKILL_TEMPLATES = Object.freeze(['skill_melee', 'skill_straight', 'skill_vertical']);
 const STARTER_QUALITY = 'common';
 const SKILL_REROLL_MAX = 20;
+const ROLE_REROLL_MAX = 8; // 角色重掷上限（common roleSlotRange [0,2]；8 次内全 0 槽概率 (1/3)^8 ≈ 1.5e-4）
 const ROLE_PLUGIN_MAX = 2; // 草案：角色插件 1~2 个（受点数与匹配槽数量限制）
-const SKILL_PLUGIN_MAX = 1;
+const SKILL_PLUGIN_MAX = 2; // 技能插件：1 个专属 + 1 个通用（2026-09-28 §6.2）
 const STARTER_AI_NAME = '新手AI';
 
 const PLUGIN_DEFS = require('./data/plugins.json').plugins;
+const SKILL_DEFS = require('./data/skill-templates.json').skillTemplates;
+const SKILL_TYPE_OF = Object.fromEntries(SKILL_DEFS.map((s) => [s.id, s.type]));
 
 function starterSeedOf(publicId, playerId) {
   const hex = crypto.createHash('sha256')
@@ -43,17 +47,27 @@ function starterSeedOf(publicId, playerId) {
 }
 
 // 与目标物品插槽类型匹配、且允许掉落的插件定义（drop !== false 缺省视为 true）
-function pluginPoolFor(kind, slotTypes) {
-  const want = new Set(slotTypes);
-  return PLUGIN_DEFS.filter((p) => p && p.kind === kind && p.drop !== false && want.has(p.slot));
+//   2026-09-28：改用 items.slotMatches —— **万能槽 `any` 接受五维任一插件**（旧实现按精确等值匹配，
+//   生成出 `any` 槽时池为空 → starter 拿不到角色插件）。
+function pluginPoolFor(kind, slotTypes, itemsApi, skillType) {
+  const I = itemsApi || itemsMod;
+  const want = Array.isArray(slotTypes) ? slotTypes : [];
+  return PLUGIN_DEFS.filter((p) => {
+    if (!p || p.kind !== kind || p.drop === false) return false;
+    if (!want.some((t) => I.slotMatches(p.slot, t))) return false;
+    // 专属插件按技能类型绑定（2026-09-28 §6.2）：forTypes 不含该技能类型 → 不进池
+    if (p.slot === 'exclusive' && skillType && Array.isArray(p.forTypes) && !p.forTypes.includes(skillType)) return false;
+    return true;
+  });
 }
 
 // 第一个"类型匹配且空闲"的槽下标；无 → -1
-function freeSlotIndexOf(item, plugin) {
+function freeSlotIndexOf(item, plugin, itemsApi) {
+  const I = itemsApi || itemsMod;
   const slots = Array.isArray(item && item.slots) ? item.slots : [];
   for (let i = 0; i < slots.length; i += 1) {
     const s = slots[i];
-    if (s && s.type === plugin.slot && (s.pluginUid === null || s.pluginUid === undefined)) return i;
+    if (s && I.slotMatches(plugin.slot, s.type) && (s.pluginUid === null || s.pluginUid === undefined)) return i;
   }
   return -1;
 }
@@ -70,18 +84,26 @@ function buildStarter(input) {
   const seed = starterSeedOf(o.publicId, o.playerId);
   const rng = rngMod.createRng(seed, { logger: log });
 
-  // ---- 角色（common → roleSlotRange [1,3]，必有插槽）----
-  const role = items.generateRoleItem(STARTER_ROLE_TEMPLATE, STARTER_QUALITY, rng.deriveStream(0, 'starter'));
+  // ---- 角色（common → roleSlotRange [0,2]：**可能 0 槽** → 重掷直到 ≥1 槽）----
+  //   2026-09-28 §3.3：插槽数下限 1 已作废，故 starter 必须自行保证"至少一个可装槽"
+  //   （与下方技能同一策略）。重掷流下标 0..ROLE_REROLL_MAX-1 与技能流（≥10）不冲突。
+  let role = null;
+  let roleGenerateAttempts = 0;
+  for (; roleGenerateAttempts < ROLE_REROLL_MAX; roleGenerateAttempts += 1) {
+    role = items.generateRoleItem(STARTER_ROLE_TEMPLATE, STARTER_QUALITY, rng.deriveStream(roleGenerateAttempts, 'starter'));
+    if ((role.slots || []).length > 0) break;
+  }
   const roleSlotTypes = [...new Set((role.slots || []).map((s) => s && s.type).filter(Boolean))];
 
-  // ---- 技能 ×3（可能全 0 槽 → 重掷，直到至少 1 个技能有槽）----
+  // ---- 技能 ×3（专属槽恒有；**通用槽**按品质掷出、common 下可能全 0 → 重掷到至少 1 个技能有通用槽）----
+  //   重掷目标 = "能发出 1 专属 + 1 通用"（用户 2026-09-28 裁定）；上限 SKILL_REROLL_MAX 次后接受实际掷出。
   let skills = [];
   let skillAttempts = 0;
   for (; skillAttempts < SKILL_REROLL_MAX; skillAttempts += 1) {
     skills = STARTER_SKILL_TEMPLATES.map((tid, i) => items.generateSkillItem(
       tid, STARTER_QUALITY, rng.deriveStream(10 + skillAttempts * 4 + i, 'starter'),
     ));
-    if (skills.some((s) => (s.slots || []).length > 0)) break;
+    if (skills.some((s) => (s.slots || []).some((sl) => sl && sl.type === 'general'))) break;
   }
   const skillSlotTotal = skills.reduce((a, s) => a + (s.slots || []).length, 0);
 
@@ -94,7 +116,7 @@ function buildStarter(input) {
   // ---- 角色插件（1~2 个，按实际槽类型筛池；点数必须装得下）----
   //   注意：core/items.assemble 返回**新仓库**（入参不变）→ 每次都必须从当前仓库里取目标物品，
   //   否则会一直看到"空槽"并反复装配同一槽（占位失败 → 死循环；用 attempt 上限双保险）。
-  const rolePool = pluginPoolFor('rolePlugin', roleSlotTypes);
+  const rolePool = pluginPoolFor('rolePlugin', roleSlotTypes, items);
   const roleInWarehouse = () => warehouse.buckets.role.find((x) => x.uid === role.uid) || role;
   let stream = 100;
   let roleAttempts = 0;
@@ -103,7 +125,7 @@ function buildStarter(input) {
     roleAttempts += 1;
     const plugin = items.generatePlugin('rolePlugin', STARTER_QUALITY, rng.deriveStream(stream, 'starter'), rolePool);
     stream += 1;
-    const slotIndex = freeSlotIndexOf(roleInWarehouse(), plugin);
+    const slotIndex = freeSlotIndexOf(roleInWarehouse(), plugin, items);
     if (slotIndex < 0) break; // 没有匹配空槽 → 停止（不再生成新的）
     if ((plugin.pointCost || 0) > (role.pluginPoints || 0)) {
       log.warn('starter', 'store.starter.issued', `starter 角色插件点数超出预算，跳过（${plugin.id}）`, {
@@ -122,27 +144,32 @@ function buildStarter(input) {
     assembled.push({ kind: 'rolePlugin', id: plugin.id, uid: plugin.uid, targetUid: role.uid, slotIndex });
   }
 
-  // ---- 技能插件（1 个，装进第一个"有匹配空槽"的技能）----
+  // ---- 技能插件（**1 专属 + 1 通用**，2026-09-28 用户裁定：新号必须能体验专属形态）----
+  //   两轮确定性选择：先 `exclusive` 槽（池按 `forTypes` 绑定技能类型），再 `general` 槽；
+  //   每轮取第一个"有该类型匹配空槽"的技能，生成一个插件并装配（`SKILL_PLUGIN_MAX` 为总上限）。
   let skillPlugins = 0;
-  for (const skill of skills) {
+  for (const wantSlot of ['exclusive', 'general']) {
     if (skillPlugins >= SKILL_PLUGIN_MAX) break;
-    const live = warehouse.buckets.skill.find((x) => x.uid === skill.uid) || skill;
-    const types = [...new Set((live.slots || []).map((s) => s && s.type).filter(Boolean))];
-    const pool = pluginPoolFor('skillPlugin', types);
-    if (pool.length === 0) continue;
-    const plugin = items.generatePlugin('skillPlugin', STARTER_QUALITY, rng.deriveStream(stream, 'starter'), pool);
-    stream += 1;
-    const slotIndex = freeSlotIndexOf(live, plugin);
-    if (slotIndex < 0) continue;
-    warehouse.buckets.skillPlugin.push(plugin);
-    const res = items.assemble(warehouse, { targetUid: skill.uid, pluginUid: plugin.uid, slotIndex, tier: 'common' });
-    if (!res.ok) {
-      warehouse.buckets.skillPlugin.pop();
-      continue;
+    for (const skill of skills) {
+      const live = warehouse.buckets.skill.find((x) => x.uid === skill.uid) || skill;
+      if (!(live.slots || []).some((s) => s && s.type === wantSlot && !s.pluginUid)) continue; // 该技能无该类型空槽 → 换下一个
+      const pool = pluginPoolFor('skillPlugin', [wantSlot], items, SKILL_TYPE_OF[live.templateId]);
+      if (pool.length === 0) continue;
+      const plugin = items.generatePlugin('skillPlugin', STARTER_QUALITY, rng.deriveStream(stream, 'starter'), pool);
+      stream += 1;
+      const slotIndex = freeSlotIndexOf(live, plugin, items);
+      if (slotIndex < 0) continue;
+      warehouse.buckets.skillPlugin.push(plugin);
+      const res = items.assemble(warehouse, { targetUid: live.uid, pluginUid: plugin.uid, slotIndex, tier: 'common' });
+      if (!res.ok) {
+        warehouse.buckets.skillPlugin.pop();
+        continue;
+      }
+      warehouse = res.warehouse;
+      skillPlugins += 1;
+      assembled.push({ kind: 'skillPlugin', id: plugin.id, uid: plugin.uid, targetUid: live.uid, slotIndex });
+      break; // 该轮完成（专属/通用各至多 1 个）→ 进入下一轮
     }
-    warehouse = res.warehouse;
-    skillPlugins += 1;
-    assembled.push({ kind: 'skillPlugin', id: plugin.id, uid: plugin.uid, targetUid: skill.uid, slotIndex });
   }
 
   // ---- AI：复用默认预设（不复制正文），并登记进 AI 库 ----
@@ -189,6 +216,7 @@ module.exports = {
   STARTER_QUALITY,
   STARTER_AI_NAME,
   SKILL_REROLL_MAX,
+  ROLE_REROLL_MAX,
   ROLE_PLUGIN_MAX,
   SKILL_PLUGIN_MAX,
   starterSeedOf,

@@ -58,8 +58,8 @@ function runGolden() {
   const p1 = mkPlayer('p1');
   const p2 = mkPlayer('p2');
   p1.special.critChance = 0.5; // 随机路径真实消费（crit 流；seed 保证确定性）
-  p1.skills = { precise: skillOf(skills, 'skill_straight_precise', { multiplier: 1.0 }) };
-  p2.skills = { bash: skillOf(skills, 'skill_dash_bash', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
+  p1.skills = { precise: skillOf(skills, 'skill_straight', { multiplier: 1.0 }) };
+  p2.skills = { bash: skillOf(skills, 'skill_displace', { multiplier: 1.3, distance: 4, passThroughEnemy: false, dealDamage: true }) };
   const b = engine.createBattle(undefined, { seed: SEED, players: { p1, p2 } });
   const actions = makeActionPlan();
   const result = b.runFull({ actions });

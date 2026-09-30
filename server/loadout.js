@@ -208,6 +208,8 @@ function validateLoadout(loadout, opts) {
       if (!p) errors.push({ where: ref.where, code: 'loadout_invalid', message: `悬挂引用 ${ref.uid}` });
       else if (p.equipped !== true) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件未装配: ${ref.uid}` });
       else if (p.kind !== (ref.kind === 'role' ? 'rolePlugin' : 'skillPlugin')) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件类别与槽位不匹配: ${ref.uid}` });
+      // 技能插件的品质档位展示字段（tier）必填 ≥1 —— 通用与专属插件形状一致（2026-09-28 §6.2；
+      //   专属插件的强度由 `exclusive{}` 覆盖声明，tier 仍作品质档位回带）
       else if (ref.kind === 'skill' && (!Number.isInteger(p.tier) || p.tier < 1)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `技能插件缺档位（tier 必须 ≥1）: ${ref.uid}` });
       else if (!itemsApi.validateUnlock(p, tier)) errors.push({ where: ref.where, code: 'loadout_invalid', message: `插件 ${ref.uid} 需 ${p.unlockTier} 段位（P2-2 复核）` });
     }
@@ -274,7 +276,9 @@ function buildPanel(loadout, opts) {
           // 投影白名单：含 specials/castEffects/affixes——否则技能插件的
           //   crit_chance/lifesteal（概率类）、cast_buff（释放类）、stun/knockback/pull/dot/true_dmg（命中类）
           //   会在 API 路径（/battle → battle.js buildPlayer 的 Object.assign）被丢掉，导致"文档已设计但实际不生效"。
-          for (const k of ['multiplier', 'cost', 'cooldown', 'bulletLevel', 'bulletCount', 'range', 'area', 'distance', 'passThroughEnemy', 'dealDamage', 'fullDodgeDuring', 'falloff', 'specials', 'castEffects', 'affixes']) {
+          // 投影白名单（2026-09-28 §6 扩展）：含展示字段与形态字段 ——
+          //   `name`/`animKey`/`sfxKey`/`exclusiveId`（专属插件改展示）、`trueDamage`、`moveDir`（背向位移）
+          for (const k of ['multiplier', 'cost', 'cooldown', 'bulletLevel', 'bulletCount', 'range', 'area', 'distance', 'passThroughEnemy', 'dealDamage', 'fullDodgeDuring', 'moveDir', 'trueDamage', 'falloff', 'specials', 'castEffects', 'affixes', 'name', 'animKey', 'sfxKey', 'exclusiveId']) {
             if (applied[k] !== undefined) params[k] = applied[k];
           }
           // P2-②：未列入白名单的自定义字段保留透传（聚合投影不丢非标准字段）

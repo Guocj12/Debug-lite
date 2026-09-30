@@ -349,9 +349,9 @@ test('BR-13 激活：不完整 loadout → cannot_activate_incomplete；完整�
     const complete = {
       role: { uid: 'r_13', kind: 'role', templateId: 'role_bal', quality: 'common' },
       skills: [
-        { uid: 's_13a', kind: 'skill', templateId: 'skill_melee_whirl', quality: 'common' },
-        { uid: 's_13b', kind: 'skill', templateId: 'skill_straight_precise', quality: 'common' },
-        { uid: 's_13c', kind: 'skill', templateId: 'skill_melee_whirl', quality: 'common' },
+        { uid: 's_13a', kind: 'skill', templateId: 'skill_melee', quality: 'common' },
+        { uid: 's_13b', kind: 'skill', templateId: 'skill_straight', quality: 'common' },
+        { uid: 's_13c', kind: 'skill', templateId: 'skill_melee', quality: 'common' },
       ],
       ai: { type: 'program', version: 2, body: { type: 'seq', statements: [] } },
     };

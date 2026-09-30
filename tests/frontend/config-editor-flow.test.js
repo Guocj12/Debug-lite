@@ -164,20 +164,20 @@ async function injectFixture(s, playerId) {
       unlockTier: 'common', pluginPoints: 3,
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX.skills[0], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能1', quality: 'rare',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX.skills[0], kind: 'skill', templateId: 'skill_melee', name: '夹具技能1', quality: 'rare',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX.skills[1], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能2', quality: 'rare',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX.skills[1], kind: 'skill', templateId: 'skill_melee', name: '夹具技能2', quality: 'rare',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
     });
     a.warehouse.buckets.skill.push({
-      uid: FIX.skills[2], kind: 'skill', templateId: 'skill_melee_whirl', name: '夹具技能3', quality: 'rare',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      uid: FIX.skills[2], kind: 'skill', templateId: 'skill_melee', name: '夹具技能3', quality: 'rare',
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
       unlockTier: 'common',
     });
@@ -194,12 +194,12 @@ async function injectFixture(s, playerId) {
       category: '攻击提升', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', pointCost: 1,
     });
     a.warehouse.buckets.skillPlugin.push({
-      uid: FIX.skillPlugin, kind: 'skillPlugin', id: 'sp_mult', name: '倍率 +10%', slot: 'basic',
-      category: '倍率提升', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', costDeltaByTier: { sp: [2, 4, 6] },
+      uid: FIX.skillPlugin, kind: 'skillPlugin', id: 'sk_mult', name: '增伤', slot: 'general',
+      category: '增伤', quality: 'common', tier: 1, affixes: [{ id: 'mult_up', desc: '倍率 +8.5%', params: { v: 0.085 } }], unlockTier: 'common',
     });
     a.warehouse.buckets.skillPlugin.push({
-      uid: FIX.skillPluginOther, kind: 'skillPlugin', id: 'sp_crit', name: '暴击 +5%', slot: 'special',
-      category: '暴击提升', quality: 'common', tier: 1, affixes: [], unlockTier: 'common', costDeltaByTier: { sp: [2, 4, 6] },
+      uid: FIX.skillPluginOther, kind: 'skillPlugin', id: 'sk_crit', name: '暴击率', slot: 'general',
+      category: '暴击', quality: 'common', tier: 1, affixes: [{ id: 'crit_chance', desc: '暴击率 +8.5%', params: { v: 0.085 } }], unlockTier: 'common',
     });
     return null;
   });

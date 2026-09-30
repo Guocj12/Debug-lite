@@ -1,5 +1,6 @@
 {
   "format": "placeholder-v1",
+  "_note": "占位动画表（表现层，2026-09-28 补技能组）。`animations.skill.<animKey>` 与 `server/data/skill-templates.json` / `plugins.json`（专属插件）的 animKey 一一对应；`sounds.skill[]` 为对应 sfxKey 的占位清单。表现层缺失不阻塞门禁（DS-11②），但 `.audit/verify-skill-system.js` 会核对是否齐备。",
   "animations": {
     "role": {
       "idle":   { "frames": 4, "durationMs": 800, "loop": true,  "offsetPx": [0, 0] },
@@ -15,6 +16,41 @@
     },
     "base": {
       "hit": { "frames": 3, "durationMs": 300, "loop": false, "offsetPx": [0, 0] }
+    },
+    "skill": {
+      "skill_melee":    { "frames": 5, "durationMs": 400, "loop": false, "offsetPx": [0, 0] },
+      "skill_straight": { "frames": 3, "durationMs": 200, "loop": false, "offsetPx": [8, 0] },
+      "skill_vertical": { "frames": 5, "durationMs": 450, "loop": false, "offsetPx": [0, 0] },
+      "skill_displace": { "frames": 4, "durationMs": 300, "loop": false, "offsetPx": [32, 0] },
+
+      "ex_longsword": { "frames": 6, "durationMs": 450, "loop": false, "offsetPx": [0, 0] },
+      "ex_dagger":    { "frames": 4, "durationMs": 250, "loop": false, "offsetPx": [16, 0] },
+      "ex_whirl":     { "frames": 6, "durationMs": 500, "loop": true,  "offsetPx": [0, 16] },
+      "ex_hammer":    { "frames": 7, "durationMs": 600, "loop": false, "offsetPx": [0, 0] },
+
+      "ex_pierce":  { "frames": 4, "durationMs": 250, "loop": false, "offsetPx": [8, 0] },
+      "ex_rapid":   { "frames": 3, "durationMs": 150, "loop": true,  "offsetPx": [8, 0] },
+      "ex_scatter": { "frames": 5, "durationMs": 300, "loop": false, "offsetPx": [16, 0] },
+      "ex_snipe":   { "frames": 4, "durationMs": 250, "loop": false, "offsetPx": [8, 0] },
+
+      "ex_fireball": { "frames": 6, "durationMs": 500, "loop": false, "offsetPx": [0, 0] },
+      "ex_rain":     { "frames": 8, "durationMs": 700, "loop": true,  "offsetPx": [0, 0] },
+      "ex_vine":     { "frames": 5, "durationMs": 450, "loop": false, "offsetPx": [0, 16] },
+      "ex_curse":    { "frames": 6, "durationMs": 500, "loop": false, "offsetPx": [0, 0] },
+
+      "ex_bash":    { "frames": 5, "durationMs": 400, "loop": false, "offsetPx": [32, 0] },
+      "ex_blink":   { "frames": 3, "durationMs": 200, "loop": false, "offsetPx": [64, 0] },
+      "ex_thrust":  { "frames": 4, "durationMs": 250, "loop": false, "offsetPx": [32, 0] },
+      "ex_retreat": { "frames": 4, "durationMs": 300, "loop": false, "offsetPx": [48, 0] }
     }
+  },
+  "sounds": {
+    "skill": [
+      "cast_melee", "cast_straight", "cast_vertical", "cast_displace",
+      "cast_longsword", "cast_dagger", "cast_whirl", "cast_hammer",
+      "cast_pierce", "cast_rapid", "cast_scatter", "cast_snipe",
+      "cast_fireball", "cast_rain", "cast_vine", "cast_curse",
+      "cast_bash", "cast_blink", "cast_thrust", "cast_retreat"
+    ]
   }
 }

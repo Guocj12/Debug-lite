@@ -48,10 +48,10 @@
 
 | 源（数据表） | 目标 | 传递字段 | 示例值 |
 |---|---|---|---|
-| `qualities.json` | items | `statRange` / `roleSlotRange` / `pluginPoints` / `tiers` | rare：`[1.00,1.25]` / `[2,4]` / `4` / 三档 |
-| `role-templates.json` | roles | `baseStats` / `regen` / `slotWeights` / `pluginPoints` | 均衡 `100/10/8/60/40`、`{mp:1,sp:2}` |
-| `skill-templates.json` | skills | `baseMultiplier` / `baseCost` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `slotWeights` | 重击 `1.3`、`mp10+sp8`、`cd4`、`L2`、`[0,2]` |
-| `plugins.json` | items | `slot` / `affixes` / `pointCost` / `costDeltaByTier` | `rp_atk_pct` tier1 → `+8.16%`、1 点 |
+| `qualities.json` | items | `statRange` / `roleSlotRange` / `skillSlotRange` / `pluginPointsRange` / `tiers` | rare：`[1.00,1.25]` / `[1,3]` / `[0,2]` / `[4,6]` / 三档 |
+| `role-templates.json` | roles | `baseStats` / `regen` / `typeModifiers` | 均衡 `95/15/8/73/62`、`{mp:2,sp:2}` |
+| `skill-templates.json` | skills | `baseMultiplier` / `baseCost` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `animKey` | 平射 `1.2`、`mp4+sp2`、`cd1`、`L3`、`range 5` |
+| `plugins.json` | items | `slot` / `affixes` / `pointCost`（角色）/ `exclusive{}`（技能专属） | `rp_atk_pct` tier1 → `+8.16%`、1 点；`ex_longsword` → 近战范围 `[0,3]`、sp 24 / CD 4 |
 | `items-config.json` | items | `dropRates` / `kindWeights` | 绿 .55 / 类别权重 1:1:2:2 |
 
 ```jsonc

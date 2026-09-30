@@ -195,7 +195,8 @@ test('ME-3 服务端权威仓库：GET 真源（不再 404）/ PUT 形状校验 
     assert.deepEqual(Object.keys(get0.body.data.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
     assert.equal(get0.body.data.counts.role, 1);
     assert.equal(get0.body.data.counts.skill, 3);
-    assert.equal(get0.body.data.counts.skillPlugin, 1);
+    // 技能插件恒为 1 专属 + 1 通用（§6.2 + starter 固定发放规则）
+    assert.equal(get0.body.data.counts.skillPlugin, 2, 'starter 恰 1 专属 + 1 通用技能插件');
     assert.equal(get0.body.data.caps.skillPlugin, 500);
     // usage：starter 已把物品装配进 slot1 → 每个被引用 uid 都标注"装配于哪个配置"
     const starterSlot = (await h.request(s.port, 'GET', '/api/v1/me/configs', undefined, auth)).body.data.slots

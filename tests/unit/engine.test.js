@@ -111,7 +111,7 @@ test('T-BT-20/M4 位移技可穿+有伤：穿过 + 路径弹幕 12', () => {
 // 突进斩实例（M4/M5/M8 示例参数：mult 1.3、距离 4 格，B6 位移类型 + 字段按场景调整）
 function skillBash(overrides) {
   const skills = require('../../server/core/skills.js');
-  const sk = skills.instantiateSkill('skill_dash_bash', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
+  const sk = skills.instantiateSkill('skill_displace', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
   sk.distance = 4;
   sk.multiplier = 1.3; // M 系列示例（07 表头：突进斩 倍率 1.3）
   return Object.assign(sk, overrides);
@@ -142,7 +142,7 @@ test('T-EN-1/diff 帧差异：位移起止 px + 资源增减（T-EN-1 可重建�
 
 test('T-LG-5 cid 链路：skill.cast → bullet.spawn → bullet.hit → tick.end（damage.* 事件 B9 行交付）', () => {
   const logger = createLogger({ level: 'all', ringSize: 1000 });
-  const b = engine.createBattle(CONFIG, { seed: 3, logger, players: { p1: mkPlayer({ x: 400 }), p2: mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, atk: 19, def: 9 }) } });
+  const b = engine.createBattle(CONFIG, { seed: 3, logger, players: { p1: mkPlayer({ x: 400 }), p2: mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }) } });
   b.state.players.p1.skills = { precise: skillPrecise() };
   stepActions(b, ['skill:precise'], ['wait']);
   const cast = logger.records.findIndex((x) => x.event === 'skill.cast');
@@ -151,13 +151,14 @@ test('T-LG-5 cid 链路：skill.cast → bullet.spawn → bullet.hit → tick.en
   const end = logger.records.findIndex((x) => x.event === 'tick.end');
   assert.ok(cast !== -1 && spawn !== -1 && hit !== -1 && end !== -1, '全链事件存在');
   assert.ok(cast < spawn && spawn < hit && hit < end, 'cid 链顺序固定（T-BT-9）');
-  // 平射命中：B 静止 800 → t*=(800−400)/(512−0)=0.7813 → 伤害 12×1.0×0.816327=9.796→9
+  // 平射命中：B 静止 600 → t*=(600−400)/(320−0)=0.625（射程 5 格 × 64px，§6.3）
+  //   伤害 12×1.0×0.816327=9.796→9
   assert.equal(b.state.players.p2.hp, 91, '基础伤害 9（B9 前的基础链路，无需 damage.calc 事件）');
 });
 
 function skillPrecise() {
   const skills = require('../../server/core/skills.js');
-  const sk = skills.instantiateSkill('skill_straight_precise', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
+  const sk = skills.instantiateSkill('skill_straight', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
   sk.multiplier = 1.0; // 04-bullets §1 示例（mult 1.0，L3）
   return sk;
 }
@@ -277,7 +278,7 @@ test('EN-15 补充分支：B 单穿目标重叠（后推停 A 身后）；defend
   // 下一 tick 平射打防守方
   stepActions(b2, ['wait'], ['skill:precise']); // B 也可施放？——B 无技能：直接改 setup：p1 defend + p2 平射
   // 简化重做：p1 defend、p2 平射
-  const b3 = mkBattle(mkPlayer({ x: 400, facing: 1 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, atk: 19, def: 9 }));
+  const b3 = mkBattle(mkPlayer({ x: 400, facing: 1 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
   b3.state.players.p2.skills = { precise: skillPrecise() };
   stepActions(b3, ['defend'], ['skill:precise']);
   assert.equal(b3.state.players.p1.hp, 86, 'def×1.6 减伤 → 14（无防为 15）');
@@ -309,11 +310,12 @@ test('EN-17 judge 平局：双基地同时死 / 双角色同时死', () => {
 });
 
 test('EN-18 技能资源不足：canCast 失败 → 空行动 wait（不扣资源不写 CD）', () => {
-  const b = mkBattle(mkPlayer({ x: 400, sp: 5 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
+  // 平射 cost（§6.3）= { mp:4, sp:2 }：sp 只给 1 → 资源不足
+  const b = mkBattle(mkPlayer({ x: 400, sp: 1 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
   b.state.players.p1.skills = { precise: skillPrecise() };
   stepActions(b, ['skill:precise'], ['wait']);
-  assert.equal(b.state.players.p1.sp, 7, '不扣资源（5 + 步骤 10 regen +2）');
-  assert.equal(b.state.players.p1.cooldowns.skill_straight_precise, undefined, '不写 CD');
+  assert.equal(b.state.players.p1.sp, 3, '不扣资源（1 + 步骤 10 regen +2）');
+  assert.equal(b.state.players.p1.cooldowns.skill_straight, undefined, '不写 CD');
   assert.equal(b.state.players.p1.x, 400, '空行动位置不变');
 });
 

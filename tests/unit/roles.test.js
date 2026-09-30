@@ -25,59 +25,62 @@ function stubSeq(values) {
   return { float: () => values[i++], int: (lo, hi) => values[i++], pick: (a) => a[0] };
 }
 
-// 消耗顺序（登记）：[修饰随机 ints] → 5×品质系数 float → slotCount int → 槽类型 float×slotCount
-test('T-RO-1/R-1 均衡：无修饰，品质系数与取整（→ 112/11/8/72/41）', () => {
+// 消耗顺序（登记）：[修饰随机 ints] → 5×品质系数 float → slotCount int → 槽类型 float×slotCount → pluginPoints float
+test('T-RO-1/R-1 均衡：无修饰，品质系数与取整（B0=95/15/8/73/62）', () => {
   const role = roles.instantiateRole(BAL, 'rare', stubSeq([1.12, 1.08, 1.05, 1.20, 1.02, 0, 0, 0, 0]));
-  assert.deepEqual(role.stats, { hp: 112, atk: 11, def: 8, sp: 72, mp: 41 }, 'R-1 完整实例');
-  assert.deepEqual(role.regen, { mp: 1, sp: 2 });
+  assert.deepEqual(role.stats, { hp: 106, atk: 16, def: 8, sp: 88, mp: 63 }, 'R-1 完整实例');
+  assert.deepEqual(role.regen, { mp: 2, sp: 2 });
   assert.equal(role.type, 'balanced');
+  assert.ok(role.pluginPoints >= 4 && role.pluginPoints <= 6, `rare 点数区间 [4,6]，实际 ${role.pluginPoints}`);
 });
 
-test('T-RO-1/R-2 特化：高属性 +15%、恰 1 低 -15%（R-2a 完整实例）', () => {
-  // int(0,3)=3 → 低属性 mp（0-hp 1-def 2-sp 3-mp）→ 40×0.85=34
-  const role = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([3, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.deepEqual(role.stats, { hp: 110, atk: 14, def: 9, sp: 63, mp: 34 }, 'R-2a：atk 11.5×1.20=13.8→14；mp 34×1.00=34');
+test('T-RO-1/R-2 特化：高属性 ×1.30、恰 1 低 ×0.769（R-2a 完整实例）', () => {
+  // int=2 → 低属性候选 [hp, sp, mp]（atk 为高、def 被 excludeLow 排除）→ index 2 = mp
+  const role = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([2, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
+  assert.deepEqual(role.stats, { hp: 105, atk: 23, def: 9, sp: 77, mp: 48 }, 'R-2a：atk 19.5×1.20=23.4→23；mp 62×0.7692×1.00=47.69→48');
 });
 
 test('T-RO-1/R-2b 特化随机低属性：同名模板两种结果', () => {
-  const r1 = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([3, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.equal(r1.stats.mp, 34, '低 mp');
+  const r1 = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([2, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
+  assert.equal(r1.stats.mp, 48, '低 mp');
   const r2 = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([0, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.equal(r2.stats.hp, 94, 'R-2b 低 hp：100×0.85=85（修饰后）→ ×1.10=93.5 → 94');
+  assert.equal(r2.stats.hp, 80, 'R-2b 低 hp：95×0.7692=73.08（修饰后）→ ×1.10=80.38 → 80');
 });
 
-test('T-RO-2/R-3 专家：高属性 +30%、四修饰各一次（R-3a 完整实例）', () => {
-  // 修饰数组 [1.1, 0.7, 0.9, 1.0]（hp/def/sp/mp）；FY 洗牌轨迹 ints=[1,2,1] 产生 hp+10%/def0%/sp-10%/mp-30%
+test('T-RO-2/R-3 专家：高属性 ×1.50、四因子乘性守恒（R-3a 完整实例）', () => {
+  // spread [2/3,1,1,1] 经 FY（ints=[1,2,1]）后仍为 [2/3,1,1,1] → hp 2/3；def 命中 ≥1 因子，无需换位
   const role = roles.instantiateRole(EXP_ATK, 'rare', stubSeq([1, 2, 1, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.deepEqual(role.stats, { hp: 121, atk: 16, def: 9, sp: 57, mp: 28 }, 'R-3a：hp 110×1.10=121；atk 13×1.20=15.6→16；sp 54×1.05=56.7→57；mp 28×1.00=28');
+  assert.deepEqual(role.stats, { hp: 70, atk: 27, def: 9, sp: 77, mp: 62 }, 'R-3a：hp 95×2/3×1.10=69.67→70；atk 22.5×1.20=27；def 8×1.15=9.2→9；sp 73×1.05=76.65→77');
 });
 
-test('T-RO-2/R-3b 专家四修饰覆盖：applyTypeModifier 每属性分配互斥的四种修饰', () => {
+test('T-RO-2/R-3b 专家乘性守恒：高属性 = 表值、四因子之积 = 1/high、def 不吃 <1 因子', () => {
   for (let i = 0; i < 80; i++) {
     const m = roles.applyTypeModifier(EXP_ATK, createRng(5000 + i));
-    const ratios = { hp: m.hp / 100, def: m.def / 8, sp: m.sp / 60, mp: m.mp / 40 };
-    const seen = Object.values(ratios).map((x) => Math.round(x * 100) / 100);
-    for (const e of [1.1, 0.7, 0.9, 1.0]) assert.ok(seen.includes(e), `缺修饰 ${e}: ${seen}`);
-    assert.equal(new Set(seen).size, 4, `四修饰互斥: ${seen}`);
+    const b = EXP_ATK.baseStats;
+    assert.equal(Math.round((m.atk / b.atk) * 1000) / 1000, 1.5, '高属性因子 = 表值 1.50');
+    const prod = (m.hp / b.hp) * (m.def / b.def) * (m.sp / b.sp) * (m.mp / b.mp);
+    assert.ok(Math.abs(prod - 1 / 1.5) < 1e-9, `四因子之积应 = 1/1.5（实际 ${prod}）`);
+    assert.ok(m.def / b.def >= 1 - 1e-9, `def 不吃 <1 因子（实际 ${m.def / b.def}）`);
+    const lows = [m.hp / b.hp, m.def / b.def, m.sp / b.sp, m.mp / b.mp].filter((f) => f < 1 - 1e-9);
+    assert.equal(lows.length, 1, `恰一个低因子（实际 ${lows.length}）`);
   }
-  // 高属性恒 +30%（atk）
   const m1 = roles.applyTypeModifier(EXP_ATK, createRng(9));
-  assert.equal(Math.round(m1.atk * 100) / 100, 13, 'atk 基础 10×1.3=13');
+  assert.equal(Math.round(m1.atk * 100) / 100, 22.5, 'atk 基础 15×1.5=22.5');
 });
 
 test('T-RO-7/R-4 模板 regen 进实例 + 插件 regen 由单一聚合并入面板（R-4b/c；不再写回 role.regen）', () => {
   const base = roles.instantiateRole(BAL, 'rare', stubSeq([1, 1, 1, 1, 1, 0, 0, 0, 0]));
   base.slots = [{ type: 'mp', pluginUid: null }, { type: 'sp', pluginUid: null }];
-  assert.deepEqual(base.regen, { mp: 1, sp: 2 }, 'R-4a');
+  assert.deepEqual(base.regen, { mp: 2, sp: 2 }, 'R-4a');
   const r1 = roles.equipPlugins(base, [{ id: 'rp_mp_regen', kind: 'rolePlugin', slot: 'mp', pointCost: 1, affixes: [{ id: 'mp_regen', params: { v: 1 } }] }]);
   assert.equal(r1.ok, true, r1.error);
   // 登记阶段**不改写 regen**（旧实现会写回 → 与 buildPanel 双计）
-  assert.deepEqual(r1.role.regen, { mp: 1, sp: 2 }, 'R-4b 登记不动 regen');
-  assert.equal(roles.getFinalStats(r1.role).regen.mp, 2, 'R-4b 面板：模板 1 + 词条 +1 = 2');
+  assert.deepEqual(r1.role.regen, { mp: 2, sp: 2 }, 'R-4b 登记不动 regen');
+  assert.equal(roles.getFinalStats(r1.role).regen.mp, 3, 'R-4b 面板：模板 2 + 词条 +1 = 3');
   const r2 = roles.equipPlugins(r1.role, [{ id: 'rp_sp_regen', kind: 'rolePlugin', slot: 'sp', pointCost: 1, affixes: [{ id: 'sp_regen', params: { v: 1 } }] }]);
   assert.equal(r2.ok, true, r2.error);
   assert.equal(roles.getFinalStats(r2.role).regen.sp, 3, 'R-4c');
-  assert.equal(roles.getFinalStats(r2.role).regen.mp, 2, 'R-4c 幂等：mp 不被叠加两次');
+  assert.equal(roles.getFinalStats(r2.role).regen.mp, 3, 'R-4c 幂等：mp 不被叠加两次');
 });
 
 test('T-RO-5/R-5 五维聚合：getFinalStats 幂等重算（R-5a/b）', () => {
@@ -180,7 +183,7 @@ test('T-RO-3/R-8 最终面板：getFinalStats（maxHp=hp、下限 1、regen/spec
   assert.equal(panel.maxHp, base.stats.hp, 'R-8d');
   assert.equal(panel.maxMp, base.stats.mp);
   assert.deepEqual(panel.stats, base.stats);
-  assert.deepEqual(panel.regen, { mp: 1, sp: 2 });
+  assert.deepEqual(panel.regen, { mp: 2, sp: 2 });
   assert.deepEqual(panel.special, {});
   // 下限 1：common 极低系数
   const low = roles.instantiateRole(BAL, 'common', stubSeq([0.80, 0.80, 0.80, 0.80, 0.80, 0, 0, 0, 0]));
@@ -190,7 +193,7 @@ test('T-RO-3/R-8 最终面板：getFinalStats（maxHp=hp、下限 1、regen/spec
 test('RO-10 补充分支：kind 不匹配拒绝；hp_regen 叠加（真实插件 rp_regen）', () => {
   const base = roles.instantiateRole(BAL, 'rare', stubSeq([1, 1, 1, 1, 1, 0, 0, 0, 0]));
   base.slots = [{ type: 'special', pluginUid: null }];
-  const km = roles.equipPlugins(base, [{ id: 'sp_mult', kind: 'skillPlugin', slot: 'basic', pointCost: 1, affixes: [] }]);
+  const km = roles.equipPlugins(base, [{ id: 'sk_mult', kind: 'skillPlugin', slot: 'general', pointCost: 1, affixes: [] }]);
   assert.equal(km.ok, false, 'kind_mismatch');
   assert.equal(km.error, 'kind_mismatch');
   const hr = roles.equipPlugins(base, [{ uid: 'r1', id: 'rp_regen', kind: 'rolePlugin', slot: 'special', pointCost: 1, affixes: [{ id: 'hp_regen', params: { v: 1 } }] }]);

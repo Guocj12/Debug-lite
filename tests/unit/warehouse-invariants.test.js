@@ -27,7 +27,7 @@ const PLUGIN_ATK_2 = 'wi_plugin_atk2';
 //   —— 2 个槽是为了让 WI-2（替换）与 WI-5（并发装配到同一**空闲**槽）都能构造出可达场景
 function fixtureWarehouse() {
   const skills = [1, 2, 3].map((i) => ({
-    uid: `wi_skill${i}`, kind: 'skill', templateId: 'skill_melee_whirl', name: `技能${i}`, quality: 'common',
+    uid: `wi_skill${i}`, kind: 'skill', templateId: 'skill_melee', name: `技能${i}`, quality: 'common',
     slotCount: 0, slots: [], params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
     unlockTier: 'common',
   }));
@@ -148,7 +148,7 @@ test('WI-3（审查 F-2 回归）：box.opened 防御分支超限时差额必须
       while (list.length < 499) {
         const n = list.length;
         list.push({
-          uid: `wi_fill_${n}`, kind: 'skillPlugin', id: 'sp_mult', name: 'filler', slot: 'basic',
+          uid: `wi_fill_${n}`, kind: 'skillPlugin', id: 'sk_mult', name: 'filler', slot: 'general',
           quality: 'common', tier: 1, affixes: [],
         });
       }
@@ -158,7 +158,7 @@ test('WI-3（审查 F-2 回归）：box.opened 防御分支超限时差额必须
     // 直接落一条 3 件的开箱记录（第 2、3 件必然超限）
     const ledger = require('../../server/store/ledger.js');
     const items = [0, 1, 2].map((i) => ({
-      uid: `wi_over_${i}`, kind: 'skillPlugin', id: 'sp_mult', name: `超限${i}`, slot: 'basic',
+      uid: `wi_over_${i}`, kind: 'skillPlugin', id: 'sk_mult', name: `超限${i}`, slot: 'general',
       quality: 'common', tier: 1, affixes: [],
     }));
     const rec = ledger.buildBoxRecord({ playerId, seed: 999, tier: 'common', times: 3, items, at: fx.clock() });

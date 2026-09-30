@@ -33,6 +33,12 @@ function actionOfPlan(plan, intent) {
   if (typeof p.dir === 'number') out.dir = p.dir;
   if (p.kind === 'cast' || p.kind === 'displacement') {
     out.sid = intent && typeof intent.sid === 'string' ? intent.sid : null;
+    // 2026-09-28（D-173）：帧 action 暴露技能身份与动画/音效键（前端按专属插件切图与名；无专属时为模板默认）
+    const sk = p.skill || null;
+    out.skillName = sk ? (sk.name === undefined ? null : sk.name) : null;
+    out.animKey = sk && sk.animKey !== undefined ? sk.animKey : null;
+    out.sfxKey = sk && sk.sfxKey !== undefined ? sk.sfxKey : null;
+    out.exclusiveId = sk && sk.exclusiveId !== undefined ? sk.exclusiveId : null;
   }
   if (p.kind === 'forced_move') out.cells = intent && typeof intent.cells === 'number' ? intent.cells : null;
   return out;
@@ -114,6 +120,23 @@ function createBattle(cfgIn, options) {
   const fieldApi = field.withLogger(logger);
   const CELL = cfg.cellPx;
 
+  // ---- 低血加攻（2026-09-28 内容设计 §5.4 `rp_lowhp`）----
+  // 语义：攻击者 **自身** `hp/maxHp < cfg.lowHpThreshold` 时，其 atk 获得 `special.lowHpAtk` 比例加成。
+  //   阈值入表（battle-config.lowHpThreshold，禁硬编码）；加成来自面板聚合的 special（items.applyAffixes）。
+  function lowHpAtkOf(actor) {
+    const spec = (actor && actor.special) || {};
+    const bonus = spec.lowHpAtk;
+    if (!(bonus > 0)) return 0;
+    const maxHp = actor.maxHp;
+    if (!(maxHp > 0)) return 0;
+    return actor.hp / maxHp < cfg.lowHpThreshold ? bonus : 0;
+  }
+
+  // 有效 atk = 面板 atk ×（1 + 低血加攻）；供弹幕/碰撞/撞基地三条 atk 路径共用（同一口径）
+  function effectiveAtk(actor) {
+    return actor.atk * (1 + lowHpAtkOf(actor));
+  }
+
   // ---- 完整伤害链路（systems/07-engine.md §4.4 八步；§4.5 背击；D-40..D-46/D-50/D-51/D-72）----
   // params: {mult, trueDamage, backstab, critRng, affixes, specials, sourceDir, hitUid}
   function dealDamage(attacker, defender, params) {
@@ -136,13 +159,16 @@ function createBattle(cfgIn, options) {
     const mult = p.mult === undefined ? cfg.baseHitMul : p.mult;
     const def = defender.defending ? defender.def * cfg.defendDefMul : defender.def;
     const reduction = p.trueDamage ? 1 : 1 - def / (def + cfg.defK);
-    // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击 ×1.5（critChance 消耗 crit 流）
+    // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击（暴击率消耗 crit 流）
+    //   暴击倍率 = 1 + battle-config.critBonus（2026-09-28 起 = 2.0）+ 面板/技能词条 special.critMul（`rp_critdmg`，无上限）
     const backM = p.backstab ? cfg.backstab : 1;
     const critChance = Math.min(1, ((attacker.special && attacker.special.critChance) || 0) + (skillSpecials.critChance || 0));
+    const critMulBonus = ((attacker.special && attacker.special.critMul) || 0) + (skillSpecials.critMul || 0);
     const crit = !!(critChance > 0 && rng.chance(critChance, 'crit'));
-    const critM = crit ? cfg.crit : 1;
-    // 步骤 6 倍率相乘后只取整一次（D-41），下限 1
-    const raw = attacker.atk * mult * reduction * backM * critM;
+    const critM = crit ? 1 + cfg.critBonus + critMulBonus : 1;
+    // 步骤 6 倍率相乘后只取整一次（D-41），下限 1（atk 取有效值：含低血加攻）
+    const atkEff = effectiveAtk(attacker);
+    const raw = atkEff * mult * reduction * backM * critM;
     const dmg = Math.max(1, Math.floor(raw));
     // 步骤 7 吸血（角色伤害；基地不吸血由调用方不走本函数）
     let lifesteal = 0;
@@ -161,7 +187,24 @@ function createBattle(cfgIn, options) {
     });
     // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害/附加真实伤害）
     for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
-    return { dmg, reduction, raw, mult, backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, lifesteal, dodged: false, dodgeChanceTotal };
+    // 荆棘反伤（`rp_thorns`，2026-09-28 内容设计 §5.4）：受击方按 `v × 攻击者有效 atk` 反弹真实伤害。
+    //   只在"真实打中"时触发（闪避/全程闪避已在前面 return）；不递归（直接扣 hp，不走本函数）。
+    let thornsDmg = 0;
+    const thorns = (defender.special && defender.special.thorns) || 0;
+    if (thorns > 0) {
+      thornsDmg = Math.max(1, Math.round(thorns * atkEff));
+      attacker.hp = Math.max(0, attacker.hp - thornsDmg);
+      logger.debug('damage', 'damage.thorns', `${defender.id} 荆棘反伤 ${attacker.id} ${thornsDmg}`, {
+        attacker: attacker.id, target: defender.id, thorns, atkEff, dmg: thornsDmg,
+      });
+      if (battleState._frameDamages) {
+        battleState._frameDamages.push({
+          target: attacker.owner, amount: thornsDmg, atX: defender.x, kind: 'thorns', srcUid: null,
+          attacker: defender.owner, crit: false, critM: 1, backstab: false, backM: 1, dodged: false,
+        });
+      }
+    }
+    return { dmg, reduction, raw, mult, backstab: !!p.backstab, crit, critM, trueDamage: !!p.trueDamage, lifesteal, thorns: thornsDmg, dodged: false, dodgeChanceTotal };
   }
 
   // 背击判定（§4.5，2026-09-12 拍板"追尾语义"并统一弹幕来源判定）：
@@ -176,7 +219,8 @@ function createBattle(cfgIn, options) {
   // 附加效果入列（§4.4 步骤 9）：结算规则全部来自词条注册表 hitEffect（affix-registry.json），
   // 不再按 affix.id 写分支；D-72②：位移全程免疫期间不吃控制/持续/附加伤害。
   function addAffixEffect(attacker, defender, affix, sourceDir) {
-    const def = AFFIXES[affix.id];
+    // 词条来源二选一：注册表 id（`{id, params}`）或**内联效果规格**（专属插件声明的 `{effect}`，值已内联、无 AffixFrom 引用）
+    const def = affix && affix.effect ? { hitEffect: affix.effect } : AFFIXES[affix.id];
     if (!def || !def.hitEffect) return; // skillOp / castEffect 类词条不在此结算
     const spec = def.hitEffect;
     const dir = sourceDir || attacker.facing || 1;
@@ -487,12 +531,13 @@ function createBattle(cfgIn, options) {
       const res = dealDamage(atk, def, {
         mult: h.payload.multiplier * h.falloffFactor,
         critRng, backstab, affixes: h.payload.affixes || [], specials: h.payload.specials || {},
+        trueDamage: h.payload.trueDamage === true, // 技能级真伤（专属/通用插件 setTrueDamage，2026-09-28）
         sourceDir: h.dir, hitUid: h.uid,
       });
       // D-167：伤害数值进帧（剥离 events 后，渲染方仍需"这一下打掉多少、是不是暴击/背击"）
       battleState._frameDamages.push({
         target: h.target, amount: res.dmg, atX: h.atX, kind: 'bullet', srcUid: h.uid,
-        attacker: h.owner, crit: res.crit === true, critM: res.crit ? cfg.crit : 1,
+        attacker: h.owner, crit: res.crit === true, critM: res.crit ? res.critM : 1,
         backstab: res.backstab === true, backM: res.backstab ? cfg.backstab : 1, dodged: res.dodged === true,
       });
     }
@@ -500,8 +545,8 @@ function createBattle(cfgIn, options) {
       // 双方各受对方 atk×0.8（D-10），走完整机制（闪避/暴击/背击/吸血，§4.3）；背击按位移后位置判定
       const c1 = dealDamage(p1, p2, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p1.x }, p2, 'melee') });
       const c2 = dealDamage(p2, p1, { mult: cfg.collisionDmgMul, critRng, backstab: isBackstab({ attackerX: p2.x }, p1, 'melee') });
-      battleState._frameDamages.push({ target: 'p2', amount: c1.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p1', crit: c1.crit === true, critM: c1.crit ? cfg.crit : 1, backstab: c1.backstab === true, backM: c1.backstab ? cfg.backstab : 1, dodged: c1.dodged === true });
-      battleState._frameDamages.push({ target: 'p1', amount: c2.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p2', crit: c2.crit === true, critM: c2.crit ? cfg.crit : 1, backstab: c2.backstab === true, backM: c2.backstab ? cfg.backstab : 1, dodged: c2.dodged === true });
+      battleState._frameDamages.push({ target: 'p2', amount: c1.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p1', crit: c1.crit === true, critM: c1.crit ? c1.critM : 1, backstab: c1.backstab === true, backM: c1.backstab ? cfg.backstab : 1, dodged: c1.dodged === true });
+      battleState._frameDamages.push({ target: 'p1', amount: c2.dmg, atX: resolved.collision.contactX, kind: 'collision', srcUid: null, attacker: 'p2', crit: c2.crit === true, critM: c2.crit ? c2.critM : 1, backstab: c2.backstab === true, backM: c2.backstab ? cfg.backstab : 1, dodged: c2.dodged === true });
     }
     // 撞基地：atk × baseHitMul 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）。
     // D-167：**逐条**结算（修前只看 `baseHit` 首项 ⇒ 同 tick 双方各自撞基地时第二个不掉血）
@@ -509,7 +554,8 @@ function createBattle(cfgIn, options) {
       const base = battleState.bases[bh.owner];
       const atk = bh.by;
       const reduction = 1 - base.def / (base.def + cfg.defK);
-      const amount = Math.max(1, Math.floor(atk.atk * cfg.baseHitMul * reduction));
+      // 撞基地：有效 atk（含低血加攻）× baseHitMul 走基地 def 减伤（D-34/D-61；无暴击/背击/吸血）。
+      const amount = Math.max(1, Math.floor(effectiveAtk(atk) * cfg.baseHitMul * reduction));
       base.hp = Math.max(0, base.hp - amount);
       battleState._frameDamages.push({ target: bh.owner, amount, atX: bh.atX, kind: 'base', srcUid: null, attacker: atk.owner || null, crit: false, critM: 1, backstab: false, backM: 1, dodged: false });
     }

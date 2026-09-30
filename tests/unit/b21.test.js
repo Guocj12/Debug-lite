@@ -1,7 +1,8 @@
 'use strict';
 // B21 属性测试全套（T-PB-10 序列化往返包裹 T-PB-1..10 全量）+ 数值校准回归
-// —— 依据 tasks §3.6（T-PB-1..10）；D-127/D-128（dodge 定稿 0.20 / defK 入表 40 / 附加效果数值定稿 / melee 冻结）。
-// 全部数值机器推导：消耗补偿 = costDeltaBase[quality]×tier；减伤 = 1 − def/(def+defK)。
+// —— 依据 tasks §3.6（T-PB-1..10）；D-127/D-128（dodge 定稿 0.20 / defK 入表 40 / 附加效果数值定稿 / melee 冻结）；
+// docs/content-design.md §6（2026-09-28 D-173：通用技能插件零代价，`costDeltaByTier` 退役）。
+// 全部数值机器推导：通用插件不改消耗；减伤 = 1 − def/(def+defK)。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const items = require('../../server/core/items.js');
@@ -17,7 +18,7 @@ function rtWH() {
   wh.buckets.rolePlugin.push(
     { uid: 'pa', kind: 'rolePlugin', id: 'atk_up', slot: 'atk', quality: 'rare', tier: 2, pointCost: 2, affixes: [], equipped: false },
     { uid: 'pb', kind: 'rolePlugin', id: 'hp_up', slot: 'hp', quality: 'rare', tier: 2, pointCost: 2, affixes: [], equipped: false },
-    { uid: 'qx1', kind: 'skillPlugin', id: 'sp_cost_down', slot: 'basic', quality: 'common', tier: 1, affixes: [{ id: 'cost_down', desc: '−20%', params: { v: 0.2 } }], costDeltaByTier: null, equipped: false },
+    { uid: 'qx1', kind: 'skillPlugin', id: 'sk_mp_down', slot: 'general', quality: 'common', tier: 1, affixes: [{ id: 'cost_down_mp', desc: '−20%', params: { v: 0.2 } }], equipped: false },
   );
   wh.buckets.role[0].slots.push({ type: 'sp', pluginUid: null }); // 点数/门控测试用第 3 槽
   return JSON.parse(JSON.stringify(wh)); // T-PB-10 外层往返
@@ -52,23 +53,23 @@ test('T-PB-10 + T-PB-4 档位单调：往返物品的品质/档位与数据表�
   const qualities = require('../../server/data/qualities.json').qualities;
   for (let i = 1; i < qualities.length; i++) {
     assert.ok(qualities[i].statRange[0] >= qualities[i - 1].statRange[0], '档位单调（min 不减）');
-    assert.ok(qualities[i].pluginPoints > qualities[i - 1].pluginPoints, '点数严格增');
+    assert.ok(qualities[i].pluginPointsRange[1] > qualities[i - 1].pluginPointsRange[1], '点数上界严格增');
   }
   const plugins = wh.buckets.rolePlugin.concat(wh.buckets.skillPlugin);
   for (const p of plugins) assert.ok(Number.isInteger(p.tier) && p.tier >= 1, `${p.uid} tier 有效`);
 });
 
-test('T-PB-10 + T-PB-5/6 消耗补偿与聚合：往返后消耗补偿与非声明维不变 + 面板 1.38/16 一致', () => {
+test('T-PB-10 + T-PB-5/6 零代价与聚合：往返后消耗不变 + 面板 1.38/10 一致', () => {
   const wh = JSON.parse(JSON.stringify(LD.warehouse)); // T-PB-10 往返态
   const ld = JSON.parse(JSON.stringify(LD.loadout)); // T-PB-10 外层的 loadout 侧
   const p = loadout.buildPanel(ld, { warehouse: wh, tier: 'mythic' });
   assert.equal(p.ok, true, JSON.stringify(p.errors));
-  assert.equal(p.panel.skills[0].params.cost.mp, 16, '10 + costDeltaBase.rare(3)×tier2 = 16');
-  assert.equal(p.panel.skills[0].params.cost.hp, 0, 'hp 非声明维不变');
+  assert.equal(p.panel.skills[0].params.cost.mp, 10, '通用插件零代价（D-173：qa 只给倍率词条）');
+  assert.equal(p.panel.skills[0].params.cost.hp, 0, 'hp 维不变');
   assert.equal(p.panel.skills[0].params.multiplier, 1.38, '1.2×1.15 = 1.38');
-  // 减耗类：cost_down ceil（S-3；本地构造带词条插件——fixture q1 单词条为空）
+  // 减耗类：cost_down ceil（S-3）
   const base = { type: 'straight', cost: { hp: 0, mp: 10, sp: 0 }, multiplier: 1.2, cooldown: 3, bulletLevel: 3, range: 10, bulletCount: 3, affixes: [] };
-  const costDown = { uid: 'q2', kind: 'skillPlugin', id: 'sp_cost_down', slot: 'basic', quality: 'common', tier: 1, affixes: [{ id: 'cost_down', desc: '−20%', params: { v: 0.2 } }], costDeltaByTier: null, equipped: false };
+  const costDown = { uid: 'q2', kind: 'skillPlugin', id: 'sk_mp_down', slot: 'general', quality: 'common', tier: 1, affixes: [{ id: 'cost_down_mp', desc: '−20%', params: { v: 0.2 } }], equipped: false };
   const down = skills.applySkillPlugins({ ...base }, [costDown]);
   assert.equal(down.cost.mp, 8, '10×0.8 ceil = 8');
 });
@@ -95,7 +96,7 @@ test('T-PB-10 + T-PB-8/9 唯一性与引用完整性：往返后双引用/悬挂
   const wh = JSON.parse(JSON.stringify(LD.warehouse)); // T-PB-10 往返态
   const ld = JSON.parse(JSON.stringify(LD.loadout));
   const f2 = JSON.parse(JSON.stringify(ld));
-  f2.skills[0].slots = [{ type: 'basic', pluginUid: 'pa' }, { type: 'basic', pluginUid: 'pa' }];
+  f2.skills[0].slots = [{ type: 'general', pluginUid: 'qx' }, { type: 'general', pluginUid: 'qx' }];
   const v2 = loadout.validateLoadout(f2, { warehouse: wh, tier: 'mythic' });
   assert.equal(v2.ok, false, '双引用拒绝（T-PB-8）');
   const f3 = JSON.parse(JSON.stringify(ld));
@@ -122,15 +123,32 @@ test('D-127/D-128 校准冻结：dodgeChanceBonus=0.20、defK=40 入表且引擎
   assert.equal(dodged.dodged, true);
 });
 
-test('D-128 附加效果数值冻结：插件数据含 stun/knockback/pull/dot/true_dmg；melee 射程不可增强', () => {
+test('D-128 附加效果数值冻结：专属插件内联 control/dot 效果；melee 射程不可增强且零代价', () => {
   const PLUGINS = require('../../server/data/plugins.json').plugins;
-  for (const id of ['sp_stun', 'sp_knockback', 'sp_pull', 'sp_dot', 'sp_true_dmg']) {
-    assert.ok(PLUGINS.some((x) => x.id === id), `插件 ${id} 存在（附加效果数值由词条档位给出）`);
+  const REGISTRY = require('../../server/data/affix-registry.json').affixes;
+  // 词条层仍登记 control/dot 语义（stun/knockback/pull/dot），数值由词条 params.v 给出
+  for (const id of ['stun', 'knockback', 'pull', 'dot']) {
+    assert.ok(REGISTRY[id] && REGISTRY[id].hitEffect, `词条 ${id} 登记为命中效果（附加效果数值冻结）`);
   }
+  // 内容层：专属插件用内联 hitEffects/castEffects 表达附加效果，数值必须是数字（可机器复算）
+  const exclusives = PLUGINS.filter((x) => x.slot === 'exclusive');
+  assert.ok(exclusives.length > 0, '存在专属插件');
+  let effectCount = 0;
+  for (const p of exclusives) {
+    const specs = [...(p.exclusive.hitEffects || []), ...(p.exclusive.castEffects || [])];
+    for (const s of specs) {
+      effectCount += 1;
+      for (const [k, v] of Object.entries(s)) {
+        if (k === 'kind' || k === 'stat' || k.endsWith('From') || k === 'params') continue; // *From = 取值来源（字符串键名）
+        assert.equal(typeof v, 'number', `${p.id} 效果字段 ${k} 应为数值`);
+      }
+    }
+  }
+  assert.ok(effectCount > 0, '专属插件携带附加效果（stun/dot/增益）');
   // melee 射程不可增强（B6 登记冻结）
   const melee = { type: 'melee', cost: { hp: 0, mp: 10, sp: 0 }, multiplier: 1.2, cooldown: 3, bulletLevel: 3, affixes: [] };
-  const rangeUp = { uid: 'r1', kind: 'skillPlugin', id: 'sp_range', slot: 'basic', quality: 'rare', tier: 1, affixes: [{ id: 'range_plus', params: { v: 2 } }], costDeltaByTier: { mp: [2, 4, 6] } };
+  const rangeUp = { uid: 'r1', kind: 'skillPlugin', id: 'sk_range', slot: 'general', quality: 'rare', tier: 1, affixes: [{ id: 'range_plus', params: { v: 2 } }] };
   const applied = skills.applySkillPlugins(melee, [rangeUp]);
   assert.equal(applied.range, undefined, 'melee 无射程可增强（冻结）');
-  assert.equal(applied.cost.mp, 13, 'melee 消耗补偿仍生效：10 + 3×1 = 13');
+  assert.equal(applied.cost.mp, 10, '通用插件零代价（D-173）');
 });

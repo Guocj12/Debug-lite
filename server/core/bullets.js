@@ -77,7 +77,7 @@ function makeBullets(logger) {
         if (!aliveSet.has(b1.uid)) continue;
         for (const b2 of battle.bullets) {
           if (b2.uid === b1.uid || !aliveSet.has(b2.uid) || b2.owner === b1.owner) continue;
-          if (Math.abs(b1.x0 - b2.x0) > 0.5) continue;
+          if (Math.abs(b1.x0 - b2.x0) > 0.5) continue; // cl:0.5 位置容差（通用精度常量，非战斗数值；与 battle-config.lowHpThreshold 撞值）
           battleResolve(b1, b2, Math.round((b1.x0 + b2.x0) / 2), aliveSet, events);
           foundT0 = true;
           break outer0;

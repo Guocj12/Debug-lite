@@ -12,7 +12,7 @@ const engine = require('../../server/core/engine.js');
 const CONFIG = {
   cellPx: 64, fieldPx: 1024, actorHalfPx: 32, minGapPx: 64, movePx: 64, dodgePx: 128,
   collisionDmgMul: 0.8, baseHitMul: 1.0, baseDef: 64, defendDefMul: 1.6,
-  dodgeChanceBonus: 0.2, backstab: 1.5, crit: 1.5, lifestealCap: 1,
+  dodgeChanceBonus: 0.2, backstab: 1.5, critBonus: 1.0, lifestealCap: 1,
   overtimeStart: 48, overtimeRatio: 0.0625, hardCapTick: 64,
   startX: { p1: 224, p2: 800 }, startFacing: { p1: 1, p2: -1 },
   bases: { p1: { hp: 100, maxHp: 100, def: 64 }, p2: { hp: 100, maxHp: 100, def: 64 } },
@@ -80,11 +80,11 @@ test('DM-3 背击 ×1.5（D-42/D-50/D-51）', () => {
   assert.equal(r.backstab, true);
 });
 
-test('T-BT-6 背击×暴击 = ×2.25（D-42）', () => {
+test('T-BT-6 背击×暴击 = ×3.0（D-42；2026-09-28 起 crit 倍率 2.0）', () => {
   const { b } = mkBattle(mkActor({ special: { critChance: 1 } }), mkDef());
   const r = b.dealDamage(b.state.players.p1, b.state.players.p2, { backstab: true, critRng: critAlways() });
   assert.equal(r.crit, true);
-  assert.equal(r.dmg, 22, '9×2.25=20.25→20？——12×0.816327=9.796；×2.25=22.041→22');
+  assert.equal(r.dmg, 29, '12×0.816327=9.796；×1.5(背击)×2.0(暴击)=29.39→29');
 });
 
 test('DM-5 真实伤害：不吃护甲（max(1, floor(atk×mult))）', () => {
@@ -111,7 +111,7 @@ test('DM-7 damage.calc 记录每步中间值（mult/减伤/背击/暴击/吸血�
   b.dealDamage(b.state.players.p1, b.state.players.p2, { backstab: true, critRng: critAlways() });
   const calc = logger.records.find((x) => x.event === 'damage.calc');
   assert.ok(calc, '应有 damage.calc');
-  assert.equal(calc.data.critM, 1.5);
+  assert.equal(calc.data.critM, 2.0);
   assert.equal(calc.data.backM, 1.5);
   assert.ok(typeof calc.data.reduction === 'number');
   assert.ok(typeof calc.data.raw === 'number');
@@ -164,17 +164,17 @@ test('T-BT-7 防御单调：def 越高伤害越低（0 → 满伤；递增）', 
 });
 
 test('DM-11 引擎集成：技能命中走完整链路（暴击流 per tick）', () => {
-  const { b } = mkBattle(mkActor({ x: 400 }), mkDef({ x: 800, hp: 100 }));
+  const { b } = mkBattle(mkActor({ x: 400 }), mkDef({ x: 600, hp: 100 }));
   b.state.players.p1.skills = { precise: preciseSkill() };
   const diff = b.step({ actions: { p1: 'skill:precise', p2: 'wait' } });
-  // crit 流 chance 0 → 无暴击 → 9 伤
+  // crit 流 chance 0 → 无暴击 → 9 伤（平射射程 5 格 = 320px ≥ 200px 间距）
   assert.equal(b.state.players.p2.hp, 91, '暴击流 0 → 9');
   assert.ok(diff.tick === 1);
 });
 
 function preciseSkill() {
   const skills = require('../../server/core/skills.js');
-  const sk = skills.instantiateSkill('skill_straight_precise', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
+  const sk = skills.instantiateSkill('skill_straight', 'rare', { float: () => 1.0, int: () => 0, pick: () => 0 });
   sk.multiplier = 1.0;
   return sk;
 }

@@ -14,7 +14,7 @@
     "atk": 12,
     "def": 8,
     "critChance": 0.5,
-    "skill": "skill_straight_precise（multiplier 1.0）",
+    "skill": "skill_straight（multiplier 1.0）",
     "actionSource": "固定行动计划（p1 数组）"
    },
    "p2": {
@@ -27,7 +27,7 @@
     "atk": 19,
     "def": 9,
     "critChance": 0,
-    "skill": "skill_dash_bash（multiplier 1.3 / distance 4 / passThroughEnemy false）",
+    "skill": "skill_displace（multiplier 1.3 / distance 4 / passThroughEnemy false）",
     "actionSource": "固定行动计划（p2 数组）"
    }
   }
@@ -165,7 +165,7 @@
     "facing": -1,
     "hp": 100,
     "mp": 40,
-    "sp": 52
+    "sp": 55
    },
    "bases": {
     "p1": 100,
@@ -175,42 +175,32 @@
     {
      "uid": "b_0",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 736
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_1",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 672
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_2",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 608
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_3",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 544
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_4",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 480
+     "level": 1,
+     "dir": -1
     }
    ],
    "bulletHits": [],
@@ -223,7 +213,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t3:7",
-     "msg": "skill skill_dash_bash cast",
+     "msg": "skill skill_displace cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -343,7 +333,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t3:23",
-     "msg": "p2 hp 100->100 mp 40->40 sp 50->52",
+     "msg": "p2 hp 100->100 mp 40->40 sp 53->55",
      "atX": null,
      "uid": null,
      "winner": null
@@ -361,8 +351,8 @@
     "x": 288,
     "facing": 1,
     "hp": 100,
-    "mp": 40,
-    "sp": 56
+    "mp": 37,
+    "sp": 60
    },
    "p2": {
     "fromX": 480,
@@ -370,7 +360,7 @@
     "facing": -1,
     "hp": 100,
     "mp": 40,
-    "sp": 54
+    "sp": 57
    },
    "bases": {
     "p1": 100,
@@ -380,17 +370,15 @@
     {
      "uid": "b_5",
      "owner": "p1",
-     "type": "straight",
      "level": 3,
-     "dir": 1,
-     "x0": 288
+     "dir": 1
     }
    ],
    "bulletHits": [
     {
      "uid": "b_5",
      "target": "p2",
-     "atX": 442
+     "atX": 425
     }
    ],
    "collision": null,
@@ -402,7 +390,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t4:7",
-     "msg": "skill skill_straight_precise cast",
+     "msg": "skill skill_straight cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -432,8 +420,8 @@
      "channel": "bullets",
      "event": "bullet.hit",
      "cid": "t4:12",
-     "msg": "b_5 -> p2 @442",
-     "atX": 442,
+     "msg": "b_5 -> p2 @425",
+     "atX": 425,
      "uid": "b_5",
      "winner": null
     },
@@ -462,7 +450,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t4:17",
-     "msg": "p1 hp 100->100 mp 40->40 sp 54->56",
+     "msg": "p1 hp 100->100 mp 36->37 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -472,7 +460,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t4:18",
-     "msg": "p2 hp 100->100 mp 40->40 sp 52->54",
+     "msg": "p2 hp 100->100 mp 40->40 sp 55->57",
      "atX": null,
      "uid": null,
      "winner": null
@@ -490,8 +478,8 @@
     "x": 352,
     "facing": 1,
     "hp": 100,
-    "mp": 40,
-    "sp": 58
+    "mp": 38,
+    "sp": 60
    },
    "p2": {
     "fromX": 352,
@@ -499,7 +487,7 @@
     "facing": -1,
     "hp": 100,
     "mp": 40,
-    "sp": 56
+    "sp": 59
    },
    "bases": {
     "p1": 100,
@@ -536,7 +524,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t5:13",
-     "msg": "p1 hp 100->100 mp 40->40 sp 56->58",
+     "msg": "p1 hp 100->100 mp 37->38 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -546,7 +534,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t5:14",
-     "msg": "p2 hp 100->100 mp 40->40 sp 54->56",
+     "msg": "p2 hp 100->100 mp 40->40 sp 57->59",
      "atX": null,
      "uid": null,
      "winner": null
@@ -564,8 +552,8 @@
     "x": 352,
     "facing": 1,
     "hp": 100,
-    "mp": 40,
-    "sp": 54
+    "mp": 35,
+    "sp": 60
    },
    "p2": {
     "fromX": 416,
@@ -573,7 +561,7 @@
     "facing": -1,
     "hp": 91,
     "mp": 40,
-    "sp": 58
+    "sp": 60
    },
    "bases": {
     "p1": 100,
@@ -583,10 +571,8 @@
     {
      "uid": "b_6",
      "owner": "p1",
-     "type": "straight",
      "level": 3,
-     "dir": 1,
-     "x0": 352
+     "dir": 1
     }
    ],
    "bulletHits": [
@@ -620,7 +606,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t6:7",
-     "msg": "skill skill_straight_precise cast",
+     "msg": "skill skill_straight cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -670,7 +656,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t6:16",
-     "msg": "p1 hp 100->100 mp 40->40 sp 52->54",
+     "msg": "p1 hp 100->100 mp 34->35 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -680,7 +666,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t6:17",
-     "msg": "p2 hp 91->91 mp 40->40 sp 56->58",
+     "msg": "p2 hp 91->91 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -698,8 +684,8 @@
     "x": 224,
     "facing": 1,
     "hp": 80,
-    "mp": 40,
-    "sp": 56
+    "mp": 36,
+    "sp": 60
    },
    "p2": {
     "fromX": 416,
@@ -707,7 +693,7 @@
     "facing": -1,
     "hp": 91,
     "mp": 40,
-    "sp": 50
+    "sp": 55
    },
    "bases": {
     "p1": 100,
@@ -717,42 +703,32 @@
     {
      "uid": "b_7",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 416
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_8",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 352
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_9",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 288
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_10",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 224
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_11",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 160
+     "level": 1,
+     "dir": -1
     }
    ],
    "bulletHits": [
@@ -786,7 +762,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t7:7",
-     "msg": "skill skill_dash_bash cast",
+     "msg": "skill skill_displace cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -936,7 +912,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t7:26",
-     "msg": "p1 hp 80->80 mp 40->40 sp 54->56",
+     "msg": "p1 hp 80->80 mp 35->36 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -946,7 +922,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t7:27",
-     "msg": "p2 hp 91->91 mp 40->40 sp 48->50",
+     "msg": "p2 hp 91->91 mp 40->40 sp 53->55",
      "atX": null,
      "uid": null,
      "winner": null
@@ -964,8 +940,8 @@
     "x": 224,
     "facing": 1,
     "hp": 80,
-    "mp": 40,
-    "sp": 58
+    "mp": 37,
+    "sp": 60
    },
    "p2": {
     "fromX": 160,
@@ -973,7 +949,7 @@
     "facing": -1,
     "hp": 91,
     "mp": 40,
-    "sp": 52
+    "sp": 57
    },
    "bases": {
     "p1": 100,
@@ -1000,7 +976,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t8:12",
-     "msg": "p1 hp 80->80 mp 40->40 sp 56->58",
+     "msg": "p1 hp 80->80 mp 36->37 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1010,7 +986,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t8:13",
-     "msg": "p2 hp 91->91 mp 40->40 sp 50->52",
+     "msg": "p2 hp 91->91 mp 40->40 sp 55->57",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1028,7 +1004,7 @@
     "x": 224,
     "facing": 1,
     "hp": 68,
-    "mp": 40,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -1037,7 +1013,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 54
+    "sp": 59
    },
    "bases": {
     "p1": 100,
@@ -1113,7 +1089,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t9:14",
-     "msg": "p1 hp 68->68 mp 40->40 sp 58->60",
+     "msg": "p1 hp 68->68 mp 37->38 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1123,7 +1099,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t9:15",
-     "msg": "p2 hp 84->84 mp 40->40 sp 52->54",
+     "msg": "p2 hp 84->84 mp 40->40 sp 57->59",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1141,7 +1117,7 @@
     "x": 160,
     "facing": 1,
     "hp": 68,
-    "mp": 40,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -1150,7 +1126,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 56
+    "sp": 60
    },
    "bases": {
     "p1": 100,
@@ -1187,7 +1163,17 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t10:13",
-     "msg": "p2 hp 84->84 mp 40->40 sp 54->56",
+     "msg": "p1 hp 68->68 mp 38->39 sp 60->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t10:14",
+     "msg": "p2 hp 84->84 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1205,8 +1191,8 @@
     "x": 160,
     "facing": 1,
     "hp": 48,
-    "mp": 40,
-    "sp": 56
+    "mp": 36,
+    "sp": 60
    },
    "p2": {
     "fromX": 224,
@@ -1214,7 +1200,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 48
+    "sp": 55
    },
    "bases": {
     "p1": 95,
@@ -1224,42 +1210,32 @@
     {
      "uid": "b_12",
      "owner": "p1",
-     "type": "straight",
      "level": 3,
-     "dir": 1,
-     "x0": 160
+     "dir": 1
     },
     {
      "uid": "b_13",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 224
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_14",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 160
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_15",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 96
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_16",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 32
+     "level": 1,
+     "dir": -1
     }
    ],
    "bulletHits": [
@@ -1293,7 +1269,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t11:7",
-     "msg": "skill skill_straight_precise cast",
+     "msg": "skill skill_straight cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1313,7 +1289,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t11:9",
-     "msg": "skill skill_dash_bash cast",
+     "msg": "skill skill_displace cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1433,7 +1409,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t11:25",
-     "msg": "p1 hp 48->48 mp 40->40 sp 54->56",
+     "msg": "p1 hp 48->48 mp 35->36 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1443,7 +1419,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t11:26",
-     "msg": "p2 hp 84->84 mp 40->40 sp 46->48",
+     "msg": "p2 hp 84->84 mp 40->40 sp 53->55",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1461,8 +1437,8 @@
     "x": 288,
     "facing": 1,
     "hp": 48,
-    "mp": 40,
-    "sp": 58
+    "mp": 37,
+    "sp": 60
    },
    "p2": {
     "fromX": 224,
@@ -1470,7 +1446,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 50
+    "sp": 57
    },
    "bases": {
     "p1": 95,
@@ -1497,7 +1473,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t12:12",
-     "msg": "p1 hp 48->48 mp 40->40 sp 56->58",
+     "msg": "p1 hp 48->48 mp 36->37 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1507,7 +1483,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t12:13",
-     "msg": "p2 hp 84->84 mp 40->40 sp 48->50",
+     "msg": "p2 hp 84->84 mp 40->40 sp 55->57",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1525,7 +1501,7 @@
     "x": 288,
     "facing": 1,
     "hp": 48,
-    "mp": 40,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -1534,7 +1510,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 52
+    "sp": 59
    },
    "bases": {
     "p1": 95,
@@ -1561,7 +1537,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t13:12",
-     "msg": "p1 hp 48->48 mp 40->40 sp 58->60",
+     "msg": "p1 hp 48->48 mp 37->38 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1571,7 +1547,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t13:13",
-     "msg": "p2 hp 84->84 mp 40->40 sp 50->52",
+     "msg": "p2 hp 84->84 mp 40->40 sp 57->59",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1589,7 +1565,7 @@
     "x": 224,
     "facing": 1,
     "hp": 48,
-    "mp": 40,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -1598,7 +1574,7 @@
     "facing": -1,
     "hp": 84,
     "mp": 40,
-    "sp": 54
+    "sp": 60
    },
    "bases": {
     "p1": 95,
@@ -1635,7 +1611,17 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t14:13",
-     "msg": "p2 hp 84->84 mp 40->40 sp 52->54",
+     "msg": "p1 hp 48->48 mp 38->39 sp 60->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t14:14",
+     "msg": "p2 hp 84->84 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1653,8 +1639,8 @@
     "x": 224,
     "facing": 1,
     "hp": 16,
-    "mp": 40,
-    "sp": 56
+    "mp": 36,
+    "sp": 60
    },
    "p2": {
     "fromX": 288,
@@ -1662,7 +1648,7 @@
     "facing": -1,
     "hp": 77,
     "mp": 40,
-    "sp": 46
+    "sp": 55
    },
    "bases": {
     "p1": 95,
@@ -1672,50 +1658,38 @@
     {
      "uid": "b_17",
      "owner": "p1",
-     "type": "straight",
      "level": 3,
-     "dir": 1,
-     "x0": 224
+     "dir": 1
     },
     {
      "uid": "b_18",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 288
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_19",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 224
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_20",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 160
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_21",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 96
+     "level": 1,
+     "dir": -1
     },
     {
      "uid": "b_22",
      "owner": "p2",
-     "type": "aoe",
-     "level": 2,
-     "dir": -1,
-     "x0": 32
+     "level": 1,
+     "dir": -1
     }
    ],
    "bulletHits": [
@@ -1777,7 +1751,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t15:7",
-     "msg": "skill skill_straight_precise cast",
+     "msg": "skill skill_straight cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1797,7 +1771,7 @@
      "channel": "skills",
      "event": "skill.cast",
      "cid": "t15:9",
-     "msg": "skill skill_dash_bash cast",
+     "msg": "skill skill_displace cast",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1967,7 +1941,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t15:30",
-     "msg": "p1 hp 16->16 mp 40->40 sp 54->56",
+     "msg": "p1 hp 16->16 mp 35->36 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1977,7 +1951,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t15:31",
-     "msg": "p2 hp 77->77 mp 40->40 sp 44->46",
+     "msg": "p2 hp 77->77 mp 40->40 sp 53->55",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1995,8 +1969,8 @@
     "x": 96,
     "facing": 1,
     "hp": 16,
-    "mp": 40,
-    "sp": 58
+    "mp": 37,
+    "sp": 60
    },
    "p2": {
     "fromX": 288,
@@ -2004,7 +1978,7 @@
     "facing": -1,
     "hp": 77,
     "mp": 40,
-    "sp": 48
+    "sp": 57
    },
    "bases": {
     "p1": 95,
@@ -2031,7 +2005,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t16:12",
-     "msg": "p1 hp 16->16 mp 40->40 sp 56->58",
+     "msg": "p1 hp 16->16 mp 36->37 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2041,7 +2015,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t16:13",
-     "msg": "p2 hp 77->77 mp 40->40 sp 46->48",
+     "msg": "p2 hp 77->77 mp 40->40 sp 55->57",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2059,7 +2033,7 @@
     "x": 160,
     "facing": 1,
     "hp": 16,
-    "mp": 40,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -2068,7 +2042,7 @@
     "facing": -1,
     "hp": 77,
     "mp": 40,
-    "sp": 50
+    "sp": 59
    },
    "bases": {
     "p1": 95,
@@ -2105,7 +2079,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t17:13",
-     "msg": "p1 hp 16->16 mp 40->40 sp 58->60",
+     "msg": "p1 hp 16->16 mp 37->38 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2115,7 +2089,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t17:14",
-     "msg": "p2 hp 77->77 mp 40->40 sp 48->50",
+     "msg": "p2 hp 77->77 mp 40->40 sp 57->59",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2133,7 +2107,7 @@
     "x": 160,
     "facing": 1,
     "hp": 0,
-    "mp": 40,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -2142,7 +2116,7 @@
     "facing": -1,
     "hp": 66,
     "mp": 40,
-    "sp": 52
+    "sp": 60
    },
    "bases": {
     "p1": 95,
@@ -2221,7 +2195,17 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t18:14",
-     "msg": "p2 hp 66->66 mp 40->40 sp 50->52",
+     "msg": "p1 hp 0->0 mp 38->39 sp 60->60",
+     "atX": null,
+     "uid": null,
+     "winner": null
+    },
+    {
+     "level": "trace",
+     "channel": "engine",
+     "event": "resource.regen",
+     "cid": "t18:15",
+     "msg": "p2 hp 66->66 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2230,7 +2214,7 @@
      "level": "info",
      "channel": "engine",
      "event": "battle.judge",
-     "cid": "t18:17",
+     "cid": "t18:18",
      "msg": "winner=p2",
      "atX": null,
      "uid": null,
@@ -2240,7 +2224,7 @@
      "level": "info",
      "channel": "engine",
      "event": "battle.end",
-     "cid": "t18:18",
+     "cid": "t18:19",
      "msg": "battle end @tick 18",
      "atX": null,
      "uid": null,
@@ -2255,41 +2239,37 @@
    "reason": null
   },
   "fireballImpact": {
-   "template": "skill_vert_fireball",
-   "name": "火球术",
+   "template": "skill_vertical",
+   "name": "定点",
    "type": "vertical",
-   "rangeCells": 8,
+   "rangeCells": 5,
    "area": [
-    -1,
-    1
+    0,
+    0
    ],
-   "bulletLevel": 3,
+   "bulletLevel": 4,
    "p2AtDocPosition": {
     "casterX": 800,
     "casterFacing": -1,
-    "expression": "clampX(800 + (-1) * 8 * 64)",
-    "unclamped": 288,
-    "impactX": 288,
-    "impactCell": 4,
+    "expression": "clampX(800 + (-1) * 5 * 64)",
+    "unclamped": 480,
+    "impactX": 480,
+    "impactCell": 7,
     "clamped": false,
     "xCenters": [
-     352,
-     288,
-     224
+     480
     ]
    },
    "p1AtDocPosition": {
     "casterX": 224,
     "casterFacing": 1,
-    "expression": "clampX(224 + (1) * 8 * 64)",
-    "unclamped": 736,
-    "impactX": 736,
-    "impactCell": 11,
+    "expression": "clampX(224 + (1) * 5 * 64)",
+    "unclamped": 544,
+    "impactX": 544,
+    "impactCell": 8,
     "clamped": false,
     "xCenters": [
-     672,
-     736,
-     800
+     544
     ]
    }
   },
@@ -2337,7 +2317,7 @@
    {
     "raw": "turn",
     "normalized": {
-     "type": "wait"
+     "type": "turn"
     }
    },
    {
@@ -2363,8 +2343,8 @@
   ],
   "facingConstant": true,
   "section32Collision": {
-   "p1Skill": "突击盾",
-   "p2Skill": "火球术",
+   "p1Skill": "位移",
+   "p2Skill": "定点",
    "p1PathCells": [
     224,
     288,
@@ -2377,102 +2357,67 @@
     "to": 480,
     "cells": 4
    },
-   "p2ImpactX": 288,
-   "p2ImpactCell": 4,
-   "p2RangeCells": 8,
+   "p2ImpactX": 480,
+   "p2ImpactCell": 7,
+   "p2RangeCells": 5,
    "p2AoeCells": [
-    352,
-    288,
-    224
+    480
    ],
    "spawned": [
     {
      "uid": "b_0",
      "owner": "p1",
-     "level": 2,
+     "level": 1,
      "x0": 224,
      "srcType": "displacement"
     },
     {
      "uid": "b_1",
      "owner": "p1",
-     "level": 2,
+     "level": 1,
      "x0": 288,
      "srcType": "displacement"
     },
     {
      "uid": "b_2",
      "owner": "p1",
-     "level": 2,
+     "level": 1,
      "x0": 352,
      "srcType": "displacement"
     },
     {
      "uid": "b_3",
      "owner": "p1",
-     "level": 2,
+     "level": 1,
      "x0": 416,
      "srcType": "displacement"
     },
     {
      "uid": "b_4",
      "owner": "p1",
-     "level": 2,
+     "level": 1,
      "x0": 480,
      "srcType": "displacement"
     },
     {
      "uid": "b_5",
      "owner": "p2",
-     "level": 3,
-     "x0": 352,
-     "srcType": "vertical"
-    },
-    {
-     "uid": "b_6",
-     "owner": "p2",
-     "level": 3,
-     "x0": 288,
-     "srcType": "vertical"
-    },
-    {
-     "uid": "b_7",
-     "owner": "p2",
-     "level": 3,
-     "x0": 224,
+     "level": 4,
+     "x0": 480,
      "srcType": "vertical"
     }
    ],
    "collides": [
     {
-     "atX": 224,
-     "a": "b_0",
-     "b": "b_7",
-     "winner": "b_0"
-    },
-    {
-     "atX": 288,
-     "a": "b_1",
-     "b": "b_6",
-     "winner": "b_1"
-    },
-    {
-     "atX": 352,
-     "a": "b_2",
+     "atX": 480,
+     "a": "b_4",
      "b": "b_5",
-     "winner": "b_2"
+     "winner": "b_4"
     }
    ],
    "hits": [],
    "stationaryHits": [],
-   "fireballOnlyHits": [
-    {
-     "uid": "b_18",
-     "owner": "p2",
-     "target": "p1",
-     "atX": 224
-    }
-   ],
+   "fireballOnlyHits": [],
    "p1ToP2": {
     "atk": 12,
     "def": 9,
@@ -2483,9 +2428,9 @@
    "p2ToP1": {
     "atk": 19,
     "def": 8,
-    "mult": 0.8,
-    "raw": 12.666666666666668,
-    "dmg": 12
+    "mult": 1,
+    "raw": 15.833333333333334,
+    "dmg": 15
    }
   }
  }

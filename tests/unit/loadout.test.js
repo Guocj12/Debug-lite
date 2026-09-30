@@ -150,8 +150,8 @@ test('B19 面板聚合（I-8 公式机器推导）：atk=round(20×1.10)=22、hp
   assert.equal(role.pluginPoints, 4);
   assert.equal(role.quality, 'epic');
   assert.equal(p.panel.skills.length, 3, '技能参数直透');
-  assert.equal(p.panel.skills[0].params.multiplier, 1.38, 'B20 聚合：1.2×(1+0.15) = 1.38（sp_mult）');
-  assert.equal(p.panel.skills[0].params.cost.mp, 16, 'B20 消耗补偿：10 + costDeltaBase.rare(3)×tier2 = 16');
+  assert.equal(p.panel.skills[0].params.multiplier, 1.38, 'B20 聚合：1.2×(1+0.15) = 1.38（sk_mult）');
+  assert.equal(p.panel.skills[0].params.cost.mp, 10, 'B20：通用技能插件零代价（D-173）');
   // 非法 loadout → panel 拒绝
   const f2 = fixture();
   f2.loadout.skills = f2.loadout.skills.slice(0, 2);
@@ -196,7 +196,7 @@ test('P1-2 回归：同一插件双引用（同目标双槽/跨目标）→ load
   assert.ok(v1.errors.some((e) => e.message.includes('双处引用')), JSON.stringify(v1.errors));
   // 跨目标：技能槽引用 pa
   const f2 = fixture();
-  f2.loadout.skills[0].slots = [{ type: 'basic', pluginUid: 'pa' }];
+  f2.loadout.skills[0].slots = [{ type: 'general', pluginUid: 'pa' }];
   f2.warehouse.buckets.rolePlugin[0].equipped = true;
   const v2 = loadout.validateLoadout(f2.loadout, { warehouse: f2.warehouse, tier: 'mythic' });
   assert.equal(v2.ok, false, '跨目标双引用 → 拒绝');
@@ -242,7 +242,7 @@ test('P1-3 回归：装配引用缺 warehouse → missing_warehouse；空装配�
   // 空装配（无引用）+ 无 warehouse → 放行
   const f2 = fixture();
   f2.loadout.role.slots = [{ type: 'atk', pluginUid: null }, { type: 'hp', pluginUid: null }];
-  f2.loadout.skills = f2.loadout.skills.map((s) => ({ ...s, slots: [{ type: 'basic', pluginUid: null }] }));
+  f2.loadout.skills = f2.loadout.skills.map((s) => ({ ...s, slots: [{ type: 'general', pluginUid: null }] }));
   const v2 = loadout.validateLoadout(f2.loadout, { tier: 'mythic' });
   assert.equal(v2.ok, true, '空装配无 warehouse → 放行（面板即最终值）');
   // 插件门控复核（P2-2）：warehouse 中插件 unlockTier 超 tier → 拒绝（**门控开启**；默认关闭时见下行）
@@ -300,7 +300,7 @@ test('B20 P2 回归：技能槽类别错配与缺 tier 插件拒绝；junkField 
   //   只留"技能槽引用 rolePlugin"这一处 → 命中的是类别错配分支而非双引用分支。
   f1.loadout.role.slots[0].pluginUid = null;
   f1.warehouse.buckets.role[0].slots[0].pluginUid = null;
-  f1.loadout.skills[0].slots = [{ type: 'basic', pluginUid: 'pa' }]; // rolePlugin 装技能槽
+  f1.loadout.skills[0].slots = [{ type: 'general', pluginUid: 'pa' }]; // rolePlugin 装技能槽
   const v1 = loadout.validateLoadout(f1.loadout, { warehouse: f1.warehouse, tier: 'mythic' });
   assert.equal(v1.ok, false, '类别错配拒绝');
   assert.ok(v1.errors.some((e) => e.message.includes('类别与槽位不匹配')), JSON.stringify(v1.errors));
@@ -315,9 +315,9 @@ test('B20 P2 回归：技能槽类别错配与缺 tier 插件拒绝；junkField 
   const p = loadout.buildPanel(f3.loadout, { warehouse: f3.warehouse, tier: 'mythic' });
   assert.equal(p.ok, true);
   assert.equal(p.panel.skills[0].params.junkField, 'keep-me', '非标准字段保留');
-  // 非声明维不变（P2-⑦）：qx 只声明 mp；hp/sp 不被补偿
+  // 零代价（D-173）：通用技能插件不改任何资源维
   const p4 = loadout.buildPanel(fixture().loadout, { warehouse: fixture().warehouse, tier: 'mythic' });
-  assert.equal(p4.panel.skills[0].params.cost.hp, 0, 'hp 非声明维不变');
-  assert.equal(p4.panel.skills[0].params.cost.sp, 0, 'sp 非声明维不变');
-  assert.equal(p4.panel.skills[0].params.cost.mp, 16, 'mp 声明维 = 10 + 3×2');
+  assert.equal(p4.panel.skills[0].params.cost.hp, 0, 'hp 维不变');
+  assert.equal(p4.panel.skills[0].params.cost.sp, 0, 'sp 维不变');
+  assert.equal(p4.panel.skills[0].params.cost.mp, 10, 'mp 维不变（零代价）');
 });

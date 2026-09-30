@@ -27,9 +27,11 @@ const ROLE = require('../../server/data/role-templates.json').roleTemplates[0];
 const SKILLS = require('../../server/data/skill-templates.json').skillTemplates;
 const TIERS = require('../../server/data/qualities.json').qualities.map((q) => q.id);
 
+// 三个不同模板（避免同模板双槽共享冷却键：那是引擎既有语义，不是本测试目标）
+//   2026-09-28 §6.3：技能基础模板仅 4 条（近战/平射/定点/位移）→ 取前三条不同类型
+const PICK = [0, 1, 2];
 function mkSkills() {
-  // 三个不同模板（避免同模板双槽共享冷却键：那是引擎既有语义，不是本测试目标）
-  return [0, 2, 6].map((i, k) => ({ ...items.generateSkillItem(SKILLS[i], 'rare', createRng(100 + k)), slots: [] }));
+  return PICK.map((i, k) => ({ ...items.generateSkillItem(SKILLS[i], 'rare', createRng(100 + k)), slots: [] }));
 }
 function mkRole() {
   return { ...items.generateRoleItem(ROLE, 'rare', createRng(7)), slots: [] };
@@ -67,7 +69,7 @@ test('PLAY-1 parseArgs/validateArgs：默认值、覆盖、非法输入全部给
 });
 
 test('PLAY-2 buildPreset：三个预设都是合法 AI 程序，技能动作名恰为 skill:skill1..3', () => {
-  const slots = mkSkills().map((s, i) => ({ action: `skill:skill${i + 1}`, type: SKILLS[[0, 2, 6][i]].type }));
+  const slots = mkSkills().map((s, i) => ({ action: `skill:skill${i + 1}`, type: SKILLS[PICK[i]].type }));
   for (const preset of ['steady', 'aggressive', 'kite']) {
     const prog = play.buildPreset(preset, slots);
     const v = ast.validate(prog, 'mythic');
@@ -87,7 +89,7 @@ test('PLAY-2 buildPreset：三个预设都是合法 AI 程序，技能动作名�
 test('PLAY-3 预设技能动作名在真实玩家对象上可解析（skill1..3 = p.skills 键）', () => {
   const skills = mkSkills();
   const role = mkRole();
-  const ld = { role, skills, ai: play.buildPreset('steady', skills.map((s, i) => ({ action: `skill:skill${i + 1}`, type: s.type || SKILLS[[0, 2, 6][i]].type }))) };
+  const ld = { role, skills, ai: play.buildPreset('steady', skills.map((s, i) => ({ action: `skill:skill${i + 1}`, type: s.type || SKILLS[PICK[i]].type }))) };
   // D-163：物品身份/数值一律解析自服务端权威仓库 → 桩仓库必须**含本配置的角色与 3 个技能**
   //   （只放插件不够；缺物品会如实报 `物品不在仓库: <uid>`）。
   const wh = { buckets: { role: [role], skill: skills, rolePlugin: [], skillPlugin: [] } };

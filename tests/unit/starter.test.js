@@ -4,12 +4,13 @@
  * 断言意图（不是"跑一遍不报错"）：
  *   ST-1 确定性：同一身份两次生成**内容级**逐值相同（uid 由进程内计数器分配，不参与内容级比较，B17 口径）
  *   ST-2 不同身份不同种子 → 不同套装
- *   ST-3 插槽下限：角色 slotCount ≥ 1（common 的 roleSlotRange=[1,3]）
- *   ST-4 技能：恰 3 个；至少 1 个技能有插槽（重掷规则生效）
- *   ST-5 装配必成：每个装入的插件 slot === 目标槽 type，且能在仓库内经 assemble 复验不 409
+ *   ST-3 插槽下限：角色 slotCount ≥ 1（common 的 roleSlotRange=[0,2] → 重掷保证）
+ *   ST-4 技能：恰 3 个；至少 1 个技能有通用槽（重掷规则生效）
+ *   ST-5 装配必成：每个装入的插件与目标槽匹配（`items.slotMatches`），且能在仓库内经 assemble 复验不 409
  *   ST-6 点数预算：角色插件 pointCost 之和 ≤ 角色 pluginPoints
  *   ST-7 AI：取自预设（type=program）且库条目 aiId 与 loadout.aiId 一致
  *   ST-8 桶归属：物品按 kind 入对应桶；总数远低于每桶上限
+ *   ST-10 技能插件形态：**恰 1 专属 + 1 通用**（用户 2026-09-28 裁定），且专属插件的 forTypes 含目标技能类型
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -52,15 +53,41 @@ test('ST-2 不同身份 → 不同种子与不同套装', () => {
   assert.notDeepEqual(stripUid(a.warehouse), stripUid(b.warehouse));
 });
 
-test('ST-3/ST-4/ST-6 插槽下限、技能恰 3 且至少 1 槽、角色插件点数不超预算', () => {
+test('ST-3/ST-4/ST-6 插槽下限、技能恰 3 且至少 1 个通用槽、角色插件点数不超预算', () => {
   for (let i = 0; i < 12; i += 1) {
     const r = starter.buildStarter(identity(30 + i));
     const role = r.warehouse.buckets.role[0];
     assert.ok((role.slots || []).length >= 1, `角色必须至少 1 个插槽（实际 ${(role.slots || []).length}）`);
     assert.equal(r.loadout.skills.length, 3, '出战配置必须恰 3 个技能');
-    assert.ok(r.stats.skillSlotTotal >= 1, `至少 1 个技能有插槽（实际 ${r.stats.skillSlotTotal}）`);
+    assert.ok(r.loadout.skills.some((s) => (s.slots || []).some((sl) => sl && sl.type === 'general')),
+      '至少 1 个技能有通用槽（重掷规则 → 保证能发 1 个通用插件）');
     const used = r.warehouse.buckets.rolePlugin.reduce((sum, p) => sum + (p.pointCost || 0), 0);
     assert.ok(used <= (role.pluginPoints || 0), `角色插件点数 ${used} 不得超过 ${role.pluginPoints}`);
+  }
+});
+
+test('ST-10 技能插件恰 1 专属 + 1 通用，且专属插件的 forTypes 含目标技能类型', () => {
+  const SKILL_TYPE_OF = Object.fromEntries(
+    require('../../server/data/skill-templates.json').skillTemplates.map((t) => [t.id, t.type]),
+  );
+  for (let i = 0; i < 24; i += 1) {
+    const r = starter.buildStarter(identity(300 + i));
+    const byslot = { exclusive: [], general: [] };
+    for (const p of r.warehouse.buckets.skillPlugin) {
+      assert.ok(byslot[p.slot], `技能插件 slot 只能是 exclusive/general，实际 ${p.slot}`);
+      byslot[p.slot].push(p);
+    }
+    assert.equal(byslot.exclusive.length, 1, `恰 1 个专属插件（实际 ${byslot.exclusive.length}）`);
+    assert.equal(byslot.general.length, 1, `恰 1 个通用插件（实际 ${byslot.general.length}）`);
+    assert.equal(r.stats.counts.skillPlugin, starter.SKILL_PLUGIN_MAX, '技能插件总数 = SKILL_PLUGIN_MAX');
+    // 专属插件必须装在**类型匹配**的技能上（forTypes 含该技能模板的类型）
+    const asm = r.stats.plugins.find((p) => p.kind === 'skillPlugin' && p.id.startsWith('ex_'));
+    assert.ok(asm, '装配记录里应有专属插件');
+    const target = r.warehouse.buckets.skill.find((s) => s.uid === asm.targetUid);
+    const ex = r.warehouse.buckets.skillPlugin.find((p) => p.uid === asm.uid);
+    assert.ok(ex.forTypes.includes(SKILL_TYPE_OF[target.templateId]),
+      `专属插件 ${ex.id} 的 forTypes 应含 ${SKILL_TYPE_OF[target.templateId]}`);
+    assert.equal(items.slotMatches(ex.slot, target.slots[asm.slotIndex].type), true, '专属插件与专属槽匹配');
   }
 });
 
@@ -74,7 +101,8 @@ test('ST-5 装配必成：装入的插件类型与目标槽一致，且仓库内
       const slot = target.slots[p.slotIndex];
       assert.equal(slot.pluginUid, p.uid, '槽位引用指向该插件');
       const plugin = r.warehouse.buckets[p.kind].find((x) => x.uid === p.uid);
-      assert.equal(plugin.slot, slot.type, `插件类型 ${plugin.slot} 必须等于插槽类型 ${slot.type}`);
+      assert.equal(items.slotMatches(plugin.slot, slot.type), true,
+        `插件 ${plugin.slot} 必须适配插槽 ${slot.type}（items.slotMatches：万能槽 any 收五维插件）`);
     }
   }
 });
@@ -94,7 +122,7 @@ test('ST-8 桶归属正确、总量有界（远低于每桶上限）', () => {
   assert.equal(c.role, 1);
   assert.equal(c.skill, 3);
   assert.ok(c.rolePlugin >= 1 && c.rolePlugin <= starter.ROLE_PLUGIN_MAX);
-  assert.ok(c.skillPlugin >= 1 && c.skillPlugin <= starter.SKILL_PLUGIN_MAX);
+  assert.equal(c.skillPlugin, starter.SKILL_PLUGIN_MAX, '技能插件恒为 1 专属 + 1 通用（用户 2026-09-28 裁定）');
   assert.ok(c.role <= 500 && c.skill <= 500);
   for (const key of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
     for (const it of r.warehouse.buckets[key]) {

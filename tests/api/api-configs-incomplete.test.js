@@ -53,8 +53,8 @@ async function injectSpare(s, p) {
     });
     for (const uid of SPARE.skills) {
       a.warehouse.buckets.skill.push({
-        uid, kind: 'skill', templateId: 'skill_melee_whirl', name: `备用技能 ${uid}`, quality: 'common',
-        slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+        uid, kind: 'skill', templateId: 'skill_melee', name: `备用技能 ${uid}`, quality: 'common',
+        slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
         params: { multiplier: 1, cost: { hp: 0, mp: 0, sp: 10 }, cooldown: 2, bulletLevel: 2 },
         unlockTier: 'common',
       });

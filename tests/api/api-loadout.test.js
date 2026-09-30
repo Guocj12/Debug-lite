@@ -111,7 +111,7 @@ test('P1 回归（HTTP）：skills 缺失 409 非 500；装配引用缺 warehous
   });
 });
 
-test('B20 P1-1 回归（HTTP）：未知技能模板 → 双端点 409 非 500；/panel 聚合值 1.38/16 显式断言', async () => {
+test('B20 P1-1 回归（HTTP）：未知技能模板 → 双端点 409 非 500；/panel 聚合值 1.38/10 显式断言', async () => {
   await withServer(null, async ({ port }) => {
     const f = JSON.parse(JSON.stringify(LOADOUT));
     // D-163：/panel 会先按 uid 从**仓库**取回物品副本（客户端正文的 templateId 一律丢弃）→ 要让
@@ -129,6 +129,6 @@ test('B20 P1-1 回归（HTTP）：未知技能模板 → 双端点 409 非 500�
     const pnl = await request(port, 'POST', '/api/v1/panel', { loadout: LOADOUT.loadout, warehouse: LOADOUT.warehouse, tier: 'mythic' });
     assert.equal(pnl.status, 200);
     assert.equal(pnl.body.data.panel.skills[0].params.multiplier, 1.38, '倍率聚合经 HTTP');
-    assert.equal(pnl.body.data.panel.skills[0].params.cost.mp, 16, '消耗补偿经 HTTP');
+    assert.equal(pnl.body.data.panel.skills[0].params.cost.mp, 10, '通用技能插件零代价经 HTTP（D-173）');
   });
 });

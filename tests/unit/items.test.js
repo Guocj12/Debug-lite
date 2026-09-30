@@ -40,63 +40,58 @@ test('IT-1 T-IT-1 品质分布：dropRates 加权大样本 <2% 误差（I-1）',
   }
 });
 
-test('T-IT-2 插槽数：角色/技能闭区间 + 技能下限 1（I-3 全例）', () => {
-  assert.equal(it.rollSlotCount('role', 'rare', stubRng(0.9)), 4, 'I-3a rare [2,4] 取 4');
-  assert.equal(it.rollSlotCount('role', 'common', stubRng(0)), 1, 'I-3b common [1,3] 取 1');
-  assert.equal(it.rollSlotCount('skill', 'common', stubRng(0)), 1, 'I-3c [0,1] 抽 0 → 下限 1');
-  assert.equal(it.rollSlotCount('skill', 'mythic', stubRng(0.49)), 3, 'I-3d mythic [3,4] 归一化 0.49 → 3');
+test('T-IT-2 插槽数：角色/技能闭区间（**允许 0 槽**，2026-09-28 §3.3 下限 1 已作废）', () => {
+  assert.equal(it.rollSlotCount('role', 'rare', stubRng(0.9)), 3, 'rare [1,3] 取 3');
+  assert.equal(it.rollSlotCount('role', 'common', stubRng(0)), 0, 'common [0,2] 可取 0（下限 1 已作废）');
+  assert.equal(it.rollSlotCount('skill', 'common', stubRng(0)), 0, 'skill common [0,1] 可取 0');
+  assert.equal(it.rollSlotCount('skill', 'mythic', stubRng(0.49)), 3, 'mythic [3,4] 0.49 → 3');
   // 区间端点可达（真实 rng）
   const rng = createRng(7);
   const seen = new Set();
   for (let i = 0; i < 500; i++) seen.add(it.rollSlotCount('role', 'rare', rng));
-  assert.deepEqual([...seen].sort(), [2, 3, 4], '闭区间两端都应可达');
+  assert.deepEqual([...seen].sort(), [1, 2, 3], '闭区间两端都应可达');
 });
 
-test('T-IT-3 属性系数取整四舍五入 + 下限 1（I-2a..h 定点复算）', () => {
+test('T-IT-3 属性系数取整四舍五入 + 下限 1（B0=95/15/8/73/62 定点复算）', () => {
   const mk = (coeff) => it.generateRoleItem(ROLE.role_bal, 'rare', stubRng(coeff));
-  assert.equal(mk(1.12).stats.hp, 112, 'I-2a');
-  assert.equal(mk(1.08).stats.atk, 11, 'I-2b');
-  assert.equal(mk(1.05).stats.def, 8, 'I-2c');
-  assert.equal(mk(1.20).stats.sp, 72, 'I-2d');
-  assert.equal(mk(1.02).stats.mp, 41, 'I-2e');
-  const common = byId(QUALITIES).common;
+  assert.equal(mk(1.12).stats.hp, 106, '95×1.12=106.4 → 106');
+  assert.equal(mk(1.08).stats.atk, 16, '15×1.08=16.2 → 16');
+  assert.equal(mk(1.05).stats.def, 8, '8×1.05=8.4 → 8');
+  assert.equal(mk(1.20).stats.sp, 88, '73×1.20=87.6 → 88');
+  assert.equal(mk(1.02).stats.mp, 63, '62×1.02=63.24 → 63');
   const c = it.generateRoleItem(ROLE.role_bal, 'common', stubRng(0.80));
-  assert.equal(c.stats.hp, 80, 'I-2f 下界');
-  assert.equal(c.stats.atk, 8, 'I-2g');
-  // I-2h：极端低系数 → 下限 1
+  assert.equal(c.stats.hp, 76, '95×0.80=76（品质下界）');
+  assert.equal(c.stats.atk, 12, '15×0.80=12');
+  // 极端低系数 → 下限 1
   const low = it.generateRoleItem({ ...ROLE.role_bal, baseStats: { hp: 1, atk: 1, def: 1, sp: 1, mp: 1 } }, 'common', stubRng(0.80));
   for (const k of ['hp', 'atk', 'def', 'sp', 'mp']) assert.equal(low.stats[k], 1, `${k} 下限 1`);
 });
 
 test('T-RO-7 角色物品实例携带模板 regen（D-110，B3 载体）', () => {
   const item = it.generateRoleItem(ROLE.role_bal, 'rare', createRng(3));
-  assert.deepEqual(item.regen, { mp: 1, sp: 2 }, '物品携带模板 regen');
+  assert.deepEqual(item.regen, { mp: 2, sp: 2 }, '物品携带模板 regen（B0 取推荐值，待 §8-T1 裁决）');
   const spc = it.generateRoleItem(ROLE.role_spc_atk, 'rare', createRng(4));
-  assert.deepEqual(spc.regen, { mp: 1, sp: 2 });
+  assert.deepEqual(spc.regen, { mp: 2, sp: 2 });
+  // 插件点数由品质区间掷出（2026-09-28 §3.4）
+  assert.ok(item.pluginPoints >= QUALITY.rare.pluginPointsRange[0] && item.pluginPoints <= QUALITY.rare.pluginPointsRange[1],
+    `pluginPoints=${item.pluginPoints} 应在 rare ${JSON.stringify(QUALITY.rare.pluginPointsRange)}`);
 });
 
-test('IT-2 插槽类型 slotWeights 加权（I-4）', () => {
-  // role_bal 六键各 1 → 抽 4 个的类型分布合理（无 atk 偏向）；role_spc_atk atk 权重 2 → atk 出现率更高
+test('IT-2 插槽类型权重（2026-09-28 §3.3）：五维各 15% / 万能 any 10% / 特殊 15%；重复槽权重 ×0.35', () => {
   const rng = createRng(11);
-  const balTypes = new Set();
-  for (let i = 0; i < 200; i++) {
-    const item = it.generateRoleItem(ROLE.role_bal, 'rare', rng);
-    balTypes.add(item.slots.length);
-  }
-  assert.deepEqual([...balTypes].sort(), [2, 3, 4], 'rare 角色插槽数在 [2,4]');
-  const spcRng = createRng(12);
-  let atkCount = 0;
+  const counts = {};
   let total = 0;
-  for (let i = 0; i < 200; i++) {
-    const item = it.generateRoleItem(ROLE.role_spc_atk, 'rare', spcRng);
-    for (const s of item.slots) {
-      total++;
-      if (s.type === 'atk') atkCount++;
-    }
+  for (let i = 0; i < 2000; i++) {
+    const item = it.generateRoleItem(ROLE.role_bal, 'mythic', rng); // mythic [4,6]：样本多、类型齐
+    for (const s of item.slots) { counts[s.type] = (counts[s.type] || 0) + 1; total++; }
   }
-  const atkRate = atkCount / total;
-  const base = 2 / 7; // atk:2 / 总和 7
-  assert.ok(Math.abs(atkRate - base) < 0.06, `atk 槽频率 ${atkRate} 应接近 ${base}`);
+  for (const t of ['hp', 'atk', 'def', 'sp', 'mp', 'special']) {
+    assert.ok(Math.abs(counts[t] / total - 0.15) < 0.02, `${t} 槽频率 ${(counts[t] / total).toFixed(3)} 应 ≈ 0.15`);
+  }
+  assert.ok(Math.abs(counts.any / total - 0.10) < 0.02, `any 槽频率 ${(counts.any / total).toFixed(3)} 应 ≈ 0.10`);
+  // 重复衰减（确定性核对）：同一权重下第二次不再命中已出现的类型
+  const seq = it.rollSlots('role', 'common', ROLE.role_bal, { float: () => 0.10, int: () => 0, pick: (a) => a[0] }, 2);
+  assert.deepEqual(seq.map((s) => s.type), ['hp', 'atk'], 'hp 出现后权重 ×0.35 → 0.0525，0.10×0.9025=0.09025 已越过 hp');
 });
 
 test('IT-3 T-IT-9 档位 tierOf：三档区间划分（I-5）', () => {
@@ -109,15 +104,18 @@ test('IT-3 T-IT-9 档位 tierOf：三档区间划分（I-5）', () => {
   assert.equal(it.tierOf(stubRng(1.20), q), 3, '档 3');
 });
 
-test('IT-4 插件生成：词条 = 基础值 × U(档位区间系数)（I-6 定点复算）', () => {
-  // I-6a rp_atk_pct tier3：0.08 × 1.20 = 0.096（系数落在档 3 区间）
+test('IT-4 插件生成：标准值 × U(品质系数)（2026-09-28 §5.1；flat 保留 2 位）', () => {
+  // 池内第一个角色插件（stub pick = a[0]）= rp_atk_pct_c1；coeff 1.20 → 档 3
   const p = it.generatePlugin('rolePlugin', 'rare', stubRng(1.20));
-  assert.equal(p.id, 'rp_atk_pct', '池内随机取（stub pick 取第一个匹配）');
+  assert.equal(p.id, 'rp_atk_pct_c1', '池内随机取（stub pick 取第一个匹配）');
   assert.equal(p.tier, 3);
-  // I-6b rp_atk_flat tier2：4 × 1.12 = 4.48 → flat 词条入包即取整 → +4
+  assert.equal(p.pointCost, 1, '点数消耗取自插件定义的固定 pointCost（不再等于档位）');
+  assert.equal(p.affixes[0].params.v, 0.102, '0.085 × 1.20 = 0.102（stat 类保留 2 位）');
+  // flat 类：2.55 × 1.12 = 2.856 → 保留 2 位（不再即时取整为整数）
   const p2 = it.generatePlugin('rolePlugin', 'rare', { float: () => 1.12, int: (lo, hi) => lo, pick: (a) => a.find((x) => x.id === 'rp_atk_flat') });
   assert.equal(p2.tier, 2, '1.12 落档 2');
-  assert.equal(p2.affixes[0].params.v, 4, 'I-6b 入包数值 = 基础 × 档系数四舍五入（flat 即时取整，审查 P1-1）');
+  assert.equal(p2.pointCost, 2, '固定 pointCost = 2');
+  assert.equal(p2.affixes[0].params.v, 2.856, '2.55 × 1.12 = 2.856（precision.stat=3；flat 聚合时只取整一次）');
 });
 
 test('IT-5 T-IT-4 词条聚合：百分比先乘、数值后加、最后取整一次（I-8a/b/c）', () => {
@@ -151,38 +149,39 @@ test('IT-6 T-IT-5 概率词条累加封顶 1 / 数值下限 1（I-8d/e/f）', ()
 
 test('IT-7 技能物品生成：可随机参数 × 系数取整 + 下限（S-1 系列语义）', () => {
   const q = QUALITY.common;
-  const s = SKILL.skill_melee_whirl;
-  // S-1e bulletCount 下限（用 straight precise 的 count=1 × 0.8 → 1）
-  const precise = SKILL.skill_straight_precise;
+  const s = SKILL.skill_melee;
+  // S-1e bulletCount 下限（用 straight 的 count=1 × 0.8 → 1）
+  const precise = SKILL.skill_straight;
   const item = it.generateSkillItem(precise, 'common', stubRng(0.8));
   assert.equal(item.params.bulletCount, 1, 'S-1e 下限 1');
-  // S-1c range 0.9 → 7（平射 8×0.9=7.2 → 7）
+  // 射程已不随品质浮动（2026-09-28 §6.3：copy）：平射 range 恒 = 5
   const rng90 = { float: () => 0.9, int: (lo, hi) => lo, pick: (a) => a[0] };
-  const item2 = it.generateSkillItem(SKILL.skill_straight_precise, 'common', rng90);
-  assert.equal(item2.params.range, 7, 'S-1c');
-  // 倍率保留 2 位小数：0.9×1.10=0.99（S-1a）
+  const item2 = it.generateSkillItem(SKILL.skill_straight, 'common', rng90);
+  assert.equal(item2.params.range, 5, '射程不随品质浮动（copy）');
+  assert.equal(item2.params.bulletCount, 1, '弹幕数不随品质浮动（copy）');
+  // 倍率保留 2 位小数：1.2×1.10 = 1.32（S-1a）
   const rng110 = { float: () => 1.10, int: (lo, hi) => lo, pick: (a) => a[0] };
-  const item3 = it.generateSkillItem(SKILL.skill_straight_precise, 'common', rng110);
-  assert.equal(item3.params.multiplier, 0.99, 'S-1a');
+  const item3 = it.generateSkillItem(SKILL.skill_straight, 'common', rng110);
+  assert.equal(item3.params.multiplier, 1.32, 'S-1a');
   // 不随品质：bulletLevel/cost/falloff 恒等（S-1j/k/l）
   assert.equal(item3.params.bulletLevel, 3, 'S-1j');
-  assert.deepEqual(item3.params.cost, { hp: 0, mp: 0, sp: 6 }, 'S-1k');
+  assert.deepEqual(item3.params.cost, { hp: 0, mp: 4, sp: 2 }, 'S-1k');
   assert.equal(item3.params.falloff, 0, 'S-1l');
-  // cooldown 下限 0（S-1h 语义）：1×0.1=0.1 → 0
+  // cooldown 下限 0（S-1h 语义）：3×0.1=0.3 → 0
   const rng01 = { float: () => 0.1, int: (lo, hi) => lo, pick: (a) => a[0] };
-  const item4 = it.generateSkillItem(SKILL.skill_melee_whirl, 'common', rng01);
+  const item4 = it.generateSkillItem(SKILL.skill_melee, 'common', rng01);
   assert.equal(item4.params.cooldown, 0, 'S-1h 冷却下限 0');
 });
 
 test('IT-3b 技能物品：vertical / displacement 类型参数分支（分支覆盖补齐）', () => {
   const rng09 = { float: () => 0.9, int: (lo, hi) => lo, pick: (a) => a[0] };
-  const rain = it.generateSkillItem(SKILL.skill_vert_rain, 'common', rng09);
-  assert.equal(rain.params.range, 7, '箭雨 8×0.9=7.2 → 7');
-  assert.deepEqual(rain.params.area, [-2, 2], 'area 不随品质');
-  const bash = it.generateSkillItem(SKILL.skill_dash_bash, 'common', rng09);
-  assert.equal(bash.params.distance, 4, '突击盾 4×0.9=3.6 → 4');
+  const rain = it.generateSkillItem(SKILL.skill_vertical, 'common', rng09);
+  assert.equal(rain.params.range, 5, '定点射程不随品质浮动（copy）');
+  assert.deepEqual(rain.params.area, [0, 0], 'area 不随品质');
+  const bash = it.generateSkillItem(SKILL.skill_displace, 'common', rng09);
+  assert.equal(bash.params.distance, 3, '位移距离不随品质浮动（copy）');
   assert.equal(bash.params.passThroughEnemy, false);
-  assert.equal(bash.params.dealDamage, true);
+  assert.equal(bash.params.dealDamage, false);
   assert.equal(bash.params.fullDodgeDuring, false);
   // tierOf 尾分支：系数超出最后一段（stub 越界输入）→ 档 3
   assert.equal(it.tierOf(stubRng(9), QUALITY.rare), 3, '越界系数兜底档 3');
@@ -241,10 +240,10 @@ test('IT-8b 门控关闭（默认）：tier 只作回带信息 —— 任意段�
   assert.ok([...templateSeen].some((id) => highTierIds.has(id)), `common 段位开出高段位模板: ${[...templateSeen].join('/')}`);
   // 模板/插件池不再按 unlockTier 过滤：高级段位模板在 common 段位亦可见于掉落池
   const highRole = TEMPLATES.filter((t) => t.unlockTier && t.unlockTier !== 'common');
-  const highSkill = SKILLS.filter((s) => s.unlockTier && s.unlockTier !== 'common');
-  assert.ok(highRole.length > 0 && highSkill.length > 0, '数据里存在高段位模板（元数据保留）');
+  assert.ok(highRole.length > 0, '数据里存在高段位角色模板（元数据保留）');
+  // 2026-09-28 §6.3：技能基础模板共 4 条、全部 common（每类 1 条基础形态）→ 技能侧无高段位元数据（设计如此）
+  assert.ok(SKILLS.every((s) => s.unlockTier === 'common'), '技能模板全部 common（每类 1 条基础形态）');
   assert.ok(it.dropPool(TEMPLATES, 'common').some((t) => t.unlockTier === 'legendary'), 'common 段位池含 legendary 角色');
-  assert.ok(it.dropPool(SKILLS, 'common').some((s) => s.unlockTier === 'mythic'), 'common 段位池含 mythic 技能');
   assert.ok(it.dropPool(PLUGINS, 'common').some((p) => p.unlockTier === 'legendary'), 'common 段位池含 legendary 插件');
 });
 
@@ -279,7 +278,7 @@ test('IT-10 日志：items.roll.quality / items.generate / items.affix.apply（�
   assert.doesNotThrow(() => {
     it.rollQuality(createRng(2));
     it.generateRoleItem(ROLE.role_bal, 'common', createRng(2));
-    it.generateSkillItem(SKILL.skill_melee_whirl, 'common', createRng(2));
+    it.generateSkillItem(SKILL.skill_melee, 'common', createRng(2));
     it.generatePlugin('skillPlugin', 'rare', createRng(2));
     it.openBox(createRng(2));
     it.applyAffixes({ hp: 100 }, []);
@@ -316,22 +315,21 @@ function stubSeq(values) {
   return { float: () => values[i++], int: (lo, hi) => values[i++], pick: (a) => a[0] };
 }
 
-test('IT-15 开箱角色物品套用类型修饰（修正前 11 个角色数值完全相同）', () => {
-  // 特化·攻击 rare：base atk 10 ×1.15 = 11.5 → ×品质系数后取整（下限 12）
-  // 机器复算：stubSeq[0]=int(0,3) 低属性索引（hp/def/sp/mp），随后 5 个品质系数
-  const lowMp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([3, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.deepEqual(lowMp.stats, { hp: 100, atk: 12, def: 8, sp: 60, mp: 34 }, '11.5→12；低属性 mp 40×0.85=34');
+test('IT-15 开箱角色物品套用类型修饰（乘性守恒 + 逐属性因子；2026-09-28 §3.2）', () => {
+  const TM = require('../../server/data/role-templates.json').typeModifiers;
+  // 特化·攻击 rare：高属性 atk 15×1.30=19.5；低属性候选 = 五维 − 高属性 − excludeLow(def) = [hp, sp, mp]
+  //   stubSeq 顺序：1 int（低属性索引）→ 5 float（品质系数）→ slotCount int → 槽 float ×N → pluginPoints float
+  const lowMp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([2, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.deepEqual(lowMp.stats, { hp: 95, atk: 20, def: 8, sp: 73, mp: 48 }, '19.5→20；低属性 mp 62×0.7692=47.69→48');
   const lowHp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.deepEqual(lowHp.stats, { hp: 85, atk: 12, def: 8, sp: 60, mp: 40 }, '低属性随机：hp 100×0.85=85');
-  // 专家·攻击 rare：base atk 10 ×1.30 = 13；spread [1.1,0.7,0.9,1.0] 经 FY（ints 全 0）后
-  //   → hp 0.7 / def 0.9 / sp 1.0 / mp 1.1
+  assert.deepEqual(lowHp.stats, { hp: 73, atk: 20, def: 8, sp: 73, mp: 62 }, '低属性随机：hp 95×0.7692=73.08→73');
+  // 专家·攻击 rare：高属性 atk 15×1.50=22.5→23；spread [1/1.5,1,1,1] 经 FY（ints 全 0）→ [1,1,1,2/3]，落 mp
   const exp = it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.deepEqual(exp.stats, { hp: 70, atk: 13, def: 7, sp: 60, mp: 44 }, '专家 atk 13；spread 四修饰各一次');
-  // 均衡不变（零漂移）：与修正前一致
+  assert.deepEqual(exp.stats, { hp: 95, atk: 23, def: 8, sp: 73, mp: 41 }, '专家 atk 23；spread 四因子各一次（乘性守恒）');
+  // 均衡不变（零漂移）：不消耗修饰随机
   assert.deepEqual(it.generateRoleItem(ROLE.role_bal, 'rare', stubSeq([1.12, 1.08, 1.05, 1.20, 1.02, 0, 0, 0, 0])).stats,
-    { hp: 112, atk: 11, def: 8, sp: 72, mp: 41 }, 'balanced 不消耗修饰随机 → 与修正前逐值一致');
-  // 区间实测（seed 1..300，确定性）：均衡 10×[1.00,1.25]；特化 11.5×…；专家 13×…
-  //   修正前三条完全相同（都用 baseStats 10 → 10..12）——本断言即"11 个角色数值完全相同"的回归证据
+    { hp: 106, atk: 16, def: 8, sp: 88, mp: 63 }, 'balanced 不消耗修饰随机');
+  // 区间实测（seed 1..300，确定性）：高属性下界依次抬高（修正前三条完全相同）
   const range = (templateId) => {
     let lo = Infinity;
     let hi = -Infinity;
@@ -342,14 +340,22 @@ test('IT-15 开箱角色物品套用类型修饰（修正前 11 个角色数值�
     }
     return [lo, hi];
   };
-  assert.deepEqual(range('role_bal'), [10, 12], '均衡：无修饰（与修正前一致）');
-  assert.deepEqual(range('role_spc_atk'), [12, 14], '特化 +15%：下限抬到 12（修正前同样本为 10）');
-  assert.deepEqual(range('role_exp_atk'), [13, 16], '专家 +30%：下限抬到 13（修正前同样本为 10）');
-  // 确定性上下界（stub 系数取品质区间端点；品质系数按五维顺序 hp,atk,def,sp,mp 逐个消耗 → atk 是第 2 个 float）
-  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 12, '11.5×1.00→12');
-  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 14, '11.5×1.25=14.375→14');
-  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 13, '13×1.00→13');
-  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 16, '13×1.25=16.25→16');
+  const [bLo, bHi] = range('role_bal');
+  const [sLo, sHi] = range('role_spc_atk');
+  const [eLo, eHi] = range('role_exp_atk');
+  assert.deepEqual([bLo, bHi], [15, 19], '均衡 atk = round(15×[1.00,1.25])');
+  assert.deepEqual([sLo, sHi], [20, 24], '特化 ×1.30 = round(19.5×[1.00,1.25])');
+  assert.deepEqual([eLo, eHi], [23, 28], '专家 ×1.50 = round(22.5×[1.00,1.25])');
+  assert.ok(sLo > bLo && eLo > sLo, '高属性下界依次抬高');
+  // 确定性上下界（stub 系数取品质区间端点；品质系数按五维顺序 hp,atk,def,sp,mp 消耗 → atk 是第 2 个 float）
+  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 20, '19.5×1.00→20');
+  assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 24, '19.5×1.25=24.375→24');
+  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 23, '22.5×1.00→23');
+  assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 28, '22.5×1.25=28.125→28');
+  // def 不可作低属性：特化·防御的低属性候选不含 def（excludeLow）；专家若把 <1 因子洗到 def 会确定性换位
+  assert.deepEqual(TM.excludeLow, ['def'], 'excludeLow 声明');
+  const expDefHigh = it.generateRoleItem(ROLE.role_exp_def, 'rare', stubSeq([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.ok(expDefHigh.stats.def >= 8, `def 不会被 <1 因子命中（实际 ${expDefHigh.stats.def}）`);
 });
 
 test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / 缺省 true+1（旧表兼容）', () => {
@@ -404,9 +410,9 @@ test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / �
 
   // generatePlugin 走同一池逻辑：poolOverride 内 drop=false 永不出现，dropWeight 生效
   const plugPool = [
-    { id: 'w_hi', kind: 'rolePlugin', slot: 'atk', name: 'h', desc: 'h', dropWeight: 9, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
-    { id: 'w_lo', kind: 'rolePlugin', slot: 'atk', name: 'l', desc: 'l', dropWeight: 1, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
-    { id: 'w_off', kind: 'rolePlugin', slot: 'atk', name: 'o', desc: 'o', drop: false, pointCostByTier: [1, 2, 3], affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+    { id: 'w_hi', kind: 'rolePlugin', slot: 'atk', name: 'h', desc: 'h', dropWeight: 9, pointCost: 1, affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+    { id: 'w_lo', kind: 'rolePlugin', slot: 'atk', name: 'l', desc: 'l', dropWeight: 1, pointCost: 1, affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
+    { id: 'w_off', kind: 'rolePlugin', slot: 'atk', name: 'o', desc: 'o', drop: false, pointCost: 1, affixes: [{ id: 'atk_flat', params: { v: 1 } }] },
   ];
   const rg = createRng(4242);
   const seen = new Set();

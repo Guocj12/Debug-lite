@@ -53,7 +53,8 @@ test('AU-1 注册：200 信封 + 下发 token/默认配置 + playerId 不外泄 
     assert.ok(wh.body.data.counts.role >= 1, 'starter 至少 1 个角色物品');
     assert.equal(wh.body.data.counts.skill, 3, 'starter 恰 3 个技能物品');
     assert.ok(wh.body.data.counts.rolePlugin >= 1, 'starter 至少 1 个角色插件');
-    assert.equal(wh.body.data.counts.skillPlugin, 1, 'starter 恰 1 个技能插件');
+    // 技能插件恒为 1 专属 + 1 通用（2026-09-28 §6.2 + 用户裁定：starter 固定发 1 专属 + 1 通用）
+    assert.equal(wh.body.data.counts.skillPlugin, 2, 'starter 恰 1 专属 + 1 通用技能插件');
     assert.equal(wh.body.data.caps.role, 500);
     // D-161：starter 同时登记一条默认 AI（名字 '新手AI'），并被出战配置 slot1 引用
     const ai = await h.request(s.port, 'GET', '/api/v1/me/ai', undefined, h.authed(r.body.data.token));

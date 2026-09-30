@@ -28,7 +28,7 @@ async function settle(fx, a, b, overrides) {
  * 又因 D-163 跨配置独占（一件物品同时只能属于一份配置），两份配置要用两套互不相交的夹具。
  * （形状与 tests/unit/warehouse-invariants.test.js 的 fixtureWarehouse() 同形。）
  */
-const FIX_SKILL_TEMPLATES = ['skill_melee_whirl', 'skill_straight_precise', 'skill_dash_bash'];
+const FIX_SKILL_TEMPLATES = ['skill_melee', 'skill_straight', 'skill_displace'];
 
 function fixtureItems(set) {
   const tag = `ap_fix${set}`;
@@ -41,7 +41,7 @@ function fixtureItems(set) {
     },
     skills: FIX_SKILL_TEMPLATES.map((templateId, i) => ({
       uid: `${tag}_skill${i}`, kind: 'skill', templateId, name: `夹具技能${set}-${i}`, quality: 'common',
-      slotCount: 1, slots: [{ type: 'basic', pluginUid: null }],
+      slotCount: 1, slots: [{ type: 'general', pluginUid: null }],
       params: { multiplier: 1 + i / 10, cost: { hp: 0, mp: 8 + i, sp: 0 }, cooldown: 3 - i, bulletLevel: 2 + i },
       unlockTier: 'common',
     })),

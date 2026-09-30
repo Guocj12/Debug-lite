@@ -51,7 +51,7 @@ test('AIS-2 显式 skills：`skill:skill1` 真的放出来（actionsEffective = 
   await h.withServer(null, async (s) => {
     const r = await h.request(s.port, 'POST', '/api/v1/ai/battle', {
       program: PROG, seed: 20260919, opponent: 'kiter',
-      skills: [{ templateId: 'skill_straight_precise', quality: 'common', params: CD0 }],
+      skills: [{ templateId: 'skill_straight', quality: 'common', params: CD0 }],
     });
     assert.equal(r.status, 200, r.raw);
     const d = r.body.data;
@@ -68,13 +68,13 @@ test('AIS-2 显式 skills：`skill:skill1` 真的放出来（actionsEffective = 
 test('AIS-3 对象形态 skills（键即槽位键）+ 字符串模板 shorthand', async () => {
   await h.withServer(null, async (s) => {
     const obj = await h.request(s.port, 'POST', '/api/v1/ai/battle', {
-      program: PROG2, seed: 7, skills: { skill2: { templateId: 'skill_straight_precise', params: CD0 } },
+      program: PROG2, seed: 7, skills: { skill2: { templateId: 'skill_straight', params: CD0 } },
     });
     assert.equal(obj.status, 200, obj.raw);
     assert.deepEqual(obj.body.data.skillSlots, ['skill2'], '对象键即槽位键（AI 动作 skill:skill2 命中）');
     assert.equal(obj.body.data.ineffectiveActions.count, 0);
     const sh = await h.request(s.port, 'POST', '/api/v1/ai/battle', {
-      program: PROG, seed: 7, skills: ['skill_straight_precise'],
+      program: PROG, seed: 7, skills: ['skill_straight'],
     });
     assert.equal(sh.status, 200, sh.raw);
     assert.equal(sh.body.data.skillSource, 'explicit', '字符串 shorthand（模板 id 数组）可用；参数走确定性 STUB_RNG');
@@ -133,10 +133,10 @@ test('AIS-6 参数负例：未知模板 / 超过 3 槽 / skills 与 loadout 互�
     assert.equal(unknown.body.error.code, 'bad_skills');
     assert.equal(unknown.body.error.details[0].path, 'skills[0].templateId', 'details 用 path（P2-3 口径）');
     assert.equal(unknown.body.error.details[0].code, 'unknown_skill');
-    const tooMany = await h.request(s.port, 'POST', '/api/v1/ai/battle', { program: PROG, seed: 1, skills: ['skill_straight_precise', 'skill_straight_precise', 'skill_straight_precise', 'skill_straight_precise'] });
+    const tooMany = await h.request(s.port, 'POST', '/api/v1/ai/battle', { program: PROG, seed: 1, skills: ['skill_straight', 'skill_straight', 'skill_straight', 'skill_straight'] });
     assert.equal(tooMany.status, 400);
     assert.equal(tooMany.body.error.code, 'bad_skills');
-    const both = await h.request(s.port, 'POST', '/api/v1/ai/battle', { program: PROG, seed: 1, skills: ['skill_straight_precise'], loadout: LD.loadout });
+    const both = await h.request(s.port, 'POST', '/api/v1/ai/battle', { program: PROG, seed: 1, skills: ['skill_straight'], loadout: LD.loadout });
     assert.equal(both.status, 400, both.raw);
     assert.equal(both.body.error.code, 'bad_request');
     assert.equal(both.body.error.details[0].code, 'conflict', 'skills 与 loadout 互斥（明示，不隐式取舍）');

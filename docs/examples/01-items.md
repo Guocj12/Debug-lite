@@ -62,11 +62,12 @@
 | I-6a | `rp_atk_pct` 攻击提升·百分比 | 0.08 | rare / tier3 | 1.20 | 0.096 | **+9.6%** | `pointCost = 3` |
 | I-6b | `rp_atk_flat` 攻击提升·数值 | 4 | rare / tier2 | 1.12 | 4.48 → 取整 | **+4** | `pointCost = 2` |
 | I-6c | `rp_def_flat` 防御强化·数值 | 3 | common / tier1 | 0.85 | 2.55 → 取整 | **+3** | `pointCost = 1` |
-| I-6d | `sp_range` 射程增强 | 2 | rare / tier1 | 1.02 | 2.04 → 取整 | **+2** | `costDeltaByTier` 的第 1 档 = **mp +3** |
-| I-6e | `sp_cooldown` 冷却缩减 | 1 | rare / tier2 | 1.12 | 1.12 → 取整 | **−1** | 第 2 档 = **sp +6** |
-| I-6f | `sp_cost_down` 消耗优化 | 0.20 | rare / tier1 | 1.02 | 0.204 | **−20.4%** | **`costDeltaByTier = null`**（减耗类不增消耗） |
+| I-6d | `sk_mult` 增伤（技能通用插件） | 0.085 | rare / tier1 | 1.02 | 0.0867 | **+8.67%** | **零代价**（不增消耗；D-173） |
+| I-6e | `sk_cd_down` 冷却缩减（技能通用插件） | 0.25 | rare / tier2 | 1.12 | 0.28 | **−28%** | 零代价 |
+| I-6f | `sk_mp_down` 法力消耗（技能通用插件） | 0.20 | rare / tier1 | 1.02 | 0.204 | **−20.4%** | 零代价（只降低消耗） |
 
 > **档位与强度单调**（`T-IT-9`/`T-PB-4`）：档位↑ ⇒ 词条数值↑ **且** 点数/消耗↑。
+> **技能插件零代价**（2026-09-28，D-173）：通用技能插件**不加消耗、不加冷却**——旧的 `costDeltaByTier` / `costDeltaBase` 消耗补偿机制已退役（`sp_range`/`sp_cooldown`/`sp_cost_down` 等旧技能插件 id 已不存在）；强度差异体现在词条数值本身（`sk_cd_down` 的 −25% 为绿品质标准值，实例化 ×品质系数后再按"向下取整、下限 1"作用）。
 
 ## 3. 开箱
 

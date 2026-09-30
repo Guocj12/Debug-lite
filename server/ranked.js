@@ -29,6 +29,10 @@ const archiveMod = require('./store/archive.js');
 const ledger = require('./store/ledger.js');
 
 const TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
+// 服务端自签发的默认/机器人角色使用的插件点数（**确定性**：取绿品质区间下界）。
+//   2026-09-28 内容设计 §3.4：角色模板不再带 `pluginPoints`，点数由品质 `pluginPointsRange` 掷出；
+//   默认配置（0 槽、无插件）取**下界**，不引入随机，也不留"硬编码 3"这类静默回退。
+const DEFAULT_PLUGIN_POINTS = (require('./data/qualities.json').qualities.find((q) => q.id === 'common') || {}).pluginPointsRange[0];
 const X_PROMOTE = 6; // D-122 旧阈值常量（wins > 6 = 10 场胜 7 晋升）。P2-3 起判定单一真源 = `rating-config.promoteWins`
 //   （ledger.promoteAfterBatch，缺省 6）；本常量仅保留导出兼容（文档 §10-ranked 仍登记该导出），不再参与判定。
 const DEFAULT_BATCH_SIZE = 10; // §7.2：一轮排位批次 10 场（rating-config.batchSize 可覆盖）
@@ -78,9 +82,9 @@ const DEFAULT_AI_PRESETS = Object.freeze(['steady', 'aggressive', 'kite']);
 
 // 预设 → 技能槽模板顺序（槽位 = AI 里的 `skill:skillN`；顺序即"主武器位"）
 const PRESET_SKILL_ORDER = Object.freeze({
-  steady: Object.freeze(['skill_straight_precise', 'skill_melee_whirl', 'skill_melee_whirl']),
-  aggressive: Object.freeze(['skill_melee_whirl', 'skill_straight_precise', 'skill_melee_whirl']),
-  kite: Object.freeze(['skill_straight_precise', 'skill_straight_precise', 'skill_melee_whirl']),
+  steady: Object.freeze(['skill_straight', 'skill_melee', 'skill_melee']),
+  aggressive: Object.freeze(['skill_melee', 'skill_straight', 'skill_melee']),
+  kite: Object.freeze(['skill_straight', 'skill_straight', 'skill_melee']),
 });
 
 // 族 × 子变体 → 参数（阈值/开火槽/残血防守线）。参数**由探针实测选定**（同族子变体必须打破
@@ -167,7 +171,7 @@ function buildDefaultLoadout(identity, options) {
     role: {
       uid: 'bot_role', kind: 'role', templateId: ROLE.id, quality: 'common', slotCount: 0, slots: [],
       stats: { hp: ROLE.baseStats.hp, atk: ROLE.baseStats.atk, def: ROLE.baseStats.def, sp: ROLE.baseStats.sp, mp: ROLE.baseStats.mp },
-      regen: ROLE.regen, pluginPoints: ROLE.pluginPoints || 3, unlockTier: 'common',
+      regen: ROLE.regen, pluginPoints: DEFAULT_PLUGIN_POINTS, unlockTier: 'common',
     },
     skills: skillItems,
     ai: aiProgramOf(preset, sub),

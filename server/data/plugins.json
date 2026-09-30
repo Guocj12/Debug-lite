@@ -1,124 +1,1582 @@
 {
-  "_sample": true,
-  "_note": "示例数据（2026-09-16）：插件内容为占位示例，正式设计由用户完成。每个 affix.id 必须已在 server/data/affix-registry.json 登记（门禁项 4 会校验）。每项带 drop（是否进掉落池，缺省 true）与 dropWeight（同类池内相对权重，缺省 1），掉落完全由 JSON 配置。",
+  "_note": "插件表（2026-09-28 内容设计 v3）。角色插件见 docs/content-design.md §5；技能插件见 §6：slot:exclusive = 专属插件（声明式 overrides/specials/hitEffects/castEffects，forTypes 绑定类型，每个技能至多 1 个，name/animKey/sfxKey 覆盖展示），slot:general = 通用插件（纯词条加成、零消耗代价）。全部数值为绿品质标准值，随品质浮动（专属插件的覆盖型字段不浮动；连射的弹幕数按 qualityOverrides 逐品质给值）。",
+  "_pending": "① sp/mp 相关（pct/flat/回复）的标准值依赖资源等价权重，待 §8-T2（技能设计）校准；② `rp_critdmg` 按'假设角色暴击率 50%'给值、`rp_lowhp` 按'阈值期占 1/3 战斗时长'给值，待 §8-T8 标定；③ 上述条目标 `_pending` 字段，机制已完整实现，仅数值待定。",
+  "_contract": "docs/content-design.md §5/§6/§7；docs/items-data.md",
   "plugins": [
-    { "id": "rp_atk_pct", "kind": "rolePlugin", "slot": "atk", "category": "攻击提升",
-      "name": "攻击提升·百分比", "desc": "攻击提升（百分比）",
-      "affixes": [{ "id": "atk_pct", "desc": "攻击 +8%（基础值，随档位缩放）", "params": { "v": 0.08 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_atk_flat", "kind": "rolePlugin", "slot": "atk", "category": "攻击提升",
-      "name": "攻击提升·数值", "desc": "攻击提升（数值）",
-      "affixes": [{ "id": "atk_flat", "desc": "攻击 +4（基础值，随档位缩放）", "params": { "v": 4 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_def_pct", "kind": "rolePlugin", "slot": "def", "category": "防御强化",
-      "name": "防御强化·百分比", "desc": "防御强化（百分比）",
-      "affixes": [{ "id": "def_pct", "desc": "def +8%（基础值，随档位缩放）", "params": { "v": 0.08 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_def_flat", "kind": "rolePlugin", "slot": "def", "category": "防御强化",
-      "name": "防御强化·数值", "desc": "防御强化（数值）",
-      "affixes": [{ "id": "def_flat", "desc": "def +3（基础值，随档位缩放）", "params": { "v": 3 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_hp_pct", "kind": "rolePlugin", "slot": "hp", "category": "生命强化",
-      "name": "生命强化·百分比", "desc": "生命强化（百分比）",
-      "affixes": [{ "id": "hp_pct", "desc": "hp +8%（基础值，随档位缩放）", "params": { "v": 0.08 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_hp_flat", "kind": "rolePlugin", "slot": "hp", "category": "生命强化",
-      "name": "生命强化·数值", "desc": "生命强化（数值）",
-      "affixes": [{ "id": "hp_flat", "desc": "hp +20（基础值，随档位缩放）", "params": { "v": 20 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_sp_opt", "kind": "rolePlugin", "slot": "sp", "category": "SP 优化",
-      "name": "SP 优化·上限", "desc": "sp 上限 +15%（基础值，随档位缩放）",
-      "affixes": [{ "id": "sp_cap", "desc": "sp 上限 +15%", "params": { "v": 0.15 } }],
-      "pointCostByTier": [1, 2, 3], "unlockTier": "legendary", "drop": true, "dropWeight": 1 },
-    { "id": "rp_sp_regen", "kind": "rolePlugin", "slot": "sp", "category": "SP 优化",
-      "name": "SP 优化·回复", "desc": "sp 回复 +1（叠加到模板 regen，D-110）",
-      "affixes": [{ "id": "sp_regen", "desc": "sp 回复 +1", "params": { "v": 1 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_mp_opt", "kind": "rolePlugin", "slot": "mp", "category": "MP 优化",
-      "name": "MP 优化·上限", "desc": "mp 上限 +15%（基础值，随档位缩放）",
-      "affixes": [{ "id": "mp_cap", "desc": "mp 上限 +15%", "params": { "v": 0.15 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_mp_regen", "kind": "rolePlugin", "slot": "mp", "category": "MP 优化",
-      "name": "MP 优化·回复", "desc": "mp 回复 +1（叠加到模板 regen，D-110）",
-      "affixes": [{ "id": "mp_regen", "desc": "mp 回复 +1", "params": { "v": 1 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_dodge", "kind": "rolePlugin", "slot": "special", "category": "闪避",
-      "name": "闪避", "desc": "概率闪避 +5%（基础值，随档位缩放；累加封顶 1）",
-      "affixes": [{ "id": "dodge_chance", "desc": "闪避率 +5%", "params": { "v": 0.05 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_lifesteal", "kind": "rolePlugin", "slot": "special", "category": "吸血",
-      "name": "吸血", "desc": "普攻吸血 10%（基础值，随档位缩放）",
-      "affixes": [{ "id": "lifesteal", "desc": "普攻吸血 10%", "params": { "v": 0.10 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_crit", "kind": "rolePlugin", "slot": "special", "category": "暴击",
-      "name": "暴击", "desc": "暴击率 +8%（基础值，随档位缩放；累加封顶 1）",
-      "affixes": [{ "id": "crit_chance", "desc": "暴击率 +8%", "params": { "v": 0.08 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-    { "id": "rp_regen", "kind": "rolePlugin", "slot": "special", "category": "回复",
-      "name": "回复", "desc": "每 tick hp +1（基础值，随档位缩放）",
-      "affixes": [{ "id": "hp_regen", "desc": "每 tick hp +1", "params": { "v": 1 } }],
-      "pointCostByTier": [1, 2, 3], "drop": true, "dropWeight": 1 },
-
-    { "id": "sp_mult", "kind": "skillPlugin", "slot": "basic", "category": "倍率提升",
-      "name": "倍率提升", "desc": "倍率 +15%（基础值，随档位缩放）",
-      "affixes": [{ "id": "mult_up", "desc": "倍率 +15%", "params": { "v": 0.15 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_cost_down", "kind": "skillPlugin", "slot": "basic", "category": "消耗优化",
-      "name": "消耗优化", "desc": "消耗 -20%（减耗类，不增消耗）",
-      "affixes": [{ "id": "cost_down", "desc": "消耗 -20%", "params": { "v": 0.20 } }],
-      "costDeltaByTier": null, "drop": true, "dropWeight": 1 },
-    { "id": "sp_cooldown", "kind": "skillPlugin", "slot": "basic", "category": "冷却缩减",
-      "name": "冷却缩减", "desc": "冷却 -1（基础值，随档位缩放）",
-      "affixes": [{ "id": "cooldown_down", "desc": "冷却 -1", "params": { "v": 1 } }],
-      "costDeltaByTier": { "sp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_range", "kind": "skillPlugin", "slot": "basic", "category": "射程增强",
-      "name": "射程增强", "desc": "射程/范围 +2（基础值，随档位缩放）",
-      "affixes": [{ "id": "range_plus", "desc": "射程 +2", "params": { "v": 2 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_bullet", "kind": "skillPlugin", "slot": "basic", "category": "弹幕增强",
-      "name": "弹幕增强", "desc": "弹幕数量 +1",
-      "affixes": [{ "id": "bullet_plus", "desc": "弹幕数量 +1", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_level", "kind": "skillPlugin", "slot": "basic", "category": "等级凝练",
-      "name": "等级凝练", "desc": "弹幕等级 -1（更高，下限 1）",
-      "affixes": [{ "id": "level_up", "desc": "弹幕等级 -1", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_displacement", "kind": "skillPlugin", "slot": "basic", "category": "位移增强",
-      "name": "位移增强", "desc": "位移距离 +1",
-      "affixes": [{ "id": "distance_plus", "desc": "位移距离 +1", "params": { "v": 1 } }],
-      "costDeltaByTier": { "sp": [2, 4, 6] }, "unlockTier": "legendary", "drop": true, "dropWeight": 1 },
-
-    { "id": "sp_stun", "kind": "skillPlugin", "slot": "special", "category": "眩晕",
-      "name": "眩晕", "desc": "命中眩晕 1 tick",
-      "affixes": [{ "id": "stun", "desc": "命中眩晕 1 tick", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_knockback", "kind": "skillPlugin", "slot": "special", "category": "击退",
-      "name": "击退", "desc": "命中击退 1 格",
-      "affixes": [{ "id": "knockback", "desc": "命中击退 1 格", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_pull", "kind": "skillPlugin", "slot": "special", "category": "拉近",
-      "name": "拉近", "desc": "命中拉近 1 格",
-      "affixes": [{ "id": "pull", "desc": "命中拉近 1 格", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_dot", "kind": "skillPlugin", "slot": "special", "category": "持续伤害",
-      "name": "持续伤害", "desc": "命中持续伤害 3 tick",
-      "affixes": [{ "id": "dot", "desc": "命中持续伤害 3 tick", "params": { "v": 3 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_true_dmg", "kind": "skillPlugin", "slot": "special", "category": "真实伤害",
-      "name": "真实伤害", "desc": "改为真实伤害",
-      "affixes": [{ "id": "true_dmg", "desc": "改为真实伤害", "params": { "v": 1 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_crit", "kind": "skillPlugin", "slot": "special", "category": "暴击",
-      "name": "暴击", "desc": "命中暴击率 +10%（基础值，随档位缩放）",
-      "affixes": [{ "id": "crit_chance", "desc": "暴击率 +10%", "params": { "v": 0.10 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_lifesteal", "kind": "skillPlugin", "slot": "special", "category": "吸血",
-      "name": "吸血", "desc": "命中吸 hp 20%（基础值，随档位缩放）",
-      "affixes": [{ "id": "lifesteal", "desc": "命中吸 hp 20%", "params": { "v": 0.20 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 },
-    { "id": "sp_buff", "kind": "skillPlugin", "slot": "special", "category": "释放增益",
-      "name": "释放增益", "desc": "释放后 atk 每 tick +2，duration=2（生效窗口 t+1/t+2），到期回滚累计增量、净 0（D-154）",
-      "affixes": [{ "id": "cast_buff", "desc": "释放后 atk 每 tick +2（duration=2），到期回滚、净 0（D-154）", "params": { "v": 2, "duration": 2 } }],
-      "costDeltaByTier": { "mp": [2, 4, 6] }, "drop": true, "dropWeight": 1 }
+    {
+      "id": "rp_atk_pct_c1",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·百分比（1 点）",
+      "desc": "攻击 +8.5%（标准值，随品质浮动）",
+      "pointCost": 1,
+      "affixes": [
+        {
+          "id": "atk_pct",
+          "desc": "攻击 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_atk_pct",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·百分比",
+      "desc": "攻击 +17%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "atk_pct",
+          "desc": "攻击 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_atk_pct_c3",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·百分比（3 点）",
+      "desc": "攻击 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "atk_pct",
+          "desc": "攻击 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_atk_flat_c1",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·数值（1 点）",
+      "desc": "攻击 +1.275（标准值，随品质浮动）",
+      "pointCost": 1,
+      "affixes": [
+        {
+          "id": "atk_flat",
+          "desc": "攻击 +1.275",
+          "params": {
+            "v": 1.275
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_atk_flat",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·数值",
+      "desc": "攻击 +2.55（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "atk_flat",
+          "desc": "攻击 +2.55",
+          "params": {
+            "v": 2.55
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_atk_flat_c3",
+      "kind": "rolePlugin",
+      "slot": "atk",
+      "category": "攻击提升",
+      "name": "攻击提升·数值（3 点）",
+      "desc": "攻击 +3.825（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "atk_flat",
+          "desc": "攻击 +3.825",
+          "params": {
+            "v": 3.825
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_pct_c1",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·百分比（1 点）",
+      "desc": "生命 +8.5%（标准值，随品质浮动）",
+      "pointCost": 1,
+      "affixes": [
+        {
+          "id": "hp_pct",
+          "desc": "生命 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_pct",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·百分比",
+      "desc": "生命 +17%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "hp_pct",
+          "desc": "生命 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_pct_c3",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·百分比（3 点）",
+      "desc": "生命 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "hp_pct",
+          "desc": "生命 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_flat_c1",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·数值（1 点）",
+      "desc": "生命 +8.075（标准值，随品质浮动）",
+      "pointCost": 1,
+      "affixes": [
+        {
+          "id": "hp_flat",
+          "desc": "生命 +8.075",
+          "params": {
+            "v": 8.075
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_flat",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·数值",
+      "desc": "生命 +16.15（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "hp_flat",
+          "desc": "生命 +16.15",
+          "params": {
+            "v": 16.15
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_hp_flat_c3",
+      "kind": "rolePlugin",
+      "slot": "hp",
+      "category": "生命强化",
+      "name": "生命强化·数值（3 点）",
+      "desc": "生命 +24.225（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "hp_flat",
+          "desc": "生命 +24.225",
+          "params": {
+            "v": 24.225
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_def_flat_c1",
+      "kind": "rolePlugin",
+      "slot": "def",
+      "category": "防御强化",
+      "name": "防御强化·数值（1 点）",
+      "desc": "防御 +4.08（标准值，按 (def+defK) 基准；随品质浮动）",
+      "pointCost": 1,
+      "affixes": [
+        {
+          "id": "def_flat",
+          "desc": "防御 +4.08",
+          "params": {
+            "v": 4.08
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_def_flat",
+      "kind": "rolePlugin",
+      "slot": "def",
+      "category": "防御强化",
+      "name": "防御强化·数值",
+      "desc": "防御 +8.16（标准值，按 (def+defK) 基准；随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "def_flat",
+          "desc": "防御 +8.16",
+          "params": {
+            "v": 8.16
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_def_flat_c3",
+      "kind": "rolePlugin",
+      "slot": "def",
+      "category": "防御强化",
+      "name": "防御强化·数值（3 点）",
+      "desc": "防御 +12.24（标准值，按 (def+defK) 基准；随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "def_flat",
+          "desc": "防御 +12.24",
+          "params": {
+            "v": 12.24
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_opt_c1",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 优化",
+      "name": "SP 优化·上限（1 点）",
+      "desc": "SP 上限 +8.5%（标准值，随品质浮动）",
+      "pointCost": 1,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_cap",
+          "desc": "SP 上限 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_opt",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 优化",
+      "name": "SP 优化·上限",
+      "desc": "SP 上限 +17%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "_pending": "T2",
+      "unlockTier": "legendary",
+      "affixes": [
+        {
+          "id": "sp_cap",
+          "desc": "SP 上限 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_opt_c3",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 优化",
+      "name": "SP 优化·上限（3 点）",
+      "desc": "SP 上限 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_cap",
+          "desc": "SP 上限 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_flat_c1",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 强化",
+      "name": "SP 强化·数值（1 点）",
+      "desc": "SP +6.205（标准值，随品质浮动）",
+      "pointCost": 1,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_flat",
+          "desc": "SP +6.205",
+          "params": {
+            "v": 6.205
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_flat",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 强化",
+      "name": "SP 强化·数值",
+      "desc": "SP +12.41（标准值，随品质浮动）",
+      "pointCost": 2,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_flat",
+          "desc": "SP +12.41",
+          "params": {
+            "v": 12.41
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_flat_c3",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 强化",
+      "name": "SP 强化·数值（3 点）",
+      "desc": "SP +18.615（标准值，随品质浮动）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_flat",
+          "desc": "SP +18.615",
+          "params": {
+            "v": 18.615
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_opt_c1",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 优化",
+      "name": "MP 优化·上限（1 点）",
+      "desc": "MP 上限 +8.5%（标准值，随品质浮动）",
+      "pointCost": 1,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_cap",
+          "desc": "MP 上限 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_opt",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 优化",
+      "name": "MP 优化·上限",
+      "desc": "MP 上限 +17%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_cap",
+          "desc": "MP 上限 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_opt_c3",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 优化",
+      "name": "MP 优化·上限（3 点）",
+      "desc": "MP 上限 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_cap",
+          "desc": "MP 上限 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_flat_c1",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 强化",
+      "name": "MP 强化·数值（1 点）",
+      "desc": "MP +5.27（标准值，随品质浮动）",
+      "pointCost": 1,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_flat",
+          "desc": "MP +5.27",
+          "params": {
+            "v": 5.27
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_flat",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 强化",
+      "name": "MP 强化·数值",
+      "desc": "MP +10.54（标准值，随品质浮动）",
+      "pointCost": 2,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_flat",
+          "desc": "MP +10.54",
+          "params": {
+            "v": 10.54
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_flat_c3",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 强化",
+      "name": "MP 强化·数值（3 点）",
+      "desc": "MP +15.81（标准值，随品质浮动）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_flat",
+          "desc": "MP +15.81",
+          "params": {
+            "v": 15.81
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_regen",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "回复",
+      "name": "再生",
+      "desc": "每 tick 生命 +1（基准场次 T=20 时 EP ≈ 21%；随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "hp_regen",
+          "desc": "每 tick 生命 +1",
+          "params": {
+            "v": 1
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_sp_regen",
+      "kind": "rolePlugin",
+      "slot": "sp",
+      "category": "SP 优化",
+      "name": "体力循环",
+      "desc": "每 tick SP +1（价值 ∝ 战斗时长与资源模型）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "sp_regen",
+          "desc": "每 tick SP +1",
+          "params": {
+            "v": 1
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_mp_regen",
+      "kind": "rolePlugin",
+      "slot": "mp",
+      "category": "MP 优化",
+      "name": "法力循环",
+      "desc": "每 tick MP +1（价值 ∝ 战斗时长与资源模型）",
+      "pointCost": 3,
+      "_pending": "T2",
+      "affixes": [
+        {
+          "id": "mp_regen",
+          "desc": "每 tick MP +1",
+          "params": {
+            "v": 1
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_dodge",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "闪避",
+      "name": "闪避",
+      "desc": "闪避率 +14.53%（标准值，随品质浮动；累加封顶 100%）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "dodge_chance",
+          "desc": "闪避率 +14.53%",
+          "params": {
+            "v": 0.1453
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_dodge_c3",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "闪避",
+      "name": "闪避（3 点）",
+      "desc": "闪避率 +20.32%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "dodge_chance",
+          "desc": "闪避率 +20.32%",
+          "params": {
+            "v": 0.2032
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_crit",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "暴击",
+      "name": "暴击",
+      "desc": "暴击率 +17%（标准值，随品质浮动；暴击倍率 2.0）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "crit_chance",
+          "desc": "暴击率 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_crit_c3",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "暴击",
+      "name": "暴击（3 点）",
+      "desc": "暴击率 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "crit_chance",
+          "desc": "暴击率 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_lifesteal",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "吸血",
+      "name": "吸血",
+      "desc": "吸血 +17%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "lifesteal",
+          "desc": "吸血 +17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_lifesteal_c3",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "吸血",
+      "name": "吸血（3 点）",
+      "desc": "吸血 +25.5%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "lifesteal",
+          "desc": "吸血 +25.5%",
+          "params": {
+            "v": 0.255
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_thorns",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "荆棘",
+      "name": "荆棘",
+      "desc": "受击反弹 攻击者攻击力 × 11.33%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "affixes": [
+        {
+          "id": "thorns",
+          "desc": "受击反弹 攻击者攻击力 × 11.33%",
+          "params": {
+            "v": 0.1133
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_thorns_c3",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "荆棘",
+      "name": "荆棘（3 点）",
+      "desc": "受击反弹 攻击者攻击力 × 17%（标准值，随品质浮动）",
+      "pointCost": 3,
+      "affixes": [
+        {
+          "id": "thorns",
+          "desc": "受击反弹 攻击者攻击力 × 17%",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_critdmg",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "致命",
+      "name": "致命",
+      "desc": "暴击倍率 +0.34（标准值，随品质浮动；需配合暴击率使用）",
+      "pointCost": 2,
+      "_pending": "T8（按角色暴击率 50% 折算）",
+      "affixes": [
+        {
+          "id": "critMul",
+          "desc": "暴击倍率 +0.34",
+          "params": {
+            "v": 0.34
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "rp_lowhp",
+      "kind": "rolePlugin",
+      "slot": "special",
+      "category": "背水",
+      "name": "背水",
+      "desc": "生命低于 50% 时 攻击 +51%（标准值，随品质浮动）",
+      "pointCost": 2,
+      "_pending": "T8（阈值期占比需批量对战标定）",
+      "affixes": [
+        {
+          "id": "lowHpAtk",
+          "desc": "生命低于 50% 时 攻击 +51%",
+          "params": {
+            "v": 0.51
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_mult",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "增伤",
+      "name": "增伤",
+      "desc": "倍率 +8.5%（标准值，随品质浮动）",
+      "affixes": [
+        {
+          "id": "mult_up",
+          "desc": "倍率 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_crit",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "暴击",
+      "name": "暴击率",
+      "desc": "暴击率 +8.5%（标准值，随品质浮动）",
+      "affixes": [
+        {
+          "id": "crit_chance",
+          "desc": "暴击率 +8.5%",
+          "params": {
+            "v": 0.085
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_critdmg",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "致命",
+      "name": "暴击伤害",
+      "desc": "暴击倍率 +0.17（标准值，按 50% 暴击率折算 = +8.5% 伤害）",
+      "affixes": [
+        {
+          "id": "critMul",
+          "desc": "暴击倍率 +0.17",
+          "params": {
+            "v": 0.17
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_cd_down",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "冷却",
+      "name": "冷却缩减",
+      "desc": "冷却 −25%（向下取整，下限 1）",
+      "affixes": [
+        {
+          "id": "cooldown_down",
+          "desc": "冷却 −25%",
+          "params": {
+            "v": 0.25
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_sp_down",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "减耗",
+      "name": "体力消耗",
+      "desc": "SP 消耗 −20%",
+      "affixes": [
+        {
+          "id": "cost_down_sp",
+          "desc": "SP 消耗 −20%",
+          "params": {
+            "v": 0.2
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_mp_down",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "减耗",
+      "name": "法力消耗",
+      "desc": "MP 消耗 −20%",
+      "affixes": [
+        {
+          "id": "cost_down_mp",
+          "desc": "MP 消耗 −20%",
+          "params": {
+            "v": 0.2
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "sk_true",
+      "kind": "skillPlugin",
+      "slot": "general",
+      "category": "真伤",
+      "name": "真实伤害",
+      "desc": "倍率 −10%，整次命中改为真实伤害（无视防御）",
+      "affixes": [
+        {
+          "id": "mult_up",
+          "desc": "倍率 −10%",
+          "params": {
+            "v": -0.1
+          }
+        },
+        {
+          "id": "true_convert",
+          "desc": "改为真实伤害",
+          "params": {
+            "v": 1
+          }
+        }
+      ],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_longsword",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "近战·长剑",
+      "name": "长剑",
+      "desc": "范围改为 [0,3]",
+      "forTypes": [
+        "melee"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "melee"
+        ],
+        "overrides": {
+          "range": [
+            0,
+            3
+          ],
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 24
+          },
+          "cooldown": 4
+        }
+      },
+      "animKey": "ex_longsword",
+      "sfxKey": "cast_longsword",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_dagger",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "近战·匕首",
+      "name": "匕首",
+      "desc": "范围改为 [0,1]；暴击率 +25%、暴击倍率 +0.50",
+      "forTypes": [
+        "melee"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "melee"
+        ],
+        "overrides": {
+          "range": [
+            0,
+            1
+          ],
+          "multiplier": 0.9,
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 8
+          },
+          "cooldown": 1
+        },
+        "specials": {
+          "critChance": 0.25,
+          "critMul": 0.5
+        }
+      },
+      "animKey": "ex_dagger",
+      "sfxKey": "cast_dagger",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_whirl",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "近战·旋风斩",
+      "name": "旋风斩",
+      "desc": "范围改为 [-1,1]",
+      "forTypes": [
+        "melee"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "melee"
+        ],
+        "overrides": {
+          "range": [
+            -1,
+            1
+          ],
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 12
+          },
+          "cooldown": 2
+        }
+      },
+      "animKey": "ex_whirl",
+      "sfxKey": "cast_whirl",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_hammer",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "近战·重锤",
+      "name": "重锤",
+      "desc": "命中后施加 1 tick 眩晕",
+      "forTypes": [
+        "melee"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "melee"
+        ],
+        "overrides": {
+          "range": [
+            0,
+            2
+          ],
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 32
+          },
+          "cooldown": 4
+        },
+        "hitEffects": [
+          {
+            "kind": "control",
+            "displacement": 0,
+            "remaining": 1
+          }
+        ]
+      },
+      "animKey": "ex_hammer",
+      "sfxKey": "cast_hammer",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_pierce",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "平射·穿甲",
+      "name": "穿甲",
+      "desc": "弹幕等级 +2；倍率 1.40",
+      "forTypes": [
+        "straight"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "straight"
+        ],
+        "overrides": {
+          "bulletLevel": 5,
+          "multiplier": 1.4,
+          "cost": {
+            "hp": 0,
+            "mp": 6,
+            "sp": 3
+          },
+          "cooldown": 2
+        }
+      },
+      "animKey": "ex_pierce",
+      "sfxKey": "cast_pierce",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_rapid",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "平射·连射",
+      "name": "连射",
+      "desc": "弹幕数随品质；单发伤害降低；弹幕等级 −1",
+      "forTypes": [
+        "straight"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "straight"
+        ],
+        "overrides": {
+          "bulletLevel": 2,
+          "bulletCount": 3,
+          "multiplier": 0.45,
+          "cost": {
+            "hp": 0,
+            "mp": 6,
+            "sp": 2
+          },
+          "cooldown": 1
+        },
+        "qualityOverrides": {
+          "common": {
+            "bulletCount": 3
+          },
+          "rare": {
+            "bulletCount": 3
+          },
+          "epic": {
+            "bulletCount": 4
+          },
+          "legendary": {
+            "bulletCount": 4
+          },
+          "mythic": {
+            "bulletCount": 5
+          }
+        }
+      },
+      "animKey": "ex_rapid",
+      "sfxKey": "cast_rapid",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_scatter",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "平射·霰弹",
+      "name": "霰弹",
+      "desc": "射程 −3、弹幕 +4、单发伤害降低、命中击退、弹幕等级 −1",
+      "forTypes": [
+        "straight"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "straight"
+        ],
+        "overrides": {
+          "range": 2,
+          "bulletCount": 5,
+          "bulletLevel": 2,
+          "multiplier": 0.5,
+          "cost": {
+            "hp": 0,
+            "mp": 13,
+            "sp": 6
+          },
+          "cooldown": 4
+        },
+        "hitEffects": [
+          {
+            "kind": "control",
+            "displacementFrom": "v",
+            "sign": 1,
+            "remaining": 1,
+            "params": {
+              "v": 1
+            }
+          }
+        ]
+      },
+      "animKey": "ex_scatter",
+      "sfxKey": "cast_scatter",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_snipe",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "平射·狙击",
+      "name": "狙击",
+      "desc": "弹幕等级 +1、射程 +3；暴击率 +30%、暴击倍率 +0.50",
+      "forTypes": [
+        "straight"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "straight"
+        ],
+        "overrides": {
+          "bulletLevel": 4,
+          "range": 8,
+          "multiplier": 1,
+          "cost": {
+            "hp": 0,
+            "mp": 8,
+            "sp": 4
+          },
+          "cooldown": 3
+        },
+        "specials": {
+          "critChance": 0.3,
+          "critMul": 0.5
+        }
+      },
+      "animKey": "ex_snipe",
+      "sfxKey": "cast_snipe",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_fireball",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "定点·火球",
+      "name": "火球",
+      "desc": "范围改为 [-1,1]；命中持续 −2 HP × 3 tick",
+      "forTypes": [
+        "vertical"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "vertical"
+        ],
+        "overrides": {
+          "range": 5,
+          "area": [
+            -1,
+            1
+          ],
+          "falloff": 0.2,
+          "multiplier": 1,
+          "cost": {
+            "hp": 0,
+            "mp": 33,
+            "sp": 0
+          },
+          "cooldown": 6
+        },
+        "hitEffects": [
+          {
+            "kind": "continuous",
+            "stat": "hp",
+            "delta": -2,
+            "remaining": 3
+          }
+        ]
+      },
+      "animKey": "ex_fireball",
+      "sfxKey": "cast_fireball",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_rain",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "定点·箭雨",
+      "name": "箭雨",
+      "desc": "射程 +2、范围改为 [-2,2]、伤害降低、不再衰减",
+      "forTypes": [
+        "vertical"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "vertical"
+        ],
+        "overrides": {
+          "range": 7,
+          "area": [
+            -2,
+            2
+          ],
+          "falloff": 0,
+          "multiplier": 0.5,
+          "cost": {
+            "hp": 0,
+            "mp": 29,
+            "sp": 0
+          },
+          "cooldown": 4
+        }
+      },
+      "animKey": "ex_rain",
+      "sfxKey": "cast_rain",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_vine",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "定点·藤蔓",
+      "name": "藤蔓",
+      "desc": "射程 −2；命中 2 tick 眩晕",
+      "forTypes": [
+        "vertical"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "vertical"
+        ],
+        "overrides": {
+          "range": 3,
+          "area": [
+            0,
+            0
+          ],
+          "falloff": 0.2,
+          "multiplier": 1,
+          "cost": {
+            "hp": 0,
+            "mp": 32,
+            "sp": 0
+          },
+          "cooldown": 5
+        },
+        "hitEffects": [
+          {
+            "kind": "control",
+            "displacement": 0,
+            "remaining": 2
+          }
+        ]
+      },
+      "animKey": "ex_vine",
+      "sfxKey": "cast_vine",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_curse",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "定点·诅咒",
+      "name": "诅咒",
+      "desc": "范围改为 [-1,1]；命中 −4 防御 × 3 tick",
+      "forTypes": [
+        "vertical"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "vertical"
+        ],
+        "overrides": {
+          "range": 5,
+          "area": [
+            -1,
+            1
+          ],
+          "falloff": 0.2,
+          "multiplier": 1,
+          "cost": {
+            "hp": 0,
+            "mp": 32,
+            "sp": 0
+          },
+          "cooldown": 4
+        },
+        "hitEffects": [
+          {
+            "kind": "continuous",
+            "stat": "def",
+            "delta": -4,
+            "remaining": 3
+          }
+        ]
+      },
+      "animKey": "ex_curse",
+      "sfxKey": "cast_curse",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_bash",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "位移·盾突",
+      "name": "盾突",
+      "desc": "造成伤害；释放时自身 防御 +4 × 2 tick",
+      "forTypes": [
+        "displacement"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "displacement"
+        ],
+        "overrides": {
+          "distance": 3,
+          "dealDamage": true,
+          "multiplier": 0.8,
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 32
+          },
+          "cooldown": 4
+        },
+        "castEffects": [
+          {
+            "kind": "continuous",
+            "stat": "def",
+            "delta": 4,
+            "remaining": 2
+          }
+        ]
+      },
+      "animKey": "ex_bash",
+      "sfxKey": "cast_bash",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_blink",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "位移·瞬移",
+      "name": "瞬移",
+      "desc": "穿过敌人、全程闪避、距离改为 5",
+      "forTypes": [
+        "displacement"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "displacement"
+        ],
+        "overrides": {
+          "distance": 5,
+          "passThroughEnemy": true,
+          "fullDodgeDuring": true,
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 35
+          },
+          "cooldown": 7
+        }
+      },
+      "animKey": "ex_blink",
+      "sfxKey": "cast_blink",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_thrust",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "位移·突刺",
+      "name": "突刺",
+      "desc": "造成伤害；暴击率 +25%、暴击倍率 +0.50；距离 −1",
+      "forTypes": [
+        "displacement"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "displacement"
+        ],
+        "overrides": {
+          "distance": 2,
+          "dealDamage": true,
+          "multiplier": 0.8,
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 22
+          },
+          "cooldown": 3
+        },
+        "specials": {
+          "critChance": 0.25,
+          "critMul": 0.5
+        }
+      },
+      "animKey": "ex_thrust",
+      "sfxKey": "cast_thrust",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    },
+    {
+      "id": "ex_retreat",
+      "kind": "skillPlugin",
+      "slot": "exclusive",
+      "category": "位移·后撤",
+      "name": "后撤",
+      "desc": "向背向位移 2 格；释放时自身 攻击 +4.5 × 2 tick",
+      "forTypes": [
+        "displacement"
+      ],
+      "exclusive": {
+        "forTypes": [
+          "displacement"
+        ],
+        "overrides": {
+          "distance": 2,
+          "moveDir": "backward",
+          "cost": {
+            "hp": 0,
+            "mp": 0,
+            "sp": 11
+          },
+          "cooldown": 3
+        },
+        "castEffects": [
+          {
+            "kind": "continuous",
+            "stat": "atk",
+            "delta": 4.5,
+            "remaining": 2
+          }
+        ]
+      },
+      "animKey": "ex_retreat",
+      "sfxKey": "cast_retreat",
+      "affixes": [],
+      "drop": true,
+      "dropWeight": 1
+    }
   ]
 }

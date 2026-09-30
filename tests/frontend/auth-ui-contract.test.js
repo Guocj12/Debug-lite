@@ -47,9 +47,9 @@ const WAREHOUSE_ENVELOPE = {
   data: {
     buckets: {
       role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 1, slots: [{ type: 'mp', pluginUid: null }], stats: { hp: 96, atk: 9, def: 7, sp: 58, mp: 41 }, regen: { mp: 1, sp: 2 }, pluginPoints: 3, templateId: 'role_bal' }],
-      skill: [{ uid: 'item_1', kind: 'skill', name: '旋风斩', quality: 'common', slotCount: 1, slots: [{ type: 'basic', pluginUid: null }], params: { multiplier: 0.88, cost: { hp: 0, mp: 0, sp: 12 }, cooldown: 2, bulletLevel: 2 }, templateId: 'skill_melee_whirl' }],
+      skill: [{ uid: 'item_1', kind: 'skill', name: '近战', quality: 'common', slotCount: 1, slots: [{ type: 'general', pluginUid: null }], params: { multiplier: 1.0, cost: { hp: 0, mp: 0, sp: 11 }, cooldown: 3, bulletLevel: 2 }, templateId: 'skill_melee', animKey: 'skill_melee', sfxKey: 'cast_melee' }],
       rolePlugin: [{ uid: 'item_4', kind: 'rolePlugin', id: 'rp_mp_regen', name: 'MP 优化·回复', desc: 'mp 回复 +1', slot: 'mp', category: 'MP 优化', quality: 'common', tier: 1, pointCost: 1, affixes: [{ id: 'mp_regen', desc: 'mp 回复 +1', params: { v: 1 } }] }],
-      skillPlugin: [{ uid: 'item_6', kind: 'skillPlugin', id: 'sp_displacement', name: '位移增强', desc: '位移距离 +1', slot: 'basic', category: '位移增强', quality: 'common', tier: 1, costDeltaByTier: { sp: [2, 4, 6] }, affixes: [{ id: 'distance_plus', desc: '位移距离 +1', params: { v: 1 } }] }],
+      skillPlugin: [{ uid: 'item_6', kind: 'skillPlugin', id: 'ex_longsword', name: '长剑', desc: '范围改为 [0,3]', slot: 'exclusive', category: '近战·长剑', quality: 'common', tier: 1, forTypes: ['melee'], exclusive: { overrides: { range: [0, 3] } }, animKey: 'ex_longsword', sfxKey: 'cast_longsword', affixes: [] }],
     },
     usage: { item_0: { slotIds: ['slot1'] }, item_1: { slotIds: ['slot1'] } },
     caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
