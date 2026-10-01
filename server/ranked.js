@@ -224,7 +224,9 @@ function isWarehouseVerified(archive, activeSlot) {
 
 // 把装配引用物化为 no-op 占位项（`affixes: []` → 面板与源配置的"基准值"一致，无词条加成）
 function syntheticVerifiedWarehouse(loadout) {
-  const buckets = { role: [], skill: [], rolePlugin: [], skillPlugin: [] };
+  // D-176：仓库桶清单以 store/archive 的 WAREHOUSE_BUCKETS 为准（含新增的 `package`），避免此处漏桶
+  const buckets = {};
+  for (const key of archiveMod.WAREHOUSE_BUCKETS) buckets[key] = [];
   const pushRefs = (slots, kind, bucket) => {
     for (const s of Array.isArray(slots) ? slots : []) {
       if (!s || !s.pluginUid) continue;

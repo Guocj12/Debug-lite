@@ -20,6 +20,8 @@ const crypto = require('node:crypto');
 const archiveMod = require('./store/archive.js');
 const ledger = require('./store/ledger.js');
 const ranked = require('./ranked.js');
+const itemsMod = require('./core/items.js');
+const { shortDigest } = require('./store/canonical.js');
 
 const SEED_MAX = 0x7fffffff;
 const MAX_LIMIT = 100;
@@ -327,6 +329,18 @@ function createQuickMatch(options) {
       p1SnapshotHash: mine.active.snapshot.hash, p2SnapshotHash: found.opponent.snapshotHash,
     });
     const existing = typeof store.findBattleRecord === 'function' ? await store.findBattleRecord(battleId) : null;
+    // D-176：**战斗掉落的包**（只有主动匹配的对战掉落；防守方不掉）。
+    //   计划由 matchSeed 派生 → 同一场（同 seed + 同双方快照 → 同 battleId）**始终得到同一批包**；
+    //   幂等重放（existing）时照常回带，但**不重复发放**（掉落记录另由 grantId 环兜底，见 D-177）。
+    const dropRng = createRng(matchSeed).deriveStream(1, 'quickdrop');
+    const dropSpecs = itemsMod.rollBattlePackages(dropRng, {
+      tier: mine.archive.progress.tier, result: winner === 'p1' ? 'win' : winner === 'p2' ? 'loss' : 'draw',
+    });
+    const drops = dropSpecs.map((spec, i) => itemsMod.generatePackage({
+      ...spec,
+      // uid 内容寻址：(playerId, battleId, 序号) → 跨重启稳定、天然免撞号、重放逐值一致
+      uid: `pkg_${shortDigest([o.playerId, battleId, i].join('|'), 16)}`,
+    }));
     if (!existing) {
       await store.settleBattle({
         type: 'battle.recorded',
@@ -349,6 +363,30 @@ function createQuickMatch(options) {
         verdict: { winner, reason: null, ticks: r.ticks },
         versions: { engine: store.versions.engine, data: store.versions.data },
       });
+      // D-176/D-177：发放掉落（**同一 if(!existing) 块内** → 幂等重放不重复发放）。
+      //   grantId 内容寻址到 (playerId, battleId) → 即便并发导致本块被执行两次，archive 的 grantIds 环
+      //   仍判定"已应用" → 不会重复入仓（响应/journal 可能多一条同内容记录，可审计、无副作用）。
+      if (drops.length > 0) {
+        try {
+          const granted = await store.grantPackages({
+            playerId: o.playerId, packages: drops, source: 'quick', battleId,
+            grantId: ledger.packageGrantIdOf({ playerId: o.playerId, battleId, source: 'quick' }),
+          });
+          for (let i = 0; i < granted.packages.length && i < drops.length; i += 1) {
+            drops[i] = granted.packages[i]; // 落档后 uid（若被重映射）→ "响应 = journal = 档案"
+          }
+          log.info('ranked', 'quick.droppackage', `战斗掉落 ${drops.length} 个包（${drops.map((d) => `${d.packageKind}·${d.quality}·${d.qualityPercent}%`).join(' / ')}）`, {
+            playerId: o.playerId, battleId, count: drops.length,
+            packages: drops.map((d) => ({ uid: d.uid, packageKind: d.packageKind, quality: d.quality, qualityPercent: d.qualityPercent })),
+          });
+        } catch (err) {
+          // 掉落失败**不回滚对局**（战绩已落盘）：如实记 error，响应 drops 置空（仓库真源可复核）
+          log.error('store', 'store.error', `战斗掉落发放失败（对局已结算，不掉包）：${err && err.message ? err.message : err}`, {
+            playerId: o.playerId, battleId, count: drops.length, code: (err && err.code) || null,
+          });
+          drops.length = 0;
+        }
+      }
     }
     // 结算后再读双方档案：bot 的 rating 被冻结（§7.6），取**实际落盘值**回带，响应不得与档案不一致
     const peek = typeof store.peekNow === 'function' ? store.peekNow : nowFn;
@@ -413,6 +451,9 @@ function createQuickMatch(options) {
           delta: opponentDelta,
         },
         replayId: battleId,
+        // D-176：本场掉落的包（**字段恒在**：无掉落时为 `[]`，前端契约 FC-1 依赖"字段必定可解析"）。
+        //   幂等重放时同一场得到同一批（由 matchSeed 确定性派生），但不重复发放。
+        drops,
         // D-167：**内联全量战斗过程**（画面数据 + 双方 aiTrace；不含引擎日志 events）。
         //   幂等重放（同 seed + 同双方快照 → 已存在记录）时 `r` 仍是本次真实执行结果，故帧照常回带。
         frames: Array.isArray(r.frames) ? r.frames : null,

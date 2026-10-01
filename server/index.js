@@ -1356,6 +1356,18 @@ function createHandler(logger, extraRoutes, runtime) {
         }));
       },
     },
+    // D-177：开包（在仓库里使用「包」）—— 体 `{packageUids:[…]}`；随机性归服务端（同 D-162 口径，无 seed 入参）
+    '/api/v1/me/warehouse/open-package': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.openPackages({
+          playerId: ctx.player.playerId, packageUids: body.packageUids, seedFactory: rt.boxSeedFactory,
+        }));
+      },
+    },
     // D-161：AI 库创建（命名保存；上限 100 → 409 ai_limit）；D-172：`status` 缺省/ready 时服务端完整校验
     '/api/v1/me/ai': {
       auth: true,

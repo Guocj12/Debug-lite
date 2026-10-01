@@ -386,7 +386,7 @@ test('EN-21 D-175 持续伤害：效果带**倍率**，每 tick 按施法者 atk
   assert.equal(b.state.players.p2.hp, before - 16, '两 tick 各结算一次');
 });
 
-test('EN-22 D-175 持续伤害的边界分支：来源缺失/倍率非法不结算；可暴击、可被闪避（帧内如实标注）', () => {
+test('EN-22 D-175 持续伤害只吃"攻击力×倍率×防御"：不判闪避/暴击、不触发吸血/荆棘；来源缺失或倍率非法不结算', () => {
   // ① 来源不存在 → 不结算（防御分支），但计时照走
   const b1 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
   b1.state.players.p2.effects = [{ uid: 'd1', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p9', addedTick: 0 }];
@@ -401,21 +401,41 @@ test('EN-22 D-175 持续伤害的边界分支：来源缺失/倍率非法不结�
   const before2 = b2.state.players.p2.hp;
   stepActions(b2, ['wait'], ['wait']);
   assert.equal(b2.state.players.p2.hp, before2, '倍率 0 → 不掉血');
-  // ③ 可暴击（施法者暴击率 100%）：20×0.5×0.8333=8.33 → 暴击 ×2 = 16.67 → 16
-  const b3 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20, special: { critChance: 1 } }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
+  // ③ 不判暴击（施法者暴击率 100% 也照常 8 点）——D-175 用户裁定
+  const b3 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20, special: { critChance: 1, critMul: 5 } }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
   b3.state.players.p2.effects = [{ uid: 'd3', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p1', addedTick: 0 }];
   const before3 = b3.state.players.p2.hp;
   const f3 = stepActions(b3, ['wait'], ['wait']).damages.find((d) => d.kind === 'dot');
-  assert.equal(before3 - b3.state.players.p2.hp, 16, '暴击 ×2（1 + critBonus 1.0）');
-  assert.equal(f3.crit, true, '帧内 crit=true');
-  assert.equal(f3.critM, 2, '帧内 critM=2');
-  // ④ 可被闪避（受击方闪避率 100%）→ 0 伤害、帧内 dodged=true
+  assert.equal(before3 - b3.state.players.p2.hp, 8, '暴击率/暴击倍率都不参与（仍 8 点）');
+  assert.deepEqual([f3.crit, f3.critM, f3.dodged], [false, 1, false], '帧内 crit=false / critM=1 / dodged=false');
+  // ④ 不判闪避（受击方闪避率 100% 也照样掉 8 点）
   const b4 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8, special: { dodgeChance: 1 } }));
   b4.state.players.p2.effects = [{ uid: 'd4', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p1', addedTick: 0 }];
   const before4 = b4.state.players.p2.hp;
   const f4 = stepActions(b4, ['wait'], ['wait']).damages.find((d) => d.kind === 'dot');
-  assert.equal(b4.state.players.p2.hp, before4, '被闪避 → 0 伤害');
-  assert.deepEqual([f4.amount, f4.dodged], [0, true], '帧内 amount=0 / dodged=true');
+  assert.equal(before4 - b4.state.players.p2.hp, 8, '闪避率 100% 也不影响持续伤害');
+  assert.deepEqual([f4.amount, f4.dodged], [8, false], '帧内 amount=8 / dodged=false');
+  // ⑤ 不触发吸血与荆棘（施法者吸血 100%、受击方荆棘 100% 都不生效）
+  const b5 = mkBattle(
+    mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20, hp: 50, special: { lifesteal: 1 } }),
+    mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8, special: { thorns: 1 } })
+  );
+  b5.state.players.p2.effects = [{ uid: 'd5', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p1', addedTick: 0 }];
+  const hpA = b5.state.players.p1.hp;
+  const before5 = b5.state.players.p2.hp;
+  const f5 = stepActions(b5, ['wait'], ['wait']).damages;
+  assert.equal(before5 - b5.state.players.p2.hp, 8, '目标照常掉血');
+  assert.equal(b5.state.players.p1.hp, hpA, '施法者不吸血');
+  assert.equal(f5.filter((d) => d.kind === 'thorns').length, 0, '不触发荆棘（无 thorns 帧）');
+  // ⑥ 位移全程免疫仍生效（D-72：免疫所有伤害，含持续伤害）——直接对 dealDamage 的 dot 模式断言
+  //   （不能在 step 前手工置位：步骤 1 每 tick 会复位该瞬时标记）
+  const b6 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
+  const immune = Object.assign({}, b6.state.players.p2, { fullDodgeDuring: true });
+  const r6 = b6.dealDamage(b6.state.players.p1, immune, { mult: 0.5, dot: true });
+  assert.deepEqual([r6.dmg, r6.dodged], [0, true], '全程免疫 → 0 伤害且 dodged=true（D-72 优先于一切）');
+  // 对照：非 dot 模式下 dot 标记才生效 —— 同一 dealDamage 不带 dot 时正常扣血
+  const plain = Object.assign({}, b6.state.players.p2, { hp: 100 });
+  assert.equal(b6.dealDamage(b6.state.players.p1, plain, { mult: 0.5 }).dmg, 8, '不带 dot 标记 = 常规链路（8 点）');
 });
 
 test('EN-14 死亡时序：hp≤0 仍行动（T-BT-* 锁定），持续效果后不立即判死', () => {

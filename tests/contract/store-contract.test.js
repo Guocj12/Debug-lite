@@ -124,8 +124,8 @@ const CASES = [
       'warehouse', 'ai', 'updatedAt']) {
       assert.ok(Object.prototype.hasOwnProperty.call(arch, key), `档案缺字段 ${key}`);
     }
-    // D-159：warehouse 段 = 四桶 + starterIssued + grantIds（开箱幂等环形窗口）；D-161：ai 段
-    assert.deepEqual(Object.keys(arch.warehouse.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
+    // D-159：warehouse 段 = 五桶 + starterIssued + grantIds（开箱幂等环形窗口）；D-161：ai 段；D-176：package 桶
+    assert.deepEqual(Object.keys(arch.warehouse.buckets).sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin']);
     assert.equal(arch.warehouse.starterIssued, false, '显式 loadout 建号（非 starter 路径）→ 不发放 starter');
     assert.deepEqual(arch.warehouse.grantIds, []);
     assert.deepEqual(arch.ai, { items: [] });
@@ -506,8 +506,8 @@ const CASES = [
     // 真源：adapter 层返回 {warehouse, usage, caps, counts, starterIssued}（L6 account 再拍平成 buckets）
     const wh0 = await store.getWarehouse(pid);
     assert.deepEqual(Object.keys(wh0).sort(), ['caps', 'counts', 'starterIssued', 'usage', 'warehouse']);
-    assert.deepEqual(Object.keys(wh0.warehouse.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
-    assert.deepEqual(wh0.counts, { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0 });
+    assert.deepEqual(Object.keys(wh0.warehouse.buckets).sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin']);
+    assert.deepEqual(wh0.counts, { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0, package: 0 });
     assert.equal(wh0.starterIssued, false, '显式 loadout 建号 → 不发 starter');
     assert.equal(wh0.caps.role, 500);
     await assert.rejects(() => store.getWarehouse('pl_0000000000000000'), (e) => e.code === 'store_not_found');
@@ -516,7 +516,7 @@ const CASES = [
     const plugin = { uid: 'itp_1', kind: 'rolePlugin', id: 'atk_up', slot: 'atk', quality: 'common', tier: 2, pointCost: 2, equipped: false };
     const granted = await store.grantBox({ playerId: pid, seed: 123, tier: 'common', times: 2, items: [role, plugin] });
     assert.match(granted.grantId, /^bx_/);
-    assert.deepEqual(granted.counts, { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0 });
+    assert.deepEqual(granted.counts, { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0, package: 0 });
     assert.equal(granted.starterIssued, false);
     assert.ok((await store.readRecords({})).some((r) => r.type === 'box.opened' && r.grantId === granted.grantId),
       'D-159：开箱必须落 journal（可重放）');

@@ -10,6 +10,7 @@
 | **机制层** | `affix-registry.json` | 词条注册表：`domain`/`roll`/`agg`/`special`/`regen`/`skillOp`/`hitEffect`/`castEffect`、`stats`、`caps`，以及 `_domainOfKind`（`kind` → 期望 `domain` 的映射） | 机制词汇——实现侧维护，**不是内容** |
 | **机制层** | `ai-nodes.json` | AI 语言的**真实节点类型**单一数据源（`base` 恒可用 + `nodes` 全量白名单） | 机制词汇——**不是内容** |
 | **参数表** | `service-config.json` / `rating-config.json` | 运行时参数（账号/会话/槽位/保留期/缓存上限/限速；积分与匹配参数 D-133）——**表为数值单一来源，代码默认值兜底**（`server/store/config.js` 的 `DEFAULT_SERVICE_CONFIG`/`DEFAULT_RATING_CONFIG`），schema 冻结值 + 跨字段不变量校验，**缺表必 FAIL** | `11-account-store.md` §10/§11、`interfaces.md` §4.11/§4.12 |
+| **参数表** | `package-config.json` | **包（模块包）体系（D-176/D-177）**：20 档百分比 + 品质档位、物品品质曲线（20×5）、件数曲线、战斗掉落个数/质量档曲线、包种类权重、包种类 × 质量档白名单。**表为数值单一来源、代码零概率字面量**；schema 校验"档位并集 / 每行和为 1 / 候选品质越界 / 白名单模板 id 真实存在 / 包种类齐全" | `content-design.md` §10、`interfaces.md` §4.14 |
 | **内容层** | `role-templates.json` / `skill-templates.json` / `plugins.json` / `qualities.json` / `items-config.json` / `unlock.json` | 角色/技能/插件/品质/掉落/解锁的**具体条目与数值** | ⚠️ **当前全部为示例数据** |
 | **结构校验** | `schema.js` | T-DC-1（结构 + 冻结数值）+ T-DC-2（items-data 逐值一致） | 实现侧维护 |
 | 冻结配置 | `battle-config.json` | 全部战斗数值（D-117 冻结，B21 校准入表） | 实现侧维护 |
@@ -30,6 +31,7 @@
 | `ai-nodes.json` | **机制** | AI 真实节点类型（`base` 恒可用 + `nodes` 全量白名单；**数量以此表为准，schema 不硬编码**） | `systems/08-ai.md` §3 + `examples/09-unlock.md` §1 |
 | `service-config.json` | **参数** | 运行时参数：`auth`（scrypt 参数/用户名与密码长度/失败锁定/限速）、`session`、`config`（`maxSlots:3`）、`record`、`store`（缓存上限）、`journal`、`snapshot`、`replayCacheSize`、`pool`（`ttlDays` **无消费方**、`opponentCooldownHours`） | `systems/11-account-store.md` §10/§11 |
 | `rating-config.json` | **参数** | 积分与匹配参数（D-133）：`base/cap/scale/kBase/kMin/kMax/drawFactor/matchWindow*/opponentCooldownHours/dailyBattleLimit/rounding/promoteWins/batchSize` | `systems/11-account-store.md` §8.3 |
+| `package-config.json` | **参数（D-176/D-177）** | 包体系：`percentSteps`（20 档）/`qualityPercentBands`（品质→4 档）/`itemQualityCurve`（20×5，本级及以下两级 + 最高档升一级）/`itemCountCurve`（件数 1~3）/`battleDropCountCurve`（胜 1~2、负平 0~1）/`battleDropQualityCurve`/`packageKindWeights`/`dropPool`（默认全 `"all"`） | `content-design.md` §10 |
 | `role-templates.json` | **内容（正式，D-173/D-174）** | 角色模板（D-110 必填 regen）+ **`typeModifiers`（逐属性乘性守恒；专家 = README 五档 极高/略高/极低/略低/均衡，D-174；`excludeLow` 已退役 = 无 def 特判）** + 每项 `drop`/`dropWeight`；`slotWeights`/`pluginPoints` 两字段**已退役** | `content-design.md` §2/§3 + `items-data.md` §2 |
 | `skill-templates.json` | **内容（正式，D-173）** | **4 条基础模板**（每类 1 条；D-118 bulletLevel；**无 bulletSpeed**）+ 每项 `drop`/`dropWeight`；`range`/`bulletCount`/`distance`/`area`/`cost`/`cooldown` 均为 `copy`（不随品质浮动）；带展示键 `animKey`/`sfxKey`；`slotWeights` 已退役 | `content-design.md` §6.3 + `items-data.md` §5 |
 | `plugins.json` | **内容（正式，D-173）** | 角色插件（**固定 `pointCost`**，`pointCostByTier` 退役）+ 技能插件（`slot:"general"` 通用 7 条 / `slot:"exclusive"` 专属 16 条，D-114 独立 id；`costDeltaByTier` 退役）+ 每项 `drop`/`dropWeight`；标准值口径见 `content-design.md` §5/§6 | `items-data.md` §3/§4 |

@@ -1117,9 +1117,8 @@ function createJsonAdapter(options) {
       const counts = archiveMod.warehouseCounts(archive.warehouse);
       const add = {};
       for (const it of items) {
-        const bucket = it && it.kind === 'skillPlugin' ? 'skillPlugin'
-          : it && it.kind === 'rolePlugin' ? 'rolePlugin'
-            : it && it.kind === 'skill' ? 'skill' : 'role';
+        // D-176：kind→桶 的映射收敛到 archive.bucketOfKind（此前是本文件内的隐式三元表达式）
+        const bucket = archiveMod.bucketOfKind(it && it.kind);
         add[bucket] = (add[bucket] || 0) + 1;
       }
       const details = [];
@@ -1147,6 +1146,93 @@ function createJsonAdapter(options) {
       }
       const record = ledger.buildBoxRecord({
         playerId: o.playerId, seed: o.seed, tier: o.tier, times: o.times, items: alloc.items, at: nowFn(),
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return {
+        archive: deepClone(updated), grantId: appended.grantId, items: alloc.items,
+        ...warehouseView(updated),
+      };
+    });
+  }
+
+  // D-176：战斗掉落发放包（与 grantBox 同构：上限前置校验 → uid 分配 → journal → apply → 回带视图）。
+  //   `grantId` 由调用方按 (playerId, battleId) 内容寻址给出 → 同一场重复调用**不会重复入仓**（grantIds 环幂等）。
+  async function grantPackages(input) {
+    const o = input || {};
+    const packages = Array.isArray(o.packages) ? o.packages : [];
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      if (packages.length === 0) {
+        const empty = deepClone(archive);
+        return { archive: empty, grantId: null, packages: [], ...warehouseView(empty) };
+      }
+      const cap = archiveMod.warehouseMaxPerBucketOf(serviceConfig);
+      const counts = archiveMod.warehouseCounts(archive.warehouse);
+      const room = cap - (counts.package || 0);
+      if (packages.length > room) {
+        throw new StoreError('warehouse_full', '仓库的包已达到上限，无法发放掉落（请先开包）', [{
+          path: 'warehouse.buckets.package', code: 'warehouse_full',
+          message: `package 已达上限 ${cap}（当前 ${counts.package || 0}，本次 ${packages.length} 个）`,
+        }]);
+      }
+      const alloc = archiveMod.allocateGrantUids(archive.warehouse, packages);
+      const record = ledger.buildPackageGrantRecord({
+        playerId: o.playerId, grantId: o.grantId, source: o.source, battleId: o.battleId,
+        packages: alloc.items, at: nowFn(),
+      });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return {
+        archive: deepClone(updated), grantId: appended.grantId, packages: alloc.items,
+        ...warehouseView(updated),
+      };
+    });
+  }
+
+  // D-177：开包（消耗包 + 产出物品，一条记录、一次落盘）。校验（包是否存在/可开/产出上限）全部**前置**，
+  //   任何失败 → 抛 StoreError（零写入）；`items` 由 L6 用 core/items 的纯函数算出（本层不 require core）。
+  async function openPackages(input) {
+    const o = input || {};
+    const consume = Array.isArray(o.consume) ? o.consume : [];
+    const items = Array.isArray(o.items) ? o.items : [];
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      const missing = consume.filter((uid) => {
+        const found = archiveMod.findWarehouseItem(archive.warehouse, uid);
+        return !found || !found.item || found.item.kind !== 'package';
+      });
+      if (missing.length > 0) {
+        throw new StoreError('package_invalid', '待开的包不在仓库中（可能已被消耗）', missing.map((uid) => ({
+          path: 'warehouse.buckets.package', code: 'package_invalid', message: `包不存在: ${uid}`,
+        })));
+      }
+      const cap = archiveMod.warehouseMaxPerBucketOf(serviceConfig);
+      const counts = archiveMod.warehouseCounts(archive.warehouse);
+      const add = {};
+      for (const it of items) {
+        const bucket = archiveMod.bucketOfKind(it && it.kind);
+        add[bucket] = (add[bucket] || 0) + 1;
+      }
+      const details = [];
+      for (const key of Object.keys(add)) {
+        if ((counts[key] || 0) + add[key] > cap) {
+          details.push({
+            path: `warehouse.buckets.${key}`, code: 'warehouse_full',
+            message: `${key} 已达上限 ${cap}（当前 ${counts[key] || 0}，本次 ${add[key]} 件）`,
+          });
+        }
+      }
+      if (details.length > 0) throw new StoreError('warehouse_full', '仓库已满，无法开包（请先清理）', details);
+      const alloc = archiveMod.allocateGrantUids(archive.warehouse, items);
+      const record = ledger.buildPackageOpenRecord({
+        playerId: o.playerId, grantId: o.grantId, seed: o.seed, consume, items: alloc.items, at: nowFn(),
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
@@ -1382,6 +1468,8 @@ function createJsonAdapter(options) {
     // D-159：服务端权威仓库（真源读取 / 开箱发放 / 装配拆卸）
     getWarehouse,
     grantBox,
+    grantPackages,
+    openPackages,
     applyWarehouseChange,
     // D-161：AI 库；D-172：新增编辑保存
     listAi,

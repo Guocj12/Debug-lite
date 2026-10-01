@@ -172,6 +172,16 @@ function buildStarter(input) {
     }
   }
 
+  // ---- D-176：新手引导包（1 个「角色模块包」，品质 = 起始段位 common，质量 = 该品质第 2 档）----
+  //   目的：新号在仓库里立刻能看到「包」并能开一次，理解"包 → 物品"的循环（starter 内容属用户可裁定项）。
+  const starterBand = items.packagePercentsOf(STARTER_QUALITY);
+  const starterPackage = items.generatePackage({
+    packageKind: 'role', quality: STARTER_QUALITY, qualityPercent: starterBand[1],
+    uid: `pkg_${crypto.createHash('sha256')
+      .update(`starter-package|${o.publicId || ''}|${o.playerId || ''}`, 'utf8').digest('hex').slice(0, 16)}`,
+  });
+  warehouse.buckets.package.push(starterPackage);
+
   // ---- AI：复用默认预设（不复制正文），并登记进 AI 库 ----
   const aiProgram = rankedMod.buildDefaultLoadout({ publicId: o.publicId, playerId: o.playerId }).ai;
   const aiId = `ai_starter_${crypto.createHash('sha256')
@@ -196,11 +206,13 @@ function buildStarter(input) {
     skillAttempts,
     plugins: assembled,
     aiId,
+    packages: [{ uid: starterPackage.uid, packageKind: starterPackage.packageKind, quality: starterPackage.quality, qualityPercent: starterPackage.qualityPercent }],
     counts: {
       role: warehouse.buckets.role.length,
       skill: warehouse.buckets.skill.length,
       rolePlugin: warehouse.buckets.rolePlugin.length,
       skillPlugin: warehouse.buckets.skillPlugin.length,
+      package: warehouse.buckets.package.length,
     },
   };
   log.info('starter', 'store.starter.issued', `新手套装已生成（seed=${seed}）`, {

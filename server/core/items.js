@@ -30,6 +30,12 @@ const ROLE_TEMPLATES = require('../data/role-templates.json').roleTemplates;
 const SKILL_TEMPLATES = require('../data/skill-templates.json').skillTemplates;
 const PLUGINS = require('../data/plugins.json').plugins;
 const ITEMS_CONFIG = require('../data/items-config.json');
+// D-176/D-177：包（模块包）配置 —— 品质=段位、质量=该品质 4 档百分比、三套曲线 + 掉落白名单。
+//   本节全部概率**零字面量**（表为单一来源）；包体系**自成门控**（不读 unlock.json 的 gating.enabled）。
+const PACKAGE_CONFIG = require('../data/package-config.json');
+const PACKAGE_DEFS = PACKAGE_CONFIG.packages;
+const PACKAGE_BY_KIND = Object.fromEntries(PACKAGE_DEFS.map((p) => [p.packageKind, p]));
+const PACKAGE_KINDS = PACKAGE_DEFS.map((p) => p.packageKind);
 // 段位门控开关（unlock.json 的 gating.enabled 为单一数据源；字段缺失/非 false → 按启用处理，旧表行为不变）
 const GATING_DEFAULT = !require('../data/unlock.json').gating || require('../data/unlock.json').gating.enabled !== false;
 // 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
@@ -410,6 +416,154 @@ function makeItems(logger, gating) {
     return generatePlugin(kind, quality, rng, pool);
   }
 
+  // ===== D-176：包（模块包）—— 生成 / 三套曲线抽样 =====
+  // 口径（用户 2026-09-28 裁定，docs/content-design.md §10）：
+  //   · **包品质 = 玩家当前段位**（调用方传入；本层不读档案，保持纯函数）；
+  //   · **包质量 = 该品质 4 档百分比**（qualityPercentBands；跨品质不合法 → RangeError）；
+  //   · 物品品质分布、掉落件数、战斗掉落个数/质量档 全部读 package-config.json（零概率字面量）。
+
+  function packageDefOf(packageKind) {
+    const def = PACKAGE_BY_KIND[packageKind];
+    if (!def) throw new RangeError(`未登记包种类 ${packageKind}（package-config.json）`);
+    return def;
+  }
+
+  // 该品质的 4 档百分比（升序）
+  function packagePercentsOf(qualityId) {
+    const band = PACKAGE_CONFIG.qualityPercentBands[qualityId];
+    if (!Array.isArray(band)) throw new RangeError(`未知包品质 ${qualityId}（package-config.json）`);
+    return band;
+  }
+
+  // 质量档位（1..4）；非法（不在该品质的档位集合内）→ null
+  function packageStepOf(qualityId, percent) {
+    const band = packagePercentsOf(qualityId);
+    const i = band.indexOf(percent);
+    return i < 0 ? null : i + 1;
+  }
+
+  // 按权重表抽一个键（键为字符串，值为非负权重）；全零/空表 → null（调用方兜底）
+  function pickWeighted(rng, weights, label) {
+    const keys = Object.keys(weights || {});
+    let total = 0;
+    for (const k of keys) total += weights[k];
+    if (!(total > 0)) throw new RangeError(`权重表为空或全零: ${label}`);
+    let r = rand(rng, 0, 1) * total;
+    for (const k of keys) {
+      r -= weights[k];
+      if (r < 0) return k;
+    }
+    return keys[keys.length - 1]; // rng 越界（≥1）防御
+  }
+
+  // 生成一个包（**uid 由调用方给定**，使"响应 = journal = 档案"且跨重启不撞号；
+  //   缺省回落进程内计数器，仅用于离线/测试路径）
+  function generatePackage(input) {
+    const o = input || {};
+    const def = packageDefOf(o.packageKind);
+    if (!TIERS.includes(o.quality)) throw new RangeError(`未知包品质 ${o.quality}`);
+    const percent = o.qualityPercent;
+    if (!Number.isInteger(percent) || packageStepOf(o.quality, percent) === null) {
+      throw new RangeError(`包质量 ${percent} 不属于品质 ${o.quality} 的档位（${packagePercentsOf(o.quality).join('/')}）`);
+    }
+    const uid = typeof o.uid === 'string' && o.uid !== '' ? o.uid : `pkg_${uidSeq++}`;
+    const item = {
+      uid, kind: 'package', packageKind: def.packageKind, name: def.name,
+      quality: o.quality, qualityPercent: percent,
+    };
+    L.debug('items', 'items.package.generate', `package ${def.packageKind} ${o.quality} ${percent}%`, {
+      packageKind: def.packageKind, quality: o.quality, qualityPercent: percent, uid,
+    });
+    return item;
+  }
+
+  // 战斗掉落的包（返回 [{packageKind, quality, qualityPercent}]）：
+  //   结果按请求者视角 win/loss/draw；品质 = 玩家段位（tier）；个数 = battleDropCountCurve 抽；
+  //   质量档 = battleDropQualityCurve 抽；包种类 = packageKindWeights 抽（每次独立）。
+  function rollBattlePackages(rng, options) {
+    const o = options || {};
+    const tier = o.tier;
+    if (!TIERS.includes(tier)) throw new RangeError(`未知段位 ${tier}（包品质 = 段位）`);
+    const result = o.result === 'win' || o.result === 'loss' ? o.result : 'draw';
+    const band = packagePercentsOf(tier);
+    const countKey = pickWeighted(rng, PACKAGE_CONFIG.battleDropCountCurve[result], `battleDropCountCurve.${result}`);
+    const count = Number(countKey);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      const stepKey = pickWeighted(rng, PACKAGE_CONFIG.battleDropQualityCurve[result], `battleDropQualityCurve.${result}`);
+      const kindKey = pickWeighted(rng, PACKAGE_CONFIG.packageKindWeights, 'packageKindWeights');
+      const step = Number(stepKey);
+      out.push({ packageKind: kindKey, quality: tier, qualityPercent: band[step - 1] });
+    }
+    L.debug('items', 'items.package.drop', `battle drop ${result} ${tier}: ${out.length} 个`, {
+      result, tier, count: out.length, percents: out.map((x) => x.qualityPercent), kinds: out.map((x) => x.packageKind),
+    });
+    return out;
+  }
+
+  // 该包在给定质量档下的掉落下限/上限模板（白名单 + 内容表 drop 标记；**不读段位门控** D-176）
+  function packageDropPoolOf(packageKind, percent) {
+    const def = packageDefOf(packageKind);
+    if (def.dropsKind === null) return [];
+    const key = String(percent);
+    const table = (PACKAGE_CONFIG.dropPool || {})[packageKind] || {};
+    const whitelist = table[key] === undefined ? 'all' : table[key];
+    const allow = (x) => x && x.drop !== false && (whitelist === 'all' || whitelist.includes(x.id));
+    if (def.dropsKind === 'role') return ROLE_TEMPLATES.filter(allow);
+    if (def.dropsKind === 'skill') return SKILL_TEMPLATES.filter(allow);
+    return pluginList.filter((p) => p.kind === def.dropsKind && allow(p));
+  }
+
+  // 按类别生成一件掉落物（品质由曲线给定）
+  function generateDropItem(dropsKind, quality, rng, ctx) {
+    if (dropsKind === 'role') {
+      const pool = packageDropPoolOf(ctx.packageKind, ctx.qualityPercent);
+      return generateRoleItem(pickFromPool(rng, pool, '角色模板'), quality, rng);
+    }
+    if (dropsKind === 'skill') {
+      const pool = packageDropPoolOf(ctx.packageKind, ctx.qualityPercent);
+      return generateSkillItem(pickFromPool(rng, pool, '技能模板'), quality, rng);
+    }
+    const pool = packageDropPoolOf(ctx.packageKind, ctx.qualityPercent);
+    return generatePlugin(dropsKind, quality, rng, pool);
+  }
+
+  // 开包（纯函数）：包 → 1~3 件物品。保留包（openable=false，如 AI 节点包）→ {reserved:true, items:[]}。
+  //   调用方（L6）负责：校验包确实属于该玩家仓库、扣包、把 items 落 journal（package.opened）。
+  function openPackage(rng, pkg, options) {
+    const o = options || {};
+    if (!pkg || typeof pkg !== 'object' || pkg.kind !== 'package') {
+      return { ok: false, code: 'package_invalid', message: '不是有效的包' };
+    }
+    const def = PACKAGE_BY_KIND[pkg.packageKind];
+    if (!def) return { ok: false, code: 'package_invalid', message: `未登记包种类 ${pkg.packageKind}` };
+    const step = packageStepOf(pkg.quality, pkg.qualityPercent);
+    if (step === null) {
+      return { ok: false, code: 'package_invalid', message: `包质量 ${pkg.qualityPercent} 与品质 ${pkg.quality} 不匹配` };
+    }
+    // AI 节点包（openable=false）：**保留包**——静默消耗但零产出；L6 回带 notice 供前端提示
+    if (def.openable !== true) {
+      L.info('items', 'items.package.open', `保留包 ${def.packageKind}（未开放产出）`, {
+        packageKind: def.packageKind, quality: pkg.quality, qualityPercent: pkg.qualityPercent, reserved: true,
+      });
+      return { ok: true, reserved: true, items: [] };
+    }
+    const countKey = pickWeighted(rng, PACKAGE_CONFIG.itemCountCurve[String(step)], `itemCountCurve.${step}`);
+    const count = Number(countKey);
+    const items = [];
+    for (let i = 0; i < count; i += 1) {
+      const qKey = pickWeighted(rng, PACKAGE_CONFIG.itemQualityCurve[String(pkg.qualityPercent)], `itemQualityCurve.${pkg.qualityPercent}`);
+      items.push(generateDropItem(def.dropsKind, qKey, rng, {
+        packageKind: def.packageKind, qualityPercent: pkg.qualityPercent,
+      }));
+    }
+    L.info('items', 'items.package.open', `开包 ${def.packageKind} ${pkg.quality} ${pkg.qualityPercent}% → ${items.length} 件`, {
+      packageKind: def.packageKind, quality: pkg.quality, qualityPercent: pkg.qualityPercent,
+      count: items.length, qualities: items.map((x) => x.quality),
+    });
+    return { ok: true, reserved: false, items };
+  }
+
   // 词条聚合（D-45/D-46，I-8/R-5/R-6）：base × (1+Σpct) + Σflat → 一次取整；概率类累加封顶 caps.probability
   // 词条去向全部由 affix-registry.json 声明：agg（面板）、special（概率）、regen（roles 层叠加）、
   // skillOp/hitEffect/castEffect（技能链，由 skills/engine 消费）。代码不按 id 写分支。
@@ -489,8 +643,10 @@ function makeItems(logger, gating) {
   // ===== L3：仓库与装配（B18；同文件双分层——纯函数，输入仓库不变，成功返回新仓库）=====
 
   // 仓库规范骨架（分桶键；GET /api/v1/warehouse 返回）
+  // D-176：新增第 5 桶 `package`（包）。桶键与物品 `kind` 的对应：role/skill/rolePlugin/skillPlugin 同名，
+  //   包的 kind='package' 而桶键也是 'package'（包种类由物品字段 `packageKind` 区分）。
   function emptyWarehouse() {
-    return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } };
+    return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] } };
   }
 
   function cloneWarehouse(wh) {
@@ -597,6 +753,9 @@ function makeItems(logger, gating) {
   return {
     getQuality, rollQuality, rollSlotCount, rollPluginPoints, rollSlots, slotMatches, tierOf,
     generateRoleItem, generateSkillItem, generatePlugin, openBox,
+    // D-176/D-177：包（模块包）—— 生成、战斗掉落抽样、开包、白名单池与档位查询
+    generatePackage, rollBattlePackages, openPackage, packageDefOf, packagePercentsOf, packageStepOf,
+    packageDropPoolOf, pickWeighted,
     applyAffixes, buildRolePanel, applyTypeModifier, dropPool, pickFromPool, validateUnlock,
     emptyWarehouse, assemble, disassemble,
     // 实例自省：当前门控是否参与判定（测试/文档断言用；属性非函数）

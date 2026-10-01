@@ -306,7 +306,7 @@ test('BR-11 档案版本迁移：磁盘上的 v0 档案在读取时升级并原�
     assert.equal(archive.progress.tier, 'common', '补齐缺失段');
     assert.equal(archive.record.appliedSeq, 0);
     // D-159/D-161：v0 → v2 连跳两级 → 补齐**空**仓库段与 AI 库段（老账号不发 starter）
-    assert.deepEqual(archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] }, starterIssued: false, grantIds: [] });
+    assert.deepEqual(archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] }, starterIssued: false, grantIds: [] });
     assert.deepEqual(archive.ai, { items: [] });
     assert.ok(log.has('store.migrate'));
     const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));

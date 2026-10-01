@@ -34,7 +34,7 @@
 | # | 步骤 | 内容 |
 |---|---|---|
 | 1 | `tick.begin` | `tick += 1`；派生本 tick 各用途随机流；**引擎冷却递减** `max(0, cd−1)`（D-82）；重置 `defending`/`dodging`/`fullDodgeDuring` 等**每 tick 瞬时**标记（`fullDodgeDuring` 由步骤 6 置位、本步骤复位，D-72） |
-| 2 | 持续效果 | **持续伤害**（效果带 `mult`，D-175）：每 tick 按施法者 `atk × 倍率` 走 §4.3 常规伤害公式并进帧（`damages[].kind='dot'`，走独立 `dot` 随机流）；**固定数值类**：`stat += delta`；clamp；`remaining -= 1` 归零移除 |
+| 2 | 持续效果 | **持续伤害**（效果带 `mult`，D-175）：每 tick 按施法者 `atk × 倍率 × 防御减伤` 结算并进帧（`damages[].kind='dot'`）——走 `dealDamage` 的 **`dot: true` 模式：不判闪避/暴击、不触发吸血/荆棘/命中类效果**（位移全程免疫仍生效）；**固定数值类**：`stat += delta`；clamp；`remaining -= 1` 归零移除 |
 | 3 | AI 续执行 | 按 **p1 → p2** 各调用一次 `resume`，产出 action + trace |
 | 4 | 行动归一化 | 白名单校验；非法 → `wait`（D-80）。行动集 = `move_left/move_right/dodge_left/dodge_right/wait/defend/turn`（+ `skill:<sid>`）。`<sid>` 即 `players[o].skills` 的**键**：`server/battle.js` 按出战槽位命名为 `skill1`/`skill2`/`skill3`（故 `/api/v1/battle` 的 AI 只能写 `skill:skill1..3`）；键不存在 → 空行动 + `action.invalid`(warn, `reason:"unknown_skill"`)。注意 `skill.sid`（冷却键，= 技能模板 id）与技能槽键是**两件事**：同模板的两个槽共享同一条冷却记录 |
 | 5 | 控制效果 | 复写行动（眩晕 > 位移；位移取首个）；控制位移**不可穿敌**（D-71） |

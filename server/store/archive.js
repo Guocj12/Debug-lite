@@ -19,16 +19,24 @@ const PLAYER_ID_RE = /^pl_[0-9a-f]{16}$/;
 const PUBLIC_ID_RE = /^u_[0-9a-f]{8}$/;
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,24}$/;
 
-// ---------- D-159：服务端权威仓库（四桶）与 D-161：AI 库 ----------
-const WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
+// ---------- D-159：服务端权威仓库（五桶，D-176 增 `package`）与 D-161：AI 库 ----------
+const WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
 const DEFAULT_WAREHOUSE_MAX_PER_BUCKET = 500;
 const DEFAULT_AI_MAX_PER_PLAYER = 100;
+// D-176：物品 `kind` → 仓库桶键的**唯一映射**（此前是散落三处的隐式三元表达式，未知 kind 静默兜底进 role 桶）。
+//   `package` 是本表新增项；未知 kind 仍回落 `role`（历史 box.opened 记录的兼容路径）。
+const BUCKET_OF_KIND = Object.freeze({
+  role: 'role', skill: 'skill', rolePlugin: 'rolePlugin', skillPlugin: 'skillPlugin', package: 'package',
+});
+function bucketOfKind(kind) {
+  return BUCKET_OF_KIND[kind] || 'role';
+}
 // 开箱批次幂等环形窗口（与 server/index.js 的 EVICTED_REMEMBERED 同量级）：记录最近若干 grantId +
 //   seq，用于"水位已过但内容键能证明已应用"的判定（§6.3 幂等规则，与 battleId 环形窗口同构）
 const GRANT_WINDOW = 256;
 // 这些记录改变的是**状态量**（仓库正文 / AI 库），无法由"段内增量"无损重建 →
 //   含它们的 journal 段**不参与 compact**（真源始终留在 journal；检查点里的物化态只作降级兜底）
-const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'ai.created', 'ai.updated', 'ai.deleted']);
+const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'ai.created', 'ai.updated', 'ai.deleted', 'package.granted', 'package.opened']);
 
 // D-172：AI 库条目的状态（`ready` = 正式、`draft` = 草稿）。**字段可缺省**（旧档案无该字段 → 视为 ready，
 //   因此不需要档案版本迁移）；非法取值一律按 ready 处理（写路径已挡，这里只做读路径兜底）。
@@ -47,9 +55,9 @@ function aiMaxPerPlayerOf(config) {
   return Number.isInteger(v) && v > 0 ? v : DEFAULT_AI_MAX_PER_PLAYER;
 }
 
-// 四桶空仓库（与 core/items.emptyWarehouse 同形；store 层不得 require core，故本地重建）
+// 五桶空仓库（与 core/items.emptyWarehouse 同形；store 层不得 require core，故本地重建）
 function emptyWarehouse() {
-  return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [] } };
+  return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] } };
 }
 
 function normalizeWarehouse(raw) {
@@ -217,6 +225,9 @@ const RECORD_TYPES = Object.freeze([
   'ai.deleted',
   // D-170：管理员直接改账号段位/积分/入池（运维与验收用；写 journal 留痕、可重放）
   'account.patched',
+  // D-176/D-177：包（模块包）—— 战斗掉落发放（package.granted）与开包（package.opened：消耗包 + 产出物品）
+  'package.granted',
+  'package.opened',
   'checkpoint',
 ]);
 
@@ -823,6 +834,15 @@ function isRecordApplied(archive, record) {
       const windowFrom = ring.length > 0 ? ring[0].seq : null;
       return windowFrom !== null && record.seq < windowFrom;
     }
+    // D-176/D-177：包的两条记录共用**同一条 grantIds 环形窗口**（与 box.opened 同构）；
+    //   grantId 前缀区分来源（`pk_` 掉落 / `po_` 开包），故同一环可安全承载三类记录。
+    case 'package.granted':
+    case 'package.opened': {
+      const ring = (archive.warehouse && archive.warehouse.grantIds) || [];
+      if (ring.some((g) => g && g.grantId === record.grantId)) return true;
+      const windowFrom = ring.length > 0 ? ring[0].seq : null;
+      return windowFrom !== null && record.seq < windowFrom;
+    }
     // D-159：装配/拆卸 —— 内容键 = 目标槽当前的 pluginUid 是否已是记录要求的值
     case 'warehouse.assemble': {
       const found = findWarehouseItem(archive.warehouse, record.targetUid);
@@ -1033,6 +1053,65 @@ function applyCheckpoint(archive, record, playerId) {
   return { changed: true };
 }
 
+// ---------- D-176/D-177：仓库发放/消耗的共用原语（box.opened / package.granted / package.opened 三处复用） ----------
+
+// 把一批物品按 `kind → 桶` 落进仓库（上限与 uid 撞车均为**可审计的丢弃**，不抛错——
+//   抛错会让 journal 重放永久失败；正常路径由 adapter 的**前置**校验挡住）。
+function grantItemsToWarehouse(archive, items, ctx, playerId, grantId) {
+  const cap = warehouseMaxPerBucketOf(ctx.config);
+  let added = 0;
+  const dropped = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || typeof it !== 'object' || typeof it.uid !== 'string' || it.uid === '') continue;
+    const bucket = bucketOfKind(it.kind);
+    const list = archive.warehouse.buckets[bucket];
+    if (!Array.isArray(list)) continue;
+    if (findWarehouseItem(archive.warehouse, it.uid)) {
+      // D-163 热修：uid 撞车在**发放路径**已被 `allocateGrantUids` 消解；能走到这里说明是
+      //   "档案与 journal 不一致"或历史遗留记录 —— 绝不能静默丢（修前就是静默 `continue`）。
+      dropped.push({ uid: it.uid, kind: it.kind, bucket });
+      ctx.logger.error('store', 'store.warehouse.uid_collision',
+        `发放 uid 与档案已有物品冲突，已丢弃该件（journal 记为发放、档案未落）——需人工核对`,
+        { playerId, uid: it.uid, bucket, grantId: grantId || null, droppedCount: dropped.length });
+      continue;
+    }
+    if (list.length >= cap) {
+      dropped.push({ uid: it.uid, kind: it.kind, bucket });
+      ctx.logger.error('store', 'store.warehouse.full',
+        `发放超限丢弃（${bucket} 已达 ${cap}）——journal 与档案出现差额，需人工核对`,
+        { playerId, uid: it.uid, bucket, cap, grantId: grantId || null, droppedCount: dropped.length });
+      continue;
+    }
+    list.push(deepClone(it));
+    added += 1;
+  }
+  return { added, dropped };
+}
+
+// 从仓库移除若干 uid（开包消耗包）；返回实际移除件数。找不到 → warn（重放/并发导致已消耗，属可恢复状态）。
+function consumeWarehouseItems(archive, uids, ctx, playerId) {
+  let removed = 0;
+  for (const uid of Array.isArray(uids) ? uids : []) {
+    if (typeof uid !== 'string' || uid === '') continue;
+    const found = findWarehouseItem(archive.warehouse, uid);
+    if (!found) {
+      ctx.logger.warn('store', 'store.error', `开包消耗的包不在仓库（可能已消耗/已重放）: ${uid}`, {
+        playerId, uid, reason: 'consume_missing',
+      });
+      continue;
+    }
+    if (found.item.kind !== 'package') {
+      ctx.logger.warn('store', 'store.error', `开包消耗的目标不是包，已跳过: ${uid}`, {
+        playerId, uid, kind: found.item.kind, reason: 'consume_not_package',
+      });
+      continue;
+    }
+    archive.warehouse.buckets[found.bucket].splice(found.index, 1);
+    removed += 1;
+  }
+  return removed;
+}
+
 // 应用一条 journal 记录到某个玩家档案（幂等；返回 {changed}）
 async function applyRecordToArchive(archive, record, playerId, ctx) {
   const at = Number.isInteger(record.at) ? record.at : ctx.now();
@@ -1154,48 +1233,39 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
     //   → journal 写"N 件"、档案只落 M<N 件且**永久漂移**（水位已过，rebuild 也补不回）。
     //   现改为：逐件 `error` 记录（带 grantId/uid/桶）+ 把 `dropped` 落进 grantIds 环形条目，
     //   使差额**可审计、可判定**（不改判定语义、不抛错——抛错会让 journal 重放永久失败）。
-    case 'box.opened': {
-      const cap = warehouseMaxPerBucketOf(ctx.config);
+    case 'box.opened':
+    case 'package.granted': {
       const ring = (archive.warehouse && Array.isArray(archive.warehouse.grantIds)) ? archive.warehouse.grantIds : [];
       if (record.grantId && ring.some((g) => g && g.grantId === record.grantId)) return { changed: false };
-      let added = 0;
-      const dropped = [];
-      for (const it of Array.isArray(record.items) ? record.items : []) {
-        if (!it || typeof it !== 'object' || typeof it.uid !== 'string' || it.uid === '') continue;
-        const bucket = it.kind === 'skillPlugin' ? 'skillPlugin'
-          : it.kind === 'rolePlugin' ? 'rolePlugin'
-            : it.kind === 'skill' ? 'skill' : 'role';
-        const list = archive.warehouse.buckets[bucket];
-        if (!Array.isArray(list)) continue;
-        if (findWarehouseItem(archive.warehouse, it.uid)) {
-          // D-163 热修：uid 撞车在**发放路径**已被 `allocateGrantUids` 消解；能走到这里说明是
-          //   "档案与 journal 不一致"或历史遗留记录 —— 绝不能静默丢（修前就是静默 `continue`）。
-          dropped.push({ uid: it.uid, kind: it.kind, bucket });
-          ctx.logger.error('store', 'store.warehouse.uid_collision',
-            `开箱发放 uid 与档案已有物品冲突，已丢弃该件（journal 记为发放、档案未落）——需人工核对`,
-            { playerId, uid: it.uid, bucket, grantId: record.grantId || null, droppedCount: dropped.length });
-          continue;
-        }
-        if (list.length >= cap) {
-          dropped.push({ uid: it.uid, kind: it.kind, bucket });
-          ctx.logger.error('store', 'store.warehouse.full',
-            `开箱发放超限丢弃（${bucket} 已达 ${cap}）——journal 与档案出现差额，需人工核对`,
-            { playerId, uid: it.uid, bucket, cap, grantId: record.grantId || null, droppedCount: dropped.length });
-          continue;
-        }
-        list.push(deepClone(it));
-        added += 1;
-      }
+      // 注意字段名不同：box.opened 用 `items`，package.granted 用 `packages`（两者都是"一批待入桶的物品"）
+      const incoming = record.type === 'package.granted' ? record.packages : record.items;
+      const res = grantItemsToWarehouse(archive, incoming, ctx, playerId, record.grantId);
       if (record.grantId) {
         // `dropped` 落进环形条目：差额在档案里**可见**（`GET /me/warehouse` 不带该字段，但 journal/档案可审计）
         ring.push({
-          grantId: record.grantId, seq: record.seq, at, count: added,
-          ...(dropped.length > 0 ? { dropped: dropped.length, droppedUids: dropped.map((d) => d.uid).slice(0, 8) } : {}),
+          grantId: record.grantId, seq: record.seq, at, count: res.added,
+          ...(res.dropped.length > 0 ? { dropped: res.dropped.length, droppedUids: res.dropped.map((d) => d.uid).slice(0, 8) } : {}),
         });
         while (ring.length > GRANT_WINDOW) ring.shift();
         archive.warehouse.grantIds = ring;
       }
-      return { changed: added > 0 || !!record.grantId || dropped.length > 0 };
+      return { changed: res.added > 0 || !!record.grantId || res.dropped.length > 0 };
+    }
+    // D-177：开包 —— **先消耗包，再产出物品**（两件事同一条记录，重放幂等由 grantId 环保证）。
+    case 'package.opened': {
+      const ring = (archive.warehouse && Array.isArray(archive.warehouse.grantIds)) ? archive.warehouse.grantIds : [];
+      if (record.grantId && ring.some((g) => g && g.grantId === record.grantId)) return { changed: false };
+      const consumed = consumeWarehouseItems(archive, record.consume, ctx, playerId);
+      const res = grantItemsToWarehouse(archive, record.items, ctx, playerId, record.grantId);
+      if (record.grantId) {
+        ring.push({
+          grantId: record.grantId, seq: record.seq, at, count: res.added, consumed,
+          ...(res.dropped.length > 0 ? { dropped: res.dropped.length, droppedUids: res.dropped.map((d) => d.uid).slice(0, 8) } : {}),
+        });
+        while (ring.length > GRANT_WINDOW) ring.shift();
+        archive.warehouse.grantIds = ring;
+      }
+      return { changed: res.added > 0 || consumed > 0 || !!record.grantId || res.dropped.length > 0 };
     }
     // D-159：装配/拆卸 —— 改目标物品的插槽引用 **并同步插件物品的 `equipped` 标志**。
     //   `equipped` 是**语义承重**字段：`server/loadout.js` 用它判"插件未装配"（`p.equipped !== true`
@@ -1300,12 +1370,18 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
 //   含仓库/AI 变更的段不参与 compact，故真源仍是 journal，见 NON_COMPACTABLE）。
 function applyRecordToMaterializedWarehouse(wh, record) {
   if (!wh || !record) return;
-  if (record.type === 'box.opened') {
-    for (const it of Array.isArray(record.items) ? record.items : []) {
+  // D-176/D-177：开包先在物化态里消耗掉被开的包（与 applyRecordToArchive 同序：先消耗、后产出）
+  if (record.type === 'package.opened') {
+    for (const uid of Array.isArray(record.consume) ? record.consume : []) {
+      const found = findWarehouseItem(wh, uid);
+      if (found && found.item && found.item.kind === 'package') wh.buckets[found.bucket].splice(found.index, 1);
+    }
+  }
+  if (record.type === 'box.opened' || record.type === 'package.granted' || record.type === 'package.opened') {
+    const incoming = record.type === 'package.granted' ? record.packages : record.items;
+    for (const it of Array.isArray(incoming) ? incoming : []) {
       if (!it || typeof it !== 'object' || typeof it.uid !== 'string' || it.uid === '') continue;
-      const bucket = it.kind === 'skillPlugin' ? 'skillPlugin'
-        : it.kind === 'rolePlugin' ? 'rolePlugin'
-          : it.kind === 'skill' ? 'skill' : 'role';
+      const bucket = bucketOfKind(it.kind);
       if (!Array.isArray(wh.buckets[bucket])) continue;
       if (findWarehouseItem(wh, it.uid)) continue;
       wh.buckets[bucket].push(deepClone(it));
@@ -1376,7 +1452,8 @@ function aggregateRecords(records) {
       }
       continue;
     }
-    if (record.type === 'box.opened' || record.type === 'warehouse.assemble' || record.type === 'warehouse.disassemble') {
+    if (record.type === 'box.opened' || record.type === 'package.granted' || record.type === 'package.opened'
+      || record.type === 'warehouse.assemble' || record.type === 'warehouse.disassemble') {
       const t = ensure(record.playerId);
       if (!t.warehouse) t.warehouse = emptyWarehouse();
       applyRecordToMaterializedWarehouse(t.warehouse, record);
@@ -1573,6 +1650,8 @@ module.exports = {
   RECORD_TYPES,
   NON_COMPACTABLE,
   WAREHOUSE_BUCKETS,
+  BUCKET_OF_KIND,
+  bucketOfKind,
   GRANT_WINDOW,
   PLAYER_ID_RE,
   PUBLIC_ID_RE,

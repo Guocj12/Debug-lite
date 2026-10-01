@@ -74,7 +74,7 @@ test('WI-1（审查 F-1 回归）：显式 loadout + warehouse 建档必须把 w
 
     // ① 落档仓库必须就是入参仓库（修前为空桶）
     const view = await fx.store.getWarehouse(playerId);
-    assert.deepEqual(view.counts, { role: 1, skill: 3, rolePlugin: 1, skillPlugin: 0 },
+    assert.deepEqual(view.counts, { role: 1, skill: 3, rolePlugin: 1, skillPlugin: 0, package: 0 },
       `校验所用镜像必须落档（修前档案仓库为空：${JSON.stringify(view.counts)}）`);
     assert.equal(view.warehouse.buckets.role[0].uid, ROLE_UID);
     assert.equal(view.warehouse.buckets.rolePlugin[0].equipped, true, '装配状态随仓库一起落档');

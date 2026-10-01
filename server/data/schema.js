@@ -38,6 +38,8 @@ const path = require('node:path');
 //   D-151 npm run play 离线闭环 + cli replay 伤害/暴击/背击标注 → scripts/play.js（数据侧无落点）
 //   D-152 真实玩家匹配，禁止占位 bot 充数（池不足回报 shortfall）→ 计划落 server/ranked.js（P7-3）
 //   D-153 安全登记册只登记不修复；被顺手修掉的条目更新证据与状态 → docs/security-backlog.md
+//   D-176 包（模块包）体系：品质=玩家段位、质量=该品质 4 档百分比、物品品质/件数曲线与掉落白名单 → 本目录 package-config.json
+//   D-177 战斗掉落与开包：掉落=包（journal package.granted）、开包=消耗包产出物品（journal package.opened）→ 本目录 package-config.json + server/store/archive.js
 const TIERS = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 const TIER_SEQ = Object.fromEntries(TIERS.map((t, i) => [t, i]));
 
@@ -205,6 +207,10 @@ function validateStructure(dataDir, assetsDir) {
   try {
     tables.unlock = loadJSON(dataDir, 'unlock.json').data;
   } catch (e) { problems.push(`unlock.json 缺失或解析失败: ${e.message}`); }
+  // D-176/D-177：包（模块包）配置表 —— 品质=段位、质量=4 档百分比、三套曲线 + 掉落白名单
+  try {
+    tables.packageConfig = loadJSON(dataDir, 'package-config.json').data;
+  } catch (e) { problems.push(`package-config.json 缺失或解析失败: ${e.message}`); }
   // assets 占位表（P0-9：path.join(dataDir, '..', '..', 'assets') —— dataDir=server/data）
   try {
     tables.sprites = loadJSON(assetsDirResolved, 'sprites.json').data;
@@ -448,6 +454,152 @@ function validateStructure(dataDir, assetsDir) {
     if (Math.abs(sum - 1.0) > 1e-9) problems.push(`dropRates 之和 = ${sum}，应为 1.0`);
   }
   if (!kw || !['role', 'skill', 'rolePlugin', 'skillPlugin'].every((k) => isNum(kw[k]) && kw[k] > 0)) problems.push('kindWeights 四键正数');
+
+  // package-config（D-176/D-177）：包品质=段位、质量=该品质 4 档百分比、三套曲线 + 掉落白名单
+  //   机器校验的**语义**（与 docs/content-design.md §10 冻结口径逐条对应）：
+  //     ① percentSteps = 5..100 每 5 一档（20 档）；
+  //     ② qualityPercentBands 按 TIERS 顺序各 4 档、互不重叠且并集 = percentSteps；
+  //     ③ itemQualityCurve 每行和为 1，且**只能落在本级及以下两级**（最高档额外允许上一级）；
+  //     ④ itemCountCurve / battleDropCountCurve / battleDropQualityCurve 每行和为 1；
+  //     ⑤ dropPool 白名单里的模板 id 必须在对应内容表中真实存在（防"写错 id 静默空池"）。
+  const pc = tables.packageConfig;
+  const PC_KINDS = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'aiNode'];
+  const PC_DROPS_KINDS = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
+  const bandPercentsOf = {};          // quality → [percent…]
+  const percentToQuality = {};        // percent → quality（供 ③ 反查本级）
+  if (!pc || typeof pc !== 'object' || Array.isArray(pc)) {
+    problems.push('package-config 必须是对象');
+  } else {
+    const steps = Array.isArray(pc.percentSteps) ? pc.percentSteps : null;
+    if (!steps || steps.length !== 20 || steps.some((p, i) => !isInt(p) || p !== 5 + i * 5)) {
+      problems.push(`package-config.percentSteps 应为 [5,10,…,100] 共 20 档（实际 ${JSON.stringify(steps)}）`);
+    } else {
+      const bands = pc.qualityPercentBands;
+      if (!bands || typeof bands !== 'object') problems.push('package-config.qualityPercentBands 必须是对象');
+      else {
+        const seen = [];
+        for (let gi = 0; gi < TIERS.length; gi += 1) {
+          const t = TIERS[gi];
+          const arr = bands[t];
+          if (!Array.isArray(arr) || arr.length !== 4 || arr.some((p) => !isInt(p))) {
+            problems.push(`package-config.qualityPercentBands.${t} 应为 4 个整数（该品质的质量档）`);
+            continue;
+          }
+          for (const p of arr) { seen.push(p); percentToQuality[p] = t; }
+          bandPercentsOf[t] = arr;
+        }
+        const uniq = [...new Set(seen)].sort((a, b) => a - b);
+        if (uniq.length !== seen.length) problems.push('package-config.qualityPercentBands 各品质档位存在重复百分比');
+        if (steps && (uniq.length !== 20 || uniq.some((p, i) => p !== steps[i]))) {
+          problems.push('package-config.qualityPercentBands 的并集必须恰好等于 percentSteps（且不重不漏）');
+        }
+      }
+    }
+    // ③ 物品品质曲线
+    const curve = pc.itemQualityCurve;
+    if (!curve || typeof curve !== 'object' || Array.isArray(curve)) problems.push('package-config.itemQualityCurve 必须是对象');
+    else if (steps) {
+      for (const p of steps) {
+        const row = curve[String(p)];
+        if (!row || typeof row !== 'object' || Array.isArray(row)) { problems.push(`itemQualityCurve 缺档位 ${p}`); continue; }
+        const gi = TIER_SEQ[percentToQuality[p]];
+        const step = bandPercentsOf[percentToQuality[p]] ? bandPercentsOf[percentToQuality[p]].indexOf(p) + 1 : 0;
+        const lo = Math.max(0, gi - 2);
+        const hi = step === 4 ? Math.min(TIERS.length - 1, gi + 1) : gi;
+        let sum = 0;
+        for (const [q, v] of Object.entries(row)) {
+          if (TIER_SEQ[q] === undefined) { problems.push(`itemQualityCurve[${p}] 含未知品质 ${q}`); continue; }
+          if (!isNum(v) || v < 0) { problems.push(`itemQualityCurve[${p}].${q} 应为 ≥0 的数`); continue; }
+          sum += v;
+          const qi = TIER_SEQ[q];
+          if (v > 0 && (qi < lo || qi > hi)) {
+            problems.push(`itemQualityCurve[${p}] 出现越界品质 ${q}（该档只允许 ${TIERS.slice(lo, hi + 1).join('/')}）`);
+          }
+        }
+        if (Math.abs(sum - 1.0) > 1e-9) problems.push(`itemQualityCurve[${p}] 之和 = ${sum}，应为 1.0`);
+      }
+    }
+    // ④ 三套抽样曲线
+    const curveChecks = [
+      ['itemCountCurve', ['1', '2', '3', '4'], ['1', '2', '3']],
+      ['battleDropCountCurve', ['win', 'loss', 'draw'], ['0', '1', '2']],
+      ['battleDropQualityCurve', ['win', 'loss', 'draw'], ['1', '2', '3', '4']],
+    ];
+    for (const [name, rowKeys, innerKeys] of curveChecks) {
+      const table = pc[name];
+      if (!table || typeof table !== 'object' || Array.isArray(table)) { problems.push(`package-config.${name} 必须是对象`); continue; }
+      for (const rk of rowKeys) {
+        const row = table[rk];
+        if (!row || typeof row !== 'object' || Array.isArray(row)) { problems.push(`${name} 缺行 ${rk}`); continue; }
+        let sum = 0;
+        for (const [k, v] of Object.entries(row)) {
+          if (!innerKeys.includes(k)) { problems.push(`${name}[${rk}] 含未知键 ${k}（可选 ${innerKeys.join('/')}）`); continue; }
+          if (!isNum(v) || v < 0) { problems.push(`${name}[${rk}].${k} 应为 ≥0 的数`); continue; }
+          sum += v;
+        }
+        if (Math.abs(sum - 1.0) > 1e-9) problems.push(`${name}[${rk}] 之和 = ${sum}，应为 1.0`);
+      }
+    }
+    // ② packages 清单
+    const list = Array.isArray(pc.packages) ? pc.packages : null;
+    if (!list || list.length === 0) problems.push('package-config.packages 必须是非空数组');
+    else {
+      const kinds = list.map((x) => x && x.packageKind);
+      if (kinds.some((k) => !PC_KINDS.includes(k))) problems.push(`package-config.packages 的 packageKind 必须是 ${PC_KINDS.join('/')}`);
+      if (new Set(kinds).size !== kinds.length) problems.push('package-config.packages 的 packageKind 不得重复');
+      if (!PC_KINDS.every((k) => kinds.includes(k))) problems.push(`package-config.packages 必须覆盖全部 ${PC_KINDS.length} 种包`);
+      for (const def of list) {
+        if (!def || typeof def !== 'object') { problems.push('package-config.packages 含非对象条目'); continue; }
+        if (typeof def.name !== 'string' || def.name === '') problems.push(`包 ${def.packageKind}: name 必须是非空字符串`);
+        if (typeof def.openable !== 'boolean') problems.push(`包 ${def.packageKind}: openable 必须是布尔`);
+        if (def.dropsKind !== null && !PC_DROPS_KINDS.includes(def.dropsKind)) {
+          problems.push(`包 ${def.packageKind}: dropsKind 必须是 null 或 ${PC_DROPS_KINDS.join('/')}`);
+        }
+        if (def.openable === true && !PC_DROPS_KINDS.includes(def.dropsKind)) {
+          problems.push(`包 ${def.packageKind}: openable=true 时 dropsKind 必须是具体物品类别`);
+        }
+      }
+    }
+    // ⑤ 包种类权重（战斗掉落用）
+    const pkw = pc.packageKindWeights;
+    if (!pkw || typeof pkw !== 'object' || Array.isArray(pkw)) problems.push('package-config.packageKindWeights 必须是对象');
+    else {
+      for (const k of PC_KINDS) {
+        if (!isNum(pkw[k]) || pkw[k] < 0) problems.push(`package-config.packageKindWeights.${k} 应为 ≥0 的数`);
+      }
+      const total = PC_KINDS.reduce((a, k) => a + (isNum(pkw[k]) ? pkw[k] : 0), 0);
+      if (!(total > 0)) problems.push('package-config.packageKindWeights 之和必须 > 0（否则战斗永远不掉包）');
+    }
+    // ⑥ 掉落白名单（模板 id 必须真实存在）
+    const pool = pc.dropPool;
+    const idSetOf = {
+      role: new Set((tables.roles || []).map((r) => r && r.id)),
+      skill: new Set((tables.skills || []).map((s) => s && s.id)),
+      rolePlugin: new Set((tables.plugins || []).filter((p) => p && p.kind === 'rolePlugin').map((p) => p.id)),
+      skillPlugin: new Set((tables.plugins || []).filter((p) => p && p.kind === 'skillPlugin').map((p) => p.id)),
+    };
+    if (!pool || typeof pool !== 'object' || Array.isArray(pool)) problems.push('package-config.dropPool 必须是对象');
+    else {
+      if (pool._default !== 'all') problems.push('package-config.dropPool._default 必须是 "all"（目前只支持"默认全部可掉落"）');
+      for (const [kind, table] of Object.entries(pool)) {
+        if (kind === '_default') continue;
+        if (!PC_KINDS.includes(kind)) { problems.push(`package-config.dropPool 含未知包种类 ${kind}`); continue; }
+        if (!table || typeof table !== 'object' || Array.isArray(table)) { problems.push(`dropPool.${kind} 必须是对象`); continue; }
+        for (const [pct, val] of Object.entries(table)) {
+          if (!steps || !steps.includes(Number(pct))) { problems.push(`dropPool.${kind} 含非法质量档 ${pct}`); continue; }
+          if (val === 'all') continue;
+          if (!Array.isArray(val) || val.length === 0 || val.some((x) => typeof x !== 'string' || x === '')) {
+            problems.push(`dropPool.${kind}.${pct} 必须是 "all" 或非空的模板 id 数组`);
+            continue;
+          }
+          const ids = idSetOf[kind];
+          if (ids) for (const id of val) {
+            if (!ids.has(id)) problems.push(`dropPool.${kind}.${pct} 的模板 ${id} 不存在于对应内容表`);
+          }
+        }
+      }
+    }
+  }
 
   // unlock（段位齐全 + 条目结构 + 与两表 unlockTier 交叉一致）
   //   2026-09-16：**删除 AI 节点累计数量/增量表核对**（不再硬编码 11/14/17/17/19 或 AI_BASE_NODES）；

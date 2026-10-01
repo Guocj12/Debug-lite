@@ -131,7 +131,18 @@
 
 ---
 
-## 0.3 D-174 四项口径收口（手写 README 对账）—— **✅ 已交付（2026-09-28）**
+## 0.4 包（模块包）体系 + 战斗掉落与开包（`D-176`/`D-177`）—— **✅ 后端已落地（2026-09-28）；前端待批次 F8**
+
+> **本次未新增批次号**（同 §0.2/§0.3 处置：`docs/tasks.md`/`docs/progress.md` 的"共 41 批"**保持不变**）。数值权威 = `docs/content-design.md` §10；记录 = `docs/decisions.md` §14.14；接口 = `docs/interfaces.md` §2/§2.1/§4.14。
+
+- **口径（用户 2026-09-28 裁定）**：① **包品质 = 玩家当前段位（固定）**，**质量 = 该品质 4 档百分比**（绿 5/10/15/20 … 青 85/90/95/100，共 20 档）；② 掉落物品品质 = **本级及以下两级**（最低绿），**仅每级最高档**可极小概率升一级；青包 100% 档 = **95% 青 + 5% 橙**；③ 每包 **1~3 件**（件数期望随质量档递增 1.30→1.85）；④ **只有主动匹配的快速对战（进攻方）掉包**：胜 **1~2** 个 / 负平 **0~1** 个，质量档胜方偏中高（20/35/35/10）、负平偏低（45/35/15/5）；⑤ **包体系自成门控**（不读 `unlock.json` 的 `gating.enabled`，与 D-137 并存）；⑥ 掉落池 = **包种类 × 质量档白名单**，当前全部 `"all"`（待用户进一步设计）；⑦ **AI 节点包 = 保留包**：可掉落，开包 200 + 零产出 + `notice:'package_reserved'`；⑧ 前端开箱屏废弃（**服务端 `/me/box` 与遗留 `/box` 保留**），开包改到仓库屏内（F8）。
+- **数据/代码落点**：`server/data/package-config.json`（新表 + schema 校验：档位并集 / 每行和为 1 / **候选品质越界** / 白名单模板真实存在）；`core/items.js`（`generatePackage`/`openPackage`/`rollBattlePackages`/`packageStepOf`/`packageDropPoolOf`）；`store/archive.js`（第 5 桶 `package`、`bucketOfKind` 单一映射、`package.granted`/`package.opened` 两条记录 + `grantIds` 环幂等）；`store/{ledger,adapter-json}.js`（`packageGrantIdOf`/`packageOpenGrantIdOf`、`grantPackages`/`openPackages`）；`server/quickmatch.js`（掉落接入 `if(!existing)` 块内 + `data.drops` 恒在）；`server/account.js`（`openPackages` 门面）；`server/index.js`（`POST /api/v1/me/warehouse/open-package`）；`server/starter.js`（新号送 1 个角色模块包做引导）。
+- **实跑证据（后端终态）**：`npm test` = **1159 通过 / 0 失败**；新增 `tests/unit/package.test.js`（PK-1~6：曲线不变量 / 品质规则 / 生成 / 开包确定性 / 保留包 / 掉落统计）与 `tests/api/api-me-open-package.test.js`（OP-1~5：掉落恒在且幂等不重复发放 / 开包消耗与入桶 / 负例 / 保留包提示 / 仓库满原子）。
+- **待办（前端 F8）**：仓库屏新增「包」桶与开包交互（含批量/单个、保留包提示）、快速对战结算区展示本场掉落、**删除开箱屏**（`view:'box'`/`goto-box`/`box-open`/`boxTimes`/`boxResultLines` 等）、`public/contract.js` 与 `docs/frontend/{03,04}.md` 字段契约同步、`tests/frontend/*` 的桶清单/容量行正则/契约三方一致更新。
+
+---
+
+## 0.5 D-174 四项口径收口（手写 README 对账）—— **✅ 已交付（2026-09-28）**
 
 > **本次未新增批次号**（同 §0.2 处置：`docs/tasks.md`/`docs/progress.md` 的"共 41 批"不变）。触发：用户要求"把已写完的 `README.md` 按实际代码核对一遍"——核对出 3 处实质不符 + 7 处口径偏差后，用户逐条裁定并**以 README 为准改代码**（`README.md` 手写文档，AI 禁止编辑）。
 > 决策记录：`docs/decisions.md` §14.12 **D-174**；接口落点：`docs/interfaces.md` §1（`core/roles|skills|engine`、`server/runner`）+ §5。
@@ -142,7 +153,7 @@
 - **④ 伤害衰减统一线性**：`core/bullets.js` 的 `max(0, 1 − falloff×|格偏移|)` 为准 ⇒ 改 `docs/content-design.md` §6.1 覆盖价值模型（原 `Σ(1−衰减)^|偏移|` 指数式）与 `.audit/content-design.js` 的 `coveredValue`。**数值零变化**：现有 4 模板 + 16 专属中 `|偏移| ≥ 2` 的只有「箭雨」（`falloff = 0`）⇒ 两模型同值，η 与表内 sp/mp/CD 逐条不变（审计仍全绿）。
 - **⑤ 弹幕等级方向修正（同日追加）**：等级 **1 最高 / 4 最低**，专属插件 `desc` 的「等级 +N」= 提升 N 级（数字 −N）。`plugins.json` 四个平射专属原先**写反**（穿甲 5 = 反而最弱、狙击 4、连射 2、霰弹 2）⇒ 改为 **1/2/4/4** 并按 η 模型重导消耗冷却（穿甲 sp2/mp6/cd1、狙击 sp4/mp9/cd2、连射 sp2/mp5/cd2、霰弹 sp7/mp17/cd4）；`schema.js` 硬化（`exclusive.overrides.bulletLevel` 也须 1..4，此前只校验模板）+ 负例测试；`docs/content-design.md` §6.4 平射表同步。**至此 README 的「弹幕等级 1-4」与数据完全一致**。**遗留待裁决**：模型 §6.1 的 `lf(L) = 1 + 0.05×(L−2)` 把等级当伤害系数，而引擎只用等级做互撞、且该式符号与"1 最高"相反 ⇒ 引擎实现/模型去掉 `lf`（重导 20 行）/维持现状，三选一。
 - **⑥ 弹幕等级与伤害解耦（D-175，同日追加）**：等级**只影响弹幕互撞**（1 最高），配平模型删除 `lf(L)` 并按新模型重导 20 条形态的 SP/MP/CD（模板：平射 `mp3+sp2`、定点 `mp1`；专属 8 条改动），资源拆分改「一维取整、另一维吃余数」；`docs/content-design.md` §6.1/§6.3/§6.4 与 `docs/items-data.md` §5 同步；黄金战斗快照按人工复核路径重算（`node .audit/golden-battle.js --write`，逐帧差异**仅 mp**、18 tick/p2/role 不变）。
-- **⑦ 持续伤害倍率化（D-175）**：`affix-registry.json` 的 `dot` 由固定数值改 **`multFrom='v'`**，火球内联 `hitEffects` 带 `params.v=0.2`；引擎步骤 2 经注入回调 `resolveContinuous(state,{dotDamage})` 按 **施法者 atk × 倍率** 走常规伤害公式（独立 `dot` 随机流），伤害进帧 `damages[].kind='dot'`；固定数值类（诅咒 −def）不变。新增 `EN-21`（持续伤害数值/帧/到期）与 `DM-8` 形态断言。
+- **⑦ 持续伤害倍率化（D-175）**：`affix-registry.json` 的 `dot` 由固定数值改 **`multFrom='v'`**，火球内联 `hitEffects` 带 `params.v=0.2`；引擎步骤 2 经注入回调 `resolveContinuous(state,{dotDamage})` 调 `dealDamage(..., { dot: true })` ⇒ 每 tick = **攻击力 × 倍率 × 防御减伤**；**`dot: true` 模式不判闪避/暴击、不触发吸血/荆棘/命中效果、不消耗随机**（位移全程免疫仍生效，D-72），伤害进帧 `damages[].kind='dot'`；固定数值类（诅咒 −def）不变。新增 `EN-21`（数值/帧/到期）、`EN-22`（不判闪避暴击、不吸血不荆棘、免疫与非法输入边界）与 `DM-8` 形态断言。
 - **实跑证据（2026-09-28 终态）**：`npm test` = **1148 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**（项 7 = 1148 用例 + 四目录覆盖率达标）；`npm run check:docs` = PASS（批次仍 41）；`npm run e2e` = **22/22**；`node .audit/content-design.js` = PASS（η 全部落在 0.40±0.02）；`node .audit/verify-skill-system.js` = 32/32；`node scripts/check-arch.js` = PASS。
 - **顺手修掉一个既有 flaky 测试（非本轮改动引入）**：`tests/integration/e2e-play.test.js` 的 ② 步要"开箱凑出一对可装配的角色+插件"，但它（a）**没注入 `boxSeed`**（每次开箱内容随机）、（b）配对时**只比槽位类型、不比点数预算** ⇒ 一旦先抽到"3 点插件 + 2 点角色"就假失败（实测 `409 points_exceeded`，与 D-174 改动无关：还原 HEAD 的数据表也会偶发）。已修：夹具注入 `boxSeed: 20260928`（确定性序列）+ 配对加 `pointCost ≤ pluginPoints` 过滤；单文件连跑 3 轮 7/7 全绿。此前 gate 首跑那次 `store-warehouse-recovery` WR-1/WR-2 单次失败属同一类"夹具/随机性"偶然，未复现（单跑 3/3 绿）。
 - **新增/改写的机器核对**：`tests/unit/skills.test.js` 新增 **SK-13**（定点索敌：命中敌方格 / 射程外回落 / 身后敌人不参与 / 缺省与非法 targetX 安全回落 / 同格 / 边界 clamp / 其他类型不产生 impactX）；`tests/unit/roles.test.js` R-2a/R-2b/R-3a 按新因子重算、**R-3b 改为五档结构 + "def 可吃 <1 因子"**；`tests/unit/items.test.js` IT-15 重算并**删除 excludeLow 断言**、改测"def 可承担 <1 因子"；`tests/unit/ai-mirror.test.js` M-2 改为格序号镜像（12→3）；`tests/api/api-ai.test.js` B26 增补"`x` = 格序号（含末格 992→15）"；`tests/integration/data-schema.test.js` 新增两条负例（五档被破坏 / `excludeLow` 出现即 fail）；`tests/integration/interfaces.test.js` IF-1 的 D 计数 125→**126**。

@@ -40,7 +40,7 @@ test('T-AP-1 GET /warehouse 骨架 + assemble/disassemble 正常路径（信封 
     const sk = await request(port, 'GET', '/api/v1/warehouse');
     assert.equal(sk.status, 200);
     assert.equal(sk.body.ok, true);
-    assert.deepEqual(Object.keys(sk.body.data.buckets).sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin']);
+    assert.deepEqual(Object.keys(sk.body.data.buckets).sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin']);
     const a = await request(port, 'POST', '/api/v1/warehouse/assemble', { warehouse: WH, targetUid: 'r1', slotIndex: 0, pluginUid: 'p1', tier: 'common' });
     assert.equal(a.status, 200, a.raw);
     assert.equal(a.body.data.warehouse.buckets.role[0].slots[0].pluginUid, 'p1');

@@ -215,6 +215,48 @@ function buildBoxRecord(input) {
   };
 }
 
+// D-176：战斗掉落的**幂等键** —— 内容寻址到 (playerId, battleId, source)，与 battleId 一样可重算：
+//   同一场战斗重复调用（并发/重放）得到**同一个 grantId** → archive 的 grantIds 环判定"已应用" → 不重复发放。
+//   这是"不能只靠 quickmatch 的 existing 判据"的兜底（见 docs/decisions.md D-177）。
+function packageGrantIdOf(input) {
+  const o = input || {};
+  return `pk_${shortDigest([o.playerId || '', o.battleId || '', o.source || 'quick', o.index === undefined ? '' : o.index].join('|'), 16)}`;
+}
+
+// D-177：开包的幂等键 —— 内容寻址到 (playerId, 被消耗的包 uid 列表, seed)
+function packageOpenGrantIdOf(input) {
+  const o = input || {};
+  const uids = Array.isArray(o.consume) ? o.consume.slice().sort() : [];
+  return `po_${shortDigest([o.playerId || '', uids.join(','), o.seed === undefined || o.seed === null ? '' : o.seed].join('|'), 16)}`;
+}
+
+// D-176：package.granted —— 战斗掉落发放（packages 为包正文，有界：单场 ≤2 个）
+function buildPackageGrantRecord(input) {
+  const o = input || {};
+  const packages = Array.isArray(o.packages) ? deepClone(o.packages) : [];
+  return {
+    type: 'package.granted', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    grantId: o.grantId || packageGrantIdOf({ playerId: o.playerId, battleId: o.battleId, source: o.source, index: o.index }),
+    source: o.source === undefined ? 'quick' : o.source,
+    battleId: o.battleId === undefined ? null : o.battleId,
+    packages,
+  };
+}
+
+// D-177：package.opened —— 开包（consume = 被消耗的包 uid；items = 产出物品正文）
+function buildPackageOpenRecord(input) {
+  const o = input || {};
+  const items = Array.isArray(o.items) ? deepClone(o.items) : [];
+  const consume = Array.isArray(o.consume) ? o.consume.slice() : [];
+  return {
+    type: 'package.opened', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    grantId: o.grantId || packageOpenGrantIdOf({ playerId: o.playerId, consume, seed: o.seed }),
+    seed: Number.isInteger(o.seed) ? o.seed : null,
+    consume,
+    items,
+  };
+}
+
 // D-159：装配/拆卸（增量记录：只记"哪个物品的第几个槽装了哪个插件"）
 function buildWarehouseRecord(input) {
   const o = input || {};
@@ -362,6 +404,10 @@ module.exports = {
   buildBotRecord,
   boxGrantIdOf,
   buildBoxRecord,
+  packageGrantIdOf,
+  packageOpenGrantIdOf,
+  buildPackageGrantRecord,
+  buildPackageOpenRecord,
   buildWarehouseRecord,
   buildAiRecord,
   buildPasswordRecord,

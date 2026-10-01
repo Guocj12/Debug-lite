@@ -49,8 +49,10 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //     thorns·critMul·lowHpAtk 三机制 / critBonus / range 不随品质浮动）；
   //   2026-09-28：D-174——四项口径收口（专家 README 五档 + 取消 def 特判 / 定点索敌对方格 / AI 只读格坐标 / 衰减线性）；
   //   2026-09-28：D-175——弹幕等级与伤害解耦（等级只影响互撞，删除 lf 并重导 20 条形态）+ 持续伤害倍率化（按 atk 走常规伤害公式）；
+  //   2026-09-28：D-176——包（模块包）体系（品质=玩家段位 / 质量 4 档 / 掉落品质本级及以下两级 + 最高档升一级 / 自成门控）；
+  //   2026-09-28：D-177——战斗掉落（仅进攻方、胜 1~2 负平 0~1、journal package.granted、幂等不重复发放）+ 开包端点（package.opened）；
   //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号））
-  assert.equal(decided.size, 127, `D 编号数量应为 127（decisions.md 无跳段之外的编号）`);
+  assert.equal(decided.size, 129, `D 编号数量应为 129（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

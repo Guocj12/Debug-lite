@@ -138,17 +138,20 @@ function createBattle(cfgIn, options) {
   }
 
   // ---- 完整伤害链路（systems/07-engine.md §4.4 八步；§4.5 背击；D-40..D-46/D-50/D-51/D-72）----
-  // params: {mult, trueDamage, backstab, critRng, affixes, specials, sourceDir, hitUid}
+  // params: {mult, trueDamage, backstab, critRng, affixes, specials, sourceDir, hitUid, dot}
+  //   `dot: true`（D-175）= **持续伤害模式**：只保留"攻击力 × 倍率 × 防御减伤"这一条主干
+  //   —— **不判闪避、不判暴击、不触发吸血/荆棘/命中类效果**（位移全程免疫仍生效：它是"免疫所有伤害"）。
   function dealDamage(attacker, defender, params) {
     const p = params || {};
+    const isDot = p.dot === true;
     const rng = p.critRng || { chance: () => 0 };
     // 步骤 0 D-72①：位移全程免疫（fullDodgeDuring 由步骤 6 置位）——不参与命中判定也不吃伤害
     if (defender.fullDodgeDuring) {
       logger.debug('damage', 'damage.dodge', `${defender.id} 位移全程免疫（D-72）`, { target: defender.id, fullDodgeDuring: true });
       return { dmg: 0, dodged: true, fullDodgeDuring: true, dodgeChanceTotal: 0, lifesteal: 0 };
     }
-    // 步骤 1 闪避判定（§4.4：dodgeChance + 本 tick dodge 行动的 dodgeChanceBonus）
-    const dodgeChanceTotal = Math.min(1, ((defender.special && defender.special.dodgeChance) || 0) + (defender.dodging ? cfg.dodgeChanceBonus : 0));
+    // 步骤 1 闪避判定（§4.4：dodgeChance + 本 tick dodge 行动的 dodgeChanceBonus）——持续伤害跳过（D-175）
+    const dodgeChanceTotal = isDot ? 0 : Math.min(1, ((defender.special && defender.special.dodgeChance) || 0) + (defender.dodging ? cfg.dodgeChanceBonus : 0));
     if (dodgeChanceTotal > 0 && rng.chance(dodgeChanceTotal, 'dodge')) {
       logger.debug('damage', 'damage.dodge', `${defender.id} 闪避`, { target: defender.id, chance: dodgeChanceTotal });
       return { dmg: 0, dodged: true, dodgeChanceTotal };
@@ -159,20 +162,20 @@ function createBattle(cfgIn, options) {
     const mult = p.mult === undefined ? cfg.baseHitMul : p.mult;
     const def = defender.defending ? defender.def * cfg.defendDefMul : defender.def;
     const reduction = p.trueDamage ? 1 : 1 - def / (def + cfg.defK);
-    // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击（暴击率消耗 crit 流）
+    // 步骤 4-5 背击 ×1.5（D-42/D-50）与暴击（暴击率消耗 crit 流）——持续伤害两者都不判（D-175）
     //   暴击倍率 = 1 + battle-config.critBonus（2026-09-28 起 = 2.0）+ 面板/技能词条 special.critMul（`rp_critdmg`，无上限）
     const backM = p.backstab ? cfg.backstab : 1;
     const critChance = Math.min(1, ((attacker.special && attacker.special.critChance) || 0) + (skillSpecials.critChance || 0));
     const critMulBonus = ((attacker.special && attacker.special.critMul) || 0) + (skillSpecials.critMul || 0);
-    const crit = !!(critChance > 0 && rng.chance(critChance, 'crit'));
+    const crit = isDot ? false : !!(critChance > 0 && rng.chance(critChance, 'crit'));
     const critM = crit ? 1 + cfg.critBonus + critMulBonus : 1;
     // 步骤 6 倍率相乘后只取整一次（D-41），下限 1（atk 取有效值：含低血加攻）
     const atkEff = effectiveAtk(attacker);
     const raw = atkEff * mult * reduction * backM * critM;
     const dmg = Math.max(1, Math.floor(raw));
-    // 步骤 7 吸血（角色伤害；基地不吸血由调用方不走本函数）
+    // 步骤 7 吸血（角色伤害；基地不吸血由调用方不走本函数）——持续伤害不吸血（D-175）
     let lifesteal = 0;
-    const ls = Math.min(1, ((attacker.special && attacker.special.lifesteal) || 0) + (skillSpecials.lifesteal || 0));
+    const ls = isDot ? 0 : Math.min(1, ((attacker.special && attacker.special.lifesteal) || 0) + (skillSpecials.lifesteal || 0));
     if (ls > 0) {
       lifesteal = Math.floor(dmg * ls);
       attacker.hp = Math.min(attacker.maxHp, attacker.hp + lifesteal);
@@ -185,13 +188,14 @@ function createBattle(cfgIn, options) {
       backstab: !!p.backstab, crit, trueDamage: !!p.trueDamage, raw, dmg, lifesteal,
       hitUid: p.hitUid === undefined ? null : p.hitUid,
     });
-    // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害/附加真实伤害）
-    for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
+    // 步骤 9 附加效果（伤害生效后添加：眩晕/击退/拉近/持续伤害/附加真实伤害）——持续伤害不再触发命中类效果（D-175）
+    if (!isDot) for (const affix of p.affixes || []) addAffixEffect(attacker, defender, affix, p.sourceDir);
     // 荆棘反伤（`rp_thorns`，2026-09-28 内容设计 §5.4）：受击方按 `v × 攻击者有效 atk` 反弹真实伤害。
     //   只在"真实打中"时触发（闪避/全程闪避已在前面 return）；不递归（直接扣 hp，不走本函数）。
+    //   持续伤害不触发荆棘（D-175）。
     let thornsDmg = 0;
     const thorns = (defender.special && defender.special.thorns) || 0;
-    if (thorns > 0) {
+    if (!isDot && thorns > 0) {
       thornsDmg = Math.max(1, Math.round(thorns * atkEff));
       attacker.hp = Math.max(0, attacker.hp - thornsDmg);
       logger.debug('damage', 'damage.thorns', `${defender.id} 荆棘反伤 ${attacker.id} ${thornsDmg}`, {
@@ -402,15 +406,14 @@ function createBattle(cfgIn, options) {
     stepLog(1, '冷却递减/重置标记');
 
     // 步骤 2：持续效果
-    //   D-175：**持续伤害**（效果带 `mult`）逐 tick 按"倍率 × 施法者 atk"走常规伤害公式结算——
-    //   走独立的 `dot` 随机流（不挤占本 tick 的 crit 抽样序，避免影响其它伤害的暴击结果）；
+    //   D-175：**持续伤害**（效果带 `mult`）逐 tick 按"倍率 × 施法者 atk × 防御减伤"结算，走
+    //   `dealDamage` 的 **`dot: true` 模式**（不判闪避/暴击、不触发吸血/荆棘/命中效果、不消耗任何随机）；
     //   伤害进帧（kind='dot'），与弹幕/碰撞/基地/超时同一记账口径。
-    const dotRng = battleState.rng.deriveStream(tick, 'dot');
     const dotDamage = (eff, target) => {
       const src = players[eff.source];
       if (!src || !(eff.mult > 0)) return null;
-      const res = dealDamage(src, target, { mult: eff.mult, critRng: dotRng, hitUid: eff.uid });
-      battleState._frameDamages.push({ target: target.owner, amount: res.dmg, atX: target.x, kind: 'dot', srcUid: eff.uid, attacker: src.owner, crit: res.crit === true, critM: res.crit ? res.critM : 1, backstab: false, backM: 1, dodged: res.dodged === true });
+      const res = dealDamage(src, target, { mult: eff.mult, dot: true, hitUid: eff.uid });
+      battleState._frameDamages.push({ target: target.owner, amount: res.dmg, atX: target.x, kind: 'dot', srcUid: eff.uid, attacker: src.owner, crit: false, critM: 1, backstab: false, backM: 1, dodged: res.dodged === true });
       return res;
     };
     effects.resolveContinuous({ tick, players }, { dotDamage });

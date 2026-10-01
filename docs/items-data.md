@@ -126,11 +126,12 @@
 
 **不浮动**：`range`/`area`/`bulletCount`/`distance`/`bulletLevel`/`cost`/`cooldown`/`falloff`/三个开关/`animKey`/`sfxKey`；**只有 `multiplier` 随品质浮动**。变体由专属插件产生（§4.2）。
 
-## 6. 掉落配置（`items-config.json`）
+## 6. 掉落配置（`items-config.json` 与 `package-config.json`）
 
 - `dropRates`：`common 0.55 / rare 0.28 / epic 0.12 / legendary 0.04 / mythic 0.01`（**待用户设计**，`content-design.md` §7-T2）。
 - `kindWeights`：`role 1 / skill 1 / rolePlugin 2 / skillPlugin 2`（**待用户设计**）。
 - 逐条目的 `drop` / `dropWeight` / `unlockTier` 由各内容表自带（当前：全部 `drop: true` / `dropWeight: 1`；`unlockTier` 仅 `rp_sp_opt` 为 `legendary`，其余无 → 已解锁；技能模板全部 `common`）。
+- **D-176/D-177 包（模块包）掉落另表配置**（`package-config.json`，口径见 `docs/content-design.md` §10）：20 档质量百分比 × 5 品质的物品品质曲线（本级及以下两级 + 最高档升一级）、每包 1~3 件曲线、战斗掉落个数与质量档曲线（胜 1~2 / 负平 0~1）、包种类权重、**包种类 × 质量档的模板白名单**（当前全部 `"all"`，待用户进一步设计——填数组即只从这些模板 id 中抽）。
 
 ## 7. 贴图与动画占位（`assets/sprites.json` / `assets/animations.json`）
 

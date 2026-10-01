@@ -1,0 +1,84 @@
+{
+  "_note": "包（模块包）配置表（D-176/D-177）。**包品质 = 玩家当前段位**（固定，不由随机决定）；**包质量 = 该品质 4 档百分比**（绿 5/10/15/20 … 青 85/90/95/100）。物品品质分布规则：一个品质的包可开出**本级及以下两个品质**的物品（最低绿）；每级**最高档**额外允许极小概率升一级。表为本特性的数值单一来源，代码零概率字面量。",
+  "_contract": "docs/content-design.md §10；docs/interfaces.md §2（/me/warehouse/open-package）、§4（Package）；server/data/README.md",
+  "version": 1,
+
+  "percentSteps": [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+
+  "qualityPercentBands": {
+    "common": [5, 10, 15, 20],
+    "rare": [25, 30, 35, 40],
+    "epic": [45, 50, 55, 60],
+    "legendary": [65, 70, 75, 80],
+    "mythic": [85, 90, 95, 100]
+  },
+
+  "packages": [
+    { "packageKind": "role", "name": "角色模块包", "dropsKind": "role", "openable": true },
+    { "packageKind": "skill", "name": "技能模块包", "dropsKind": "skill", "openable": true },
+    { "packageKind": "rolePlugin", "name": "角色插件包", "dropsKind": "rolePlugin", "openable": true },
+    { "packageKind": "skillPlugin", "name": "技能插件包", "dropsKind": "skillPlugin", "openable": true },
+    { "packageKind": "aiNode", "name": "AI节点包", "dropsKind": null, "openable": false, "_reserved": true }
+  ],
+
+  "_itemQualityCurve_note": "键 = 包质量百分比（字符串），值 = 该次掉落物品品质的概率分布（和 = 1）。本级为主，档位越高本级越集中；每级最高档（20/40/60/80/100）多出一次向上取一级的极小概率。",
+  "itemQualityCurve": {
+    "5": { "common": 1.0 },
+    "10": { "common": 1.0 },
+    "15": { "common": 1.0 },
+    "20": { "common": 0.97, "rare": 0.03 },
+    "25": { "common": 0.50, "rare": 0.50 },
+    "30": { "common": 0.35, "rare": 0.65 },
+    "35": { "common": 0.20, "rare": 0.80 },
+    "40": { "common": 0.12, "rare": 0.85, "epic": 0.03 },
+    "45": { "common": 0.17, "rare": 0.33, "epic": 0.50 },
+    "50": { "common": 0.12, "rare": 0.23, "epic": 0.65 },
+    "55": { "common": 0.07, "rare": 0.13, "epic": 0.80 },
+    "60": { "common": 0.03, "rare": 0.09, "epic": 0.85, "legendary": 0.03 },
+    "65": { "rare": 0.17, "epic": 0.33, "legendary": 0.50 },
+    "70": { "rare": 0.12, "epic": 0.23, "legendary": 0.65 },
+    "75": { "rare": 0.07, "epic": 0.13, "legendary": 0.80 },
+    "80": { "rare": 0.03, "epic": 0.09, "legendary": 0.85, "mythic": 0.03 },
+    "85": { "epic": 0.17, "legendary": 0.33, "mythic": 0.50 },
+    "90": { "epic": 0.12, "legendary": 0.23, "mythic": 0.65 },
+    "95": { "epic": 0.07, "legendary": 0.13, "mythic": 0.80 },
+    "100": { "legendary": 0.05, "mythic": 0.95 }
+  },
+
+  "_itemCountCurve_note": "键 = 包质量档位（1..4，档 1 = 该品质最低百分比），值 = 单包掉落件数（1~3）的概率分布（和 = 1）。质量越高，掉更多件的概率越大。",
+  "itemCountCurve": {
+    "1": { "1": 0.75, "2": 0.20, "3": 0.05 },
+    "2": { "1": 0.60, "2": 0.30, "3": 0.10 },
+    "3": { "1": 0.50, "2": 0.33, "3": 0.17 },
+    "4": { "1": 0.40, "2": 0.35, "3": 0.25 }
+  },
+
+  "_battleDropCountCurve_note": "键 = 战斗结果（win/loss/draw；对外 p1/p2 由调用方折算为请求者视角），值 = 本场掉落的包个数（0~2）概率分布（和 = 1）。",
+  "battleDropCountCurve": {
+    "win": { "0": 0.0, "1": 0.65, "2": 0.35 },
+    "loss": { "0": 0.45, "1": 0.55, "2": 0.0 },
+    "draw": { "0": 0.45, "1": 0.55, "2": 0.0 }
+  },
+
+  "_battleDropQualityCurve_note": "键 = 战斗结果，值 = 掉落包质量档位（1..4，在该包品质的 4 档内）的概率分布（和 = 1）。胜方偏中高档，负/平偏低档。",
+  "battleDropQualityCurve": {
+    "win": { "1": 0.20, "2": 0.35, "3": 0.35, "4": 0.10 },
+    "loss": { "1": 0.45, "2": 0.35, "3": 0.15, "4": 0.05 },
+    "draw": { "1": 0.45, "2": 0.35, "3": 0.15, "4": 0.05 }
+  },
+
+  "_packageKindWeights_note": "战斗掉落时**包种类**的相对权重（同 items-config.kindWeights 口径：插件包更常见）。aiNode 目前为保留包（可掉落、开包零产出，前端提示），权重可随时调低或置 0 停掉。",
+  "packageKindWeights": {
+    "role": 1, "skill": 1, "rolePlugin": 2, "skillPlugin": 2, "aiNode": 1
+  },
+
+  "_dropPool_note": "包种类 × 包质量百分比 → 掉落模板白名单：\"all\" = 该包种类全部可掉落模板（仍受内容表 drop=false 与 dropWeight 影响）；数组 = 只从这些模板 id 中抽（id 必须是该类别的合法模板）。默认全 \"all\"，后续只填需要限制的格子。",
+  "dropPool": {
+    "_default": "all",
+    "role": {},
+    "skill": {},
+    "rolePlugin": {},
+    "skillPlugin": {},
+    "aiNode": {}
+  }
+}

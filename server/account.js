@@ -17,6 +17,8 @@
  *   `store.write`(debug) 档案业务写入（data.op 标注具体操作）/ `store.read`(trace) 读视图。
  */
 const { nullLogger } = require('../shared/log.js');
+const crypto = require('node:crypto');
+const { createRng } = require('./core/rng.js');
 const { StoreError, STATUS_BY_CODE } = require('./store/errors.js');
 const { deepClone, contentHash } = require('./store/canonical.js');
 const archiveMod = require('./store/archive.js');
@@ -49,6 +51,8 @@ const EXTRA_STATUS = Object.freeze({
   forbidden: 403,
   banned: 403,
   warehouse_missing: 404,
+  // D-177：开包（包不存在/已被消耗 → 409；与 404 区分：包曾经属于该玩家）
+  package_invalid: 409,
 });
 
 function statusOf(code) {
@@ -701,6 +705,88 @@ function createAccount(options) {
     }
   }
 
+  /* ---------- D-177：开包（消耗包 → 产出物品；服务端独占随机性，同 D-162） ---------- */
+
+  // 包 uids 的入参上限（单次开包数量；与 record.recent 同量级，纯请求防护常量）
+  const PACKAGE_OPEN_MAX = 100;
+
+  // 玩家当前段位的包（品质 = 段位，D-176）；越界/缺失 → 回落 common（保守）
+  function packageTierOf(archive) {
+    const tier = archive && archive.progress ? archive.progress.tier : null;
+    return archiveMod.TIERS.includes(tier) ? tier : 'common';
+  }
+
+  // POST /me/warehouse/open-package：体 `{packageUids:[…]}`。
+  //   随机性归服务端（接口不设 seed 入参）——seed 由注入的 seedFactory 或 crypto 生成并回带（仅审计）。
+  //   AI 节点包（openable=false）= 保留包：**正常返回但零产出**，响应带 `notice:'package_reserved'`（前端提示）。
+  async function openPackages(input) {
+    const o = input || {};
+    try {
+      const archive = await requireArchive(o.playerId);
+      const uids = Array.isArray(o.packageUids) ? o.packageUids : null;
+      if (!uids || uids.length === 0 || uids.length > PACKAGE_OPEN_MAX) {
+        return fail('bad_request', `packageUids 必须是 1..${PACKAGE_OPEN_MAX} 个包 uid 的数组`);
+      }
+      if (uids.some((u) => typeof u !== 'string' || u === '')) {
+        return fail('bad_request', 'packageUids 每项必须是非空字符串');
+      }
+      if (new Set(uids).size !== uids.length) {
+        return fail('bad_request', 'packageUids 存在重复 uid（一次开包每个包只能开一次）');
+      }
+      const view = await store.getWarehouse(o.playerId);
+      const bucket = (view.warehouse.buckets && view.warehouse.buckets.package) || [];
+      const byUid = new Map(bucket.map((p) => [p.uid, p]));
+      const missing = uids.filter((u) => !byUid.has(u));
+      if (missing.length > 0) {
+        return fail('package_invalid', '待开的包不在仓库中（可能已被消耗）', missing.map((u) => (
+          detailOf('package_invalid', `包不存在: ${u}`, 'packageUids')
+        )));
+      }
+      const seed = typeof o.seed === 'number' && Number.isInteger(o.seed) && o.seed >= 1
+        ? o.seed
+        : (typeof o.seedFactory === 'function' ? o.seedFactory() : crypto.randomInt(1, 0x7fffffff));
+      const rng = createRng(seed);
+      const opened = [];
+      const allItems = [];
+      let reservedSeen = false;
+      for (let i = 0; i < uids.length; i += 1) {
+        const pkg = byUid.get(uids[i]);
+        const res = itemsMod.withLogger(log).openPackage(rng.deriveStream(i, 'package'), pkg);
+        if (!res.ok) return fail(res.code || 'package_invalid', res.message || '开包失败');
+        if (res.reserved === true) reservedSeen = true;
+        for (const it of res.items) allItems.push(it);
+        opened.push({
+          packageUid: pkg.uid, packageKind: pkg.packageKind, quality: pkg.quality,
+          qualityPercent: pkg.qualityPercent, count: res.items.length,
+          ...(res.reserved === true ? { notice: 'package_reserved' } : {}),
+        });
+      }
+      const applied = await store.openPackages({
+        playerId: o.playerId, consume: uids, items: allItems, seed,
+      });
+      logWrite('openPackages', {
+        playerId: o.playerId, count: uids.length, items: allItems.length,
+        reserved: reservedSeen, seed,
+      });
+      // 落档后 uid 可能被重映射（allocateGrantUids）→ 用**最终** items 覆盖逐包的 items，
+      //   保证"响应 = journal = 档案"（与 /me/box 的 D-163 口径一致）。applied.items 保持入参顺序 1:1。
+      let offset = 0;
+      for (const rec of opened) {
+        rec.items = applied.items.slice(offset, offset + rec.count);
+        offset += rec.count;
+      }
+      return ok({
+        seed,
+        opened,
+        items: applied.items,
+        warehouse: applied.warehouse, usage: applied.usage, counts: applied.counts, caps: applied.caps,
+        ...(reservedSeen ? { notice: 'package_reserved' } : {}),
+      });
+    } catch (err) {
+      return toFailure(err, log, 'openPackages');
+    }
+  }
+
   /* ---------- D-161：AI 库；D-172：可编辑 + 草稿态 + 双校验 ---------- */
 
   function aiBrief(ai) {
@@ -1100,10 +1186,11 @@ function createAccount(options) {
     saveConfig,
     activateConfig,
     deleteSlot,
-    // D-159：服务端权威仓库（真源 + 装配/拆卸）
+    // D-159：服务端权威仓库（真源 + 装配/拆卸）；D-177：开包
     getWarehouse,
     assemblePlugin,
     disassemblePlugin,
+    openPackages,
     // D-161：AI 库
     listAi,
     createAi,

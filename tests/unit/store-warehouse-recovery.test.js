@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const h = require('../helpers/http.js');
 const itemsApi = require('../../server/core/items.js');
 
-const BUCKETS = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
+const BUCKETS = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package'];
 
 function countsOf(warehouse) {
   const out = {};
