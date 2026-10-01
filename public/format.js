@@ -25,11 +25,10 @@
 
   var PAGE_TITLE = 'Debug-Lite v3 · 账号';
 
-  // F3：开箱次数上限（与 server/box.js 的 BOX_TIMES_MAX、store.BOX_TIMES_MAX 同口径；03 §3.4）
-  var BOX_TIMES_MAX = 100;
-  // F3：仓库四桶的**显示名**（03 §3.3；容量行与开箱结果都用它）
-  var BUCKET_LABELS = Object.freeze({ role: '角色', skill: '技能', rolePlugin: '角色插件', skillPlugin: '技能插件' });
-  var BUCKET_ORDER = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
+  // F3/F8：仓库五桶的**显示名**（03 §3.3；容量行与开包结果都用它）
+  //   F8/D-176：新增 `package`（包）
+  var BUCKET_LABELS = Object.freeze({ role: '角色', skill: '技能', rolePlugin: '角色插件', skillPlugin: '技能插件', package: '包' });
+  var BUCKET_ORDER = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
   // 每桶上限缺省值（正常一律以响应的 data.caps 为准；缺失时才回落，避免整屏崩）
   var CAP_FALLBACK = 500;
   // F3：空页的标题与计划批次（03 §3.6；FR-12）
@@ -122,9 +121,10 @@
     return '已登出（服务端未确认：' + or(reason, '未知原因') + '）';
   }
   var REFRESH_OK_TEXT = '档案已刷新';
-  // F3：仓库刷新与开箱成功的可见文案（03 §4 表格「成功可见文本」）
+  // F3：仓库刷新与开包成功的可见文案（03 §4 表格「成功可见文本」）
   var WAREHOUSE_OK_TEXT = '仓库已刷新';
-  var BOX_OK_TEXT = '开箱完成：物品已入仓库';
+  // F8/D-177：开包成功文案（原「开箱完成」——开箱屏已退役，改为在仓库屏开「包」）
+  var PACKAGE_OK_TEXT = '开包完成：物品已入仓库';
 
   // F3：设置屏·改名成功文案（03 §3.5「昵称已更新为 <n>」；昵称取响应回带值）
   function nicknameOkText(env) {
@@ -333,11 +333,20 @@
 
   function bucketLabel(bucket) { return BUCKET_LABELS[bucket] === undefined ? '角色' : BUCKET_LABELS[bucket]; }
 
+  // F8/D-176：包种类 → 中文显示名（与 server/data/package-config.json 的 `packages[].name` 同口径）
+  var PACKAGE_KIND_LABELS = Object.freeze({
+    role: '角色模块包', skill: '技能模块包', rolePlugin: '角色插件包', skillPlugin: '技能插件包', aiNode: 'AI节点包',
+  });
+  function packageKindLabel(kind) {
+    return PACKAGE_KIND_LABELS[kind] === undefined ? '未知包' : PACKAGE_KIND_LABELS[kind];
+  }
+
   // 响应里某一桶的物品数组（**按桶名分派到不同的 pick 字面量** —— 契约要求路径为字面量）
   function bucketItems(env, bucket) {
     if (bucket === 'skill') return arrayOf(pick(env, 'data.buckets.skill'));
     if (bucket === 'rolePlugin') return arrayOf(pick(env, 'data.buckets.rolePlugin'));
     if (bucket === 'skillPlugin') return arrayOf(pick(env, 'data.buckets.skillPlugin'));
+    if (bucket === 'package') return arrayOf(pick(env, 'data.buckets.package'));
     return arrayOf(pick(env, 'data.buckets.role'));
   }
 
@@ -368,18 +377,27 @@
   }
 
   // 仓库每一行：**只显示物品名字**（+ `[装配于配置N]` 标记；03 §3.3）
+  //   F8/D-176：包显示为 `<名字>（<品质>·<质量>%）`（如「角色模块包（绿·15%）」）——包不被任何配置引用，
+  //   故不叠 `usage` 标记。
   function itemLabel(env, item) {
     var name = or(pick(item, 'name'), '（未命名物品）');
+    if (str(pick(item, 'kind')) === 'package') {
+      return name + '（' + or(pick(item, 'quality'), '未知品质') + '·' + num(pick(item, 'qualityPercent')) + '%）';
+    }
     var mark = usageText(env, str(pick(item, 'uid')));
     return mark === '' ? name : name + ' ' + mark;
   }
 
   function itemRows(env, bucket, busy) {
     return bucketItems(env, bucket).map(function (item) {
-      return {
-        text: '',
-        buttons: [{ action: 'item-open', label: itemLabel(env, item), kind: 'button', disabled: busy === true, uid: str(pick(item, 'uid')) }],
-      };
+      var uid = str(pick(item, 'uid'));
+      // F8/D-176：包桶的行多一个「开包」按钮（`package-open` + `data-uid`）；其余桶只有详情
+      var buttons = [];
+      if (bucket === 'package') {
+        buttons.push({ action: 'package-open', label: '开包', kind: 'button', disabled: busy === true, uid: uid });
+      }
+      buttons.push({ action: 'item-open', label: itemLabel(env, item), kind: 'button', disabled: busy === true, uid: uid });
+      return { text: '', buttons: buttons };
     });
   }
 
@@ -444,6 +462,14 @@
       lines.push('插槽数：' + num(pick(item, 'slotCount')));
       // 展示键（§6.2）：基础模板自带；装上专属插件后被覆盖（帧 action 同步暴露）
       lines.push('动画：' + or(pick(item, 'animKey'), '无') + ' · 音效：' + or(pick(item, 'sfxKey'), '无'));
+    } else if (kind === 'package') {
+      // F8/D-176：包（模块包）—— 种类决定掉落物类别；品质=段位；质量=该品质 4 档百分比
+      var pkgKind = str(pick(item, 'packageKind'));
+      lines.push('包种类：' + packageKindLabel(pkgKind));
+      lines.push('质量：' + num(pick(item, 'qualityPercent')) + '%');
+      lines.push(pkgKind === 'aiNode'
+        ? '说明：保留包 —— 当前开包不产出物品（暂未开放）'
+        : '说明：开包消耗此包，随机掉出 1~3 件物品（种类由包种类决定）');
     } else {
       lines.push('插件 id：' + or(pick(item, 'id'), '未知'));
       lines.push('说明：' + or(pick(item, 'desc'), '无'));
@@ -463,18 +489,31 @@
   }
 
   // 仓库空态（03 §3.3 / B-1）
-  var EMPTY_WAREHOUSE_TEXT = '仓库为空：点「开箱」获取物品';
+  //   F8/D-176：开箱屏退役 → 指引改为"打快速对战掉包 → 到「包」桶开包"
+  var EMPTY_WAREHOUSE_TEXT = '仓库为空：打「快速对战」赢取「包」，再到「包」桶开包';
 
-  /* ---------- F3 §3.4：开箱（POST /me/box；**不显示也不传 seed**） ---------- */
+  /* ---------- F8/D-177：开包（POST /me/warehouse/open-package；**不传也不显示 seed**） ---------- */
 
-  // 逐件行：`<名字>（<分类>·<品质>）`
-  function boxResultLines(env) {
+  // 逐件行：`<名字>（<分类>·<品质>）`；保留包（AI 节点包）另起一行提示「未开放产出」
+  //   注：**不读**响应顶层的 `notice`（条件字段，只在保留包出现）—— 改用 `opened[].packageKind`
+  //   判定（`pick(opened[i], …)` 是子对象读取，不进信封级契约）。
+  function packageResultLines(env) {
     var items = arrayOf(pick(env, 'data.items'));
-    var lines = ['本次获得 ' + num(pick(env, 'data.times')) + ' 件：'];
+    var opened = arrayOf(pick(env, 'data.opened'));
+    var lines = ['本次开包获得 ' + items.length + ' 件：'];
     for (var i = 0; i < items.length; i++) {
       var kind = str(pick(items[i], 'kind'));
       lines.push(or(pick(items[i], 'name'), '（未命名物品）')
         + '（' + (kind === null ? '未知' : bucketLabel(kind)) + '·' + or(pick(items[i], 'quality'), '未知') + '）');
+    }
+    var reserved = false;
+    for (var j = 0; j < opened.length; j++) {
+      if (str(pick(opened[j], 'packageKind')) === 'aiNode') reserved = true;
+    }
+    if (items.length === 0) {
+      lines.push(reserved ? '（保留包：暂未开放产出）' : '（本次没有产出物品）');
+    } else if (reserved) {
+      lines.push('其中含保留包（AI 节点包）：已消耗但暂未开放产出');
     }
     return lines;
   }
@@ -490,16 +529,16 @@
     return null;
   }
 
-  // `仓库已满（<分类> 500/500），请先清理`（03 §3.4 / §6 warehouse_full）
-  function boxFullNotice(state) {
+  // `仓库已满（<分类> 500/500），请先清理`（03 §6 warehouse_full；F8 起服务开包与开箱两条路径）
+  function packageFullNotice(state) {
     var env = state && state.warehouse ? state.warehouse.envelope : null;
     var bucket = fullBucket(state);
     if (bucket === null) return null;
     return '仓库已满（' + bucketLabel(bucket) + ' ' + capOf(env, bucket) + '/' + capOf(env, bucket) + '），请先清理';
   }
 
-  var BOX_TIMES_RANGE_TEXT = '开箱次数需为 ' + 1 + '~' + BOX_TIMES_MAX + ' 的整数';
-  var BOX_STALE_HINT = '物品已直接入服务端仓库：点「仓库」→「刷新」可看到新物品';
+  // F8/D-177：开包结果区的尾行提示（物品已入服务端仓库）
+  var PACKAGE_STALE_HINT = '物品已直接入服务端仓库：切到对应分桶或点「刷新」可看到新物品';
 
   /* ---------- F3 提交③：出战配置编辑器（03 §3.7/§3.8/§4/§6） ----------
    *
@@ -1401,6 +1440,21 @@
       + ' · 共 ' + num(pick(env, 'data.ticks')) + ' tick';
   }
 
+  // F8/D-177：本场掉落的包（`data.drops` **恒在**，无掉落 = `[]`）→ 结算区一行。
+  //   逐项只读子对象字段（`packageKind`/`quality`/`qualityPercent`/`name`），
+  //   保留包（AI 节点包）标注"暂未开放产出"，避免玩家以为拿到了能开的东西。
+  function quickDropsText(env) {
+    var drops = arrayOf(pick(env, 'data.drops'));
+    if (drops.length === 0) return '本场掉落 0 个包';
+    var parts = drops.map(function (d) {
+      var kind = str(pick(d, 'packageKind'));
+      var suffix = kind === 'aiNode' ? '（保留包：暂未开放产出）' : '';
+      return or(pick(d, 'name'), packageKindLabel(kind))
+        + '（' + or(pick(d, 'quality'), '?') + '·' + num(pick(d, 'qualityPercent')) + '%）' + suffix;
+    });
+    return '本场掉落 ' + drops.length + ' 个包：' + parts.join(' / ');
+  }
+
   function quickPoolText(env) {
     return '抽池窗口 ' + num(pick(env, 'data.window'))
       + ' · 对手冷却权重 ' + num(pick(env, 'data.opponentWeight'))
@@ -1667,6 +1721,7 @@
       lines.push(QUICK_IDLE_TEXT);
     } else {
       lines.push(quickPoolText(env));
+      lines.push(quickDropsText(env));   // F8/D-177：本场掉落的包（恒在，无掉落 = 0 个）
       lines.push(quickOpponentPointsText(env));
       if (total === 0) {
         if (envBattleId === null) lines.push(QUICK_NO_ID_TEXT);
@@ -2498,7 +2553,6 @@
     var buttons = [
       { action: 'goto-profile', label: '用户', kind: 'button', disabled: busy },
       { action: 'goto-warehouse', label: '仓库', kind: 'button', disabled: busy },
-      { action: 'goto-box', label: '开箱', kind: 'button', disabled: busy },
       { action: 'goto-quick', label: '快速对战', kind: 'button', disabled: busy },
       { action: 'goto-tournament', label: '锦标赛', kind: 'button', disabled: busy },
       { action: 'goto-leaderboard', label: '排行榜', kind: 'button', disabled: busy },
@@ -2543,9 +2597,19 @@
     var rows = env === null ? [] : itemRows(env, bucket, busy);
     var lines = [env === null ? '（尚未读取仓库：点「刷新」）' : warehouseCapacityText(env)];
     if (env !== null && rows.length === 0) lines.push(EMPTY_WAREHOUSE_TEXT);
+    // F8/D-177：开包结果区（最近一次 POST /me/warehouse/open-package）+ 满仓本地拦截提示
+    var full = packageFullNotice(state);
+    if (full !== null) lines.push(full);
+    var result = state.packages ? state.packages.result : null;
+    if (result && Array.isArray(result.lines)) {
+      for (var i = 0; i < result.lines.length; i++) lines.push(result.lines[i]);
+      if (result.lines.length > 1) lines.push(PACKAGE_STALE_HINT);
+    }
     return vm('仓库', {
       notice: notice,
-      hint: '每行只显示物品名字：点名字看详情；数据源 = GET /me/warehouse（服务端权威）',
+      hint: bucket === 'package'
+        ? '点「开包」使用包（消耗该包并随机获得物品）；点名字看详情。包只在快速对战中掉落'
+        : '每行只显示物品名字：点名字看详情；数据源 = GET /me/warehouse（服务端权威）',
       lines: lines,
       rows: rows,
       buttons: [
@@ -2553,33 +2617,10 @@
         { action: 'warehouse-bucket', label: '技能', kind: 'button', disabled: busy, bucket: 'skill' },
         { action: 'warehouse-bucket', label: '角色插件', kind: 'button', disabled: busy, bucket: 'rolePlugin' },
         { action: 'warehouse-bucket', label: '技能插件', kind: 'button', disabled: busy, bucket: 'skillPlugin' },
+        { action: 'warehouse-bucket', label: '包', kind: 'button', disabled: busy, bucket: 'package' },
         { action: 'refresh-warehouse', label: '刷新', kind: 'button', disabled: busy },
         { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
       ],
-      modal: modalViewModel(state, busy),
-    });
-  }
-
-  // F3 §3.4：开箱
-  function boxViewModel(state, notice, busy) {
-    var lines = [];
-    var full = boxFullNotice(state);
-    if (full !== null) lines.push(full);
-    var result = state.box ? state.box.result : null;
-    if (result && Array.isArray(result.lines)) {
-      for (var i = 0; i < result.lines.length; i++) lines.push(result.lines[i]);
-      if (result.lines.length > 1) lines.push(BOX_STALE_HINT);
-    }
-    return vm('开箱', {
-      notice: notice,
-      hint: '开箱次数 1~' + BOX_TIMES_MAX + '；物品直接入服务端仓库',
-      lines: lines,
-      fields: [{ name: 'boxTimes', label: '开箱次数（1~' + BOX_TIMES_MAX + '）', type: 'text', value: state.box ? state.box.times : '1' }],
-      buttons: [
-        { action: 'box-open', label: '开箱', kind: 'submit', disabled: busy || full !== null },
-        { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
-      ],
-      enterAction: 'box-open',
       modal: modalViewModel(state, busy),
     });
   }
@@ -2699,7 +2740,7 @@
     if (state.view === 'hub') return hubViewModel(state, notice, busy);
     if (state.view === 'profile') return profileViewModel(state, notice, busy);
     if (state.view === 'warehouse') return warehouseViewModel(state, notice, busy);
-    if (state.view === 'box') return boxViewModel(state, notice, busy);
+    // F8/D-176：`view === 'box'` 已删除（开箱屏退役 → 开包在仓库屏的「包」桶内完成）
     if (state.view === 'settings') return settingsViewModel(state, notice, busy);
     if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
     if (state.view === 'tournament') return tournamentViewModel(state, notice, busy);   // F7（05 分册）
@@ -2763,7 +2804,6 @@
 
   return {
     PAGE_TITLE: PAGE_TITLE,
-    BOX_TIMES_MAX: BOX_TIMES_MAX,
     BUCKET_LABELS: BUCKET_LABELS,
     BUCKET_ORDER: BUCKET_ORDER,
     EMPTY_PAGES: EMPTY_PAGES,
@@ -2773,8 +2813,8 @@
     CONFIG_DRAFT_HINT: CONFIG_DRAFT_HINT,
     PLUGIN_HINTS: PLUGIN_HINTS,
     NICKNAME_MAX_TEXT: NICKNAME_MAX_TEXT,
-    BOX_TIMES_RANGE_TEXT: BOX_TIMES_RANGE_TEXT,
     EMPTY_WAREHOUSE_TEXT: EMPTY_WAREHOUSE_TEXT,
+    PACKAGE_OK_TEXT: PACKAGE_OK_TEXT,
     pick: pick,
     isOk: isOk,
     errorCodeOf: errorCodeOf,
@@ -2789,7 +2829,6 @@
     nicknameOkText: nicknameOkText,
     REFRESH_OK_TEXT: REFRESH_OK_TEXT,
     WAREHOUSE_OK_TEXT: WAREHOUSE_OK_TEXT,
-    BOX_OK_TEXT: BOX_OK_TEXT,
     hintFor: hintFor,
     noticeText: noticeText,
     networkText: networkText,
@@ -2818,9 +2857,12 @@
     itemLabel: itemLabel,
     itemRows: itemRows,
     itemDetailLines: itemDetailLines,
-    boxResultLines: boxResultLines,
+    // F8/D-176/D-177：开包（仓库屏「包」桶）与战斗掉落投影
+    packageResultLines: packageResultLines,
+    packageKindLabel: packageKindLabel,
+    quickDropsText: quickDropsText,
     fullBucket: fullBucket,
-    boxFullNotice: boxFullNotice,
+    packageFullNotice: packageFullNotice,
     // 提交③：出战配置编辑器（03 §3.7/§3.8）
     itemTitle: itemTitle,
     posLabelOf: posLabelOf,

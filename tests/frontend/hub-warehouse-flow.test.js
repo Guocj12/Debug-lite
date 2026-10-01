@@ -55,8 +55,9 @@ function harness(baseUrl) {
   const storage = appMod.createStorage(win);
   const raw = apiMod.createApi({ baseUrl });
   const counter = { n: 0 };
-  const boxCalls = [];
-  const boxEnvelopes = [];
+  // F8/D-177：开包请求体与响应（"请求体只有 packageUids、不传 seed"的断言依据）
+  const pkgCalls = [];
+  const pkgEnvelopes = [];
   const counting = (fn) => (...a) => { counter.n += 1; return fn(...a); };
   const api = {
     call: counting(raw.call),
@@ -76,20 +77,20 @@ function harness(baseUrl) {
     rankedRun: counting(raw.rankedRun),
     leaderboard: counting(raw.leaderboard),
     admin: counting(raw.admin),
-    box: (token, input) => {
+    // F8/D-177：开包出口（仓库屏「包」桶）
+    openPackage: (token, input) => {
       counter.n += 1;
-      boxCalls.push(input);
-      return raw.box(token, input).then((r) => { boxEnvelopes.push(r.envelope); return r; });
+      pkgCalls.push(input);
+      return raw.openPackage(token, input).then((r) => { pkgEnvelopes.push(r.envelope); return r; });
     },
   };
   const h = {
-    win, storage, api, counter, boxCalls, boxEnvelopes,
+    win, storage, api, counter, pkgCalls, pkgEnvelopes,
     state: () => st.getState(),
     dispatch: (a) => st.dispatch(a),
     html: () => render.render(format.viewModel(st.getState())),
     notice: () => (st.getState().notice ? st.getState().notice.text : ''),
     form: (values) => { for (const [k, v] of Object.entries(values)) st.dispatch({ type: 'form.set', field: k, value: v }); },
-    times: (value) => st.dispatch({ type: 'screen.form.set', field: 'boxTimes', value }),
     nickname: (value) => st.dispatch({ type: 'screen.form.set', field: 'settingsNickname', value }),
     run: (name, payload) => {
       const ctx = { state: st.getState(), dispatch: (a) => st.dispatch(a), api, format, storage, actions: actions.ACTIONS };
@@ -120,7 +121,7 @@ const buttonLabels = (html) => [...html.matchAll(/>([^<>]+)<\/button>/g)].map((m
 
 /* ---------- WH-1：主界面（hub） ---------- */
 
-test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 11 个按钮 ＋ 刷新', async () => {
+test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 10 个按钮 ＋ 刷新', async () => {
   await withHarness(async (h) => {
     const me = await h.signUp('wh1user');
     const html = h.html();
@@ -135,12 +136,13 @@ test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 11 个按钮 ＋ �
     assert.match(format.hubSummary(h.state()), /尚未读取到档案数据/);
     h.dispatch({ type: 'profile.set', envelope: me });
 
-    // 11 个按钮 + 刷新（03 §3.1）
+    // 10 个按钮 + 刷新（03 §3.1；F8/D-176 删「开箱」）
     const labels = buttonLabels(html);
-    for (const label of ['用户', '仓库', '开箱', '快速对战', '锦标赛', '排行榜',
+    for (const label of ['用户', '仓库', '快速对战', '锦标赛', '排行榜',
       '出战配置1', '出战配置2', '出战配置3', 'AI编辑', '设置', '刷新']) {
       assert.ok(labels.includes(label), `主界面缺少按钮：${label}（实际 ${labels.join('/')}）`);
     }
+    assert.ok(!labels.includes('开箱'), 'F8/D-176：开箱入口已随开箱屏删除');
     assert.equal(labels.filter((l) => l === '刷新').length, 1, '主界面只应有一个「刷新」');
 
     // 刷新：重取 GET /me（摘要随之更新）
@@ -177,7 +179,7 @@ test('WH-2 四个空页已全部落地：EMPTY_PAGES 为空，ai-editor 是真�
 
 /* ---------- WH-3：仓库 ---------- */
 
-test('WH-3 仓库：容量行 / 四桶切换（本地）/ 行内名字 + [装配于配置1] / 详情弹窗与背景关闭', async () => {
+test('WH-3 仓库：容量行 / 五桶切换（本地）/ 行内名字 + [装配于配置1] / 详情弹窗与背景关闭', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh3user');
     await h.run('goto-warehouse');
@@ -185,11 +187,11 @@ test('WH-3 仓库：容量行 / 四桶切换（本地）/ 行内名字 + [装配
     const wr = h.state().warehouse.envelope;
     assert.ok(wr, '仓库屏应已取到 GET /me/warehouse');
 
-    // 容量行：`角色 n/500 · 技能 n/500 · 角色插件 n/500 · 技能插件 n/500`（03 §3.3）
+    // 容量行：`角色 n/500 · 技能 n/500 · 角色插件 n/500 · 技能插件 n/500 · 包 n/500`（03 §3.3；F8 新增包桶）
     const capacity = format.warehouseCapacityText(wr);
-    assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500$/, capacity);
+    assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500$/, capacity);
     assert.ok(h.html().includes(capacity), '容量行必须渲染到屏幕上');
-    for (const label of ['角色', '技能', '角色插件', '技能插件', '刷新', '返回主界面']) {
+    for (const label of ['角色', '技能', '角色插件', '技能插件', '包', '刷新', '返回主界面']) {
       assert.ok(buttonLabels(h.html()).includes(label), `仓库缺少分桶/动作按钮：${label}`);
     }
 
@@ -236,152 +238,154 @@ test('WH-3 仓库：容量行 / 四桶切换（本地）/ 行内名字 + [装配
   });
 });
 
-/* ---------- WH-4 / WH-5 / WH-6：开箱 ---------- */
+/* ---------- WH-4 / WH-5 / WH-6：开包（F8/D-176/D-177 取代原开箱屏） ---------- */
 
-test('WH-4 开箱：进入屏取一次仓库；times=5 逐件行；请求体无 seed；不显示 seed；成功后仓库状态已刷新', async () => {
+test('WH-4 开包：包桶行有「开包」；请求体只有 packageUids；结果区逐件行；不显示 seed；成功后仓库已刷新', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh4user');
     await h.run('goto-warehouse');
-    const countBefore = format.BUCKET_ORDER
-      .reduce((sum, b) => sum + format.bucketItems(h.state().warehouse.envelope, b).length, 0);
+    // 切到「包」桶（纯本地）；starter 必带 1 个「角色模块包」（D-176）
+    const before = h.counter.n;
+    await h.run('warehouse-bucket', { bucket: 'package' });
+    assert.equal(h.counter.n, before, '分桶切换不得发请求');
+    const pkg = format.bucketItems(h.state().warehouse.envelope, 'package')[0];
+    assert.ok(pkg, 'starter 应带 1 个包（D-176）');
+    assert.equal(pkg.kind, 'package');
+    // 行文字 = `<名字>（<品质>·<质量>%）`，且带两个按钮（开包 + 详情）
+    const label = format.itemLabel(h.state().warehouse.envelope, pkg);
+    assert.equal(label, pkg.name + '（' + pkg.quality + '·' + pkg.qualityPercent + '%）', `包行文字：${label}`);
+    assert.ok(h.html().includes(label), '包行必须渲染到屏幕上');
+    assert.ok(h.html().includes('data-action="package-open"'), '包行必须有「开包」按钮');
+    assert.ok(h.html().includes('data-uid="' + pkg.uid + '"'), '开包按钮必须携带 data-uid');
 
-    const enterBefore = h.counter.n;
-    await h.run('goto-box');
-    // 03 §3.4：进入开箱屏取**一次**仓库真源（"满仓 → 按钮禁用且不发请求"的前提），且不打扰用户
-    assert.equal(h.counter.n, enterBefore + 1, '进入开箱屏应恰好取一次 GET /me/warehouse');
-    assert.equal(h.notice(), '', '进入开箱屏的成功取数是静默的（失败才可见）');
-    h.times('5');
-    assert.equal(h.state().box.times, '5', '开箱次数应进 state.box.times（受控输入）');
+    const countBefore = format.bucketItems(h.state().warehouse.envelope, 'package').length;
     const reqBefore = h.counter.n;
-    await h.run('box-open');
-    // 开箱 1 次 + 成功后的静默仓库刷新 1 次
-    assert.equal(h.counter.n, reqBefore + 2, '开箱 = POST /me/box(1) + 静默刷新仓库(1)');
-    // D-162：请求体**只有 times**（不含 seed）
-    assert.deepEqual(h.boxCalls, [{ times: 5 }], `开箱请求体：${JSON.stringify(h.boxCalls)}`);
-    const env = h.boxEnvelopes[0];
+    await h.run('package-open', { uid: pkg.uid });
+    // 开包 1 次 + 成功后的静默仓库刷新 1 次
+    assert.equal(h.counter.n, reqBefore + 2, '开包 = POST /me/warehouse/open-package(1) + 静默刷新仓库(1)');
+    // 请求体**只有 packageUids**（无 seed 入参 —— 随机性归服务端，D-162 口径）
+    assert.deepEqual(h.pkgCalls, [{ packageUids: [pkg.uid] }], `开包请求体：${JSON.stringify(h.pkgCalls)}`);
+    const env = h.pkgEnvelopes[0];
     assert.equal(env.ok, true);
+    assert.equal(env.data.opened.length, 1);
+    assert.equal(env.data.opened[0].packageUid, pkg.uid);
 
-    // 结果区：`本次获得 5 件：` + 逐件 `<名字>（<分类>·<品质>）`（03 §3.4）
-    const lines = h.state().box.result.lines;
-    assert.equal(lines[0], '本次获得 5 件：');
-    assert.equal(lines.length, 6, `times=5 应回 5 件：${lines.length - 1}`);
-    for (const line of lines.slice(1)) {
+    // 结果区：`本次开包获得 <n> 件：` + 逐件 `<名字>（<分类>·<品质>）`
+    const lines = h.state().packages.result.lines;
+    const n = env.data.items.length;
+    assert.equal(lines[0], '本次开包获得 ' + n + ' 件：');
+    for (const line of lines.slice(1, 1 + n)) {
       assert.match(line, /^.+（(角色|技能|角色插件|技能插件)·.+）$/, `逐件行：${line}`);
     }
     const html = h.html();
     for (const line of lines) assert.ok(html.includes(line), `结果区缺少行：${line}`);
-    // seed 是服务端审计量：不传（上面已断言）**也不显示**（03 §3.4）
+    // seed 是服务端审计量：不传（上面已断言）**也不显示**
     assert.ok(typeof env.data.seed === 'number', '服务端应回带 seed（仅审计）');
-    assert.ok(!html.includes(String(env.data.seed)), '开箱屏不得显示 seed');
-    assert.ok(!html.includes('种子'), '开箱屏不得出现"种子"字样');
+    assert.ok(!html.includes(String(env.data.seed)), '仓库屏不得显示开包 seed');
+    assert.ok(!html.includes('种子'), '不得出现"种子"字样');
+    assert.equal(h.notice(), format.PACKAGE_OK_TEXT);
 
-    // 成功后**本地仓库状态已刷新**（连续开箱时"满仓立刻禁用"才成立）
-    const countNow = format.BUCKET_ORDER
-      .reduce((sum, b) => sum + format.bucketItems(h.state().warehouse.envelope, b).length, 0);
-    assert.equal(countNow, countBefore + 5, '开箱成功后 state.warehouse 应已更新（+5）');
-
-    // 回仓库（真实走查步 7）→ 新物品可见，总数仍是 +5（不重复计数）
-    const backBefore = h.counter.n;
+    // 成功后**本地仓库状态已刷新**：包被消耗（-1），产出物入对应的桶（+n）
+    const countNow = format.bucketItems(h.state().warehouse.envelope, 'package').length;
+    assert.equal(countNow, countBefore - 1, '开包后包桶应 -1（包被消耗）');
+    // 回仓库再取一次真源 → 计数与本地一致（不重复计数）
     await h.run('goto-warehouse');
-    assert.equal(h.counter.n, backBefore + 1, '再取一次仓库真源（goto-warehouse）');
-    const countAfter = format.BUCKET_ORDER
-      .reduce((sum, b) => sum + format.bucketItems(h.state().warehouse.envelope, b).length, 0);
-    assert.equal(countAfter, countBefore + 5, `开箱 5 件后仓库总数应 +5（${format.warehouseCapacityText(h.state().warehouse.envelope)}）`);
+    assert.equal(format.bucketItems(h.state().warehouse.envelope, 'package').length, countBefore - 1);
   });
 });
 
-test('WH-5 开箱次数越界（0/101/1.5/abc/空）→ 客户端拦下、不发请求（B-3）', async () => {
-  await withHarness(async (h) => {
-    await h.signUp('wh5user');
-    const enterBefore = h.counter.n;
-    await h.run('goto-box');
-    assert.equal(h.counter.n, enterBefore + 1, '进入开箱屏取一次仓库真源（03 §3.4）');
-    // 输入框名字必须与 app.js 的路由表（store.SCREEN_FIELDS）逐字一致，否则输入永远进不了状态
-    assert.equal(format.viewModel(h.state()).fields[0].name, store.BOX_TIMES_FIELD);
-    assert.ok(store.SCREEN_FIELDS.includes(store.BOX_TIMES_FIELD));
-    for (const value of ['0', '101', '1.5', 'abc', '', '-1', '1e2', '  ']) {
-      h.times(value);
-      const before = h.counter.n;
-      await h.run('box-open');
-      assert.equal(h.counter.n, before, `次数 ${JSON.stringify(value)} 不得发请求`);
-      assert.equal(h.notice(), format.BOX_TIMES_RANGE_TEXT, `次数 ${JSON.stringify(value)} 的文案`);
-      assert.equal(h.state().box.result, null, '越界不得产生结果区');
-    }
-    // 边界内可用：1 与 100 都能过客户端预校验（真发请求：开箱 1 次 + 成功后静默刷新仓库 1 次）
-    for (const value of ['1', '100']) {
-      h.times(value);
-      const before = h.counter.n;
-      await h.run('box-open');
-      assert.equal(h.counter.n, before + 2, `次数 ${value} 应发请求（box + 静默刷新仓库）`);
-      assert.match(h.state().box.result.lines[0], new RegExp('^本次获得 ' + value + ' 件：$'));
-    }
+test('WH-5 保留包（AI 节点包）：可开、零产出、有明确提示、不报错', async () => {
+  await withHarness(async (h, s) => {
+    const me = await h.signUp('wh5user');
+    const playerId = await playerIdByPublicId(s.store, me.data.publicId);
+    assert.ok(playerId, '应能用 publicId 反查到 playerId');
+    // 注入一个 AI 节点包（保留包；package-config.packages[].openable=false）
+    await s.store.updateArchive(playerId, (archive) => {
+      archive.warehouse.buckets.package.push({
+        uid: 'pkg_ainode_1', kind: 'package', packageKind: 'aiNode', name: 'AI节点包',
+        quality: 'common', qualityPercent: 20,
+      });
+      return null;
+    });
+    await h.run('goto-warehouse');
+    await h.run('warehouse-bucket', { bucket: 'package' });
+    await h.run('package-open', { uid: 'pkg_ainode_1' });
+    const env = h.pkgEnvelopes[0];
+    assert.equal(env.ok, true, '保留包开包必须 200（用户裁定：静默消耗 + 提示，不报错）');
+    assert.deepEqual(env.data.items, [], '保留包零产出');
+    assert.equal(env.data.opened[0].notice, 'package_reserved');
+    const lines = h.state().packages.result.lines;
+    assert.equal(lines[0], '本次开包获得 0 件：');
+    assert.ok(lines.some((l) => l.includes('保留包')), `结果区必须提示保留包：${lines.join(' | ')}`);
+    assert.ok(h.html().includes('保留包'), '提示必须渲染到屏幕上');
+    assert.equal(h.notice(), format.PACKAGE_OK_TEXT, '不报错：仍是成功文案');
+    // 包确实被消耗了
+    assert.equal(format.bucketItems(h.state().warehouse.envelope, 'package')
+      .filter((p) => p.uid === 'pkg_ainode_1').length, 0, '保留包也被消耗（已提示）');
   });
 });
 
-test('WH-6 满仓：进入开箱屏即取仓 → 按钮禁用 → 零 POST /me/box；未读/读取失败时由服务端 409 兜底（B-2）', async () => {
+test('WH-6 满仓：本地拦下「开包」且零请求；未读仓库时由服务端 409 兜底；取仓失败不挡人', async () => {
   await withHarness(async (h, s) => {
     const me = await h.signUp('wh6user');
-    // 把四桶灌满到 500（与 tests/api/api-me-box.test.js UBX-4 同法；走 store 门面，不打补丁）
+    // 把五桶灌满到 500（走 store 门面，不打补丁）
     const playerId = await playerIdByPublicId(s.store, me.data.publicId);
     assert.ok(playerId, '应能用 publicId 反查到 playerId');
     await s.store.updateArchive(playerId, (archive) => {
-      const mk = (bucket, n) => ({ uid: bucket + '_fill_' + n, kind: bucket, name: 'filler', quality: 'common', tier: 1, affixes: [], slots: [] });
-      for (const bucket of ['role', 'skill', 'rolePlugin', 'skillPlugin']) {
+      const mk = (bucket, n) => ({ uid: bucket + '_fill_' + n, kind: bucket === 'package' ? 'package' : bucket, name: 'filler', quality: 'common', tier: 1, affixes: [], slots: [] });
+      for (const bucket of ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']) {
         const list = archive.warehouse.buckets[bucket];
         while (list.length < 500) list.push(mk(bucket, list.length));
       }
       return null;
     });
 
-    // ① 进入开箱屏即取仓 → 本地判定满仓 → 按钮禁用 + 精确文案 + **零** POST /me/box（03 §3.4）
-    const enterBefore = h.counter.n;
-    await h.run('goto-box');
-    assert.equal(h.counter.n, enterBefore + 1, '进入开箱屏应恰好取一次 GET /me/warehouse');
-    const wr = h.state().warehouse.envelope;
-    assert.equal(format.bucketItems(wr, 'role').length, 500, '仓库真源应显示该桶 500 件');
-    const text = '仓库已满（角色 500/500），请先清理';
-    assert.equal(format.boxFullNotice(h.state()), text);
-    assert.ok(h.html().includes(text), '已满提示必须渲染到屏幕上');
-    assert.ok(h.html().includes('data-action="box-open" disabled'), '已满时开箱按钮必须禁用');
-    const before = h.counter.n;
-    h.times('1');
-    await h.run('box-open');
-    assert.equal(h.counter.n, before, '已满时一个请求都不许发');
-    assert.deepEqual(h.boxCalls, [], '已满时不得发 POST /me/box');
-    assert.equal(h.notice(), text, '被拦下时也要有可见文案（按钮永不无声）');
-    // 仓库屏的容量行同样显示 500/500（两屏共用同一份 warehouse 状态）
+    // ① 进入仓库即取仓 → 本地判定满仓 → 「开包」被拦下 + 精确文案 + **零**请求
     await h.run('goto-warehouse');
-    assert.ok(h.html().includes('角色 500/500 · 技能 500/500'), '仓库屏容量行也应显示满仓');
+    await h.run('warehouse-bucket', { bucket: 'package' });
+    const wr = h.state().warehouse.envelope;
+    assert.equal(format.bucketItems(wr, 'package').length, 500, '仓库真源应显示包桶 500 件');
+    const text = '仓库已满（角色 500/500），请先清理';
+    assert.equal(format.packageFullNotice(h.state()), text, '满仓判定按 BUCKET_ORDER 的首个满桶（角色）');
+    assert.ok(h.html().includes(text), '已满提示必须渲染到屏幕上');
+    const target = format.bucketItems(wr, 'package')[0];
+    const before = h.counter.n;
+    await h.run('package-open', { uid: target.uid });
+    assert.equal(h.counter.n, before, '已满时一个请求都不许发');
+    assert.deepEqual(h.pkgCalls, [], '已满时不得发 open-package');
+    assert.equal(h.notice(), text, '被拦下时也要有可见文案（按钮永不无声）');
 
-    // ② 未读到仓库（人为清空信封）→ 不做本地预判、按钮可用、真问服务端 → 409 落到可见提示（03 §6）
-    await h.run('goto-hub');
+    // ② 未读到仓库（人为清空信封）→ 不做本地预判、真问服务端 → 409 `warehouse_full` 落到可见提示
     h.dispatch({ type: 'warehouse.set', envelope: null });
-    h.dispatch({ type: 'view.go', view: 'box' });   // 直接构造"没有信封"的开箱屏（模拟取数尚未回来）
-    assert.equal(format.boxFullNotice(h.state()), null, '没有仓库信封时不做本地预判');
-    assert.ok(!h.html().includes('data-action="box-open" disabled'), '未读仓库时按钮不应禁用');
-    h.times('1');
+    assert.equal(format.packageFullNotice(h.state()), null, '没有仓库信封时不做本地预判');
     const before2 = h.counter.n;
-    const boxBefore = h.boxCalls.length;
-    await h.run('box-open');
+    const pkgBefore = h.pkgCalls.length;
+    await h.run('package-open', { uid: target.uid });
     assert.equal(h.counter.n, before2 + 1, '未读仓库时必须真的问服务端（409 后不再刷新仓库）');
-    assert.equal(h.boxCalls.length, boxBefore + 1, '应真的发了 POST /me/box');
+    assert.equal(h.pkgCalls.length, pkgBefore + 1, '应真的发了 open-package');
     assert.match(h.notice(), /仓库已满/, `409 文案必须可读：${h.notice()}`);
     assert.ok(h.html().includes('仓库已满'), '409 文案必须渲染到屏幕上');
   });
 
-  // ③ 仓库**读取失败**（服务未启动）→ 不影响进入开箱屏：按钮保持可用、失败文案可见、由服务端兜底
-  const s2 = await startServer({ prefix: 'dl-fe-hub-boxfail-', level: 'warn' });
+  // ③ 缺 uid（无 data-uid 的包行）→ 客户端拦下、不发请求、文案可见
+  await withHarness(async (h) => {
+    await h.signUp('wh6nouser');
+    await h.run('goto-warehouse');
+    await h.run('warehouse-bucket', { bucket: 'package' });
+    const before = h.counter.n;
+    await h.run('package-open', null);
+    assert.equal(h.counter.n, before, '缺 uid 不得发请求');
+    assert.match(h.notice(), /缺少包 uid/, `缺 uid 的文案：${h.notice()}`);
+  });
+
+  // ④ 仓库**读取失败**（服务已关）→ 开包失败文案可见（不做本地预判、由服务端兜底）
+  const s2 = await startServer({ prefix: 'dl-fe-hub-pkgfail-', level: 'warn' });
   const h2 = harness(s2.baseUrl);
   try {
     await h2.signUp('wh6fail');
     await s2.close();
-    await h2.run('goto-box');
-    assert.equal(h2.state().view, 'box', '取仓失败不得把用户挡在屏外');
-    assert.match(h2.notice(), /^无法连接服务器：/, `取仓失败的文案必须可见：${h2.notice()}`);
-    assert.ok(!h2.html().includes('data-action="box-open" disabled'), '读取失败时按钮必须仍可用（靠服务端兜底）');
-    h2.times('1');
-    await h2.run('box-open');
-    assert.match(h2.notice(), /^无法连接服务器：/, '随后开箱失败同样可见');
+    await h2.run('package-open', { uid: 'pkg_whatever' });
+    assert.match(h2.notice(), /^无法连接服务器：/, `网络失败必须可见：${h2.notice()}`);
   } finally {
     await s2.cleanup();
   }
@@ -437,9 +441,9 @@ test('WH-7 设置：改昵称成功/客户端拦截；修改密码入口；登�
     assert.equal(h.state().view, 'login');
     assert.equal(h.notice(), '已登出');
     assert.equal(h.win.map.get('dl.token'), undefined, '登出应清 dl.token');
-    // F3：登出后仓库/开箱等用户态数据不得残留
+    // F3：登出后仓库/开包等用户态数据不得残留
     assert.equal(h.state().warehouse.envelope, null, '登出应清仓库数据（不残留上个账号的内容）');
-    assert.equal(h.state().box.result, null);
+    assert.equal(h.state().packages.result, null);
   });
 });
 
@@ -468,8 +472,8 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     await h.run('config-open');
     assert.deepEqual(h.state().modal, { kind: 'config', slotId: 'slot1' });
 
-    // 任何含弹窗的屏都必须渲染 modal-close
-    for (const view of ['hub', 'profile', 'warehouse', 'box', 'settings']) {
+    // 任何含弹窗的屏都必须渲染 modal-close（F8/D-176：`box` 屏已删除）
+    for (const view of ['hub', 'profile', 'warehouse', 'settings']) {
       const state = store.initialState();
       state.view = view;
       state.modal = { kind: 'config', slotId: 'slot1' };
@@ -482,7 +486,7 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     assert.ok(h.html().includes('data-action="modal-close"'));
 
     // 切屏即清弹窗（modal 不跨屏存活）
-    await h.run('goto-box');
+    await h.run('goto-hub');
     assert.equal(h.state().modal, null, '切屏应清弹窗');
     // 关闭：丢弃未提交输入（提交③ 起弹窗内有**本地草稿** → 关闭必须一并丢弃）
     h.dispatch({ type: 'configs.draft.set', draft: { slotId: 'slot1', loadout: { role: null, skills: [null, null, null], ai: null } }, dirty: true });
@@ -531,16 +535,26 @@ function fakeButton(action, dataset) {
   };
 }
 
-test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、开箱输入与回车提交', async () => {
+test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、包行「开包」与结果区', async () => {
   const dom = fakeDom();
   const calls = [];
   const fakeApi = {
     me: () => Promise.resolve({ transport: 'error', message: '本用例不发 /me' }),
-    box: (token, input) => {
-      calls.push({ op: 'box', token, input });
+    // F8/D-177：开包出口（取代原 box 出口）
+    openPackage: (token, input) => {
+      calls.push({ op: 'openPackage', token, input });
       return Promise.resolve({
         transport: 'response', status: 200,
-        envelope: { ok: true, data: { seed: 424242, tier: 'common', times: 3, items: [{ uid: 'item_9', kind: 'role', name: '均衡', quality: 'common' }] } },
+        envelope: {
+          ok: true,
+          data: {
+            seed: 424242,
+            opened: [{ packageUid: 'pkg_0', packageKind: 'role', quality: 'common', qualityPercent: 15, count: 1, items: [{ uid: 'item_9', kind: 'role', name: '均衡', quality: 'common' }] }],
+            items: [{ uid: 'item_9', kind: 'role', name: '均衡', quality: 'common' }],
+            warehouse: { buckets: { role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 0, slots: [], stats: {}, regen: {}, pluginPoints: 0, templateId: 'role_bal' }], skill: [], rolePlugin: [], skillPlugin: [], package: [] }, usage: {}, caps: {}, counts: {} },
+            usage: {}, caps: {}, counts: {},
+          },
+        },
       });
     },
   };
@@ -550,15 +564,19 @@ test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、开�
   await app.start();
   assert.ok(dom.host.innerHTML.includes('登录'), '无会话时应渲染登录屏');
 
-  // 造出"已登录 + 仓库已取到"的状态（形状来自真实响应）
+  // 造出"已登录 + 仓库已取到"的状态（形状来自真实响应；F8 起含包桶）
   const me = { ok: true, data: { publicId: 'u_x', nickname: '甲', progress: { tier: 'common' }, rating: { points: 0 }, record: { unread: { attack: 0, defense: 0 } }, pool: { inPool: true }, flags: { isAdmin: false } } };
   const warehouse = {
     ok: true,
     data: {
-      buckets: { role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 0, slots: [], stats: {}, regen: {}, pluginPoints: 0, templateId: 'role_bal' }], skill: [], rolePlugin: [], skillPlugin: [] },
+      buckets: {
+        role: [{ uid: 'item_0', kind: 'role', name: '均衡', quality: 'common', slotCount: 0, slots: [], stats: {}, regen: {}, pluginPoints: 0, templateId: 'role_bal' }],
+        skill: [], rolePlugin: [], skillPlugin: [],
+        package: [{ uid: 'pkg_0', kind: 'package', packageKind: 'role', name: '角色模块包', quality: 'common', qualityPercent: 15 }],
+      },
       usage: { item_0: { slotIds: ['slot1'] } },
-      caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
-      counts: { role: 1, skill: 0, rolePlugin: 0, skillPlugin: 0 },
+      caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500, package: 500 },
+      counts: { role: 1, skill: 0, rolePlugin: 0, skillPlugin: 0, package: 1 },
     },
   };
   app.dispatch({ type: 'session.set', token: 'tk', publicId: 'u_x', nickname: '甲', expiresAt: null, isAdmin: false });
@@ -578,24 +596,16 @@ test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、开�
   assert.equal(app.store.getState().modal, null);
   assert.ok(!dom.host.innerHTML.includes('id="modal"'));
 
-  // 开箱屏：进入屏走 goto-box（会静默取一次仓库），输入框走 screen.form.set（不重绘），回车提交走 box-open
-  fakeApi.warehouse = () => {
-    calls.push({ op: 'warehouse' });
-    return Promise.resolve({ transport: 'error', message: '本用例不校验仓库取数结果' });
-  };
-  await app.run('goto-box');
-  assert.equal(app.store.getState().view, 'box');
-  assert.deepEqual(calls[calls.length - 1], { op: 'warehouse' }, '进入开箱屏应先取一次仓库真源');
-  const writesBefore = dom.host.writes;
-  dom.fire('input', { target: { name: 'boxTimes', value: '3' } });
-  assert.equal(app.store.getState().box.times, '3', '开箱次数应进 state.box.times');
-  assert.equal(dom.host.writes, writesBefore, '输入事件不得触发重绘');
-  dom.fire('submit', { target: { getAttribute: (n) => (n === 'data-enter' ? 'box-open' : null) }, preventDefault: () => {} });
+  // 包桶行（data-action=package-open + data-uid）→ 开包：请求体只有 packageUids；结果区可读；不显示 seed
+  app.dispatch({ type: 'warehouse.bucket.set', bucket: 'package' });
+  assert.ok(dom.host.innerHTML.includes('角色模块包'), '包桶应列出包名（名字（品质·质量%））');
+  dom.fire('click', { target: { closest: () => fakeButton('package-open', { uid: 'pkg_0' }) } });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls.filter((c) => c.op === 'box'), [{ op: 'box', token: 'tk', input: { times: 3 } }], '回车应触发开箱，且请求体只有 times');
-  assert.equal(app.store.getState().box.result.lines[0], '本次获得 3 件：');
+  assert.deepEqual(calls.filter((c) => c.op === 'openPackage'),
+    [{ op: 'openPackage', token: 'tk', input: { packageUids: ['pkg_0'] } }], '开包请求体只有 packageUids');
+  assert.equal(app.store.getState().packages.result.lines[0], '本次开包获得 1 件：');
   const finalHtml = dom.host.innerHTML;
-  assert.ok(!finalHtml.includes('424242'), '开箱屏不得显示响应里的 seed');
+  assert.ok(!finalHtml.includes('424242'), '仓库屏不得显示响应里的 seed');
   // 设置屏输入框：另一个 screen 字段
   app.dispatch({ type: 'view.go', view: 'settings' });
   dom.fire('input', { target: { name: 'settingsNickname', value: '乙' } });
@@ -615,7 +625,7 @@ test('WH-10 失败路径落在可见提示：会话失效（仓库/开箱）与�
     assert.equal(h.state().warehouse.envelope, null, '会话失效应清仓库数据');
   });
 
-  // ② 服务未启动 → 仓库/开箱都是可见网络失败文案（不是静默失败）
+  // ② 服务未启动 → 仓库/开包都是可见网络失败文案（不是静默失败）
   const s = await startServer({ prefix: 'dl-fe-hub-net-', level: 'warn' });
   const h = harness(s.baseUrl);
   try {
@@ -624,10 +634,8 @@ test('WH-10 失败路径落在可见提示：会话失效（仓库/开箱）与�
     await h.run('goto-warehouse');
     assert.equal(h.state().view, 'warehouse');
     assert.match(h.notice(), /^无法连接服务器：/, `网络失败文案：${h.notice()}`);
-    h.dispatch({ type: 'view.go', view: 'box' });
-    h.times('1');
-    await h.run('box-open');
-    assert.match(h.notice(), /^无法连接服务器：/, '开箱的网络失败同样必须可见');
+    await h.run('package-open', { uid: 'pkg_whatever' });
+    assert.match(h.notice(), /^无法连接服务器：/, '开包的网络失败同样必须可见');
   } finally {
     await s.cleanup();
   }
@@ -773,12 +781,15 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
     skillPlugin: ['id', 'desc', 'slot', 'category', 'tier', 'affixes'],
     // 技能**专属**插件追加字段（§6.2；通用插件没有这两个字段 → 按内容变体核对）
     skillPluginExclusive: ['forTypes', 'exclusive'],
+    // F8/D-176：包（模块包）—— 种类 + 质量百分比（03 §5.3 的包行）
+    package: ['packageKind', 'qualityPercent'],
   };
   // 子对象字段（slots[i].type / slots[i].pluginUid / affixes[i].params.v）在上面的清单里由容器覆盖，
   //   这里显式断言它们也能解析，并顺带核对"契约里的每个字段都有宿主（不会漏检）"
   const SUB_FIELDS = ['type', 'pluginUid', 'params.v'];
   const covered = new Set([...COMMON_FIELDS, ...FIELDS_BY_KIND.role, ...FIELDS_BY_KIND.skill,
-    ...FIELDS_BY_KIND.rolePlugin, ...FIELDS_BY_KIND.skillPlugin, ...FIELDS_BY_KIND.skillPluginExclusive, ...SUB_FIELDS]);
+    ...FIELDS_BY_KIND.rolePlugin, ...FIELDS_BY_KIND.skillPlugin, ...FIELDS_BY_KIND.skillPluginExclusive,
+    ...FIELDS_BY_KIND.package, ...SUB_FIELDS]);
   assert.deepEqual([...declared].filter((f) => !covered.has(f)), [], '契约字段没有对应的真实响应核对项');
 
   await withHarness(async (h) => {
@@ -814,7 +825,8 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
         assert.notStrictEqual(format.pick(affix, 'params.v'), undefined, `${kind} ${uid} 的词条缺少 params.v`);
       }
     }
-    assert.deepEqual([...kinds].sort(), ['role', 'rolePlugin', 'skill', 'skillPlugin'],
-      `starter 应覆盖四桶全部类别：${[...kinds].join(', ')}`);
+    // F8/D-176：starter 必带 1 个包 → `package` 也必须在覆盖集合内
+    assert.deepEqual([...kinds].sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin'],
+      `starter 应覆盖五桶全部类别：${[...kinds].join(', ')}`);
   });
 });

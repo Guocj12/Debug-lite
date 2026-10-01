@@ -96,6 +96,14 @@ async function capture() {
     const asm = await post('/api/v1/me/warehouse/assemble',
       { targetUid: FIX_ROLE, pluginUid: FIX_PLUGIN_MATCH, slotIndex: 0 }, token);
     assert.equal(asm.status, 200, `装配应 200：${asm.raw.slice(0, 200)}`);
+    // F8/D-177：开包（仓库屏「包」桶的唯一写路径）—— 契约路径的宿主响应。
+    //   starter 必带 1 个「角色模块包」（D-176）→ 直接开它。
+    const starterPkg = (((wh.body.data.buckets || {}).package) || [])[0];
+    assert.ok(starterPkg && starterPkg.uid, 'starter 应带 1 个包（D-176）');
+    const openPkg = await post('/api/v1/me/warehouse/open-package', { packageUids: [starterPkg.uid] }, token);
+    assert.equal(openPkg.status, 200, `开包应 200：${openPkg.raw.slice(0, 300)}`);
+    assert.ok(Array.isArray(openPkg.body.data.opened) && openPkg.body.data.opened.length === 1,
+      '开包应回带逐包结果 opened[]');
     const boxResp = await post('/api/v1/me/box', { times: 2 }, token);
     assert.equal(boxResp.status, 200, boxResp.raw);
     const ai = await get('/api/v1/me/ai', token);
@@ -193,7 +201,7 @@ async function capture() {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
       aiValidate: aiVal.body, aiCreate: aiNew.body, aiUpdate: aiPut.body, aiDelete: aiDel.body,
-      configs: configs.body, assemble: asm.body,
+      configs: configs.body, assemble: asm.body, openPackage: openPkg.body,
       quick: quick.body, replay: replayResp.body, ranked: ranked.body, board: boardResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
@@ -227,6 +235,8 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     logout: { envelopes: [real.logout], anyOf: false },
     // F3：本批新接 UI 的端点（真起服务抓取；03 §5.1/§5.2）
     'me/warehouse': { envelopes: [real.warehouse], anyOf: false },
+    // F8/D-177：开包（仓库屏「包」桶；03 §5.2）
+    'me/warehouse/open-package': { envelopes: [real.openPackage], anyOf: false },
     'me/box': { envelopes: [real.box], anyOf: false },
     'me/ai': { envelopes: [real.ai], anyOf: false },
     // F5/D-172：AI 编辑器的四个端点
@@ -392,10 +402,10 @@ test('FC-6 F3 三个新投影只用契约字段就能产出可见文本（真实
   const summary = format.hubSummary({ profile: real.me });
   assert.match(summary, /^.+( · .+){4}$/, `hub 摘要格式：${summary}`);
   assert.match(summary, /^契约 · common · 0 · 未读 进攻0\/防守0 · 在池$/, `hub 摘要内容：${summary}`);
-  // 仓库容量行 + 物品行 + 物品详情（03 §3.3/§5.3）
+  // 仓库容量行 + 物品行 + 物品详情（03 §3.3/§5.3）—— F8/D-176：五桶（含包）
   const capacity = format.warehouseCapacityText(real.warehouse);
-  assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500$/, `容量行：${capacity}`);
-  const buckets = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
+  assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500$/, `容量行：${capacity}`);
+  const buckets = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package'];
   let items = 0;
   for (const bucket of buckets) {
     for (const item of format.bucketItems(real.warehouse, bucket)) {
@@ -411,12 +421,17 @@ test('FC-6 F3 三个新投影只用契约字段就能产出可见文本（真实
     }
   }
   assert.ok(items >= 5, `starter 应至少有 5 件物品（1 角色 + 3 技能 + 插件），实际 ${items}`);
-  // 开箱结果逐件行（03 §3.4）：**不显示 seed**（D-162）
-  const boxLines = format.boxResultLines(real.box);
-  assert.match(boxLines[0], /^本次获得 2 件：$/, `开箱结果首行：${boxLines[0]}`);
-  assert.equal(boxLines.length, 3, 'times=2 时应回两件物品');
-  for (const line of boxLines.slice(1)) assert.match(line, /^.+（(角色|技能|角色插件|技能插件)·.+）$/, `逐件行：${line}`);
-  const seed = String(real.box.data.seed);
+  // 开包结果逐件行（F8/D-177；取代原开箱结果行）：**不显示 seed**
+  const pkgLines = format.packageResultLines(real.openPackage);
+  const openedCount = real.openPackage.data.items.length;
+  assert.match(pkgLines[0], new RegExp(`^本次开包获得 ${openedCount} 件：$`), `开包结果首行：${pkgLines[0]}`);
+  for (const line of pkgLines.slice(1)) {
+    assert.ok(!line.includes('undefined') && !line.includes('null'), `开包逐件行出现未投影值：${line}`);
+    if (openedCount > 0 && pkgLines.indexOf(line) <= openedCount) {
+      assert.match(line, /^.+（(角色|技能|角色插件|技能插件|包)·.+）$/, `逐件行：${line}`);
+    }
+  }
+  const seed = String(real.openPackage.data.seed);
   assert.ok(seed !== 'undefined', '响应应回带 seed（仅服务端审计）');
-  assert.ok(!boxLines.join('\n').includes(seed), '开箱结果区不得显示 seed（D-162）');
+  assert.ok(!pkgLines.join('\n').includes(seed), '开包结果区不得显示 seed（D-162 口径）');
 });

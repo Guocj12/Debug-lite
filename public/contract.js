@@ -66,11 +66,18 @@
     { endpoint: 'me/warehouse', path: 'data.buckets.skill', use: '技能桶列表' },
     { endpoint: 'me/warehouse', path: 'data.buckets.rolePlugin', use: '角色插件桶列表' },
     { endpoint: 'me/warehouse', path: 'data.buckets.skillPlugin', use: '技能插件桶列表' },
+    // F8/D-176：第 5 桶（包）—— 仓库行 / 容量行 / 物品详情 / 开包按钮
+    { endpoint: 'me/warehouse', path: 'data.buckets.package', use: '包桶列表（第 5 桶；仓库行 / 容量行 / 开包按钮；D-176）' },
     { endpoint: 'me/warehouse', path: 'data.usage', use: '物品行 `[装配于配置N]` 标记（usage[uid].slotIds[]）' },
     { endpoint: 'me/warehouse', path: 'data.caps', use: '容量行上限（n/500）与「仓库已满」判定（B-2）' },
-    // POST /api/v1/me/box（F3 开箱；D-162：**没有 seed 入参**，响应里的 seed 前端不读不显示）
-    { endpoint: 'me/box', path: 'data.items', use: '开箱结果逐件行（名字/分类/品质）' },
-    { endpoint: 'me/box', path: 'data.times', use: '结果区「本次获得 <n> 件」' },
+    // POST /api/v1/me/warehouse/open-package（F8/D-177 开包；**无 seed 入参**，随机性归服务端，同 D-162）
+    //   注：**不登记** `data.notice`（保留包提示）——它是条件字段（只在 AI 节点包出现），
+    //   而 FC-1 要求登记路径在每个真实响应里都"键存在"；前端改用 `opened[].packageKind==='aiNode'` 判定。
+    { endpoint: 'me/warehouse/open-package', path: 'data.items', use: '开包产出逐件行（名字/分类/品质）' },
+    { endpoint: 'me/warehouse/open-package', path: 'data.opened', use: '逐包结果（`packageKind` 判定保留包 / 零产出提示）' },
+    { endpoint: 'me/warehouse/open-package', path: 'data.warehouse', use: '开包后回带的四桶全文（并回 state.warehouse，容量行立即变化）' },
+    { endpoint: 'me/warehouse/open-package', path: 'data.usage', use: '开包后回带的出战引用映射' },
+    { endpoint: 'me/warehouse/open-package', path: 'data.caps', use: '开包后回带的容量上限（容量行）' },
     // GET /api/v1/me/ai（F3 只用列表；提交③ 的配置弹窗消费 ai-pick 候选；F5 起是 AI 编辑器的主数据源）
     { endpoint: 'me/ai', path: 'data.items', use: 'AI 库列表（ai-pick 候选 + 编辑器列表行：名字/状态/更新时间/被引用）' },
     { endpoint: 'me/ai', path: 'data.count', use: 'F5：列表头「AI 库：n/100」' },
@@ -152,6 +159,8 @@
     { endpoint: 'quick/run', path: 'data.opponent.pointsAfter', use: '对手行·积分后值' },
     { endpoint: 'quick/run', path: 'data.opponent.delta', use: '对手行·积分变化（双向记账可见）' },
     { endpoint: 'quick/run', path: 'data.replayId', use: '读回放用的 id（实测与 battleId 同值）' },
+    // F8/D-177：本场掉落的包（**字段恒在**，无掉落 = `[]`）；逐项 `name`/`packageKind`/`quality`/`qualityPercent`
+    { endpoint: 'quick/run', path: 'data.drops', use: '结算区「本场掉落 N 个包」+ 逐个包名（品质·质量%）' },
     { endpoint: 'quick/run', path: 'data.frames', use: '内联完整战斗过程（逐帧查看器的唯一数据源，D-167）' },
     // GET /api/v1/replay/:id（F6：无内联帧时的兜底来源；04 §5.1）
     { endpoint: 'replay/:id', path: 'data.id', use: '回放头·对局 id' },
@@ -216,6 +225,8 @@
     'id', 'desc', 'slot', 'category', 'tier', 'pointCost', 'affixes',
     // 技能专属插件（§6.2；通用/角色插件无此字段 → 读取方按"缺省即无专属"处理）
     'forTypes', 'exclusive',
+    // F8/D-176：包（模块包）—— 种类（用于保留包判定）与质量百分比（`名称（品质·质量%）`）
+    'packageKind', 'qualityPercent',
     // 插槽与词条：在 `slots[i]` / `affixes[i]` 子对象上读取（`slots[].{type,pluginUid}`、
     //   `affixes[].{id,desc,params.v}`）—— 故路径就是它在子对象内的相对位置
     'type', 'pluginUid', 'params.v',
@@ -282,7 +293,6 @@
   // 分册 §5 登记了、但**本批前端明确不读取**的路径（FC-3 的双向核对靠它闭合：
   //   documented == AUTH_FIELD_CONTRACT ∪ DOC_NOT_READ，且两者无交集）
   var DOC_NOT_READ = [
-    { path: 'data.seed', reason: '03 §5.2 me/box：D-162 规定 seed 由服务端生成、不是入参；前端**不传也不显示**（防"找到好 seed 无限复制"）' },
     { path: 'data.maxSlots', reason: '03 §5.1 me/configs：槽位上限；提交③ 只编辑已有的 3 个槽（新建/删除槽不在本批），前端不需要该字段' },
     { path: 'data.caps.max', reason: '03 §5.2 me/ai：AI 库上限；ai-pick 只列条目，满库由服务端 409 ai_limit 兜底，前端不做本地上限判定' },
   ];

@@ -50,10 +50,15 @@ const WAREHOUSE_ENVELOPE = {
       skill: [{ uid: 'item_1', kind: 'skill', name: '近战', quality: 'common', slotCount: 1, slots: [{ type: 'general', pluginUid: null }], params: { multiplier: 1.0, cost: { hp: 0, mp: 0, sp: 11 }, cooldown: 3, bulletLevel: 2 }, templateId: 'skill_melee', animKey: 'skill_melee', sfxKey: 'cast_melee' }],
       rolePlugin: [{ uid: 'item_4', kind: 'rolePlugin', id: 'rp_mp_regen', name: 'MP 优化·回复', desc: 'mp 回复 +1', slot: 'mp', category: 'MP 优化', quality: 'common', tier: 1, pointCost: 1, affixes: [{ id: 'mp_regen', desc: 'mp 回复 +1', params: { v: 1 } }] }],
       skillPlugin: [{ uid: 'item_6', kind: 'skillPlugin', id: 'ex_longsword', name: '长剑', desc: '范围改为 [0,3]', slot: 'exclusive', category: '近战·长剑', quality: 'common', tier: 1, forTypes: ['melee'], exclusive: { overrides: { range: [0, 3] } }, animKey: 'ex_longsword', sfxKey: 'cast_longsword', affixes: [] }],
+      // F8/D-176：第 5 桶（包）—— 形状见 docs/interfaces.md §4.14
+      package: [
+        { uid: 'pkg_1', kind: 'package', packageKind: 'role', name: '角色模块包', quality: 'common', qualityPercent: 15 },
+        { uid: 'pkg_2', kind: 'package', packageKind: 'aiNode', name: 'AI节点包', quality: 'common', qualityPercent: 20 },
+      ],
     },
     usage: { item_0: { slotIds: ['slot1'] }, item_1: { slotIds: ['slot1'] } },
-    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
-    counts: { role: 1, skill: 1, rolePlugin: 1, skillPlugin: 1 },
+    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500, package: 500 },
+    counts: { role: 1, skill: 1, rolePlugin: 1, skillPlugin: 1, package: 2 },
   },
 };
 
@@ -241,6 +246,12 @@ function nonAdminRenderings() {
   itemDetail.warehouse.envelope = WAREHOUSE_ENVELOPE;
   itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
   list.push(itemDetail);
+  // F8/D-176：仓库屏**包桶**的可达态 —— `package-open` 只在包桶的行上渲染，
+  //   不纳入本集合就会被 UI-2 判成"注册了没入口"
+  const packageBucket = stateFor('warehouse');
+  packageBucket.warehouse.envelope = WAREHOUSE_ENVELOPE;
+  packageBucket.warehouseBucket = 'package';
+  list.push(packageBucket);
   // 提交③：编辑器（弹窗 A）+ 三个二级选择弹窗（弹窗 B）—— slot-set / ai-set / plugin-set /
   //   plugin-clear 只在二级弹窗里出现，故必须把它们作为可达状态纳入渲染集合
   list.push(configEditorState('hub', { kind: 'config', slotId: 'slot1' }));
@@ -328,8 +339,9 @@ test('UI-3 每个动作都有可实现分支与非空标签', () => {
 test('UI-4 回车提交入口（data-enter）全部命中注册表，且每个 submit 按钮都绑定在它所在表单上', () => {
   const enter = new Set();
   for (const view of store.VIEWS) for (const a of attrValues(htmlFor(view), 'data-enter')) enter.add(a);
-  // F1 三屏（login/register/password）+ F3 两屏（box/settings）
-  assert.deepEqual([...enter].sort(), ['box-open', 'settings-nickname-save', 'submit-login', 'submit-password', 'submit-register']);
+  // F1 三屏（login/register/password）+ F3 一屏（settings）
+  //   **F8/D-176**：开箱屏退役 → 其 `data-enter='box-open'` 随之消失
+  assert.deepEqual([...enter].sort(), ['settings-nickname-save', 'submit-login', 'submit-password', 'submit-register']);
   for (const a of enter) assert.ok(ACTION_NAMES.indexOf(a) !== -1, `data-enter=${a} 不在注册表`);
   // 每个 submit 型按钮的 data-action 必须等于其所在表单的 data-enter（否则点按钮与回车会跑两个动作）
   for (const view of store.VIEWS) {

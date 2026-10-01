@@ -35,9 +35,10 @@ const F2_ACTIONS = ['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'ac
   // D-170：改任意账号的段位/积分（管理面板新增按钮 + 三格输入）
   'admin-account-patch'];
 // F3 实际注册的非管理动作：提交② 17（主界面线）+ 提交③ 9（出战配置编辑器）
-const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-box', 'goto-quick', 'goto-tournament',
+//   **F8/D-176**：删 `goto-box`/`box-open`（开箱屏退役）、加 `package-open`（仓库屏「包」桶）
+const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-quick', 'goto-tournament',
   'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub', 'refresh-warehouse', 'warehouse-bucket',
-  'item-open', 'config-open', 'box-open', 'modal-close', 'settings-nickname-save',
+  'item-open', 'config-open', 'package-open', 'modal-close', 'settings-nickname-save',
   // 提交③：出战配置编辑器（03 §4）
   'config-save', 'config-activate', 'slot-pick', 'slot-set', 'ai-pick', 'ai-set',
   'plugin-pick', 'plugin-set', 'plugin-clear'];
@@ -74,10 +75,12 @@ const WAREHOUSE_ENVELOPE = {
       skill: [],
       rolePlugin: [{ uid: 'item_4', kind: 'rolePlugin', id: 'rp_mp_regen', name: 'MP 优化·回复', desc: 'mp 回复 +1', slot: 'mp', category: 'MP 优化', quality: 'common', tier: 1, pointCost: 1, affixes: [] }],
       skillPlugin: [],
+      // F8/D-176：第 5 桶（包）—— `package-open` 的唯一渲染宿主
+      package: [{ uid: 'pkg_1', kind: 'package', packageKind: 'role', name: '角色模块包', quality: 'common', qualityPercent: 15 }],
     },
     usage: { item_0: { slotIds: ['slot1'] } },
-    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500 },
-    counts: { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0 },
+    caps: { role: 500, skill: 500, rolePlugin: 500, skillPlugin: 500, package: 500 },
+    counts: { role: 1, skill: 0, rolePlugin: 1, skillPlugin: 0, package: 1 },
   },
 };
 
@@ -261,6 +264,11 @@ function adminRenderings() {
   const itemDetail = adminState('warehouse', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
   itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
   list.push(htmlFor(itemDetail));
+  // F8/D-176：仓库屏**包桶**态 —— `package-open` 的唯一渲染宿主
+  list.push(htmlFor(adminState('warehouse', {
+    warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }),
+    warehouseBucket: 'package',
+  })));
   // 提交③：编辑器 + 三个二级选择弹窗（slot-set / ai-set / plugin-set / plugin-clear 的宿主）
   list.push(htmlFor(adminConfigState({ kind: 'config', slotId: 'slot1' })));
   list.push(htmlFor(adminConfigState({ kind: 'slot-pick', slotId: 'slot1', pos: 'role' })));

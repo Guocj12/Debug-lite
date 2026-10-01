@@ -18,10 +18,11 @@
 
   var EMPTY_SESSION = Object.freeze({ token: null, publicId: null, nickname: null, expiresAt: null, isAdmin: false });
   var FORM_FIELDS = Object.freeze(['username', 'password', 'confirm', 'nickname', 'oldPassword', 'newPassword', 'newConfirm']);
-  // F1 四屏 + F2 两屏 + F3 九屏（03 §3：hub/profile/warehouse/box/settings + 4 个空页）
+  // F1 四屏 + F2 两屏 + F3 八屏（03 §3：hub/profile/warehouse/settings + 4 个空页）
+  //   **F8/D-176**：删 `box`（开箱屏退役 —— 开箱改为在仓库屏里开「包」）
   var VIEWS = Object.freeze([
     'login', 'register', 'hub', 'profile', 'password', 'admin', 'accounts',
-    'warehouse', 'box', 'settings', 'quick', 'tournament', 'leaderboard', 'ai-editor',
+    'warehouse', 'settings', 'quick', 'tournament', 'leaderboard', 'ai-editor',
   ]);
   var ADMIN_VIEWS = Object.freeze(['admin', 'accounts']);
   // 账号列表每页条数三档（02-accounts.md §3.2）
@@ -33,18 +34,15 @@
   var ADMIN_DEFAULT_LIMIT = 20;
   var ADMIN_DEFAULT_COUNT = 1;
 
-  // F3：非 form 的屏内输入框（开箱次数 / 新昵称）—— 由 app.js 的 input 委托按名字路由到各自 reducer
-  var BOX_TIMES_FIELD = 'boxTimes';
+  // F3：非 form 的屏内输入框（新昵称）—— 由 app.js 的 input 委托按名字路由到各自 reducer
   var NICKNAME_FIELD = 'settingsNickname';
   // F5/D-172：AI 编辑器的名称输入框（同样是非 form 的屏内输入框）
   var AI_NAME_FIELD = 'aiName';
-  var SCREEN_FIELDS = Object.freeze([BOX_TIMES_FIELD, NICKNAME_FIELD, AI_NAME_FIELD]);
+  var SCREEN_FIELDS = Object.freeze([NICKNAME_FIELD, AI_NAME_FIELD]);
 
-  // F3：仓库四桶（与 GET /me/warehouse 的 data.buckets 键逐条相等；03 §5.2）
-  var WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
-  // F3：开箱次数上限（与 server/box.js 的 BOX_TIMES_MAX 同口径；03 §3.4）
-  var BOX_TIMES_MAX = 100;
-  var BOX_TIMES_DEFAULT = 1;
+  // F3/F8：仓库五桶（与 GET /me/warehouse 的 data.buckets 键逐条相等；03 §5.2）
+  //   **F8/D-176**：新增第 5 桶 `package`（包）
+  var WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
   // F3：屏内弹窗种类（03 §3.7/§3.8；至多一个）。
   //   提交③ 新增两级选择弹窗：slot-pick（角色/技能模板）· plugin-pick（某插槽的插件）· ai-pick（AI 库）
   //   F6 新增 ai-logic（AI 逻辑查看器：只读展示我方 AI 程序树 + 本帧执行轨迹；04 §3.3）
@@ -160,7 +158,8 @@
       admin: emptyAdmin(),
       warehouse: emptyWarehouse(),
       warehouseBucket: 'role',
-      box: { times: String(BOX_TIMES_DEFAULT), result: null },
+      // F8/D-177：最近一次 POST /me/warehouse/open-package 的结果（`lines` 由 format.js 投影；同 F3 开箱结果的口径）
+      packages: { result: null },
       configs: emptyConfigs(),
       settings: { nickname: '', result: null },
       quick: emptyQuick(),      // F6
@@ -183,13 +182,6 @@
     return value && typeof value === 'object' ? value : fallback;
   }
 
-  // 数字输入框（开箱次数）：一律存**字符串**（与 F1/F2 的输入框同构，避免"1"→1 的隐式转换歧义），
-  //   由 public/actions.js 在提交前解析并做 1~100 的客户端预校验（03 §8 B-3）。
-  //   空串**不做缺省填充**：它属于"非数字"，必须被拦下而不是偷偷变成 1。
-  function boxTimesOf(value) {
-    return strOf(value);
-  }
-
   // 纯 reducer：未知动作原样返回（不静默吞掉任何已知动作）
   function reduce(state, action) {
     if (!action || typeof action.type !== 'string') return state;
@@ -205,12 +197,9 @@
         (action.fields || []).forEach(function (f) { if (FORM_FIELDS.indexOf(f) !== -1) form2[f] = ''; });
         return Object.assign({}, state, { form: form2 });
       }
-      // F3：非 form 的屏内输入框（开箱次数 / 新昵称）；F5：AI 编辑器名称
+      // F3：非 form 的屏内输入框（新昵称）；F5：AI 编辑器名称
       case 'screen.form.set': {
         if (SCREEN_FIELDS.indexOf(action.field) === -1) return state;
-        if (action.field === BOX_TIMES_FIELD) {
-          return Object.assign({}, state, { box: Object.assign({}, state.box, { times: boxTimesOf(action.value) }) });
-        }
         if (action.field === AI_NAME_FIELD) {
           return Object.assign({}, state, {
             aiEditor: Object.assign({}, state.aiEditor, { name: strOf(action.value), dirty: true }),
@@ -278,10 +267,9 @@
         return Object.assign({}, state, {
           warehouseBucket: WAREHOUSE_BUCKETS.indexOf(action.bucket) === -1 ? state.warehouseBucket : action.bucket,
         });
-      case 'box.times.set':
-        return Object.assign({}, state, { box: Object.assign({}, state.box, { times: boxTimesOf(action.value) }) });
-      case 'box.result.set':
-        return Object.assign({}, state, { box: Object.assign({}, state.box, { result: action.result || null }) });
+      // F8/D-177：开包结果（POST /me/warehouse/open-package 的信封；由 format.js 投影成行）
+      case 'package.result.set':
+        return Object.assign({}, state, { packages: { result: action.result || null } });
       case 'configs.set': {
         // 配置列表整包（GET /me/configs 的**响应信封**）；换列表即丢弃旧草稿（草稿绑定单个槽）
         var data = objectOr(action.data, null);
@@ -558,12 +546,9 @@
     VIEWER_SOURCES: VIEWER_SOURCES,
     CONFIG_POSITIONS: CONFIG_POSITIONS,
     SKILL_SLOTS: SKILL_SLOTS,
-    BOX_TIMES_FIELD: BOX_TIMES_FIELD,
     NICKNAME_FIELD: NICKNAME_FIELD,
     AI_NAME_FIELD: AI_NAME_FIELD,
     SCREEN_FIELDS: SCREEN_FIELDS,
-    BOX_TIMES_MAX: BOX_TIMES_MAX,
-    BOX_TIMES_DEFAULT: BOX_TIMES_DEFAULT,
     FORM_FIELDS: FORM_FIELDS,
     initialState: initialState,
     emptyForm: emptyForm,

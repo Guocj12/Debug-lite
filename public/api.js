@@ -89,7 +89,10 @@
       // F3（docs/frontend/03-hub-warehouse-loadout.md §3）：仓库真源 / 开箱 / 改昵称；
       //   出战配置与 AI 库只登记出口（提交③ 才接 UI）—— 同样只回 {transport,status,envelope}。
       warehouse: function (token) { return call('GET', '/api/v1/me/warehouse', undefined, token); },
-      box: function (token, input) { return call('POST', '/api/v1/me/box', input, token); },
+      // F8/D-177：开包（在仓库屏的「包」桶内使用）—— 体 = `{packageUids:[…]}`（1..100、不重复）；
+      //   **无 seed 入参**（随机性归服务端，同 D-162）；响应自带 warehouse/usage/caps → 并回 state.warehouse。
+      //   注：服务端 `POST /me/box`（直接开箱）**刻意保留**给离线/CLI 路径，前端屏已删（F8）。
+      openPackage: function (token, input) { return call('POST', '/api/v1/me/warehouse/open-package', input, token); },
       configs: function (token) { return call('GET', '/api/v1/me/configs', undefined, token); },
       aiList: function (token) { return call('GET', '/api/v1/me/ai', undefined, token); },
       // 提交③：出战配置编辑器（03 §3.7 两步顺序）——

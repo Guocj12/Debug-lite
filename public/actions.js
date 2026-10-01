@@ -19,8 +19,7 @@
   var PW_MIN = 8;
   var PW_MAX = 72;
   var NICK_MAX = 16;
-  // F3：开箱次数上限（与 server/box.js 的 BOX_TIMES_MAX 同口径；03 §3.4 / §8 B-3）
-  var BOX_TIMES_MAX = 100;
+  // F8/D-176：开箱次数上限（`BOX_TIMES_MAX`）随开箱屏退役 —— 开包以「一个包 uid」为入参，没有次数概念
 
   // F2：账号列表每页条数三档、bots 单次注入上限（与 server/admin.js 的 MAX_BOTS_PER_CALL 同口径）
   var ADMIN_LIMITS = [20, 50, 100];
@@ -63,14 +62,6 @@
   }
 
   /* ---------- F3 客户端预校验（03 §8 B-3 / B-11） ---------- */
-
-  // 开箱次数：1~100 的**整数**（"1.5"/"abc"/""/"0"/"101" 一律拦下，不发请求）
-  function validateTimes(value) {
-    var raw = typeof value === 'string' ? value.trim() : (typeof value === 'number' ? String(value) : '');
-    if (!/^[0-9]+$/.test(raw)) return null;
-    var n = Number(raw);
-    return n >= 1 && n <= BOX_TIMES_MAX ? n : null;
-  }
 
   // 新昵称：1~16 字符（服务端也会夹到 ≤16，前端提示为准；B-11）
   function validateNickname(value) {
@@ -115,10 +106,10 @@
     else noticeNotice(ctx, 'error', '会话已失效，请重新登录');
   }
 
-  // F3：随会话一起清掉的用户态数据（仓库/开箱结果/设置输入）—— 不残留上一个账号的内容
+  // F3：随会话一起清掉的用户态数据（仓库/开包结果/设置输入）—— 不残留上一个账号的内容
   function clearUserState(ctx) {
     ctx.dispatch({ type: 'warehouse.set', envelope: null });
-    ctx.dispatch({ type: 'box.result.set', result: null });
+    ctx.dispatch({ type: 'package.result.set', result: null });
     ctx.dispatch({ type: 'configs.set', data: null });
     ctx.dispatch({ type: 'settings.set', nickname: '', result: null });
     ctx.dispatch({ type: 'viewer.clear' });   // F6：战斗态（对局/帧/游标）随会话一起清
@@ -848,18 +839,6 @@
       },
     },
 
-    // 切到开箱屏**并**取一次仓库真源（03 §3.4：目标分类已达上限 → 按钮**禁用**且**不发请求**）。
-    //   要"本地禁用且不发请求"就必须在渲染该屏时已握有 caps/桶长度 → 进入时取一次（不轮询）；
-    //   与仓库屏共用同一份 state.warehouse，避免两处数据不一致。
-    //   读取失败（网络/401）**不影响进入屏**：按钮保持可用，由服务端 409 兜底（§6 warehouse_full）。
-    'goto-box': {
-      label: '开箱',
-      run: function (ctx) {
-        ctx.dispatch({ type: 'view.go', view: 'box' });
-        return loadWarehouse(ctx, { quiet: true });
-      },
-    },
-
     'goto-quick': {
       label: '快速对战',
       run: function (ctx) { return goView(ctx, 'quick'); },
@@ -928,6 +907,44 @@
         }
         ctx.dispatch({ type: 'modal.set', modal: { kind: 'item-detail', uid: uid } });
         return Promise.resolve();
+      },
+    },
+
+    // 开包（F8/D-177）：仓库屏「包」桶的行级动作（`data-uid`）。
+    //   客户端只做两件本地事：① 缺 uid → 拦下不发请求；② 已满仓 → 拦下（B-2，靠已读到的 caps/桶长度）。
+    //   成功后：用响应回带的 `warehouse/usage/caps` 并回 `state.warehouse`（容量行立即变化），
+    //   结果进 `state.packages.result`，并**静默刷新一次仓库**（与服务端真源对齐，同 F3 开箱口径）。
+    //   `package_invalid`（包已被消耗）/`warehouse_full` 一律走服务端文案（按钮永不无声）。
+    'package-open': {
+      label: '开包',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var uid = uidOf(payload);
+        if (uid === null) {
+          noticeNotice(ctx, 'error', '缺少包 uid（package-open 需要 data-uid）');
+          return Promise.resolve();
+        }
+        var full = ctx.format.packageFullNotice(ctx.state);
+        if (full !== null) {
+          noticeNotice(ctx, 'error', full);
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.openPackage(token, { packageUids: [uid] }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          ctx.dispatch({ type: 'package.result.set', result: { lines: ctx.format.packageResultLines(result.envelope) } });
+          ctx.dispatch({ type: 'warehouse.set', envelope: ctx.format.warehouseChangeEnvelope(result.envelope) });
+          noticeNotice(ctx, 'info', ctx.format.PACKAGE_OK_TEXT);
+          return loadWarehouse(ctx, { quiet: true }).then(function () { return undefined; });
+        });
       },
     },
 
@@ -1165,39 +1182,6 @@
           return loadConfigs(ctx)
             .then(function () { return loadWarehouse(ctx, { quiet: true }); })
             .then(function () { return loadProfile(ctx, token); });
-        });
-      },
-    },
-
-    // 开箱（03 §3.4）：客户端先拦次数与"仓库已满"（B-2/B-3），**不传也不显示 seed**（D-162）
-    'box-open': {
-      label: '开箱',
-      run: function (ctx) {
-        if (ctx.state.busy) return Promise.resolve();
-        if (!ctx.state.session.token) return sessionLost(ctx, null);
-        var times = validateTimes(ctx.state.box ? ctx.state.box.times : '');
-        if (times === null) {
-          noticeNotice(ctx, 'error', ctx.format.BOX_TIMES_RANGE_TEXT);
-          return Promise.resolve();
-        }
-        var full = ctx.format.boxFullNotice(ctx.state);
-        if (full !== null) {
-          noticeNotice(ctx, 'error', full);
-          return Promise.resolve();
-        }
-        busy(ctx, true);
-        ctx.dispatch({ type: 'notice.set', notice: null });
-        return ctx.api.box(ctx.state.session.token, { times: times }).then(function (result) {
-          busy(ctx, false);
-          if (result.transport === 'error') return failFrom(ctx, result);
-          if (!ctx.format.isOk(result.envelope)) {
-            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
-            return failFrom(ctx, result);
-          }
-          ctx.dispatch({ type: 'box.result.set', result: { lines: ctx.format.boxResultLines(result.envelope) } });
-          noticeNotice(ctx, 'info', ctx.format.BOX_OK_TEXT);
-          // 成功后**静默刷新一次仓库**：连续开箱时"满仓 → 按钮立刻禁用"才成立（03 §3.4/§8 B-2）
-          return loadWarehouse(ctx, { quiet: true }).then(function () { return undefined; });
         });
       },
     },

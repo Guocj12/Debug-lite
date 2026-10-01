@@ -80,7 +80,7 @@
 
 - 静态文字：标题 `Debug-Lite`；摘要行（由 `format.hubSummary()` 产出）。
 - 摘要行内容（**只读 `GET /me`**）：`昵称` · `段位` · `积分` · `未读 进攻<a>/防守<d>` · `在池/不在池`。
-- 按钮（11 个）：`用户`(goto-profile)、`仓库`(goto-warehouse)、`开箱`(goto-box)、`快速对战`(goto-quick)、`锦标赛`(goto-tournament)、`排行榜`(goto-leaderboard)、`出战配置1`(config-open:slot1)、`出战配置2`(config-open:slot2)、`出战配置3`(config-open:slot3)、`AI编辑`(goto-ai-editor)、`设置`(goto-settings)。
+- 按钮（**10 个**，F8/D-176 删「开箱」）：`用户`(goto-profile)、`仓库`(goto-warehouse)、`快速对战`(goto-quick)、`锦标赛`(goto-tournament)、`排行榜`(goto-leaderboard)、`出战配置1`(config-open:slot1)、`出战配置2`(config-open:slot2)、`出战配置3`(config-open:slot3)、`AI编辑`(goto-ai-editor)、`设置`(goto-settings)。
 - 另：`刷新`(refresh-hub，重取 `GET /me`)。
 - 进入条件：登录/注册成功；或启动时本地 token 经 `GET /me` 校验通过；或从任一子屏返回。
 
@@ -93,21 +93,24 @@
 ### 3.3 屏 `warehouse`（仓库）
 
 - 数据源：`GET /me/warehouse`（**服务端权威**，含 `usage` 映射标记"出战于配置几"）。
-- 静态文字：标题 `仓库`；容量行 `角色 <n>/500 · 技能 <n>/500 · 角色插件 <n>/500 · 技能插件 <n>/500`。
-- 分桶切换按钮（4）：`角色`/`技能`/`角色插件`/`技能插件`(warehouse-bucket:role|skill|rolePlugin|skillPlugin)。
+- 静态文字：标题 `仓库`；容量行 `角色 <n>/500 · 技能 <n>/500 · 角色插件 <n>/500 · 技能插件 <n>/500 · 包 <n>/500`。
+- 分桶切换按钮（**5**）：`角色`/`技能`/`角色插件`/`技能插件`/`包`(warehouse-bucket:role|skill|rolePlugin|skillPlugin|package)。
 - 列表：**每行只显示物品名字**（+ 简要标记 `[装配于配置1]` 若 `usage` 命中）；每行是可点元素（`item-open:<uid>`）。
+  **包桶（F8/D-176）**：行文字 = `<名字>（<品质>·<质量>%）`（如「角色模块包（绿·15%）」；包不被任何配置引用，故无 `usage` 标记），
+  且每行**多一个** `开包`(package-open, `data-uid`) 按钮。
+- 开包（F8/D-177，**原开箱屏的替代**）：点 `开包` → `POST /me/warehouse/open-package {packageUids:[<uid>]}`（**无 seed 入参**）
+  → 用响应回带的 `warehouse/usage/caps` 并回 `state.warehouse`（容量行立刻变化）+ 结果区逐件行 → **静默刷新一次仓库**。
+  结果区首行 = `本次开包获得 <n> 件：`；保留包（`packageKind='aiNode'`）追加 `（保留包：暂未开放产出）`（**不报错**）。
 - 物品详情：**屏内弹窗**（`state.modal={kind:'item-detail',uid}`），显示该物品的全部字段（按 §5.3 的字段清单），右下 `关闭`(modal-close)。
 - 其它按钮：`刷新`(refresh-warehouse)、`返回主界面`(goto-hub)。
-- 空仓库：显示 `仓库为空：点「开箱」获取物品`，列表区无行。
+- 空仓库：显示 `仓库为空：打「快速对战」赢取「包」，再到「包」桶开包`，列表区无行。
 
-### 3.4 屏 `box`（开箱）
+### 3.4 开箱屏（**已删除**，F8/D-176）
 
-- 输入框：`开箱次数`（单行数字，缺省 1；界面上限 `100` = `BOX_TIMES_MAX`）。
-- 按钮：`开箱`(box-open)、`返回主界面`(goto-hub)。
-- 结果区：`本次获得 <n> 件：` + 逐件一行（`<名字>（<分类>·<品质>）`）。
-- **不渲染 `seed`**（不是入参，也不显示）。
-- **进入本屏时取一次 `GET /me/warehouse`（静默，不轮询）** —— 这是下面"本地禁用"的前提（否则手上没有 `caps`/桶长度）；读取失败不影响进入本屏，按钮保持可用，由服务端 409 兜底。
-- 超限行为：目标分类已达 500 → `开箱` 按钮**禁用** + 提示 `仓库已满（<分类> 500/500），请先清理`（**不发请求**）；开箱成功后**静默刷新一次仓库**，使"连续开箱 → 满仓立刻禁用"成立。
+- `view:'box'` / `goto-box` / `box-open` / `boxTimes` / `BOX_TIMES_MAX` / `BOX_TIMES_RANGE_TEXT` 全部移除（`public/store.js`、`format.js`、`actions.js`）。
+- 开箱改在 §3.3 仓库屏的**「包」桶内**完成（端点 `POST /me/warehouse/open-package`，见 §5.2）。
+- **服务端 `POST /me/box` 与遗留 `POST /box` 刻意保留**（离线 `npm run play`/`demo`、CLI `box`、e2e/压测脚本仍用）；
+  但前端**不再有**该入口，也没有任何库存屏位引用它（§9.4 的 seed 注入缝随之只服务离线/测试）。
 
 ### 3.5 屏 `settings`（设置）
 
@@ -177,21 +180,20 @@
 
 ## 4. 按钮 ↔ 动作白名单（规则 4.1）
 
-`public/actions.js` 的 `ACTIONS` 仍是唯一注册表。**本批新增 26 个动作**（下表 28 行中 `logout` 与 `goto-password` 是 F1 既有动作的重用；F1 的 9 + F2 的 16 = 25，合计 **51**）。
+`public/actions.js` 的 `ACTIONS` 仍是唯一注册表。**本批（F3）新增 26 个动作**（下表 `logout` 与 `goto-password` 是 F1 既有动作的重用；F1 的 9 + F2 的 16 = 25）。**F8/D-176 后合计 = 50**（删 `goto-box`/`box-open`、加 `package-open`；数字以实际注册表为准）。
 
 | 动作 | 触发 | 行为 | 成功可见文本 | 失败可见文本 |
 |---|---|---|---|---|
 | `goto-hub` | 各子屏·返回主界面 | 切 `hub` + 清 `modal` | 主界面 | — |
 | `goto-profile` | hub·用户 | 切 `profile` | 用户详情 | — |
 | `goto-warehouse` | hub·仓库；设置结果区返回 | 切 `warehouse`，请求仓库 | 仓库 | 服务端文案 |
-| `goto-box` | hub·开箱 | 切 `box` **并静默取一次仓库**（`GET /me/warehouse`，不轮询；失败不挡人） | 开箱 | — |
-| `goto-quick` / `goto-tournament` / `goto-leaderboard` / `goto-ai-editor` | hub·对应按钮 | 切到空页 | 空页标题 | — |
+| `goto-quick` / `goto-tournament` / `goto-leaderboard` / `goto-ai-editor` | hub·对应按钮 | 切到对应屏 | 屏标题 | — |
 | `goto-settings` | hub·设置 | 切 `settings` | 设置 | — |
 | `refresh-hub` | hub·刷新 | `GET /me` | 摘要更新 | 服务端文案；401 按 F1 §6 登出 |
 | `refresh-warehouse` | 仓库·刷新 | `GET /me/warehouse` | 列表更新 | 服务端文案 |
-| `warehouse-bucket` | 仓库·4 个分桶按钮 | 切当前桶（纯本地） | 列表切换 | — |
+| `warehouse-bucket` | 仓库·**5** 个分桶按钮 | 切当前桶（纯本地） | 列表切换 | — |
 | `item-open` | 仓库·物品行（`data-uid`） | 打开 `item-detail` 弹窗 | 详情 | — |
-| `box-open` | 开箱·开箱 | 客户端预校验次数 → `POST /me/box {times}`；**成功后静默刷新一次仓库** | `本次获得 n 件：…` | `仓库已满（…）` / 服务端文案 |
+| `package-open` | 仓库·**包桶**某行的「开包」（`data-uid`） | 满仓本地拦截 → `POST /me/warehouse/open-package {packageUids:[uid]}`；用回带的 `warehouse/usage/caps` 并回 `state.warehouse`，结果进 `state.packages.result`；**成功后静默刷新一次仓库**（F8/D-177） | `开包完成：物品已入仓库` + `本次开包获得 n 件：…` | `仓库已满（…）` / `package_invalid`（包已被消耗）/ 服务端文案 |
 | `config-open` | hub·出战配置1/2/3（`data-slot`） | `GET /me/configs` → 打开 `config` 弹窗 | 配置内容 | 服务端文案 |
 | `config-save` | 配置弹窗·保存 | `PUT /me/configs/:slotId`（带完整 loadout） | `已保存` | `loadout_invalid` 逐条 details 文案 |
 | `config-activate` | 配置弹窗·设为出战 | `POST /me/configs/:slotId/activate` | `已设为出战配置` | `配置不完整：缺少<角色/技能N/AI>`（409） |
@@ -207,7 +209,7 @@
 | `logout` | 设置·登出（F1 既有动作，**入口移位**） | 同 F1 §4 | 切 `login` + `已登出` | 同 F1（失败也清本地会话） |
 | `goto-password` | profile·设置密码；settings·修改密码（F1 既有动作，**新增一个入口**） | 同 F1 §4 | 设置密码屏 | — |
 
-**双向机器核对**（沿用 F1 UI-2 / F2 AU-1 的做法）：非管理员态下，`login/register/home(=profile)/password/hub/warehouse/box/settings` 各屏渲染的 `data-action` 集合 == 注册表中**非管理动作**集合（F3 落地时把 F1 的"恰好 9"改为"恰好 51 − 16（管理动作）= 35，且管理动作在非管理员态不出现"）。
+**双向机器核对**（沿用 F1 UI-2 / F2 AU-1 的做法）：非管理员态下，`login/register/home(=profile)/password/hub/warehouse/settings`（+ F5/F6/F7 各屏）渲染的 `data-action` 集合 == 注册表中**非管理动作**集合。**F8/D-176 起**：删 `goto-box`/`box-open`(−2)、加 `package-open`(+1) ⇒ 注册表 **51 → 50**，非管理动作 **35 → 34**（数字一律由测试从实际注册表推出，不写死）。
 
 > **`goto-home` 语义**：F1 的 `goto-home`（设置密码屏·返回主页）在 F3 中指"切回 `profile`（原 `home`）"。由于密码屏现在有两个入口（profile 的「设置密码」与 settings 的「修改密码」），该屏**同时渲染**「返回用户详情」(`goto-home`) 与「返回设置」(`goto-settings`)，不新增动作。
 
@@ -240,10 +242,10 @@
 
 | 端点 | 字段路径（约定） | 用途 |
 |---|---|---|
-| `me/warehouse` | `data.buckets.role[]` / `.skill[]` / `.rolePlugin[]` / `.skillPlugin[]` | 四桶列表（物品对象形状同 §5.1 `box`） |
+| `me/warehouse` | `data.buckets.role[]` / `.skill[]` / `.rolePlugin[]` / `.skillPlugin[]` / `.package[]` | **五桶**列表（物品对象形状同 §5.1 `box`；`package` 桶为 **F8/D-176** 新增的「包」，形状见 `docs/interfaces.md` §4.14） |
 | `me/warehouse` | `data.usage[uid].slotIds[]` | 仓库行"装配于配置几"（可多处引用） |
-| `me/warehouse` | `data.caps.{role,skill,rolePlugin,skillPlugin}` | 容量行 `n/500` |
-| `me/box` | `data.items[]` / `data.times` / `data.seed`（服务端生成，仅审计用） | 开箱结果 |
+| `me/warehouse` | `data.caps.{role,skill,rolePlugin,skillPlugin,package}` | 容量行 `n/500` |
+| `me/warehouse/open-package` | `data.items` / `data.opened` / `data.warehouse` / `data.usage` / `data.caps` | **F8/D-177 开包**结果（`data.opened[].packageKind` 用于保留包提示；顶层 `notice` **前端不读** —— 条件字段） |
 | `me/ai` | `data.items[].{aiId,name,program,status,updatedAt}` / `data.caps.max=100` | AI 位置候选列表（`status`/`updatedAt` 由 **F5/D-172** 追加：F5 的 AI 编辑器读它们做"草稿/正式"与"更新时间"展示；F3 的 ai-pick 只用 `aiId`+`name`） |
 | `me/warehouse/assemble` | `data.warehouse` / `data.usage` | 装配后回带 |
 | `me/configs/:id/activate` | `data.activeSlotId` | 出战标记更新 |
@@ -256,6 +258,7 @@
 - 角色插件：`id` / `desc` / `slot` / `category` / `tier` / `pointCost` / `affixes[].{id,desc,params.v}`
 - 技能插件：`id` / `desc` / `slot`（general 通用 / exclusive 专属）/ `category` / `tier` / `affixes[].{id,desc,params.v}`
 - 技能**专属**插件追加（2026-09-28 §6.2；通用插件无此两字段 → 读取方按"缺省即无专属"处理）：`forTypes[]` / `exclusive{}`
+- **包（F8/D-176）**：`packageKind` / `qualityPercent`（行文字显示为"名字（品质·质量%）"；AI 节点包为保留包）
 
 ---
 
@@ -265,9 +268,10 @@
 |---|---|---|---|
 | `unauthorized` / `session_expired` | 401 | 会话失效 | 按 F1 §6 统一登出 |
 | `forbidden` | 403 | 越权 | 服务端文案 |
-| `bad_request` | 400 | 参数非法（如开箱次数越界、昵称超长由客户端先拦） | 服务端文案 |
-| `bad_times` | 400 | 开箱次数不在 1..100 | `开箱次数需为 1~100 的整数` |
-| `warehouse_full` | 409 | **新增**：目标分类已达 500 | `仓库已满（<分类> 500/500），请先清理`（正常情况下由按钮禁用拦截） |
+| `bad_request` | 400 | 参数非法（如昵称超长由客户端先拦；开包缺 `packageUids`） | 服务端文案 |
+| ~~`bad_times`~~ | — | **F8 删除**：开箱次数输入框随开箱屏退役（开包以包 uid 为入参） | — |
+| `warehouse_full` | 409 | 目标分类已达 500（**开包产出超上限**同样如此，且**零写入**：包不被消耗） | `仓库已满（<分类> 500/500），请先清理`（正常情况下由「开包」按钮禁用拦截） |
+| `package_invalid` | 409 | **F8/D-177 新增**：待开的包不在仓库 / 已被消耗 / 目标不是包 | `该包已不在仓库里（可能已被开包消耗）`（服务端文案） |
 | `slot_type_mismatch` | 409 | 插件类型与插槽不符 / 槽位不可用（**同一码两种含义**，实测确认） | 优先客户端预过滤；若仍发生 → `该插件不能装入此槽（类型不符）` + 服务端 `message` 原文附注 |
 | `slot_occupied` | 409 | 插槽已占用 | `该插槽已装配插件，请先拆卸` |
 | `points_exceeded` | 409 | 角色插件点数不足 | `插件点数不足（需要 <x>，剩余 <y>）` |
@@ -353,6 +357,21 @@ settings: { nickname: '', result: null },
 
 - `POST /me/box` 的**请求体没有 `seed` 字段**；seed 一律服务端生成（响应可回带，仅供审计/复现日志）。
 - `server/box.js` 的 `openBoxes({seed})` **保持**（离线 `npm run play`/`demo`/核心单测仍可确定性注入）。
+- **F8/D-176 起**：前端**开箱屏已删除**、`api.js` 的 `box` 出口一并移除 ⇒ 本节只服务**服务端与离线/CLI 路径**（`/me/box`、遗留 `/box`、CLI `box`、e2e/压测脚本）。
+
+### 9.5 包（模块包）体系与开包（D-176/D-177，F8）
+
+- **第 5 桶 `package`**：`GET /me/warehouse` 的 `data.buckets.package[]`（形状 `{uid, kind:'package', packageKind, name, quality, qualityPercent}`）；
+  包**品质 = 玩家当前段位**、**质量 = 该品质 4 档百分比**（`server/data/package-config.json` 为数值单一来源）。
+- **开包**：`POST /api/v1/me/warehouse/open-package`（体 `{packageUids:[…]}`，1..100 不重复；**无 seed 入参**）→
+  消耗包 + 产出 1~3 件物品（`package.opened` journal）；产出超上限 → 409 `warehouse_full` **零写入**；
+  包已被消耗/不存在/不是包 → 409 `package_invalid`。
+- **保留包**：`packageKind='aiNode'`（`openable=false`）→ 200 + `items:[]` + `notice:'package_reserved'`，前端显示「保留包：暂未开放产出」（**不报错**）。
+- **战斗掉落**：`POST /quick/run` 响应**恒带** `data.drops[]`（只有主动匹配的进攻方掉；胜 1~2 / 负平 0~1）；
+  幂等重放（`duplicate:true`）照带回同一批但**不重复发放**（见 04 分册）。
+- **starter**：新号除既有套装外，另发 **1 个「角色模块包」**（品质 `common`、质量档 2）用于引导开包。
+- 机器核对：`tests/unit/package.test.js`（PK-1~6 曲线/规则/生成/开包/保留包/掉落统计）、
+  `tests/api/api-me-open-package.test.js`（OP-1~6 掉落幂等/开包/负例/保留包/仓库满原子/发放原语）。
 - `start()` 增加实例级注入缝（同 `start({replayLimit})` 风格）供 e2e/压测确定性使用。
 - 受影响的 9 处调用点（`tests/api/api-box.test.js` T-AP-5、`api-replay-auth`、`e2e-play`、`tests/helpers/{e2e,load}.js`、`scripts/e2e.js`、`cli box --seed`）在提交①内一并修改；`docs/interfaces.md` §2 的 `/box` 行与 T-AP-5 注记同步。
 
@@ -363,8 +382,8 @@ settings: { nickname: '', result: null },
 | 编号 | 断言 |
 |---|---|
 | UW-1 | `public/` 仍为 9 个文件（UI-1 不变）；`render.js` 中 `pick(` 出现 0 次 |
-| UW-2 | 非管理员态：`login/register/profile/password/hub/warehouse/box/settings` 各屏渲染的 `data-action` 集合 == 注册表中非管理动作集合（双向，无死按钮、无未注册入口；总数 = 35） |
-| UW-3 | 管理员态：F2 的 25 + F3 的 26 = **51** 全覆盖（沿用 AU-1 口径） |
+| UW-2 | 非管理员态：`login/register/profile/password/hub/warehouse/settings`（+ F5/F6/F7 各屏）渲染的 `data-action` 集合 == 注册表中非管理动作集合（双向，无死按钮、无未注册入口）。**F8/D-176 起**：删 `goto-box`/`box-open`、加 `package-open` ⇒ 注册表 **50**、非管理动作 **34**（数字由测试从实际注册表推出） |
+| UW-3 | 管理员态：F2 的 25 + F3 的 25（F8 口径）+ F5/F6/F7 全覆盖（沿用 AU-1 口径） |
 | UW-4 | `format.js` 的 `pick()` 字面量集合 == `contract.js` 声明 == 本分册 §5.1 表格路径集合（双向；§5.2 新增端点落地后回填） |
 | UW-5 | 弹窗机制：任何含弹窗的屏，`data-action="modal-close"` 必存在；`state.modal` 至多一个 |
 | UW-6 | `fetch(` 只在 `api.js`；`innerHTML` 只在 `app.js`（F1 既有，回归） |
@@ -385,11 +404,12 @@ settings: { nickname: '', result: null },
 | 1 | 注册新账号 | 落点 | 直接进**主界面**（不再是 F1 的档案页） |
 | 2 | 主界面摘要 | — | `昵称 · common · 0 · 未读 进攻0/防守0 · 在池` |
 | 3 | 点「用户」 | 用户详情 | F1 的档案各行照旧；**看不到**「登出」按钮 |
-| 4 | 点「仓库」 | 仓库 | 四桶容量行 + starter 的角色/技能/插件（**非空**）；行内可见 `[装配于配置1]` |
+| 4 | 点「仓库」 | 仓库 | **五桶**容量行 + starter 的角色/技能/插件/包（**非空**）；行内可见 `[装配于配置1]` |
 | 5 | 点某件物品 | 详情弹窗 | 名字/品质/模板/数值/插槽/词条逐项显示 |
 | 6 | 点弹窗外空白 | 弹窗关闭 | 回到仓库列表 |
-| 7 | 点「开箱」→ 次数 5 → 开箱 | 结果区 | `本次获得 5 件：…`；回仓库可看到新物品 |
-| 8 | 再开箱一次（同次数） | 结果区 | **内容与上次不同**（seed 由服务端生成） |
+| 7 | 点「包」桶 → 某包行点「开包」 | 结果区 | `本次开包获得 <n> 件：…`；该包消失（被消耗）、产出物进对应桶；容量行同步变化（F8/D-177） |
+| 8 | 再开一个包 | 结果区 | **内容与上次不同**（seed 由服务端生成） |
+| 8b | 开「AI节点包」（保留包） | 结果区 | `本次开包获得 0 件：` + 「保留包：暂未开放产出」提示，**不报错** |
 | 9 | 仓库点「技能插件」桶 | 列表 | 切桶生效；容量行不变 |
 | 10 | 返回主界面 → 点「出战配置1」 | 配置弹窗 | 角色/3 技能/AI 均为 starter 实物；插槽按实际数量显示并标注类型 |
 | 11 | 点「角色模板」 | 候选弹窗 | 列出仓库里的角色 + `空` |

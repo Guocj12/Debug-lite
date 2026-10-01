@@ -131,13 +131,19 @@
 
 ---
 
-## 0.4 包（模块包）体系 + 战斗掉落与开包（`D-176`/`D-177`）—— **✅ 后端已落地（2026-09-28）；前端待批次 F8**
+## 0.4 包（模块包）体系 + 战斗掉落与开包（`D-176`/`D-177`）—— **✅ 后端 + 前端 F8 已交付（2026-09-28）**
 
 > **本次未新增批次号**（同 §0.2/§0.3 处置：`docs/tasks.md`/`docs/progress.md` 的"共 41 批"**保持不变**）。数值权威 = `docs/content-design.md` §10；记录 = `docs/decisions.md` §14.14；接口 = `docs/interfaces.md` §2/§2.1/§4.14。
 
 - **口径（用户 2026-09-28 裁定）**：① **包品质 = 玩家当前段位（固定）**，**质量 = 该品质 4 档百分比**（绿 5/10/15/20 … 青 85/90/95/100，共 20 档）；② 掉落物品品质 = **本级及以下两级**（最低绿），**仅每级最高档**可极小概率升一级；青包 100% 档 = **95% 青 + 5% 橙**；③ 每包 **1~3 件**（件数期望随质量档递增 1.30→1.85）；④ **只有主动匹配的快速对战（进攻方）掉包**：胜 **1~2** 个 / 负平 **0~1** 个，质量档胜方偏中高（20/35/35/10）、负平偏低（45/35/15/5）；⑤ **包体系自成门控**（不读 `unlock.json` 的 `gating.enabled`，与 D-137 并存）；⑥ 掉落池 = **包种类 × 质量档白名单**，当前全部 `"all"`（待用户进一步设计）；⑦ **AI 节点包 = 保留包**：可掉落，开包 200 + 零产出 + `notice:'package_reserved'`；⑧ 前端开箱屏废弃（**服务端 `/me/box` 与遗留 `/box` 保留**），开包改到仓库屏内（F8）。
 - **数据/代码落点**：`server/data/package-config.json`（新表 + schema 校验：档位并集 / 每行和为 1 / **候选品质越界** / 白名单模板真实存在）；`core/items.js`（`generatePackage`/`openPackage`/`rollBattlePackages`/`packageStepOf`/`packageDropPoolOf`）；`store/archive.js`（第 5 桶 `package`、`bucketOfKind` 单一映射、`package.granted`/`package.opened` 两条记录 + `grantIds` 环幂等）；`store/{ledger,adapter-json}.js`（`packageGrantIdOf`/`packageOpenGrantIdOf`、`grantPackages`/`openPackages`）；`server/quickmatch.js`（掉落接入 `if(!existing)` 块内 + `data.drops` 恒在）；`server/account.js`（`openPackages` 门面）；`server/index.js`（`POST /api/v1/me/warehouse/open-package`）；`server/starter.js`（新号送 1 个角色模块包做引导）。
-- **实跑证据（后端终态）**：`npm test` = **1159 通过 / 0 失败**；新增 `tests/unit/package.test.js`（PK-1~6：曲线不变量 / 品质规则 / 生成 / 开包确定性 / 保留包 / 掉落统计）与 `tests/api/api-me-open-package.test.js`（OP-1~5：掉落恒在且幂等不重复发放 / 开包消耗与入桶 / 负例 / 保留包提示 / 仓库满原子）。
+- **前端 F8（2026-09-28 同轮完成）**：仓库屏新增**第 5 桶「包」**（行文字 `<名字>（<品质>·<质量>%）` + 行内 `开包` 按钮）、开包结果区、满仓本地拦截；
+  **开箱屏整体退役**（`view:'box'`/`goto-box`/`box-open`/`boxTimes`/`BOX_TIMES_*`/`boxViewModel`/`boxResultLines`/`api.box` 全部删除，
+  主界面按钮 11→10）；快速对战结算区新增 `本场掉落 N 个包：…`；`public/contract.js` 与 `docs/frontend/{03,04}.md` 契约同步
+  （删 `me/box` 路径、加 `data.buckets.package`/`data.opened`/`data.drops`、`ITEM_DETAIL_FIELDS` 加 `packageKind`/`qualityPercent`）；
+  前端测试相应重写（WH-4/5/6 由"开箱"改为"开包/保留包/满仓"，UI-2/UI-4/AU-1/FC-1/FC-3/FC-6/WH-11 同步）。
+- **实跑证据（本轮终态）**：`npm test` = **1160 通过 / 0 失败**（含 `tests/frontend/*` 124 项全绿）；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+  `npm run e2e` = **22/22**；`npm run load-test -- --players 50 --deep` = **7/7**；`npm run check:docs` = PASS。
 - **待办（前端 F8）**：仓库屏新增「包」桶与开包交互（含批量/单个、保留包提示）、快速对战结算区展示本场掉落、**删除开箱屏**（`view:'box'`/`goto-box`/`box-open`/`boxTimes`/`boxResultLines` 等）、`public/contract.js` 与 `docs/frontend/{03,04}.md` 字段契约同步、`tests/frontend/*` 的桶清单/容量行正则/契约三方一致更新。
 
 ---

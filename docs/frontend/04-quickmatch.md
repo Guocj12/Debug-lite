@@ -168,6 +168,7 @@
 | `quick/run` | `data.opponent.delta` | 对手行·积分变化（双向记账可见） |
 | `quick/run` | `data.replayId` | 读回放用的 id（与 `battleId` 同值，实测） |
 | `quick/run` | `data.frames` | 内联完整战斗过程（逐帧查看器的唯一数据源） |
+| `quick/run` | `data.drops` | 结算区「本场掉落 N 个包」+ 逐个包名（`<名字>（<品质>·<质量>%）`；`packageKind='aiNode'` 标「保留包：暂未开放产出」）。**字段恒在**，无掉落 = `[]`（F8/D-177） |
 | `replay/:id` | `data.id` | 回放头·对局 id |
 | `replay/:id` | `data.winner` | 回放头·判决 |
 | `replay/:id` | `data.phase` | 回放头·判决依据（`base\|role`） |
