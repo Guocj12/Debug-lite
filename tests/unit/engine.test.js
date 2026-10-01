@@ -367,6 +367,57 @@ test('T-BT-20/M5 位移技不可穿+有伤：碰撞 + 弹幕双结算（B 合受
   assert.equal(b.state.players.p1.hp, 88, 'A 受碰撞 12');
 });
 
+test('EN-21 D-175 持续伤害：效果带**倍率**，每 tick 按施法者 atk 走常规伤害公式（不再固定数值直扣）', () => {
+  const A = mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20, def: 8 });
+  const B = mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, atk: 19, def: 8 });
+  const b = mkBattle(A, B);
+  // 形态 = affix-registry 的 `dot`（D-175）：`{kind:'continuous', stat:'hp', mult, remaining, source}`
+  b.state.players.p2.effects = [{ uid: 'dot1', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 2, source: 'p1', addedTick: 0 }];
+  const before = b.state.players.p2.hp;
+  const d1 = stepActions(b, ['wait'], ['wait']);
+  // 20 × 0.5 = 10，过防御 8 的减伤 1−8/48 = 0.8333 → 8.33 → 取整 8
+  assert.equal(b.state.players.p2.hp, before - 8, '每 tick 伤害 = 施法者 atk × 倍率 × 防御减伤');
+  const dotDmg = d1.damages.find((d) => d.kind === 'dot');
+  assert.ok(dotDmg, '持续伤害进帧（kind=dot）');
+  assert.deepEqual([dotDmg.amount, dotDmg.attacker, dotDmg.target, dotDmg.srcUid], [8, 'p1', 'p2', 'dot1'], '帧内数值/归属/来源 uid');
+  assert.equal(b.state.players.p2.effects.length, 1, '第二次仍在计时');
+  stepActions(b, ['wait'], ['wait']);
+  assert.equal(b.state.players.p2.effects.length, 0, '剩余 tick 用尽后移除');
+  assert.equal(b.state.players.p2.hp, before - 16, '两 tick 各结算一次');
+});
+
+test('EN-22 D-175 持续伤害的边界分支：来源缺失/倍率非法不结算；可暴击、可被闪避（帧内如实标注）', () => {
+  // ① 来源不存在 → 不结算（防御分支），但计时照走
+  const b1 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
+  b1.state.players.p2.effects = [{ uid: 'd1', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p9', addedTick: 0 }];
+  const before1 = b1.state.players.p2.hp;
+  const f1 = stepActions(b1, ['wait'], ['wait']);
+  assert.equal(b1.state.players.p2.hp, before1, '来源缺失 → 不掉血');
+  assert.equal(f1.damages.filter((d) => d.kind === 'dot').length, 0, '来源缺失 → 不进帧');
+  assert.equal(b1.state.players.p2.effects.length, 0, '计时仍递减并到期移除');
+  // ② 倍率非正 → 不结算
+  const b2 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
+  b2.state.players.p2.effects = [{ uid: 'd2', kind: 'continuous', stat: 'hp', mult: 0, remaining: 1, source: 'p1', addedTick: 0 }];
+  const before2 = b2.state.players.p2.hp;
+  stepActions(b2, ['wait'], ['wait']);
+  assert.equal(b2.state.players.p2.hp, before2, '倍率 0 → 不掉血');
+  // ③ 可暴击（施法者暴击率 100%）：20×0.5×0.8333=8.33 → 暴击 ×2 = 16.67 → 16
+  const b3 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20, special: { critChance: 1 } }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8 }));
+  b3.state.players.p2.effects = [{ uid: 'd3', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p1', addedTick: 0 }];
+  const before3 = b3.state.players.p2.hp;
+  const f3 = stepActions(b3, ['wait'], ['wait']).damages.find((d) => d.kind === 'dot');
+  assert.equal(before3 - b3.state.players.p2.hp, 16, '暴击 ×2（1 + critBonus 1.0）');
+  assert.equal(f3.crit, true, '帧内 crit=true');
+  assert.equal(f3.critM, 2, '帧内 critM=2');
+  // ④ 可被闪避（受击方闪避率 100%）→ 0 伤害、帧内 dodged=true
+  const b4 = mkBattle(mkPlayer({ id: 'A', owner: 'p1', x: 400, atk: 20 }), mkPlayer({ id: 'B2', owner: 'p2', x: 800, facing: -1, def: 8, special: { dodgeChance: 1 } }));
+  b4.state.players.p2.effects = [{ uid: 'd4', kind: 'continuous', stat: 'hp', mult: 0.5, remaining: 1, source: 'p1', addedTick: 0 }];
+  const before4 = b4.state.players.p2.hp;
+  const f4 = stepActions(b4, ['wait'], ['wait']).damages.find((d) => d.kind === 'dot');
+  assert.equal(b4.state.players.p2.hp, before4, '被闪避 → 0 伤害');
+  assert.deepEqual([f4.amount, f4.dodged], [0, true], '帧内 amount=0 / dodged=true');
+});
+
 test('EN-14 死亡时序：hp≤0 仍行动（T-BT-* 锁定），持续效果后不立即判死', () => {
   const b = mkBattle(mkPlayer({ x: 400, hp: 5 }), mkPlayer({ id: 'B2', owner: 'p2', x: 600, facing: -1, atk: 19, def: 9 }));
   b.state.players.p1.effects = [{ uid: 'dot1', kind: 'continuous', stat: 'hp', delta: -10, remaining: 1, addedTick: 0 }];

@@ -1119,12 +1119,12 @@
           "straight"
         ],
         "overrides": {
-          "bulletLevel": 5,
+          "bulletLevel": 1,
           "multiplier": 1.4,
           "cost": {
             "hp": 0,
-            "mp": 6,
-            "sp": 3
+            "mp": 3,
+            "sp": 2
           },
           "cooldown": 2
         }
@@ -1150,7 +1150,7 @@
           "straight"
         ],
         "overrides": {
-          "bulletLevel": 2,
+          "bulletLevel": 4,
           "bulletCount": 3,
           "multiplier": 0.45,
           "cost": {
@@ -1201,7 +1201,7 @@
         "overrides": {
           "range": 2,
           "bulletCount": 5,
-          "bulletLevel": 2,
+          "bulletLevel": 4,
           "multiplier": 0.5,
           "cost": {
             "hp": 0,
@@ -1243,15 +1243,15 @@
           "straight"
         ],
         "overrides": {
-          "bulletLevel": 4,
+          "bulletLevel": 2,
           "range": 8,
           "multiplier": 1,
           "cost": {
             "hp": 0,
-            "mp": 8,
+            "mp": 9,
             "sp": 4
           },
-          "cooldown": 3
+          "cooldown": 2
         },
         "specials": {
           "critChance": 0.3,
@@ -1270,7 +1270,7 @@
       "slot": "exclusive",
       "category": "定点·火球",
       "name": "火球",
-      "desc": "范围改为 [-1,1]；命中持续 −2 HP × 3 tick",
+      "desc": "范围改为 [-1,1]；命中后每 tick 造成 20% 攻击力伤害，持续 3 tick",
       "forTypes": [
         "vertical"
       ],
@@ -1288,16 +1288,19 @@
           "multiplier": 1,
           "cost": {
             "hp": 0,
-            "mp": 33,
+            "mp": 32,
             "sp": 0
           },
-          "cooldown": 6
+          "cooldown": 5
         },
         "hitEffects": [
           {
             "kind": "continuous",
             "stat": "hp",
-            "delta": -2,
+            "multFrom": "v",
+            "params": {
+              "v": 0.2
+            },
             "remaining": 3
           }
         ]
@@ -1332,7 +1335,7 @@
           "multiplier": 0.5,
           "cost": {
             "hp": 0,
-            "mp": 29,
+            "mp": 24,
             "sp": 0
           },
           "cooldown": 4
@@ -1368,7 +1371,7 @@
           "multiplier": 1,
           "cost": {
             "hp": 0,
-            "mp": 32,
+            "mp": 30,
             "sp": 0
           },
           "cooldown": 5
@@ -1411,7 +1414,7 @@
           "multiplier": 1,
           "cost": {
             "hp": 0,
-            "mp": 32,
+            "mp": 27,
             "sp": 0
           },
           "cooldown": 4
@@ -1452,7 +1455,7 @@
           "cost": {
             "hp": 0,
             "mp": 0,
-            "sp": 32
+            "sp": 33
           },
           "cooldown": 4
         },
@@ -1524,9 +1527,9 @@
           "cost": {
             "hp": 0,
             "mp": 0,
-            "sp": 22
+            "sp": 19
           },
-          "cooldown": 3
+          "cooldown": 4
         },
         "specials": {
           "critChance": 0.25,

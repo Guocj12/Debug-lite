@@ -27,6 +27,8 @@ const runtime = require('./ai/runtime.js');
 const engine = require('./core/engine.js');
 const archiveMod = require('./store/archive.js');
 const ledger = require('./store/ledger.js');
+// D-174：AI 快照的 `x` 是**格序号**，故所有距离阈值按"格"给定（表内保留原 px 探针口径 ÷ 格宽）
+const CELL_PX = require('./data/battle-config.json').cellPx;
 
 const TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
 // 服务端自签发的默认/机器人角色使用的插件点数（**确定性**：取绿品质区间下界）。
@@ -89,21 +91,23 @@ const PRESET_SKILL_ORDER = Object.freeze({
 
 // 族 × 子变体 → 参数（阈值/开火槽/残血防守线）。参数**由探针实测选定**（同族子变体必须打破
 // "完全对称 → 恒平局"：见报告 P2-5 实测矩阵；当前 9 个程序两两 36 对中仅 5 对恒平局）。
+// ⚠️ D-174：快照 `x` 已改为**格序号**，阈值 = 原 px 探针值 ÷ CELL_PX（2.5 格 = 160px 等）；
+//    半格阈值保留原口径（`gap > 2.5` ≡ `gap ≥ 3`，格差为整数）。
 const AI_VARIANT_PARAMS = Object.freeze({
   steady: Object.freeze([
-    Object.freeze({ threshold: 160, slot: 'skill:skill1', defendHp: 30 }),
-    Object.freeze({ threshold: 192, slot: 'skill:skill1', defendHp: 30 }),
-    Object.freeze({ threshold: 320, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 160 / CELL_PX, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 192 / CELL_PX, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 320 / CELL_PX, slot: 'skill:skill1', defendHp: 30 }),
   ]),
   kite: Object.freeze([
-    Object.freeze({ threshold: 288, slot: 'skill:skill1', defendHp: null }),
-    Object.freeze({ threshold: 320, slot: 'skill:skill1', defendHp: null }),
-    Object.freeze({ threshold: 448, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 288 / CELL_PX, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 320 / CELL_PX, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 448 / CELL_PX, slot: 'skill:skill1', defendHp: null }),
   ]),
   aggressive: Object.freeze([
-    Object.freeze({ threshold: 64, slot: 'skill:skill1', defendHp: null }),
-    Object.freeze({ threshold: 64, slot: 'skill:skill1', defendHp: 30 }),
-    Object.freeze({ threshold: 64, slot: 'skill:skill2', defendHp: 30 }),
+    Object.freeze({ threshold: 64 / CELL_PX, slot: 'skill:skill1', defendHp: null }),
+    Object.freeze({ threshold: 64 / CELL_PX, slot: 'skill:skill1', defendHp: 30 }),
+    Object.freeze({ threshold: 64 / CELL_PX, slot: 'skill:skill2', defendHp: 30 }),
   ]),
 });
 

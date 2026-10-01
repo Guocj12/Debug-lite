@@ -235,6 +235,13 @@ function createBattle(cfgIn, options) {
       return;
     }
     if (spec.kind === 'continuous') {
+      // D-175：`multFrom` ⇒ 该效果是**持续伤害**，携带倍率（值取自 v），逐 tick 由引擎按施法者 atk
+      //   走常规伤害公式结算（见步骤 2 的 dotDamage）；其余（deltaFrom / delta）仍是固定数值加减（如诅咒的 −def）。
+      if (spec.multFrom) {
+        const mult = spec.multFrom === 'v' ? v : (spec.mult === undefined ? 0 : spec.mult);
+        effects.addEffect(battleState, { kind: 'continuous', target: defender.owner, stat: spec.stat, mult, remaining: spec.remaining, source: attacker.owner });
+        return;
+      }
       const delta = (spec.sign || 1) * (spec.deltaFrom ? v : (spec.delta || 0));
       effects.addEffect(battleState, { kind: 'continuous', target: defender.owner, stat: spec.stat, delta, remaining: spec.remaining, source: attacker.owner });
       return;
@@ -395,7 +402,18 @@ function createBattle(cfgIn, options) {
     stepLog(1, '冷却递减/重置标记');
 
     // 步骤 2：持续效果
-    effects.resolveContinuous({ tick, players });
+    //   D-175：**持续伤害**（效果带 `mult`）逐 tick 按"倍率 × 施法者 atk"走常规伤害公式结算——
+    //   走独立的 `dot` 随机流（不挤占本 tick 的 crit 抽样序，避免影响其它伤害的暴击结果）；
+    //   伤害进帧（kind='dot'），与弹幕/碰撞/基地/超时同一记账口径。
+    const dotRng = battleState.rng.deriveStream(tick, 'dot');
+    const dotDamage = (eff, target) => {
+      const src = players[eff.source];
+      if (!src || !(eff.mult > 0)) return null;
+      const res = dealDamage(src, target, { mult: eff.mult, critRng: dotRng, hitUid: eff.uid });
+      battleState._frameDamages.push({ target: target.owner, amount: res.dmg, atX: target.x, kind: 'dot', srcUid: eff.uid, attacker: src.owner, crit: res.crit === true, critM: res.crit ? res.critM : 1, backstab: false, backM: 1, dodged: res.dodged === true });
+      return res;
+    };
+    effects.resolveContinuous({ tick, players }, { dotDamage });
     stepLog(2, '持续效果');
 
     // 步骤 3：AI 续执行 / 行动注入（B8：由调用方注入；B16：actions.aiTrace 可选缓冲——AI 驱动器
@@ -427,6 +445,7 @@ function createBattle(cfgIn, options) {
     const plans = {};
     for (const owner of ['p1', 'p2']) {
       const p = players[owner];
+      const foe = players[owner === 'p1' ? 'p2' : 'p1'];
       const intent = intents[owner];
       const plan = { kind: 'wait', x: p.x, dir: intent.dir === undefined ? p.facing : intent.dir, pass: false, rawToX: p.x };
       if (intent.type === 'move' || intent.type === 'dodge') {
@@ -454,7 +473,8 @@ function createBattle(cfgIn, options) {
         const can = skills.canCast(sk, p, intent.sid);
         if (!can.ok) { plans[owner] = plan; continue; } // 无效技能行动 → 空行动（07 §5 / skill.reject 已记）
         Object.assign(p, can.caster); // 扣资源 + 写 CD
-        const act = skills.buildSkillAction(sk, { x: p.x, facing: p.facing });
+        // D-174：定点类技能"以对方所在格为目标"（射程内无敌人 → 最远位置）；targetX = 敌方 px
+        const act = skills.buildSkillAction(sk, { x: p.x, facing: p.facing }, { targetX: foe.x });
         plan.kind = 'cast';
         plan.skill = sk;
         bullets.spawnBullets(state, Object.assign({ owner }, act));

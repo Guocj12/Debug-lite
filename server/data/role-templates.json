@@ -4,10 +4,9 @@
   "_contract": "docs/content-design.md §2/§3；docs/systems/02-roles.md",
   "typeModifiers": {
     "_note": "乘性守恒：特化 high×low = 1；专家 high×Πspread = 1（schema 校验）。数值来自等价点数模型：战力 P = A×H×(D+defK)，故'同一战力增幅'换算到各属性的百分比不同。",
+    "_expert_note": "专家 = README 五档（2026-09-28 用户裁定）：1 属性『极高』×high，其余四维各承担『略高 1.20 / 极低 0.6667 / 略低 0.8333 / 均衡 1.00』之一（洗牌）；**无 def 特判**（excludeLow 已退役，def 可作低属性）。",
     "specialized": { "high": 1.30, "low": 0.7692307692307693 },
-    "expert": { "high": 1.50, "spread": [0.6666666666666666, 1, 1, 1] },
-    "excludeLow": ["def"],
-    "_excludeLow_note": "def 的边际价值 ∝ 1/(D+defK)，(D+defK) 最低只到 defK=40（相对基准 48 只能降 16.7%），吃不下 -23%/-33% 的补偿 → def 不可作低属性（只能作高属性）。"
+    "expert": { "high": 1.50, "spread": [1.2, 0.6666666666666666, 0.8333333333333334, 1] }
   },
   "roleTemplates": [
     { "id": "role_bal", "name": "均衡", "type": "balanced",

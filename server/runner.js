@@ -14,6 +14,7 @@ const { createLogger, nullLogger } = require('../shared/log.js');
 const crypto = require('node:crypto');
 
 const BATTLE_CFG = require('./data/battle-config.json');
+const fieldApi = require('./core/field.js'); // 坐标换算单一来源（D-174：快照 x = 格序号）
 
 // 技能实例化基准 rng（与 server/battle.js / server/loadout.js 同一口径：确定性、不消费随机流）
 const STUB_RNG = { float: () => 1, int: () => 0, pick: () => 0 };
@@ -55,6 +56,7 @@ function baselinePlayer(P) {
 // 快照字段总清单（与 docs/systems/08-ai §4.5 / interfaces 同步；get.path 白名单以本清单为准）：
 //   tick                              number
 //   self.{hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}  number
+//     · `x` = **格序号 0..cells−1**（D-174 用户裁定：AI 只读格，不读像素；引擎内部仍是 px）
 //   self.cooldowns.<slotKey>          number（只读副本；未装配技能不在其中）
 //     键语义（P1-4 裁定，2026-09-19）：**槽位键 `skill1..3`**（= AI 动作名 `skill:<槽位>` 的槽位，
 //     也是引擎冷却键）；不再是模板 id——`sys/08-ai` §4.5 的字段说明需同步。旧快照缺该键 → 读到 null。
@@ -89,7 +91,7 @@ function projectSnapshot(state, owner) {
   }));
   const pick = (p, base) => ({
     hp: p.hp, maxHp: p.maxHp, mp: p.mp, maxMp: p.maxMp, sp: p.sp, maxSp: p.maxSp,
-    atk: p.atk, def: p.def, x: p.x, facing: p.facing,
+    atk: p.atk, def: p.def, x: fieldApi.cellOf(p.x), facing: p.facing, // x：px → 格（D-174；AI 只见格）
     baseHp: base.hp === undefined ? null : base.hp, // B26 修正：基地当前血量（原误填角色 maxHp）
     cooldowns: copyCooldowns(p),
     effects: summarizeEffects(p),
@@ -105,16 +107,17 @@ function projectSnapshot(state, owner) {
   };
 }
 
-/* ---------- 守方镜像（用户 2026-09-25 口径；D-164） ----------
+/* ---------- 守方镜像（用户 2026-09-25 口径；D-164；坐标单位见 D-174） ----------
  * 规则：**每个玩家都在自己的 p1 坐标系里思考**。p2（右侧、facing=−1）的 AI 拿到的是**镜像世界**：
- *   x' = fieldPx − x、facing' = −facing、effects[].displacement' = −displacement；
+ *   x' = (cells−1) − x（格序号镜像；D-174 起快照 x 是格，故不再是 fieldPx − x）、
+ *   facing' = −facing、effects[].displacement' = −displacement；
  *   它产出的方向动作再**反镜像**回真实世界（move_left↔move_right、dodge_left↔dodge_right）。
  * 为什么不是"只翻动作名"（实测反例，2026-09-25 探针）：
  *   出厂默认/新手 AI（ranked.buildDefaultLoadout，所有新号与 bot 都用它）用**有符号距离**
  *   `enemy.x − self.x` 选绝对方向，两侧本来就自洽；若只翻输出动作，p2 会掉头退回自己基地角、
  *   永不交战（实测：默认 AI 当守方从 800 退到 992，整场不开火）。
  *   完整镜像对这类"方向无关"程序是**恒等变换**（实测逐 tick 帧完全一致），
- *   而对"按 p1 坐标写死方向"的玩家程序（永远 move_right、self.x<500→move_right、看 facing 转身）
+ *   而对"按 p1 坐标写死方向"的玩家程序（永远 move_right、self.x<8→move_right、看 facing 转身）
  *   才产生正确行为。`turn`（自反）、`wait`/`defend`（无方向）、`skill:<槽位>`（方向取自 facing）不参与映射。
  * 范围：仅**玩家编写的出战配置 AI**。内置对手 OPPONENTS（runner.js 下方，写死 p2 语义、且不经
  *   runtime.resume）与 `/ai/battle` 的 p2 一律不镜像。
@@ -129,11 +132,11 @@ const MIRROR_ACTION = Object.freeze({
 function mirrorSnapshot(snapshot) {
   const snap = snapshot;
   if (!snap || typeof snap !== 'object') return snap;
-  const W = snap.field && typeof snap.field.fieldPx === 'number' ? snap.field.fieldPx : BATTLE_CFG.fieldPx;
+  const N = fieldApi.CELLS;
   const flip = (side) => {
     if (!side || typeof side !== 'object') return side;
     const out = Object.assign({}, side);
-    if (typeof side.x === 'number') out.x = W - side.x;
+    if (typeof side.x === 'number') out.x = (N - 1) - side.x; // 格序号镜像（0↔cells−1）
     if (typeof side.facing === 'number') out.facing = -side.facing;
     out.effects = (Array.isArray(side.effects) ? side.effects : []).map((e) => {
       const c = Object.assign({}, e);

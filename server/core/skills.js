@@ -44,10 +44,21 @@ function fieldValue(skill, ref) {
   return skill[ref];
 }
 
-// 落点：施法者前方 rangePx（clamp 到场内），垂直类与覆盖格共用
-function impactXOf(skill, caster, emit) {
-  const reach = fieldValue(skill, emit.impactFrom);
-  return field.clampX(caster.x + caster.facing * reach);
+// 落点（2026-09-28 D-174）：缺省 = 施法者前方 rangePx（clamp 到场内）；
+//   机制表声明 `emit.impactAim === 'enemyCell'` 时（定点类）：**敌方所在格**落在射程覆盖格内
+//   → 落点 = 该格格心（"以对方所在格为目标"）；射程内没有对方角色 → 回落"最远位置"释放（不再失败）。
+//   `ctx.targetX` = 敌方当前 px 坐标（引擎步骤 6 注入）；缺省 = 无敌人 → 最远位置（向后兼容）。
+function impactXOf(skill, caster, emit, ctx) {
+  const maxX = field.clampX(caster.x + caster.facing * fieldValue(skill, emit.impactFrom));
+  if (emit.impactAim !== 'enemyCell') return maxX;
+  if (!ctx || !Number.isFinite(ctx.targetX)) return maxX;
+  const fromCell = field.cellOf(caster.x);
+  const toCell = field.cellOf(maxX);
+  const targetCell = field.cellOf(ctx.targetX);
+  const lo = Math.min(fromCell, toCell);
+  const hi = Math.max(fromCell, toCell);
+  if (targetCell < lo || targetCell > hi) return maxX; // 前方射程覆盖格内无敌人 → 最远位置
+  return field.xCenter(targetCell);                    // 命中敌方所在格（格心）
 }
 
 function makeSkills(logger, tables) {
@@ -249,12 +260,13 @@ function makeSkills(logger, tables) {
   }
 
   // 覆盖格集合（T-SK-3/F-20..27 语义；由类型机制表 cellsFrom/impactFrom 决定锚点）
-  function coveredCellRanges(skill, caster) {
+  //   ctx（可选）：`{ targetX }` —— 定点类"以对方所在格为目标"索敌（D-174）
+  function coveredCellRanges(skill, caster, ctx) {
     const mech = MECHANICS_.types[skill.type];
     if (!mech || !mech.emit || !mech.emit.cellsFrom) return [];
     const span = skill[mech.emit.cellsFrom];
     if (!Array.isArray(span)) return [];
-    const anchor = mech.emit.impactFrom ? impactXOf(skill, caster, mech.emit) : caster.x;
+    const anchor = mech.emit.impactFrom ? impactXOf(skill, caster, mech.emit, ctx) : caster.x;
     const cells = field.cellRange(span[0], span[1], caster.facing, anchor);
     if (mech.emit.impactFrom) {
       L.trace('skills', 'skill.area', `${skill.type} cells=${cells.join(',')} impact=${anchor}`, { type: skill.type, cells, impactX: anchor });
@@ -265,7 +277,8 @@ function makeSkills(logger, tables) {
   }
 
   // 释放指令（S-6..S-9）：{type:'cast', skill, bullets, move?, impactX?, castEffects?}
-  function buildSkillAction(skill, caster) {
+  //   ctx（可选）：`{ targetX }` —— 定点类索敌（D-174）
+  function buildSkillAction(skill, caster, ctx) {
     const mech = MECHANICS_.types[skill.type];
     const payload = {
       multiplier: skill.multiplier, falloff: skill.falloff, affixes: skill.affixes,
@@ -291,7 +304,7 @@ function makeSkills(logger, tables) {
       L.warn('skills', 'skill.emit.unknown', `未登记发射模式 ${mech.emit.pattern}（skill-mechanics.json）`, { pattern: mech.emit.pattern });
       return action;
     }
-    const fired = emitter(skill, caster, mech, payload, coveredCellRanges);
+    const fired = emitter(skill, caster, mech, payload, coveredCellRanges, ctx);
     action.bullets = fired.bullets;
     if (mech.emit.exposeImpactX && fired.impactX !== undefined) action.impactX = fired.impactX;
     return action;
@@ -320,9 +333,9 @@ function makeBullet(spec, skill, caster, ctx, payload) {
 
 // 发射模式解释器（pattern 名取自 skill-mechanics.json；新增模式 = 在此登记一个函数）
 const EMITTERS = {
-  cellsFromRange(skill, caster, mech, payload, coveredCellRanges) {
+  cellsFromRange(skill, caster, mech, payload, coveredCellRanges, ctx) {
     const originCell = field.cellOf(caster.x);
-    const bullets = coveredCellRanges(skill, caster).map((c) => makeBullet(mech.emit.bullet, skill, caster, {
+    const bullets = coveredCellRanges(skill, caster, ctx).map((c) => makeBullet(mech.emit.bullet, skill, caster, {
       cell: c, distCells: Math.abs(c - originCell),
     }, payload));
     return { bullets };
@@ -337,8 +350,8 @@ const EMITTERS = {
     return { bullets };
   },
 
-  impactCells(skill, caster, mech, payload) {
-    const impact = impactXOf(skill, caster, mech.emit);
+  impactCells(skill, caster, mech, payload, coveredCellRanges, ctx) {
+    const impact = impactXOf(skill, caster, mech.emit, ctx);
     const impactCell = field.cellOf(impact);
     const span = skill[mech.emit.cellsFrom];
     const bullets = field.cellRange(span[0], span[1], caster.facing, impact).map((c) => makeBullet(mech.emit.bullet, skill, caster, {

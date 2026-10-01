@@ -61,12 +61,12 @@
 |---|---|---|---|
 | `cellsFromRange` | melee | 以**施法者格心**为基准，`range` 为闭区间偏移 | `btype=aoe`、`v=0`、`len=0`、`origin=cellCenter`、`distCells=fromOriginCell` |
 | `repeatCount` | straight | 按 `countFrom`（= `bulletCount`）枚数**重复同一枚**，起点 = `origin=caster`（不再取邻格，D-22） | `btype=straight`、`v=len=range×cellPx`、`dirFrom=facing`、`distCells=none` |
-| `impactCells` | vertical | 先算落点 `impact=clampX(x+朝向×rangePx)`，覆盖格 = 以**落点格**为基准的 `cellsFrom`（= `area`）区间 | `btype=aoe`、`v=0`、`len=0`、`origin=cellCenter`、`distCells=fromImpactCell` |
+| `impactCells` | vertical | 先算**落点**，覆盖格 = 以**落点格**为基准的 `cellsFrom`（= `area`）区间。落点规则（2026-09-28 D-174）：`emit.impactAim='enemyCell'` 且敌方所在格在射程覆盖格内 → 落点 = 该**格格心**（"以对方所在格为目标"）；射程内无敌人 → `clampX(x+朝向×rangePx)`（最远位置，**仍释放，不失败**） | `btype=aoe`、`v=0`、`len=0`、`origin=cellCenter`、`distCells=fromImpactCell` |
 | `pathCells` | displacement | 按 `move.cellsFrom`（= `distance`）声明路径**逐格发射**（D-18/D-118） | `btype=aoe`、`v=0`、`len=0`、`dirFrom=facing`、`origin=cellCenter` |
 
 - `origin=caster` 用施法者当前 px 坐标；`origin=cellCenter` 用所在格中心 px（`field.xCenter`）。
 - `distCells` 语义：`fromOriginCell` = |格 − 施法者格|、`fromImpactCell` = |格 − 落点格|、`none` = 不写该字段（= 0，falloff 不衰减）。
-- **`falloff`（D-29）**：AOE 每向外一格减伤百分比，`0` = 不衰减；模板固有字段，**不随品质随机**。
+- **`falloff`（D-29）**：AOE 每向外一格减伤百分比，`0` = 不衰减；模板固有字段，**不随品质随机**。**线性衰减**（D-174 统一口径，与 `core/bullets.js:160` 一致）：`系数 = max(0, 1 − falloff × |格偏移|)`（`0.2` ⇒ 落点 1.0 / ±1 格 0.8 / ±2 格 0.6 … / ±5 格 0）。
 - **`costDims = ["hp","mp","sp"]`**：消耗维度皆由此表声明（减耗词条按维作用），代码无字面量。
 - **`bounds`**：`minStat=1` / `minSlotCount=1` / `minRange=1` / `minBulletCount=1` / `minDistance=1` / `minBulletLevel=1` / `minCooldown=0`；**`precision.stat=3`**（面板与倍率保留 3 位小数）、`precision.multiplier=3`（`mult_up` 专用）。
 
@@ -160,7 +160,7 @@
 | `stun` | `control` | 入控制队列，`displacement=0`（= 眩晕），`remaining=1` |
 | `knockback` | `control` | `displacement = +v` 格（沿攻击来源方向），`remaining=1` |
 | `pull` | `control` | `displacement = −v` 格，`remaining=1` |
-| `dot` | `continuous` | `stat=hp`、`delta = −v`、`remaining=3` |
+| `dot` | `continuous` | `stat=hp`、**`multFrom=v`（倍率）**、`remaining=3`：每 tick 按施法者 `atk` 走常规伤害公式（D-175；不再固定数值直扣） |
 | `true_dmg` | `flatTrueDamage` | **命中后额外直扣 `v` 点真实伤害**（`hp ← max(0, hp − v)`，B21/D-128 冻结）。**不是**"把本次伤害改为真实伤害"；若要改成 D-40 的 `trueDamage = max(1, floor(atk×倍率))` 公式语义，属**设计变更** |
 
 - **位移全程免疫（D-72）优先于上述一切**：受击方本 tick 处于 `fullDodgeDuring` 时，命中类词条与附加真实伤害**一律不结算**（见 §4.6）。
@@ -221,7 +221,8 @@
 | `critMul` | `skillOp.addSpecial(critMul)`（`domain: both`，不封顶） | 同上 | `skill.specials.critMul` |
 | 专属插件的内联 `hitEffects` | `exclusive.hitEffects[]`（不经注册表） | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
 | 专属插件的内联 `castEffects` | `exclusive.castEffects[]`（不经注册表） | 引擎步骤 6 入队 → 下一 tick 起效 | `skill.castEffects[]` |
-| `stun` / `knockback` / `pull` / `dot` | `hitEffect.*` | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
+| `stun` / `knockback` / `pull` | `hitEffect.*` | 引擎步骤 9 `addAffixEffect` | `skill.affixes[]` |
+| `dot` | `hitEffect.continuous(hp, multFrom)` | 引擎步骤 9 入队 → **引擎步骤 2 每 tick** 按施法者 `atk × 倍率` 走常规伤害公式（D-175，`damages[].kind='dot'`） | `skill.affixes[]` |
 | `cast_buff` | `castEffect.continuous(atk)` | 引擎步骤 6 入队 → 下一 tick 起效 | `skill.castEffects[]` |
 
 > 注册表仍保留 `stun` / `knockback` / `pull` / `dot` / `cast_buff` 等**通用词条语义**（通用插件可用、未来内容可复用）；当前 16 条专属插件改用内联 `hitEffects`/`castEffects` 直接声明数值。

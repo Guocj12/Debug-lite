@@ -100,6 +100,7 @@ const ACTION_PREFIXES = ACTION_SPEC.parametric || ACTION_SPEC.params || []; // �
 // 快照读路径白名单（B26，D-107 投影；字段清单权威来源 = server/runner.js projectSnapshot 的投影注释）：
 //   tick
 //   self|enemy.<f>                  f ∈ {hp,maxHp,mp,maxMp,sp,maxSp,atk,def,x,facing,baseHp}
+//     · `x` = **格序号 0..cells−1**（D-174 用户裁定：AI 只读格；引擎内部仍是 px）
 //   self|enemy.cooldowns.<sid>      sid = 标识符（只读副本；未装配技能不出现）
 //   self|enemy.effects[<i>].<f>     f ∈ {uid,kind,stat,delta,displacement,remaining}
 //   bases.self|enemy.<f>            f ∈ {hp,maxHp,def}

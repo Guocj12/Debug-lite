@@ -196,6 +196,10 @@ before(async () => {
   const s = await h.startE2E({
     rateLimitPerMinute: h.RATE_LIMIT,
     config: { replayCacheSize: 3 },
+    // D-162 确定性开箱序列：**必须注入** —— 本文件的 ② 步要"开箱凑出一对可装配的
+    //   角色+插件"，不注入则每次开箱内容随机（抽查发现偶发假失败：抽到 3 点插件 + 2 点角色
+    //   → 409 points_exceeded，2026-09-28 定位为**夹具不随机可控**，非产品缺陷）。
+    boxSeed: 20260928,
   });
   F.s = s;
   F.A = await reg(s, 'e2ea', { nickname: '阿尔法' });
@@ -471,7 +475,10 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；starter 落档；GET /m
     for (const r of roles) {
       for (let i = 0; i < (r.slots || []).length && !pair; i += 1) {
         if (r.slots[i].pluginUid) continue;
-        const cand = plugins.find((p) => p.slot === r.slots[i].type);
+        // 必须挑**装得起**的插件：角色点数预算（pluginPoints）≥ 插件 pointCost。
+        //   修前只比槽位类型 ⇒ 本夹具未注入 boxSeed（开箱内容随机），一旦先抽到
+        //   "3 点插件 + 2 点角色"就假失败（实测偶发 409 points_exceeded，2026-09-28）。
+        const cand = plugins.find((p) => p.slot === r.slots[i].type && (p.pointCost || 0) <= (r.pluginPoints || 0));
         if (cand) pair = { targetUid: r.uid, pluginUid: cand.uid, slotIndex: i };
       }
       if (pair) break;

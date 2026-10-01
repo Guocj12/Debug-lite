@@ -70,7 +70,7 @@
     { key: 'mp', label: '当前法力' }, { key: 'maxMp', label: '法力上限' },
     { key: 'sp', label: '当前体力' }, { key: 'maxSp', label: '体力上限' },
     { key: 'atk', label: '攻击力' }, { key: 'def', label: '防御力' },
-    { key: 'x', label: '位置（像素）' }, { key: 'facing', label: '朝向（+1 右 / -1 左）' },
+    { key: 'x', label: '位置（格序号，0 起）' }, { key: 'facing', label: '朝向（+1 右 / -1 左）' },
     { key: 'baseHp', label: '基地当前血量' },
   ]);
   var EFFECT_FIELDS = Object.freeze([

@@ -35,35 +35,50 @@ test('T-RO-1/R-1 均衡：无修饰，品质系数与取整（B0=95/15/8/73/62�
 });
 
 test('T-RO-1/R-2 特化：高属性 ×1.30、恰 1 低 ×0.769（R-2a 完整实例）', () => {
-  // int=2 → 低属性候选 [hp, sp, mp]（atk 为高、def 被 excludeLow 排除）→ index 2 = mp
+  // int=2 → 低属性候选 [hp, def, sp, mp]（atk 为高；D-174：无 def 特判，其余四维等权）→ index 2 = sp
   const role = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([2, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.deepEqual(role.stats, { hp: 105, atk: 23, def: 9, sp: 77, mp: 48 }, 'R-2a：atk 19.5×1.20=23.4→23；mp 62×0.7692×1.00=47.69→48');
+  assert.deepEqual(role.stats, { hp: 105, atk: 23, def: 9, sp: 59, mp: 62 }, 'R-2a：atk 19.5×1.20=23.4→23；sp 73×0.7692×1.05=58.96→59');
 });
 
 test('T-RO-1/R-2b 特化随机低属性：同名模板两种结果', () => {
   const r1 = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([2, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.equal(r1.stats.mp, 48, '低 mp');
+  assert.equal(r1.stats.sp, 59, '低 sp');
   const r2 = roles.instantiateRole(SPC_ATK, 'rare', stubSeq([0, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
   assert.equal(r2.stats.hp, 80, 'R-2b 低 hp：95×0.7692=73.08（修饰后）→ ×1.10=80.38 → 80');
 });
 
 test('T-RO-2/R-3 专家：高属性 ×1.50、四因子乘性守恒（R-3a 完整实例）', () => {
-  // spread [2/3,1,1,1] 经 FY（ints=[1,2,1]）后仍为 [2/3,1,1,1] → hp 2/3；def 命中 ≥1 因子，无需换位
+  // spread [1.2, 2/3, 5/6, 1] 经 FY（ints=[1,2,1]）→ [1.2, 1, 5/6, 2/3]
+  // others = [hp, def, sp, mp] → hp ×1.2 / def ×1 / sp ×5/6 / mp ×2/3（D-174：五档，无 def 特判）
   const role = roles.instantiateRole(EXP_ATK, 'rare', stubSeq([1, 2, 1, 1.10, 1.20, 1.15, 1.05, 1.00, 0, 0, 0, 0]));
-  assert.deepEqual(role.stats, { hp: 70, atk: 27, def: 9, sp: 77, mp: 62 }, 'R-3a：hp 95×2/3×1.10=69.67→70；atk 22.5×1.20=27；def 8×1.15=9.2→9；sp 73×1.05=76.65→77');
+  assert.deepEqual(role.stats, { hp: 125, atk: 27, def: 9, sp: 64, mp: 41 }, 'R-3a：hp 95×1.2×1.10=125.4→125；atk 22.5×1.20=27；def 8×1×1.15=9.2→9；sp 73×5/6×1.05=63.875→64；mp 62×2/3=41.33→41');
 });
 
-test('T-RO-2/R-3b 专家乘性守恒：高属性 = 表值、四因子之积 = 1/high、def 不吃 <1 因子', () => {
+test('T-RO-2/R-3b 专家乘性守恒：高属性 = 表值、四因子之积 = 1/high、五档齐全且 def 无特判（D-174）', () => {
+  let defLow = 0;
+  let defHigh = 0;
   for (let i = 0; i < 80; i++) {
     const m = roles.applyTypeModifier(EXP_ATK, createRng(5000 + i));
     const b = EXP_ATK.baseStats;
     assert.equal(Math.round((m.atk / b.atk) * 1000) / 1000, 1.5, '高属性因子 = 表值 1.50');
-    const prod = (m.hp / b.hp) * (m.def / b.def) * (m.sp / b.sp) * (m.mp / b.mp);
+    const factors = [m.hp / b.hp, m.def / b.def, m.sp / b.sp, m.mp / b.mp];
+    const prod = factors.reduce((a, x) => a * x, 1);
     assert.ok(Math.abs(prod - 1 / 1.5) < 1e-9, `四因子之积应 = 1/1.5（实际 ${prod}）`);
-    assert.ok(m.def / b.def >= 1 - 1e-9, `def 不吃 <1 因子（实际 ${m.def / b.def}）`);
-    const lows = [m.hp / b.hp, m.def / b.def, m.sp / b.sp, m.mp / b.mp].filter((f) => f < 1 - 1e-9);
-    assert.equal(lows.length, 1, `恰一个低因子（实际 ${lows.length}）`);
+    // README 五档（D-174）：高属性之外的 4 个因子恰为 略高(>1) / 均衡(=1) / 极低(<1) / 略低(<1)
+    const hi = factors.filter((f) => f > 1 + 1e-9);
+    const eq = factors.filter((f) => Math.abs(f - 1) <= 1e-9);
+    const lo = factors.filter((f) => f < 1 - 1e-9);
+    assert.equal(hi.length, 1, `恰 1 个略高因子（实际 ${hi.length}）`);
+    assert.equal(eq.length, 1, `恰 1 个均衡因子（实际 ${eq.length}）`);
+    assert.equal(lo.length, 2, `恰 2 个负因子（极低/略低，实际 ${lo.length}）`);
+    assert.ok(Math.abs(lo[0] - lo[1]) > 1e-9, `极低 ≠ 略低（实际 ${lo[0]} / ${lo[1]}）`);
+    const d = m.def / b.def;
+    if (d < 1 - 1e-9) defLow += 1;
+    if (d > 1 + 1e-9) defHigh += 1;
   }
+  // D-174：无 def 特判 —— def 既可吃 <1 因子（旧 excludeLow 会确定性换位掉），也可吃 >1 因子
+  assert.ok(defLow > 0, 'def 必须能承担 <1 因子（无 def 特判）');
+  assert.ok(defHigh > 0, 'def 也能承担 >1 因子');
   const m1 = roles.applyTypeModifier(EXP_ATK, createRng(9));
   assert.equal(Math.round(m1.atk * 100) / 100, 22.5, 'atk 基础 15×1.5=22.5');
 });

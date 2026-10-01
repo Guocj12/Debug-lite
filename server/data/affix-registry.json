@@ -34,6 +34,12 @@
   "_hitKindVocabulary": [
     "control", "continuous", "flatTrueDamage"
   ],
+  "_hitValueModes": {
+    "deltaFrom": "固定数值（值 = v，按 sign 定正负）——增益/减益类（如诅咒 −def）",
+    "multFrom": "**持续伤害倍率**（值 = v）：每 tick 按施法者 atk 走常规伤害公式（D-175，1 点伤害不再等于 1 点）",
+    "displacementFrom": "控制类位移格数（值 = v，按 sign 定方向，再乘施法者朝向）",
+    "amountFrom": "附加真实伤害点数（值 = v，直扣 HP）"
+  },
   "_castKindVocabulary": [
     "continuous"
   ],
@@ -92,8 +98,8 @@
       "hitEffect": { "kind": "control", "displacementFrom": "v", "sign": -1, "remaining": 1 }
     },
     "dot": {
-      "domain": "skill", "roll": "int",
-      "hitEffect": { "kind": "continuous", "stat": "hp", "deltaFrom": "v", "sign": -1, "remaining": 3 }
+      "domain": "skill", "roll": "stat",
+      "hitEffect": { "kind": "continuous", "stat": "hp", "multFrom": "v", "remaining": 3 }
     },
     "true_dmg": {
       "domain": "skill", "roll": "int",

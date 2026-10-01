@@ -49,18 +49,19 @@ test('M-1 反镜像只映射四个方向动作，其余原样（含未登记动�
 });
 
 test('M-2 mirrorSnapshot：只翻 x/facing/位移，归属与其他字段不变，且不改动入参', () => {
+  // D-174：快照 `x` = 格序号（0..cells−1 = 0..15）→ 镜像是 (cells−1) − x
   const snap = {
     tick: 7,
-    self: { hp: 90, x: 800, facing: -1, baseHp: 100, effects: [{ uid: 'e1', kind: 'move', displacement: -2, remaining: 1 }] },
-    enemy: { hp: 80, x: 224, facing: 1, baseHp: 100, effects: [] },
+    self: { hp: 90, x: 12, facing: -1, baseHp: 100, effects: [{ uid: 'e1', kind: 'move', displacement: -2, remaining: 1 }] },
+    enemy: { hp: 80, x: 3, facing: 1, baseHp: 100, effects: [] },
     bases: { self: { hp: 100, maxHp: 100, def: 64 }, enemy: { hp: 100, maxHp: 100, def: 64 } },
     field: { fieldPx: 1024, cellPx: 64 },
   };
   const before = JSON.parse(JSON.stringify(snap));
   const out = runner.mirrorSnapshot(snap);
   assert.equal(out.tick, 7);
-  assert.equal(out.self.x, 224, 'x → fieldPx − x');
-  assert.equal(out.enemy.x, 800);
+  assert.equal(out.self.x, 3, 'x → (cells−1) − x（格序号镜像；12 → 3）');
+  assert.equal(out.enemy.x, 12);
   assert.equal(out.self.facing, 1, 'facing → −facing');
   assert.equal(out.enemy.facing, -1);
   assert.equal(out.self.effects[0].displacement, 2, '位移取反');

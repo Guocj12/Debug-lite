@@ -60,16 +60,16 @@ const COST_CAP = 35; // 单技能单维资源上限（§6.1）
 const CD_CAP = 8;
 const ETA = 0.4;
 
-const levelFactor = (L) => 1 + 0.05 * (L - 2);
+const levelFactor = () => 1; // D-175：弹幕等级**只影响弹幕互撞**，与伤害系数完全独立（模型里不再有等级修正）
 const cdTier = (adv) => (adv < 5 ? 1 : adv < 9 ? 2 : adv < 14 ? 3 : adv < 20 ? 4 : adv < 26 ? 5 : adv < 32 ? 6 : 7);
 
-// 覆盖价值：近战 = 格数 / 平射 = 弹幕数 / 定点 = Σ(1−衰减)^|偏移| / 位移 = 距离（造成伤害时）
+// 覆盖价值：近战 = 格数 / 平射 = 弹幕数 / 定点 = Σ(1−衰减×|偏移|)（**线性**，与 core/bullets.js 一致）/ 位移 = 距离（造成伤害时）
 function coveredValue(sk) {
   if (sk.type === 'melee') return sk.range[1] - sk.range[0] + 1;
   if (sk.type === 'straight') return sk.bulletCount;
   if (sk.type === 'vertical') {
     let s = 0;
-    for (let off = sk.area[0]; off <= sk.area[1]; off += 1) s += Math.pow(1 - sk.falloff, Math.abs(off));
+    for (let off = sk.area[0]; off <= sk.area[1]; off += 1) s += Math.max(0, 1 - sk.falloff * Math.abs(off));
     return s;
   }
   return sk.dealDamage ? sk.distance : 0;
@@ -101,7 +101,12 @@ function effectsValue(form, base, ex, ep) {
     if (h.kind === 'control' && h.displacementFrom) out.control = (h.params ? h.params[h.displacementFrom] : 0) * 3; // 击退/拉近 1 格 = 3
     else if (h.kind === 'control') out.control = h.remaining * 10;                                                   // 眩晕 1 tick = 10
     else if (h.kind === 'continuous' && h.stat === 'def') out.defDown = (Math.abs(h.delta) / (B0.def + ep.K)) * ep.hit * h.remaining;
-    else if (h.kind === 'continuous' && h.stat === 'hp') out.dot = Math.abs(h.delta) * h.remaining;                  // 直扣 HP：1 点 = 1
+    // 持续伤害（D-175）：效果自带**倍率**（写在词条/内联 spec 的 `v` 里），每 tick 按施法者 atk 走常规伤害公式
+    //   ⇒ 每 tick 期望 = B0 基准命中 hit × 倍率；总价值 = 每 tick × 剩余 tick
+    else if (h.kind === 'continuous' && h.stat === 'hp') {
+      const m = h.params && h.params.v !== undefined ? h.params.v : (h.mult === undefined ? 0 : h.mult);
+      out.dot = m * ep.hit * h.remaining;
+    }
   }
   for (const c of (ex && ex.castEffects) || []) {
     const denom = c.stat === 'atk' ? B0.atk : c.stat === 'def' ? B0.def + ep.K : B0[c.stat];
@@ -111,13 +116,16 @@ function effectsValue(form, base, ex, ep) {
 }
 
 // 由 adv 推导 cost/CD（§6.1：CD 档位 → cost = adv/η → 资源 = cost − 4×CD → 按类型分配；超上限则 CD +1）
+//   2026-09-28（D-175）：两维类型（平射 30/70）的分配改为「**先按份额取整一维，另一维吃掉余数**」——
+//   修前两维各自独立取整会让 Σ维度 > cost（实测平射 res=5 → 2+4=6 ⇒ η 掉到 0.36），与"每点资源收益恒定"自相矛盾。
 function derive(formType, adv) {
   let cd = cdTier(adv);
   const cost = Math.max(1, Math.round(adv / ETA));
   let res = cost - 4 * cd;
   while (res > COST_CAP && cd < CD_CAP) { cd += 1; res = cost - 4 * cd; }
-  const sp = Math.max(0, Math.round(res * SPLIT[formType].sp));
-  const mp = Math.max(0, Math.round(res * SPLIT[formType].mp));
+  const spShare = SPLIT[formType].sp;
+  const sp = Math.max(0, Math.round(res * spShare));
+  const mp = Math.max(0, res - sp);
   return { cd, sp, mp, cost: sp + mp + 4 * cd };
 }
 

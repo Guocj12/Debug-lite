@@ -25,6 +25,8 @@ const { BOX_TIMES_MAX } = require('../server/box.js');
 const { replayLine } = require('../cli/index.js');
 const QUALITIES = require('../server/data/qualities.json').qualities;
 const SKILL_TYPES = Object.fromEntries(require('../server/data/skill-templates.json').skillTemplates.map((t) => [t.id, t.type]));
+// D-174：AI 快照的 `x` 是**格序号**，故预设阈值按格给定（原 px 口径 ÷ 格宽）
+const CELL_PX = require('../server/data/battle-config.json').cellPx;
 
 const TIERS = QUALITIES.map((q) => q.id); // 段位序 = 品质表顺序（unlock.js 同源口径）
 const PRESETS = ['steady', 'aggressive', 'kite'];
@@ -160,7 +162,7 @@ const cmp = (op, left, right) => ({ type: 'cmp', op, left, right });
 const arith = (op, left, right) => ({ type: 'arith', op, left, right });
 const ifElse = (cond, thenN, elseN) => ({ type: 'if', cond, then: thenN, else: elseN });
 const programOf = (body) => ({ type: 'program', version: 2, body });
-const gapExpr = () => arith('-', get('enemy.x'), get('self.x')); // 敌我 x 差（正 = 敌在右侧）
+const gapExpr = () => arith('-', get('enemy.x'), get('self.x')); // 敌我 x 差（正 = 敌在右；单位 = 格，D-174）
 
 // slots = [{action:'skill:skill1', type:'straight'}, ...]（顺序 = 出战槽 1..3）
 function buildPreset(preset, slots) {
@@ -171,24 +173,24 @@ function buildPreset(preset, slots) {
     // 稳健：残血先防 → 拉近到中距 → 背后则转身靠近 → 否则主技能开火
     return programOf(seq([
       ifElse(cmp('<', get('self.hp'), lit(30)), seq([act('defend')]),
-        seq([ifElse(cmp('>', gapExpr(), lit(224)), seq([act('move_right')]),
-          seq([ifElse(cmp('<', gapExpr(), lit(-224)), seq([act('move_left')]),
+        seq([ifElse(cmp('>', gapExpr(), lit(224 / CELL_PX)), seq([act('move_right')]),
+          seq([ifElse(cmp('<', gapExpr(), lit(-224 / CELL_PX)), seq([act('move_left')]),
             seq([act(p1)]))]))])),
     ]));
   }
   if (preset === 'aggressive') {
     // 激进：贴脸为主，够近就交二技能，残血也继续压上（不给自己留退路）
     return programOf(seq([
-      ifElse(cmp('>', gapExpr(), lit(96)), seq([act('move_right')]),
-        seq([ifElse(cmp('<', gapExpr(), lit(-96)), seq([act('move_left')]),
+      ifElse(cmp('>', gapExpr(), lit(96 / CELL_PX)), seq([act('move_right')]),
+        seq([ifElse(cmp('<', gapExpr(), lit(-96 / CELL_PX)), seq([act('move_left')]),
           seq([act(p2)]))])),
     ]));
   }
   // 风筝：太近就拉开（有位移技能用位移，否则后撤）→ 太远就靠近 → 射程内开火
   const escape = slots[2].type === 'displacement' ? p3 : 'move_left';
   return programOf(seq([
-    ifElse(cmp('<', gapExpr(), lit(224)), seq([act(escape)]),
-      seq([ifElse(cmp('>', gapExpr(), lit(448)), seq([act('move_right')]),
+    ifElse(cmp('<', gapExpr(), lit(224 / CELL_PX)), seq([act(escape)]),
+      seq([ifElse(cmp('>', gapExpr(), lit(448 / CELL_PX)), seq([act('move_right')]),
         seq([act(p1)]))])),
   ]));
 }

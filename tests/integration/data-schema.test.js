@@ -296,6 +296,11 @@ test('DS-10 T-DC-1 破坏矩阵：12 类结构违规逐一 fail（分支覆盖�
     ['重复槽衰减越界', 'qualities.json', (q) => { q.slotRepeatDecay = 1.5; }, 'slotRepeatDecay'],
     ['专家修饰乘性不守恒', 'role-templates.json', (t) => { t.typeModifiers.expert.high = 1.7; }, 'typeModifiers'],
     ['角色插件点数标量退役', 'role-templates.json', (t) => { t.roleTemplates[0].pluginPoints = 3; }, 'pluginPoints 已退役'],
+    // D-174：专家五档结构 + excludeLow 退役
+    ['专家五档被破坏（两个正因子，守恒不变）', 'role-templates.json', (t) => { t.typeModifiers.expert.spread = [1.2, 0.6666666666666666, 0.6666666666666666, 1.25]; }, '五档'],
+    ['excludeLow 已退役', 'role-templates.json', (t) => { t.typeModifiers.excludeLow = ['def']; }, 'excludeLow'],
+    // D-174 硬化：专属覆盖的弹幕等级同样受 1..4 约束（1 最高；穿甲曾写成 5 = 方向反了）
+    ['专属覆盖 bulletLevel 越界', 'plugins.json', (p) => { p.plugins.find((x) => x.id === 'ex_pierce').exclusive.overrides.bulletLevel = 5; }, 'bulletLevel'],
   ];
   for (const [label, file, mutate, keyword] of cases) {
     withRoot((root) => {

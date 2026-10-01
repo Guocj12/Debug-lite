@@ -197,6 +197,14 @@ test('B26 projectSnapshot：baseHp=基地当前血量（≠ maxHp）；max*/cool
   }
   assert.equal(typeof snap.bases.self.hp, 'number', 'bases.self.hp（基地血量可读路径）');
   assert.equal(typeof snap.bases.enemy.hp, 'number', 'bases.enemy.hp');
+  // D-174：AI 快照的 `x` 是**格序号**（0..cells−1），不是 px（引擎内部/回放帧/档案仍是 px）
+  const field = require('../../server/core/field.js');
+  assert.equal(snap.self.x, field.cellOf(p1.x), 'self.x = field.cellOf(引擎 px)');
+  assert.ok(snap.self.x >= 0 && snap.self.x < field.CELLS, `self.x 应在 [0,${field.CELLS - 1}]（实际 ${snap.self.x}）`);
+  b.state.players.p1.x = 992;
+  assert.equal(runner.projectSnapshot(b.state, 'p1').self.x, field.CELLS - 1, 'x=992（场最右）→ 末格');
+  b.state.players.p1.x = p1.x;
+  assert.equal(runner.projectSnapshot(b.state, 'p1').self.x, field.cellOf(p1.x), '恢复后与 cellOf 一致');
   // D-138 防回归：快照**不投影** `bullets`（AI 无法观测弹幕＝设计，弹幕当 tick 全解算）
   assert.ok(!('bullets' in snap), 'snapshot 不得包含 bullets 字段（D-138）');
   assert.deepEqual(Object.keys(snap).sort(), ['bases', 'enemy', 'field', 'self', 'tick'], 'snapshot 顶层字段固定（无 bullets）');

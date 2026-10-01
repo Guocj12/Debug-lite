@@ -47,8 +47,10 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-09-25：D-172——AI 库可编辑 + 草稿状态 + 双校验（`PUT /me/ai/:aiId`、`POST /me/ai/validate`、`ai.items[].status`、`ai_is_draft`）；
   //   2026-09-28：D-173——内容数值设计 v2 全量落地（等价点数配平 / 乘性守恒类型修饰 / 插槽 75-10-15 + 万能槽 + 0 槽 / 固定 pointCost /
   //     thorns·critMul·lowHpAtk 三机制 / critBonus / range 不随品质浮动）；
+  //   2026-09-28：D-174——四项口径收口（专家 README 五档 + 取消 def 特判 / 定点索敌对方格 / AI 只读格坐标 / 衰减线性）；
+  //   2026-09-28：D-175——弹幕等级与伤害解耦（等级只影响互撞，删除 lf 并重导 20 条形态）+ 持续伤害倍率化（按 atk 走常规伤害公式）；
   //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号））
-  assert.equal(decided.size, 125, `D 编号数量应为 125（decisions.md 无跳段之外的编号）`);
+  assert.equal(decided.size, 127, `D 编号数量应为 127（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

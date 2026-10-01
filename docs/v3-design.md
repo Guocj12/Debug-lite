@@ -348,6 +348,7 @@ flowchart LR
 
 - `range`：射程（最远落点距离，以角色为起点的格数）。
 - `area`：以落点为基准的范围区间，计算方式同近战 `range`。
+- **落点（D-174）**：**优先取敌方所在格格心**（当该格在"施法者格 → 最远格"的射程覆盖格内）；射程内没有对方角色时取 `clampX(caster.x + 朝向 × range × cellPx)`（最远位置）——两种情况都**照常释放**。
 - **效果作用于范围内的每一格**。
 
 ```jsonc
@@ -616,7 +617,7 @@ AI 程序是一个「产出一连串行动」的协程 AST。前端生成 AST（
 | 节点 | 字段 | 说明 |
 |---|---|---|
 | `literal` | `value` | 数值/布尔常量 |
-| `get` | `path`（**单个字符串**，非 `target`+`field`） | 按白名单路径读取，如 `self.hp` / `enemy.x` / `self.facing` / `field.cellPx` |
+| `get` | `path`（**单个字符串**，非 `target`+`field`） | 按白名单路径读取，如 `self.hp` / `enemy.x`（**格序号 0..15**，D-174）/ `self.facing` / `field.cellPx` |
 | `var` | `name`, `value`（**非 `init`**） | 声明局部变量（跨 tick 持久；已存在则跳过赋值） |
 | `set` | `name`, `value` | 给局部变量赋值 |
 | `getVar` | `name` | 读取局部变量 |

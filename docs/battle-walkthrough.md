@@ -50,7 +50,7 @@
 |---|---|---|---|
 | `qualities.json` | items | `statRange` / `roleSlotRange` / `skillSlotRange` / `pluginPointsRange` / `tiers` | rare：`[1.00,1.25]` / `[1,3]` / `[0,2]` / `[4,6]` / 三档 |
 | `role-templates.json` | roles | `baseStats` / `regen` / `typeModifiers` | 均衡 `95/15/8/73/62`、`{mp:2,sp:2}` |
-| `skill-templates.json` | skills | `baseMultiplier` / `baseCost` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `animKey` | 平射 `1.2`、`mp4+sp2`、`cd1`、`L3`、`range 5` |
+| `skill-templates.json` | skills | `baseMultiplier` / `baseCost` / `cooldown` / `bulletLevel` / 类型参数 / `falloff` / `animKey` | 平射 `1.2`、`mp3+sp2`、`cd1`、`L3`、`range 5` |
 | `plugins.json` | items | `slot` / `affixes` / `pointCost`（角色）/ `exclusive{}`（技能专属） | `rp_atk_pct` tier1 → `+8.16%`、1 点；`ex_longsword` → 近战范围 `[0,3]`、sp 24 / CD 4 |
 | `items-config.json` | items | `dropRates` / `kindWeights` | 绿 .55 / 类别权重 1:1:2:2 |
 
@@ -207,6 +207,7 @@
 > **设计期示例（已按真实引擎复算，与黄金战斗的 t1 无关）**：原 §3.2 讲的是"位移伤害并入弹幕系统"——位移不再是特殊技能，它生成的路径弹幕与敌方 AOE 走**完全相同**的抵消流程，无需任何特判。这个**机制结论仍然成立**，数值改为以下实测值（`node .audit/walkthrough.js` 第 [5b] 段）：
 >
 > - P1 突击盾 224→480 生成 5 枚路径弹幕 **L2** @224/288/352/416/480；P2 火球术（vertical、range 8、起点 800、facing −1）落点 `clampX(800 − 8×64) = 288`、AOE 覆盖格心 352/288/224（**L3**）。
+>   （**D-174 复核**：定点技能现在优先取"敌方所在格格心"；本例 P1 在格 3、P2 在格 12 朝左 ⇒ 前方射程覆盖格 = 格 4…12，**不含**格 3 ⇒ 落点仍回落最远位置 `288`，上式成立。）
 > - 真实解算 → **三次抵消** `@224 / @288 / @352`，每次都是 **P1 的 L2 穿掉 P2 的 L3**（等级数值小者胜，D-28）→ 三枚 AOE 全部被消，本 tick 无命中。
 > - 旧文两处说法不成立、已修正：① "P1 未被火球命中"**只在位移弹幕把三枚 AOE 全部抵消的前提下成立**；若 P1 留在起点不动、或只放火球（无抵消），未被消掉的 AOE 弹幕**会命中生成格上的 P1**（实测命中 @224，伤害 `19×0.8×(1−8/48) = 12.667 → 12`）。② 位移路径弹幕命中 P2 的伤害是 `12×1.3×(1−9/49) = 12.735 → 12`（不是 10）。
 

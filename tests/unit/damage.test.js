@@ -133,8 +133,8 @@ test('DM-8 附加效果：stun/knockback/pull/dot → effects.addEffect（伤害
   assert.ok(stun, 'stun → control 0');
   const kb = p2.effects.find((e) => e.kind === 'control' && e.displacement > 0);
   assert.ok(kb, 'knockback → control +1 格');
-  const dot = p2.effects.find((e) => e.kind === 'continuous' && e.stat === 'hp' && e.delta < 0);
-  assert.ok(dot, 'dot → continuous hp −3');
+  const dot = p2.effects.find((e) => e.kind === 'continuous' && e.stat === 'hp' && e.mult === 3);
+  assert.ok(dot, 'dot → continuous hp 倍率 3（D-175：按施法者 atk 走常规伤害公式，不再是固定数值）');
   assert.equal(r.dmg, 9, '附加效果不影响伤害数值');
 });
 

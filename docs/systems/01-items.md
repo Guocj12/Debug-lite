@@ -85,7 +85,8 @@
 | both | `crit_chance` | stat | `special.critChance` + `skillOp.addSpecial` |
 | both | `lifesteal` | stat | `special.lifesteal` + `skillOp.addSpecial` |
 | skill | `mult_up` / `cooldown_down` / `range_plus` / `bullet_plus` / `level_up` / `distance_plus` / `cost_down` | stat / int | `skillOp`（见 `03-skills` §4.2） |
-| skill | `stun` / `knockback` / `pull` / `dot` / `true_dmg` | int | `hitEffect`（引擎步骤 9） |
+| skill | `stun` / `knockback` / `pull` / `true_dmg` | int | `hitEffect`（引擎步骤 9） |
+| skill | `dot` | stat | `hitEffect`（引擎步骤 9 入队；**倍率 `multFrom=v`**，引擎步骤 2 每 tick 按施法者 `atk` 走常规伤害公式，D-175） |
 | skill | `cast_buff` | int | `castEffect`（引擎步骤 6 入队，下一 tick 起效） |
 
 > `true_dmg` 的真实语义是**命中附加 `v` 点真实伤害（直扣 `hp`）**，不是"把本次伤害改为真实伤害"（见 `items-data.md` §6 备注）。

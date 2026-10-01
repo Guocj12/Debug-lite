@@ -351,7 +351,7 @@
     "x": 288,
     "facing": 1,
     "hp": 100,
-    "mp": 37,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -450,7 +450,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t4:17",
-     "msg": "p1 hp 100->100 mp 36->37 sp 58->60",
+     "msg": "p1 hp 100->100 mp 37->38 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -478,7 +478,7 @@
     "x": 352,
     "facing": 1,
     "hp": 100,
-    "mp": 38,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -524,7 +524,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t5:13",
-     "msg": "p1 hp 100->100 mp 37->38 sp 60->60",
+     "msg": "p1 hp 100->100 mp 38->39 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -552,7 +552,7 @@
     "x": 352,
     "facing": 1,
     "hp": 100,
-    "mp": 35,
+    "mp": 37,
     "sp": 60
    },
    "p2": {
@@ -656,7 +656,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t6:16",
-     "msg": "p1 hp 100->100 mp 34->35 sp 58->60",
+     "msg": "p1 hp 100->100 mp 36->37 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -684,7 +684,7 @@
     "x": 224,
     "facing": 1,
     "hp": 80,
-    "mp": 36,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -912,7 +912,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t7:26",
-     "msg": "p1 hp 80->80 mp 35->36 sp 60->60",
+     "msg": "p1 hp 80->80 mp 37->38 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -940,7 +940,7 @@
     "x": 224,
     "facing": 1,
     "hp": 80,
-    "mp": 37,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -976,7 +976,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t8:12",
-     "msg": "p1 hp 80->80 mp 36->37 sp 60->60",
+     "msg": "p1 hp 80->80 mp 38->39 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1004,7 +1004,7 @@
     "x": 224,
     "facing": 1,
     "hp": 68,
-    "mp": 38,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -1089,7 +1089,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t9:14",
-     "msg": "p1 hp 68->68 mp 37->38 sp 60->60",
+     "msg": "p1 hp 68->68 mp 39->40 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1117,7 +1117,7 @@
     "x": 160,
     "facing": 1,
     "hp": 68,
-    "mp": 39,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -1163,16 +1163,6 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t10:13",
-     "msg": "p1 hp 68->68 mp 38->39 sp 60->60",
-     "atX": null,
-     "uid": null,
-     "winner": null
-    },
-    {
-     "level": "trace",
-     "channel": "engine",
-     "event": "resource.regen",
-     "cid": "t10:14",
      "msg": "p2 hp 84->84 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
@@ -1191,7 +1181,7 @@
     "x": 160,
     "facing": 1,
     "hp": 48,
-    "mp": 36,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -1409,7 +1399,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t11:25",
-     "msg": "p1 hp 48->48 mp 35->36 sp 58->60",
+     "msg": "p1 hp 48->48 mp 37->38 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1437,7 +1427,7 @@
     "x": 288,
     "facing": 1,
     "hp": 48,
-    "mp": 37,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -1473,7 +1463,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t12:12",
-     "msg": "p1 hp 48->48 mp 36->37 sp 60->60",
+     "msg": "p1 hp 48->48 mp 38->39 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1501,7 +1491,7 @@
     "x": 288,
     "facing": 1,
     "hp": 48,
-    "mp": 38,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -1537,7 +1527,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t13:12",
-     "msg": "p1 hp 48->48 mp 37->38 sp 60->60",
+     "msg": "p1 hp 48->48 mp 39->40 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1565,7 +1555,7 @@
     "x": 224,
     "facing": 1,
     "hp": 48,
-    "mp": 39,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -1611,16 +1601,6 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t14:13",
-     "msg": "p1 hp 48->48 mp 38->39 sp 60->60",
-     "atX": null,
-     "uid": null,
-     "winner": null
-    },
-    {
-     "level": "trace",
-     "channel": "engine",
-     "event": "resource.regen",
-     "cid": "t14:14",
      "msg": "p2 hp 84->84 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
@@ -1639,7 +1619,7 @@
     "x": 224,
     "facing": 1,
     "hp": 16,
-    "mp": 36,
+    "mp": 38,
     "sp": 60
    },
    "p2": {
@@ -1941,7 +1921,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t15:30",
-     "msg": "p1 hp 16->16 mp 35->36 sp 58->60",
+     "msg": "p1 hp 16->16 mp 37->38 sp 58->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -1969,7 +1949,7 @@
     "x": 96,
     "facing": 1,
     "hp": 16,
-    "mp": 37,
+    "mp": 39,
     "sp": 60
    },
    "p2": {
@@ -2005,7 +1985,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t16:12",
-     "msg": "p1 hp 16->16 mp 36->37 sp 60->60",
+     "msg": "p1 hp 16->16 mp 38->39 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2033,7 +2013,7 @@
     "x": 160,
     "facing": 1,
     "hp": 16,
-    "mp": 38,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -2079,7 +2059,7 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t17:13",
-     "msg": "p1 hp 16->16 mp 37->38 sp 60->60",
+     "msg": "p1 hp 16->16 mp 39->40 sp 60->60",
      "atX": null,
      "uid": null,
      "winner": null
@@ -2107,7 +2087,7 @@
     "x": 160,
     "facing": 1,
     "hp": 0,
-    "mp": 39,
+    "mp": 40,
     "sp": 60
    },
    "p2": {
@@ -2195,16 +2175,6 @@
      "channel": "engine",
      "event": "resource.regen",
      "cid": "t18:14",
-     "msg": "p1 hp 0->0 mp 38->39 sp 60->60",
-     "atX": null,
-     "uid": null,
-     "winner": null
-    },
-    {
-     "level": "trace",
-     "channel": "engine",
-     "event": "resource.regen",
-     "cid": "t18:15",
      "msg": "p2 hp 66->66 mp 40->40 sp 59->60",
      "atX": null,
      "uid": null,
@@ -2214,7 +2184,7 @@
      "level": "info",
      "channel": "engine",
      "event": "battle.judge",
-     "cid": "t18:18",
+     "cid": "t18:17",
      "msg": "winner=p2",
      "atX": null,
      "uid": null,
@@ -2224,7 +2194,7 @@
      "level": "info",
      "channel": "engine",
      "event": "battle.end",
-     "cid": "t18:19",
+     "cid": "t18:18",
      "msg": "battle end @tick 18",
      "atX": null,
      "uid": null,

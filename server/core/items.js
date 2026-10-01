@@ -54,18 +54,17 @@ function affixDef(id) {
 }
 
 // 类型修饰（2026-09-28 内容设计 §3.2；**乘性守恒** Π 因子 = 1，schema 强制校验）：
-//   特化 specialized：高属性 ×high，**一个随机低属性** ×low（high×low=1）；
-//   专家 expert：高属性 ×high，其余四维按 spread 洗牌（high×Πspread=1）；
-//   `excludeLow` = 不可作"低属性"的维度（def 的边际价值 ∝ 1/(D+K)，(D+K) 吃不下 <1 的大额补偿），
-//   专家若把 <1 的因子洗到 def → **确定性换位**到某个 ≥1 的维度（不额外消耗随机，守恒不变）。
+//   特化 specialized：高属性 ×high（略高），**一个随机低属性** ×low（略低），high×low=1；
+//   专家 expert（README 五档，2026-09-28 用户裁定）：高属性 ×high（极高），其余四维按 spread 洗牌，
+//     各承担『略高 1.20 / 极低 0.6667 / 略低 0.8333 / 均衡 1.00』之一，high×Πspread=1；
+//   **无 def 特判**：五维等权，任何维度都可作高/低属性（旧 `excludeLow` 已退役）。
 // 随机消耗顺序冻结：修饰随机（特化 1 int / 专家 3 int）→ 5 次品质系数 float → 插槽数 → 槽类型 → 点数。
 function applyTypeModifier(template, rng) {
   const base = template.baseStats;
   const stats = { hp: base.hp, atk: base.atk, def: base.def, sp: base.sp, mp: base.mp };
-  const excludeLow = new Set(TYPE_MODIFIERS.excludeLow || []);
   if (template.type === 'specialized') {
     stats[template.highStat] = base[template.highStat] * TYPE_MODIFIERS.specialized.high;
-    const others = FLAT_STATS.filter((k) => k !== template.highStat && !excludeLow.has(k));
+    const others = FLAT_STATS.filter((k) => k !== template.highStat);
     const lowIdx = rng.int(0, others.length - 1);
     stats[others[lowIdx]] = base[others[lowIdx]] * TYPE_MODIFIERS.specialized.low;
   } else if (template.type === 'expert') {
@@ -78,16 +77,6 @@ function applyTypeModifier(template, rng) {
       const tmp = spread[i];
       spread[i] = spread[j];
       spread[j] = tmp;
-    }
-    // def 不可承担 <1 的因子：与某个 ≥1 的维度确定性换位（同一 multiset → 守恒不变）
-    const defIdx = others.indexOf('def');
-    if (defIdx !== -1 && excludeLow.has('def') && spread[defIdx] < 1) {
-      const swapIdx = spread.findIndex((f) => f >= 1);
-      if (swapIdx !== -1) {
-        const tmp = spread[defIdx];
-        spread[defIdx] = spread[swapIdx];
-        spread[swapIdx] = tmp;
-      }
     }
     others.forEach((k, idx) => {
       stats[k] = base[k] * spread[idx];

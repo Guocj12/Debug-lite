@@ -257,6 +257,8 @@ function validateStructure(dataDir, assetsDir) {
   //     · `slotWeights` **不再是角色模板字段**（插槽类型权重改由 qualities.slotTypeWeights 提供，五维均衡）；
   //     · `pluginPoints` 标量字段**退役**（点数由品质 `pluginPointsRange` 掷出）；若仍存在则只做形状校验；
   //     · `typeModifiers` 改为**逐属性乘性因子**并要求**乘性守恒**（Π 因子 = 1），见 docs/content-design.md §3.2。
+  //       2026-09-28（D-174 用户裁定）：专家 = README 五档（极高 high / 略高 / 极低 / 略低 / 均衡），
+  //       **删除 `excludeLow`**（def 等权，可作任何档位）。
   const tm = tables.roleTable ? tables.roleTable.typeModifiers : null;
   const EPS_CONSERVE = 1e-6;
   if (!tm) {
@@ -274,12 +276,19 @@ function validateStructure(dataDir, assetsDir) {
       problems.push('typeModifiers.expert 需 {high, spread[4]} 数值');
     } else if (Math.abs(tm.expert.high * prodOf(tm.expert.spread) - 1) > EPS_CONSERVE) {
       problems.push(`typeModifiers.expert 乘性不守恒：high×Πspread = ${tm.expert.high * prodOf(tm.expert.spread)}，应为 1`);
+    } else {
+      // 五档结构（D-174：README 口径）——高属性之外的 4 个因子必须恰为
+      // 『略高(>1) / 均衡(=1) / 极低(<1) / 略低(<1)』且两个负因子不相等（极低 ≠ 略低）
+      const hi = tm.expert.spread.filter((f) => f > 1);
+      const eq = tm.expert.spread.filter((f) => f === 1);
+      const lo = tm.expert.spread.filter((f) => f < 1);
+      if (hi.length !== 1 || eq.length !== 1 || lo.length !== 2) {
+        problems.push(`typeModifiers.expert 应为 README 五档（略高 1 / 均衡 1 / 极低 1 / 略低 1），实得 高${hi.length}/均${eq.length}/低${lo.length}`);
+      } else if (Math.abs(lo[0] - lo[1]) < EPS_CONSERVE) {
+        problems.push('typeModifiers.expert 的『极低』与『略低』不得同值（README 五档口径）');
+      }
     }
-    // 低属性候选排除表（def 的边际价值非线性，(D+K) 吃不下大额负补偿 → 不可作低属性）
-    if (tm.excludeLow !== undefined
-      && (!Array.isArray(tm.excludeLow) || !tm.excludeLow.every((k) => ['hp', 'atk', 'def', 'sp', 'mp'].includes(k)))) {
-      problems.push('typeModifiers.excludeLow 应为五维子集数组');
-    }
+    if (tm.excludeLow !== undefined) problems.push('typeModifiers.excludeLow 已退役（D-174：无 def 特判，五维等权）');
   }
   const ROLE_SLOT_KEYS = ['hp', 'atk', 'def', 'sp', 'mp'];
   const roleIds = new Set();
@@ -359,6 +368,12 @@ function validateStructure(dataDir, assetsDir) {
           }
           if (ex.overrides !== undefined && (typeof ex.overrides !== 'object' || ex.overrides === null || Array.isArray(ex.overrides))) {
             problems.push(`${p.id}: exclusive.overrides 应为对象`);
+          }
+          // D-174 硬化：专属覆盖的 `bulletLevel` 也必须落在 1..4（**1 最高**）。
+          //   此前只校验 skill-templates，导致 `ex_pierce` 写成 5（= 反而最弱，方向反了）能通过。
+          const lv = ex.overrides && ex.overrides.bulletLevel;
+          if (lv !== undefined && (!isInt(lv) || lv < 1 || lv > 4)) {
+            problems.push(`${p.id}: exclusive.overrides.bulletLevel 须为 1..4 整数（1 最高；D-174）`);
           }
           if (ex.hitEffects !== undefined && !Array.isArray(ex.hitEffects)) problems.push(`${p.id}: exclusive.hitEffects 应为数组`);
           if (ex.castEffects !== undefined && !Array.isArray(ex.castEffects)) problems.push(`${p.id}: exclusive.castEffects 应为数组`);

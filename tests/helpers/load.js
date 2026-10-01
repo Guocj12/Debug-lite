@@ -27,6 +27,8 @@ const loadoutMod = require('../../server/loadout.js');
 const battleApi = require('../../server/battle.js');
 const boxMod = require('../../server/box.js');
 const rankedMod = require('../../server/ranked.js');
+// D-174：AI 快照 `x` 为格序号 → 程序里的距离阈值必须按"格"给（原 px 口径 ÷ 格宽）
+const CELL_PX = require('../../server/data/battle-config.json').cellPx;
 const archiveMod = require('../../server/store/archive.js');
 const ledger = require('../../server/store/ledger.js');
 const rankingConfig = require('../../server/data/rating-config.json');
@@ -304,9 +306,10 @@ function buildAiProgram(seed, types) {
   const rng = new SeededRng((seed ^ 0x5bf03635) >>> 0);
   const preset = rng.pick(PRESETS);
   const t = Array.isArray(types) && types.length === 3 ? types : ['straight', 'straight', 'straight'];
-  const baseRange = t[0] === 'melee' ? 32 : t[0] === 'vertical' ? 64 : 224;
-  const closeDistance = rng.int(48, 160);
-  const farDistance = rng.int(baseRange, baseRange + 256);
+  const baseRange = t[0] === 'melee' ? 32 : t[0] === 'vertical' ? 64 : 224; // px（保留原探针口径）
+  // D-174：快照 `x` 已改为**格序号** → 阈值统一 ÷ CELL_PX 换成格；两次抽取顺序/范围不变（仅换单位）
+  const closeDistance = rng.int(48, 160) / CELL_PX;
+  const farDistance = rng.int(baseRange, baseRange + 256) / CELL_PX;
   const retreat = t[2] === 'displacement' ? 'skill:skill3' : 'move_left';
   const hpFloor = rng.int(18, 44);
   const primary = rng.int(1, 3);

@@ -165,7 +165,7 @@ test('IT-7 技能物品生成：可随机参数 × 系数取整 + 下限（S-1 �
   assert.equal(item3.params.multiplier, 1.32, 'S-1a');
   // 不随品质：bulletLevel/cost/falloff 恒等（S-1j/k/l）
   assert.equal(item3.params.bulletLevel, 3, 'S-1j');
-  assert.deepEqual(item3.params.cost, { hp: 0, mp: 4, sp: 2 }, 'S-1k');
+  assert.deepEqual(item3.params.cost, { hp: 0, mp: 3, sp: 2 }, 'S-1k');
   assert.equal(item3.params.falloff, 0, 'S-1l');
   // cooldown 下限 0（S-1h 语义）：3×0.1=0.3 → 0
   const rng01 = { float: () => 0.1, int: (lo, hi) => lo, pick: (a) => a[0] };
@@ -315,17 +315,18 @@ function stubSeq(values) {
   return { float: () => values[i++], int: (lo, hi) => values[i++], pick: (a) => a[0] };
 }
 
-test('IT-15 开箱角色物品套用类型修饰（乘性守恒 + 逐属性因子；2026-09-28 §3.2）', () => {
+test('IT-15 开箱角色物品套用类型修饰（乘性守恒 + 逐属性因子；2026-09-28 §3.2 / D-174）', () => {
   const TM = require('../../server/data/role-templates.json').typeModifiers;
-  // 特化·攻击 rare：高属性 atk 15×1.30=19.5；低属性候选 = 五维 − 高属性 − excludeLow(def) = [hp, sp, mp]
+  // 特化·攻击 rare：高属性 atk 15×1.30=19.5；低属性候选 = 五维 − 高属性 = [hp, def, sp, mp]（D-174：无 def 特判）
   //   stubSeq 顺序：1 int（低属性索引）→ 5 float（品质系数）→ slotCount int → 槽 float ×N → pluginPoints float
-  const lowMp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([2, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.deepEqual(lowMp.stats, { hp: 95, atk: 20, def: 8, sp: 73, mp: 48 }, '19.5→20；低属性 mp 62×0.7692=47.69→48');
+  const lowSp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([2, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.deepEqual(lowSp.stats, { hp: 95, atk: 20, def: 8, sp: 56, mp: 62 }, '19.5→20；低属性 sp 73×0.7692=56.15→56');
   const lowHp = it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
   assert.deepEqual(lowHp.stats, { hp: 73, atk: 20, def: 8, sp: 73, mp: 62 }, '低属性随机：hp 95×0.7692=73.08→73');
-  // 专家·攻击 rare：高属性 atk 15×1.50=22.5→23；spread [1/1.5,1,1,1] 经 FY（ints 全 0）→ [1,1,1,2/3]，落 mp
+  // 专家·攻击 rare：高属性 atk 15×1.50=22.5→23；spread [1.2,2/3,5/6,1] 经 FY（ints 全 0）→ [2/3,5/6,1,1.2]
+  //   others = [hp, def, sp, mp] → hp ×2/3 / def ×5/6 / sp ×1 / mp ×1.2（五档，D-174）
   const exp = it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.deepEqual(exp.stats, { hp: 95, atk: 23, def: 8, sp: 73, mp: 41 }, '专家 atk 23；spread 四因子各一次（乘性守恒）');
+  assert.deepEqual(exp.stats, { hp: 63, atk: 23, def: 7, sp: 73, mp: 74 }, '专家 atk 23；四因子各一次（乘性守恒）');
   // 均衡不变（零漂移）：不消耗修饰随机
   assert.deepEqual(it.generateRoleItem(ROLE.role_bal, 'rare', stubSeq([1.12, 1.08, 1.05, 1.20, 1.02, 0, 0, 0, 0])).stats,
     { hp: 106, atk: 16, def: 8, sp: 88, mp: 63 }, 'balanced 不消耗修饰随机');
@@ -352,10 +353,13 @@ test('IT-15 开箱角色物品套用类型修饰（乘性守恒 + 逐属性因�
   assert.equal(it.generateRoleItem(ROLE.role_spc_atk, 'rare', stubSeq([0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 24, '19.5×1.25=24.375→24');
   assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1.00, 1, 1, 1, 1, 0, 0, 0])).stats.atk, 23, '22.5×1.00→23');
   assert.equal(it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([0, 0, 0, 1, 1.25, 1, 1, 1, 0, 0, 0])).stats.atk, 28, '22.5×1.25=28.125→28');
-  // def 不可作低属性：特化·防御的低属性候选不含 def（excludeLow）；专家若把 <1 因子洗到 def 会确定性换位
-  assert.deepEqual(TM.excludeLow, ['def'], 'excludeLow 声明');
-  const expDefHigh = it.generateRoleItem(ROLE.role_exp_def, 'rare', stubSeq([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
-  assert.ok(expDefHigh.stats.def >= 8, `def 不会被 <1 因子命中（实际 ${expDefHigh.stats.def}）`);
+  // D-174：**无 def 特判**（excludeLow 已退役）——def 既可作高属性，也可承担 <1 因子
+  assert.equal(TM.excludeLow, undefined, 'excludeLow 已退役（无 def 特判）');
+  // 特化·防御：高属性是 def；低属性候选 = [hp, atk, sp, mp] → index 3 = mp
+  assert.equal(it.generateRoleItem(ROLE.role_spc_def, 'rare', stubSeq([3, 1, 1, 1, 1, 1, 0, 0, 0, 0])).stats.mp, 48, '特化低属性可落任意维度（含 def 之外的全部）');
+  // 专家·攻击：FY ints=[3,0,0] → spread [2/3,5/6,1.2,1] → others [hp,def,sp,mp] ⇒ def ×5/6 < 1（旧口径会换位）
+  const expDefLow = it.generateRoleItem(ROLE.role_exp_atk, 'rare', stubSeq([3, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0]));
+  assert.equal(expDefLow.stats.def, 7, 'def 可承担 <1 因子：8×5/6=6.67→7（无 def 特判）');
 });
 
 test('IT-16 掉落池配置：drop=false 不进池 / dropWeight 同类加权 / 缺省 true+1（旧表兼容）', () => {

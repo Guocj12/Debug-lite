@@ -9,13 +9,13 @@
       "unlockTier": "common", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_straight", "name": "平射", "type": "straight",
-      "baseMultiplier": 1.2, "baseCost": { "hp": 0, "mp": 4, "sp": 2 }, "cooldown": 1,
+      "baseMultiplier": 1.2, "baseCost": { "hp": 0, "mp": 3, "sp": 2 }, "cooldown": 1,
       "bulletLevel": 3, "range": 5, "bulletCount": 1, "falloff": 0,
       "animKey": "skill_straight", "sfxKey": "cast_straight",
       "unlockTier": "common", "drop": true, "dropWeight": 1 },
 
     { "id": "skill_vertical", "name": "定点", "type": "vertical",
-      "baseMultiplier": 1.0, "baseCost": { "hp": 0, "mp": 3, "sp": 0 }, "cooldown": 1,
+      "baseMultiplier": 1.0, "baseCost": { "hp": 0, "mp": 1, "sp": 0 }, "cooldown": 1,
       "bulletLevel": 4, "range": 5, "area": [0, 0], "falloff": 0.2,
       "animKey": "skill_vertical", "sfxKey": "cast_vertical",
       "unlockTier": "common", "drop": true, "dropWeight": 1 },

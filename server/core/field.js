@@ -75,7 +75,8 @@ function makeField(logger) {
     return hit;
   }
 
-  return { CELL_PX, FIELD_PX, ACTOR_HALF, MIN_GAP_PX, START_X, START_FACING, BASE_DEF, clampX, cellOf, xCenter, cellRange, baseOf, touchesBase };
+  //   `CELLS` 供上层换算格序号（D-174：AI 快照 `x` = 格序号；镜像 `x' = (CELLS−1) − x`）
+  return { CELL_PX, FIELD_PX, CELLS, ACTOR_HALF, MIN_GAP_PX, START_X, START_FACING, BASE_DEF, clampX, cellOf, xCenter, cellRange, baseOf, touchesBase };
 }
 
 module.exports = Object.assign(makeField(), { withLogger: (logger) => makeField(logger) });

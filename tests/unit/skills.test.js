@@ -28,7 +28,7 @@ test('T-SK-1/S-1a 实例化：倍率随品质浮动，等级/消耗/射程/弹�
   const s = skills.instantiateSkill(PRECISE, 'common', { float: () => 1.10, int: (lo, hi) => lo, pick: (a) => a[0] });
   assert.equal(s.multiplier, 1.32, 'S-1a 1.2×1.10=1.32');
   assert.equal(s.bulletLevel, 3, 'S-1j 不随品质');
-  assert.deepEqual(s.cost, { hp: 0, mp: 4, sp: 2 }, 'S-1k 消耗 copy');
+  assert.deepEqual(s.cost, { hp: 0, mp: 3, sp: 2 }, 'S-1k 消耗 copy');
   assert.equal(s.falloff, 0, 'S-1l');
   // S-1c 射程不随品质浮动（copy）；S-1e 弹幕数同样 copy
   const s2 = skills.instantiateSkill(PRECISE, 'common', { float: () => 0.9, int: (lo, hi) => lo, pick: (a) => a[0] });
@@ -55,6 +55,32 @@ test('T-SK-1/S-6 近战：每格一枚 0 速弹幕（A=736 近战 [0,2]）', () 
   assert.ok(act.bullets.every((b) => b.payload.trueDamage === false), '默认非真伤');
   // coveredCellRanges
   assert.deepEqual(skills.coveredCellRanges(skill, { x: 736, facing: 1 }), [11, 12, 13]);
+});
+
+test('SK-13 定点索敌（D-174）：落点 = 敌方所在格格心；射程内无敌人 → 最远位置（仍释放）', () => {
+  const field = require('../../server/core/field.js');
+  const skill = skills.instantiateSkill(FIREBALL, 'rare', one); // 定点：range 5、area [0,0]、falloff 0.2
+  const caster = { x: 224, facing: 1 };                          // 格 3
+  const maxX = field.xCenter(8);                                 // 224 + 5×64 = 544 → 最远格 8
+  // ① 射程覆盖格内（格 6）有敌人 → 落点 = 该格格心，衰减基准 = 落点格
+  const act = skills.buildSkillAction(skill, caster, { targetX: field.xCenter(6) });
+  assert.equal(act.impactX, field.xCenter(6), '落点 = 敌方所在格格心');
+  assert.deepEqual(act.bullets.map((b) => b.x0), [field.xCenter(6)], '覆盖格 = 落点格（area [0,0]）');
+  assert.deepEqual(act.bullets.map((b) => b.payload.distCells), [0], '衰减基准 = 落点格');
+  assert.deepEqual(skills.coveredCellRanges(skill, caster, { targetX: field.xCenter(6) }), [6], 'coveredCellRanges 同锚点');
+  // ② 射程外（格 9）→ 回落最远位置（不再"释放失败"）
+  assert.equal(skills.buildSkillAction(skill, caster, { targetX: field.xCenter(9) }).impactX, maxX, '射程外 → 最远位置');
+  // ③ 敌人在身后（格 1）→ 不在"前方射程覆盖格"内 → 最远位置
+  assert.equal(skills.buildSkillAction(skill, caster, { targetX: field.xCenter(1) }).impactX, maxX, '身后敌人不参与前方索敌');
+  // ④ 无敌人（缺 ctx / 非法 targetX）→ 最远位置（向后兼容）
+  assert.equal(skills.buildSkillAction(skill, caster).impactX, maxX, '缺省 = 最远位置');
+  assert.equal(skills.buildSkillAction(skill, caster, { targetX: NaN }).impactX, maxX, '非法 targetX 安全回落');
+  // ⑤ 同格敌人 → 落点 = 自身格（射程覆盖格含起点）
+  assert.equal(skills.buildSkillAction(skill, caster, { targetX: caster.x }).impactX, field.xCenter(3), '同格 → 自身格格心');
+  // ⑥ 最远位置 clamp 到场内（贴右边界释放）
+  assert.equal(skills.buildSkillAction(skill, { x: 992, facing: 1 }).impactX, 992, '最远位置 clamp 到场内');
+  // ⑦ 其他类型不受影响（平射/近战/位移无 impactAim）
+  assert.equal(skills.buildSkillAction(skills.instantiateSkill(PRECISE, 'rare', one), caster, { targetX: field.xCenter(6) }).impactX, undefined, '平射不产生 impactX');
 });
 
 test('T-SK-1/S-7 平射：起点释放者所在格、当 tick 飞完射程（D-20/D-22）', () => {
@@ -97,7 +123,7 @@ test('T-SK-1/S-9 位移：移动意图（默认无伤）+ 专属插件改形态�
   assert.equal(bash2.exclusiveId, 'ex_bash');
   assert.equal(bash2.name, '盾突', '技能名 = 专属插件名');
   assert.equal(bash2.multiplier, 0.8, '专属覆盖倍率');
-  assert.equal(bash2.cost.sp, 32, '专属自带代价（§6.4：adv 19.07 → sp32/cd4）');
+  assert.equal(bash2.cost.sp, 33, '专属自带代价（§6.4：adv 19.67 → sp33/cd4）');
   assert.equal(bash2.cooldown, 4);
   assert.deepEqual(bash2.castEffects, [{ kind: 'continuous', stat: 'def', delta: 4, remaining: 2 }], '专属释放类效果');
   assert.equal(act2.move.dealDamage, true);
@@ -125,7 +151,7 @@ test('T-SK-2/S-2 通用插件叠加：词条生效且**零代价**（倍率/冷�
   // S-2b 倍率提升 +15%
   const r1 = skills.applySkillPlugins(base, [mk('sk_mult', [{ id: 'mult_up', params: { v: 0.15 } }])]);
   assert.equal(r1.multiplier, 1.38, 'S-2b 1.2×1.15=1.38');
-  assert.deepEqual(r1.cost, { hp: 0, mp: 4, sp: 2 }, '通用插件零代价（D-173）');
+  assert.deepEqual(r1.cost, { hp: 0, mp: 3, sp: 2 }, '通用插件零代价（D-173）');
   // 百分比冷却缩减 −25%（向下取整，下限 1）：近战 cd3 → floor(3×0.75) = 2
   const meleeCd = skills.applySkillPlugins(skills.instantiateSkill(HEAVY, 'rare', one), [P.sk_cd_down]);
   assert.equal(meleeCd.cooldown, 2, 'cd 3 → 2（−25% 向下取整）');
@@ -165,7 +191,7 @@ test('T-SK-4/S-5 canCast 全分支：成功扣资源写 CD / 冷却 / 资源不�
   // S-5a 成功
   const ok = skills.canCast(base, { ...caster });
   assert.equal(ok.ok, true, 'S-5a');
-  assert.equal(ok.caster.mp, 36, 'mp 40−4');
+  assert.equal(ok.caster.mp, 37, 'mp 40−3');
   assert.equal(ok.caster.sp, 58, 'sp 60−2');
   assert.equal(ok.caster.cooldowns.skill_straight, 1, 'S-5a 写 CD=1');
   // 冷却键 = 槽位键（P1-4）：同一模板两槽 CD 独立
@@ -185,7 +211,7 @@ test('T-SK-4/S-5 canCast 全分支：成功扣资源写 CD / 冷却 / 资源不�
   assert.equal(r3.ok, false, 'S-5c');
   assert.equal(r3.reason, 'resource');
   // S-5e 资源恰等（≥ 语义）
-  const c4 = { hp: 100, mp: 4, sp: 2, cooldowns: {} };
+  const c4 = { hp: 100, mp: 3, sp: 2, cooldowns: {} };
   const r4 = skills.canCast(base, { ...c4 });
   assert.equal(r4.ok, true, 'S-5e');
   assert.equal(r4.caster.mp, 0);
@@ -243,7 +269,7 @@ test('SK-10 补充分支：字符串模板 / coveredCellRanges 各类型 / 空�
   // 无 affixes 字段的插件（`|| []` falsy 分支）：技能不变
   const r1 = skills.applySkillPlugins(skills.instantiateSkill(PRECISE, 'rare', one), [{ id: 'bare', kind: 'skillPlugin', slot: 'general', quality: 'rare' }]);
   assert.equal(r1.multiplier, 1.2, '无词条 → 倍率不变');
-  assert.deepEqual(r1.cost, { hp: 0, mp: 4, sp: 2 }, '无词条 → 无代价');
+  assert.deepEqual(r1.cost, { hp: 0, mp: 3, sp: 2 }, '无词条 → 无代价');
   // hp 消耗技能 canCast
   const hpSkill = { sid: 'hp_cost', templateId: 'hp_cost', type: 'melee', cost: { hp: 5, mp: 0, sp: 0 }, cooldown: 1 };
   const c = skills.canCast(hpSkill, { hp: 8, mp: 0, sp: 0, cooldowns: {} });
@@ -364,7 +390,7 @@ test('SK-13 防御分支：专属覆盖的标量/逐品质/名称兜底 + 算子
   const precise = fake.instantiateSkill(PRECISE, 'rare', one);
   assert.equal(fake.applySkillPlugins(precise, [{ id: 'd', slot: 'general', affixes: [{ id: 'pct_bare', params: { v: 0.1 } }] }]).multiplier, 1.32, 'scalePct 缺 round → precision.stat');
   assert.equal(fake.applySkillPlugins(precise, [{ id: 'e', slot: 'general', affixes: [{ id: 'add_bare', params: { v: 1 } }] }]).bulletCount, 2, 'add 缺 min → 下限 0');
-  assert.deepEqual(fake.applySkillPlugins(precise, [{ id: 'f', slot: 'general', affixes: [{ id: 'cost_bad_dim', params: { v: 0.2 } }] }]).cost, { hp: 0, mp: 4, sp: 2 }, '单维减耗维度未登记 → 整条不生效');
+  assert.deepEqual(fake.applySkillPlugins(precise, [{ id: 'f', slot: 'general', affixes: [{ id: 'cost_bad_dim', params: { v: 0.2 } }] }]).cost, { hp: 0, mp: 3, sp: 2 }, '单维减耗维度未登记 → 整条不生效');
   assert.deepEqual(fake.applySkillPlugins(precise, [{ id: 'g', slot: 'general', affixes: [{ id: 'buff_bare', params: { v: 2 } }] }]).castEffects,
     [{ kind: 'continuous', stat: 'atk', delta: 2, remaining: 2 }], 'castEffect 无 durationFrom → fallbackDuration');
 });

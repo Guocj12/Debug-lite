@@ -67,7 +67,10 @@ function makeEffects(logger) {
     return after - before; // 负数=净减（回滚掉的增量）
   }
 
-  function resolveContinuous(state) {
+  // `opts`（可选）：`{ dotDamage(eff, player) }` —— **持续伤害**（`stat:'hp'` 且效果带 `mult`）的结算回调，
+  //   由引擎注入（本模块 L1 不能依赖 L4 的伤害链路）：收到即按"倍率 × 施法者 atk"走常规伤害公式，
+  //   本函数只负责计时/到期移除（D-175：持续伤害自带倍率，不再是固定数值直扣）。
+  function resolveContinuous(state, opts) {
     // 入口清理：remaining≤0 立即移除、不结算（05-effects §5）；防御性回滚（正常路径已回滚，此处 applied 通常为 0）
     for (const owner of Object.keys(state.players)) {
       const player = state.players[owner];
@@ -86,6 +89,17 @@ function makeEffects(logger) {
         if (eff.kind !== 'continuous') continue;
         if (eff.addedTick === state.tick) continue; // 新效果下一 tick 起效（E-1①）
         const stat = eff.stat;
+        // 持续伤害（D-175）：带 `mult` 的 hp 效果 → 交引擎按常规伤害公式结算（含防御减伤/暴击/吸血/荆棘）
+        if (stat === 'hp' && typeof eff.mult === 'number' && opts && typeof opts.dotDamage === 'function') {
+          opts.dotDamage(eff, player);
+          eff.remaining -= 1;
+          L.trace('effects', 'effect.continuous', `${eff.uid}: hp ×${eff.mult} -> ${player.hp}`, { uid: eff.uid, stat, mult: eff.mult, after: player.hp, remaining: eff.remaining });
+          if (eff.remaining <= 0) {
+            player.effects.splice(player.effects.indexOf(eff), 1);
+            L.debug('effects', 'effect.expire', `${eff.uid} 到期移除`, { uid: eff.uid, stat, mult: eff.mult });
+          }
+          continue;
+        }
         const before = player[stat];
         let after = before + eff.delta;
         if (RESOURCE_STATS.has(stat)) {

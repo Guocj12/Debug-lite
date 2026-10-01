@@ -12,7 +12,7 @@
 **不随品质（`copy`）**：`type`、`bulletLevel`、`range`/`area`/`bulletCount`/`distance`、`cost` 结构、`cooldown`（冷却**模板值**不浮动，随机只影响生成期取整）、`falloff`、`passThroughEnemy`/`dealDamage`/`fullDodgeDuring`、`animKey`/`sfxKey`。
 **已删除**：`bulletSpeed`（D-21）、技能模板的 `slotWeights`（D-111 字段退役）。
 
-以 **平射 `skill_straight`**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp4+sp2`）与 **近战 `skill_melee`**（`mult 1.0 / cd 3 / range [0,2] / L2 / cost sp11`）为例：
+以 **平射 `skill_straight`**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp3+sp2`）与 **近战 `skill_melee`**（`mult 1.0 / cd 3 / range [0,2] / L2 / cost sp11`）为例：
 
 | # | 字段 | 模板值 | 品质系数 | 计算 | 结果 | 说明 |
 |---|---|---|---|---|---|---|
@@ -26,17 +26,17 @@
 | S-1h | `cooldown`（近战） | 3 | 0.10 | 0.3 → 取整 0 → **下限 0** | **0** | 冷却下限 0（`bounds.minCooldown`） |
 | S-1i | `distance`（位移） | 3 | 0.80 | copy | **3** | 位移距离不随品质浮动 |
 | S-1j | `bulletLevel` | 3 | 1.25 | copy | **3** | 不参与随机（专属插件可覆盖） |
-| S-1k | `cost`（平射） | `{mp 4, sp 2}` | 1.25 | copy | `{mp 4, sp 2}` | 只有减耗/专属插件能改 |
+| S-1k | `cost`（平射） | `{mp 3, sp 2}` | 1.25 | copy | `{mp 3, sp 2}` | 只有减耗/专属插件能改 |
 | S-1l | `falloff` | 0 / 0.2 | 任意 | copy | **0 / 0.2** | AOE 衰减固定（定点基础模板 0.2） |
 
 ## 2. 插件叠加（专属改形态 → 通用加词条，通用**零代价**）
 
-以 **平射**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp4+sp2`）为例：
+以 **平射**（`mult 1.2 / cd 1 / range 5 / count 1 / L3 / cost mp3+sp2`）为例：
 
 | 步骤 | 插件 | 效果 | 倍率 | 冷却 | 射程 | 数量 | 等级 | 消耗 |
 |---|---|---|---|---|---|---|---|---|
-| S-2a | 起始（基础模板） | — | 1.20 | 1 | 5 | 1 | 3 | `mp 4 / sp 2` |
-| S-2b | 「增伤 `sk_mult`」（通用） | `mult_up` +8.5% | **1.302** | 1 | 5 | 1 | 3 | `mp 4 / sp 2`（**不变**） |
+| S-2a | 起始（基础模板） | — | 1.20 | 1 | 5 | 1 | 3 | `mp 3 / sp 2` |
+| S-2b | 「增伤 `sk_mult`」（通用） | `mult_up` +8.5% | **1.302** | 1 | 5 | 1 | 3 | `mp 3 / sp 2`（**不变**） |
 | S-2c | 「冷却缩减 `sk_cd_down`」（通用） | 冷却 −25%（向下取整，下限 1） | 1.302 | **1** | 5 | 1 | 3 | 不变 |
 | S-2d | 「射程增强」（通用词条 `range_plus` +2） | 射程 +2 | 1.302 | 1 | **7** | 1 | 3 | 不变 |
 | S-2e | 「等级凝练」（通用词条 `level_up` −1） | 弹幕等级 −1 | 1.302 | 1 | 7 | 1 | **2** | 不变 |
@@ -76,7 +76,7 @@
 | S-5b | 冷却中（`cooldowns[key] = 2`） | **失败**：不扣资源、不产生效果 → 引擎视为空行动 `wait` | `skill.reject`(**warn**, reason=cooldown) |
 | S-5c | 资源不足（平射需 `sp 2`，只有 `sp 1`） | **失败**（同上） | `skill.reject`(**warn**, reason=resource) |
 | S-5d | 冷却恰好在本 tick 递减到 0 | **成功**（递减发生在步骤 1，判定在步骤 6，D-82） | `skill.cast` |
-| S-5e | 资源恰等于消耗（`mp 4 / sp 2` 恰好用完） | **成功**（判定为 `≥`） | `skill.cast` |
+| S-5e | 资源恰等于消耗（`mp 3 / sp 2` 恰好用完） | **成功**（判定为 `≥`） | `skill.cast` |
 
 > **冷却键 = 槽位键**（P1-4）：`canCast(skill, caster, cooldownKey)` 的第三参由引擎传 `skill1..3` → 同一模板装两槽时两槽 CD 独立。
 
@@ -107,9 +107,9 @@ A 在 736（格 11）释放近战 `range [0,2]`：
 
 | 项 | 计算 |
 |---|---|
-| 落点 | `clampX(caster.x + 朝向 × range × 64)`；A 在 224 朝右、range 5 → `224+320 = 544`（格 8） |
+| 落点 | **优先 = 敌方所在格格心**（D-174：该格落在射程覆盖格内时）；射程内无敌人 → `clampX(caster.x + 朝向 × range × cellPx)`。例：A 在 224 朝右、range 5、敌在格 6 → 落点 = 格 6 格心 416；若无敌人 → `224+320 = 544`（格 8） |
 | 覆盖格 | 以落点为基准按 `area` 展开（基础 `[0,0]` → 仅落点格；专属「火球/诅咒」为 `[-1,1]`） |
-| 衰减 | `falloff` = 每向外一格 ×(1−falloff)（基础 0.2 → 外格 ×0.8） |
+| 衰减 | **线性**（D-174）：`系数 = max(0, 1 − falloff × \|格偏移\|)`（基础 0.2 → ±1 格 0.8、±2 格 0.6 …） |
 | 判定基准 | **角色本 tick 位移后的位置**（D-24） |
 | 背击 | **永不触发**（D-51） |
 
@@ -141,9 +141,9 @@ A 在 736（格 11）释放近战 `range [0,2]`：
 | 技能类型 | 专属插件（id） | adv | η |
 |---|---|---|---|
 | 近战 | 长剑 `ex_longsword` / 匕首 `ex_dagger` / 旋风斩 `ex_whirl` / 重锤 `ex_hammer` | 16.00 / 4.85 / 8.00 / 19.00 | 0.400 / 0.404 / 0.400 / 0.396 |
-| 平射 | 穿甲 `ex_pierce` / 连射 `ex_rapid` / 霰弹 `ex_scatter` / 狙击 `ex_snipe` | 6.88 / 4.80 / 14.00 / 9.76 | 0.405 / 0.400 / 0.400 / 0.407 |
-| 定点 | 火球 `ex_fireball` / 箭雨 `ex_rain` / 藤蔓 `ex_vine` / 诅咒 `ex_curse` | 22.88 / 18.00 / 20.80 / 19.38 | 0.401 / 0.400 / 0.400 / 0.404 |
-| 位移 | 盾突 `ex_bash` / 瞬移 `ex_blink` / 突刺 `ex_thrust` / 后撤 `ex_retreat` | 19.07 / 25.00 / 13.45 / 9.00 | 0.397 / 0.397 / 0.396 / 0.391 |
+| 平射 | 穿甲 `ex_pierce` / 连射 `ex_rapid` / 霰弹 `ex_scatter` / 狙击 `ex_snipe` | 5.20 / 4.80 / 14.00 / 8.60 | 0.400 / 0.400 / 0.400 / 0.410 |
+| 定点 | 火球 `ex_fireball` / 箭雨 `ex_rain` / 藤蔓 `ex_vine` / 诅咒 `ex_curse` | 20.80 / 16.00 / 20.00 / 17.30 | 0.400 / 0.400 / 0.400 / 0.402 |
+| 位移 | 盾突 `ex_bash` / 瞬移 `ex_blink` / 突刺 `ex_thrust` / 后撤 `ex_retreat` | 19.67 / 25.00 / 14.00 / 9.00 | 0.401 / 0.397 / 0.400 / 0.391 |
 
 > 完整数值（覆盖项 / SP / MP / CD / 效果）见 `content-design.md` §6.4；复算命令 `node .audit/content-design.js`。
 

@@ -26,7 +26,7 @@
   "_emitPatterns": {
     "cellsFromRange": "覆盖格 = 以施法者格心为基准、range 为闭区间偏移（melee）",
     "repeatCount": "按 countFrom 字段枚数重复同一枚弹幕，起点=origin（straight）",
-    "impactCells": "先算落点 impact=clampX(x+dir*rangePx)，覆盖格=以落点格为基准的 cellsFrom 区间（vertical）",
+    "impactCells": "先算落点，覆盖格=以落点格为基准的 cellsFrom 区间（vertical）。落点规则（2026-09-28 D-174，由 emit.impactAim 声明）：impactAim='enemyCell' 且**敌方所在格**在射程覆盖格内 → 落点 = 该格格心（'以对方所在格为目标'）；射程内无敌人 → 落点 = clampX(x+dir*rangePx)（最远位置，仍释放不失败）",
     "pathCells": "按 move.distance 声明路径逐格发射（displacement，D-18/D-118）"
   },
   "_originModes": { "caster": "施法者当前 px 坐标", "cellCenter": "所在格中心 px" },
@@ -70,6 +70,7 @@
       "emit": {
         "pattern": "impactCells",
         "impactFrom": "rangePx",
+        "impactAim": "enemyCell",
         "cellsFrom": "area",
         "exposeImpactX": true,
         "bullet": {
