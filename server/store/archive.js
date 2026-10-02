@@ -20,13 +20,13 @@ const PUBLIC_ID_RE = /^u_[0-9a-f]{8}$/;
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,24}$/;
 
 // ---------- D-159：服务端权威仓库（五桶，D-176 增 `package`）与 D-161：AI 库 ----------
-const WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
+const WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package', 'aiNode']);
 const DEFAULT_WAREHOUSE_MAX_PER_BUCKET = 500;
 const DEFAULT_AI_MAX_PER_PLAYER = 100;
 // D-176：物品 `kind` → 仓库桶键的**唯一映射**（此前是散落三处的隐式三元表达式，未知 kind 静默兜底进 role 桶）。
-//   `package` 是本表新增项；未知 kind 仍回落 `role`（历史 box.opened 记录的兼容路径）。
+//   `package` 是本表新增项；`aiNode`（D-178 第 6 桶）同为新增项；未知 kind 仍回落 `role`（历史 box.opened 记录的兼容路径）。
 const BUCKET_OF_KIND = Object.freeze({
-  role: 'role', skill: 'skill', rolePlugin: 'rolePlugin', skillPlugin: 'skillPlugin', package: 'package',
+  role: 'role', skill: 'skill', rolePlugin: 'rolePlugin', skillPlugin: 'skillPlugin', package: 'package', aiNode: 'aiNode',
 });
 function bucketOfKind(kind) {
   return BUCKET_OF_KIND[kind] || 'role';
@@ -55,9 +55,10 @@ function aiMaxPerPlayerOf(config) {
   return Number.isInteger(v) && v > 0 ? v : DEFAULT_AI_MAX_PER_PLAYER;
 }
 
-// 五桶空仓库（与 core/items.emptyWarehouse 同形；store 层不得 require core，故本地重建）
+// 六桶空仓库（与 core/items.emptyWarehouse 同形；store 层不得 require core，故本地重建）
+//   D-178：第 6 桶 `aiNode` = 可堆叠积木节点（条目形如 {uid, kind:'aiNode', nodeId, quality, count}）
 function emptyWarehouse() {
-  return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] } };
+  return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] } };
 }
 
 function normalizeWarehouse(raw) {
@@ -868,6 +869,10 @@ function isRecordApplied(archive, record) {
       if (record.name !== undefined && ai.name !== record.name) return false;
       if (record.status !== undefined && aiStatusOf(ai) !== record.status) return false;
       if (record.program !== undefined && JSON.stringify(ai.program) !== JSON.stringify(record.program)) return false;
+      // D-178：蓝图/映射/编译器版本也纳入内容比对（否则"只改蓝图不改 program"的编辑会被误判已应用）
+      if (record.blueprint !== undefined && JSON.stringify(ai.blueprint === undefined ? null : ai.blueprint) !== JSON.stringify(record.blueprint)) return false;
+      if (record.traceMap !== undefined && JSON.stringify(ai.traceMap === undefined ? null : ai.traceMap) !== JSON.stringify(record.traceMap)) return false;
+      if (record.compilerVersion !== undefined && (ai.compilerVersion === undefined ? null : ai.compilerVersion) !== record.compilerVersion) return false;
       return Number.isInteger(record.at) ? ai.updatedAt === record.at : true;
     }
     case 'ai.deleted':
@@ -1066,6 +1071,17 @@ function grantItemsToWarehouse(archive, items, ctx, playerId, grantId) {
     const bucket = bucketOfKind(it.kind);
     const list = archive.warehouse.buckets[bucket];
     if (!Array.isArray(list)) continue;
+    // D-178：积木节点**可堆叠**——同 nodeId 直接累加已有堆叠的 count（不新增条目、不占额外槽位，
+    //   故既不涉及 uid 撞车也不触发桶上限）。找不到同 nodeId 的堆叠才作为新堆叠插入（走下方常规路径）。
+    if (it.kind === 'aiNode' && typeof it.nodeId === 'string' && it.nodeId !== '') {
+      const stack = list.find((x) => x && x.kind === 'aiNode' && x.nodeId === it.nodeId);
+      if (stack) {
+        const add = Number.isInteger(it.count) && it.count > 0 ? it.count : 1;
+        stack.count = (Number.isInteger(stack.count) && stack.count > 0 ? stack.count : 1) + add;
+        added += add;
+        continue;
+      }
+    }
     if (findWarehouseItem(archive.warehouse, it.uid)) {
       // D-163 热修：uid 撞车在**发放路径**已被 `allocateGrantUids` 消解；能走到这里说明是
       //   "档案与 journal 不一致"或历史遗留记录 —— 绝不能静默丢（修前就是静默 `continue`）。
@@ -1137,6 +1153,10 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
             aiId: a.aiId,
             name: a.name === undefined || a.name === null ? a.aiId : a.name,
             program: deepClone(a.program),
+            // D-178：starter 的默认 AI 也是积木蓝图（新号开局即可编辑）
+            blueprint: a.blueprint === undefined ? null : deepClone(a.blueprint),
+            traceMap: a.traceMap === undefined ? null : deepClone(a.traceMap),
+            compilerVersion: a.compilerVersion === undefined ? null : a.compilerVersion,
             createdAt: at,
             updatedAt: at,
             status: a.status === 'draft' ? 'draft' : 'ready',
@@ -1314,13 +1334,17 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       }
       return { changed: true };
     }
-    // D-161：AI 库；D-172：`status`（缺省 = ready，旧记录无该字段照旧可用）
+    // D-161：AI 库；D-172：`status`（缺省 = ready，旧记录无该字段照旧可用）；D-178：`blueprint/traceMap/compilerVersion`
     case 'ai.created': {
       if (findAi(archive, record.aiId)) return { changed: false };
       archive.ai.items.push({
         aiId: record.aiId,
         name: record.name === undefined ? record.aiId : record.name,
         program: deepClone(record.program),
+        // D-178：无 blueprint 的历史程序照旧可跑（编辑器视为"旧程序/不可编辑"）
+        blueprint: record.blueprint === undefined ? null : deepClone(record.blueprint),
+        traceMap: record.traceMap === undefined ? null : deepClone(record.traceMap),
+        compilerVersion: record.compilerVersion === undefined ? null : record.compilerVersion,
         createdAt: at,
         updatedAt: at,
         status: record.status === 'draft' ? 'draft' : 'ready',
@@ -1339,6 +1363,18 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       if (record.program !== undefined) {
         const next = deepClone(record.program);
         if (JSON.stringify(ai.program) !== JSON.stringify(next)) { ai.program = next; changed = true; }
+      }
+      // D-178：蓝图三件套与 program 同批更新（编译器版本随之冻结）
+      if (record.blueprint !== undefined) {
+        const next = record.blueprint === null ? null : deepClone(record.blueprint);
+        if (JSON.stringify(ai.blueprint === undefined ? null : ai.blueprint) !== JSON.stringify(next)) { ai.blueprint = next; changed = true; }
+      }
+      if (record.traceMap !== undefined) {
+        const next = record.traceMap === null ? null : deepClone(record.traceMap);
+        if (JSON.stringify(ai.traceMap === undefined ? null : ai.traceMap) !== JSON.stringify(next)) { ai.traceMap = next; changed = true; }
+      }
+      if (record.compilerVersion !== undefined && ai.compilerVersion !== record.compilerVersion) {
+        ai.compilerVersion = record.compilerVersion; changed = true;
       }
       if (record.status !== undefined) {
         const next = record.status === 'draft' ? 'draft' : 'ready';
@@ -1445,6 +1481,9 @@ function aggregateRecords(records) {
             aiId: a.aiId,
             name: a.name === undefined || a.name === null ? a.aiId : a.name,
             program: deepClone(a.program),
+            blueprint: a.blueprint === undefined ? null : deepClone(a.blueprint),
+            traceMap: a.traceMap === undefined ? null : deepClone(a.traceMap),
+            compilerVersion: a.compilerVersion === undefined ? null : a.compilerVersion,
             createdAt: record.at === undefined ? null : record.at,
             updatedAt: record.at === undefined ? null : record.at,
             status: a.status === 'draft' ? 'draft' : 'ready',
@@ -1468,6 +1507,9 @@ function aggregateRecords(records) {
           aiId: record.aiId,
           name: record.name === undefined ? record.aiId : record.name,
           program: deepClone(record.program),
+          blueprint: record.blueprint === undefined ? null : deepClone(record.blueprint),
+          traceMap: record.traceMap === undefined ? null : deepClone(record.traceMap),
+          compilerVersion: record.compilerVersion === undefined ? null : record.compilerVersion,
           createdAt: record.at === undefined ? null : record.at,
           updatedAt: record.at === undefined ? null : record.at,
           status: record.status === 'draft' ? 'draft' : 'ready',
@@ -1483,6 +1525,9 @@ function aggregateRecords(records) {
       if (item) {
         if (record.name !== undefined) item.name = record.name;
         if (record.program !== undefined) item.program = deepClone(record.program);
+        if (record.blueprint !== undefined) item.blueprint = record.blueprint === null ? null : deepClone(record.blueprint);
+        if (record.traceMap !== undefined) item.traceMap = record.traceMap === null ? null : deepClone(record.traceMap);
+        if (record.compilerVersion !== undefined) item.compilerVersion = record.compilerVersion;
         if (record.status !== undefined) item.status = record.status === 'draft' ? 'draft' : 'ready';
         if (record.at !== undefined) item.updatedAt = record.at;
       }

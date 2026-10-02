@@ -281,12 +281,19 @@ function buildAiRecord(input) {
     if (o.name !== undefined) rec.name = o.name;
     if (o.program !== undefined) rec.program = deepClone(o.program);
     if (o.status !== undefined) rec.status = o.status === 'draft' ? 'draft' : 'ready';
+    // D-178：积木蓝图（玩家层源）+ 高亮映射 + 编译器版本（与 program 同进同出，保证回放/行为冻结）
+    if (o.blueprint !== undefined) rec.blueprint = deepClone(o.blueprint);
+    if (o.traceMap !== undefined) rec.traceMap = deepClone(o.traceMap);
+    if (o.compilerVersion !== undefined) rec.compilerVersion = o.compilerVersion;
     return rec;
   }
   return {
     type: 'ai.created', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
     aiId: o.aiId, name: o.name === undefined ? null : o.name, program: deepClone(o.program),
     status: o.status === 'draft' ? 'draft' : 'ready',
+    blueprint: o.blueprint === undefined ? null : deepClone(o.blueprint),
+    traceMap: o.traceMap === undefined ? null : deepClone(o.traceMap),
+    compilerVersion: o.compilerVersion === undefined ? null : o.compilerVersion,
   };
 }
 

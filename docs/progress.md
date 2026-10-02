@@ -417,3 +417,50 @@ docs/progress.md       本文件
 - **UTF-8 跨 chunk 解码收口（2026-09-19T07:49:12.476Z）**：在上一批（`server/index.js` readBody 改 `Buffer.concat` + 字节上限、`tests/helpers/http.js` 与 7 个 `tests/api/*`、`tests/api/api-body-utf8-split.test.js`）基础上，**收口剩余 5 处同源点**：`cli/index.js:53-65`（**生产 CLI 响应解码**）、`scripts/gate.js:570-582`（项 9 getJson）、`scripts/e2e.js:180-190`、`tests/helpers/e2e.js:54-66`、`tests/helpers/load.js:238-250`（全仓 `on('data'` 18 处现均为 chunks 写法；`gate.js`/`check-arch.js` 的 `out += c` 是源码字符扫描器，非网络数据，未动）。新增 `tests/cli/cli-utf8-split.test.js`（3 条：`httpJson.raw` 逐字节一致 / `cli health` stdout 无 U+FFFD / 非 JSON 500 中文 stderr 完整且退出码 1；**判别力实测**：临时改回逐 chunk 解码 → 3/3 全红，恢复后 3/3 全绿；用例内含"服务端确实写出 ≥2 chunk"的探针断言，避免静默失去判别力）。
 - 实测（UTF-8 收口后）：`npm test` = **946 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`check-docs` PASS；`baseline --compare` exit 0（无新增失败）；`npm run e2e` **22/22**；`npm run play` exit 0。
   > 注：上一条"UTF-8 跨 chunk 解码修复"记录中的 `npm test` 数字（943）与范围（仅 readBody + 夹具 + api 用例）已由本条更新为 **946** 与"含 5 处收口点 + CLI 回归用例"。
+
+## §0.7 AI 积木节点系统（D-178，2026-09-28）—— 现状与剩余
+
+**已完成并机器验证**（四门禁全绿：`npm test` 1206/1206 · `npm run gate` 9 PASS · `check-docs` PASS · `npm run e2e` 22/22）：
+
+| 项 | 落点 | 验证 |
+|---|---|---|
+| ① 节点目录 54 个原语（5 档固定品质）+ 蓝图→AST 编译器（运行时/回放/排名零改动） | `server/data/ai-node-catalog.json`、`server/ai/blueprint.js`、`server/ai/ast.js`（LIMITS/白名单）、`server/runner.js`（`self.skills[*]` 投影） | `tests/unit/blueprint.test.js` BP-1..13（含全目录扫描、记忆跨帧、德摩根、产物必过 `ast.validate`） |
+| ② 节点包产出堆叠 + 仓库第 6 桶 + 跨 AI 占用校验 + 空闲派生 API | `package-config.json`（`nodeQualityCurve`）、`core/items.js`、`store/archive.js`、`account.js`（`GET /me/ai/nodes`） | `tests/unit/{package,ai-node-pack}.test.js`、`tests/api/api-me-ai-nodes.test.js` ALN-1..7 |
+| ③-a 前端积木编辑器重写 | `public/{ai-blueprint,format,actions,store,contract}.js` | `tests/frontend/ai-blueprint-model.test.js` AB-1..10、`ai-editor-flow.test.js` **AE-15 端到端**、UI-2/AU-1 双向闭合 |
+| ④ 新手绿节点集 + 预设模板 + bot 预设改写 + 文档/e2e | `starter.js`、`ai-blueprint-presets.json`、`ranked.js`（`blueprintOf`） | `tests/unit/{ai-blueprint-presets,ai-blueprint-bots}.test.js`（含 9 变体行为冻结基线） |
+
+**剩余（③-c / ④-b 收尾）**：
+1. ~~**查看器高亮**~~ **✅ 已交付（2026-09-28）**：`format.traceSummaryText(frame, owner, isAdmin, traceMap)` 三口径 ——
+   ① 非管理员 + 有映射 → 「N 个积木步骤 · 当前跑到积木节点 <uid>」（**底层 path 一律不外泄**）；
+   ② 非管理员 + 无映射 → 「N 个执行步骤（底层节点明细仅管理员可见）」；
+   ③ 管理员 → 逐条底层 `#seq owner path nodeType → result`。
+   映射来源：`aiBrief` 导出的 `traceMap`（`GET /me/ai`，`viewerTraceMapFromAiOf` 取第一条带映射的条目）**仅用于自己那侧（p1）**，
+   对手侧不套用他人映射（避免标错）。测试：`quick-battle-flow` **QB-4**（管理员门禁）+ **QB-4b**（三口径全断言）、`AB-8`（模型层，真 trace）。
+2. **旧编辑器收敛**：`public/ai-editor.js` 仅服务 `blueprint === null` 的旧版程序；按"旧节点不必保留"应收敛为**只读展示**并删除该文件
+   （需同步 `UI-1` 文件清单、`AE-3/AE-4/AE-6` 三例旧模型测试）。
+3. **分册收尾**：`06-ai-editor.md` §0.0 已置顶现状说明，但 §1–§15 仍是旧 AST 编辑器设计（下一步全文重写或整体归档）。
+
+---
+
+## §0.8 D-179 交付期缺陷修复批（2026-10-02）—— 用户实测三症状的根因与补测
+
+**用户实测**：① 快速对战/锦标赛后界面卡死、「AI 逻辑查看器」「读取本场回放」点了没反应、返回主界面按钮全灰（刷新才恢复）；② 「新手 AI 打不开」；③ 保存 AI 报 `Cannot read properties of undefined (reading 'setCatalog')`。
+
+**根因（一个）**：`public/index.html` **从未加载 `/ai-blueprint.js`** → 浏览器里 `DL.aiBlueprint === undefined` →
+触碰积木蓝图的屏（战斗后查看器 / 回放 / AI 编辑器 / 保存 AI）抛 TypeError → 异常沿 `dispatch` → 动作 promise 链上抛 →
+**链尾 `busy(ctx,false)` 永不执行** → 全局 busy 卡真 → 全屏按钮变灰、点击被静默吞掉。
+**当时 147 个测试文件全绿**：它们一律 `require('public/*.js')`（UMD 的 CommonJS 分支），天然绕过 index.html 的脚本清单。
+
+| 修复 | 落点 | 回归钉 |
+|---|---|---|
+| ① 入口装配闭环（脚本清单 ↔ 模块依赖图 ↔ 磁盘三方一致 + 真实 UMD 装配 + 逐屏渲染） | `public/index.html`、`tests/helpers/browser.js`（新，**浏览器等价装置**） | `boot-wiring.test.js` BW-1..7（撤掉脚本标签即 5 例红，已实测） |
+| ② 界面绝不锁死（渲染失败 → 兜底屏 + 复位 busy；动作同步抛 → 可见提示） | `public/app.js`、`public/format.js`（`fatalViewModel`） | `browser-flows.test.js` BF-4/BF-5 |
+| ③ 按钮载荷三层契约（`format` 字段 → `render` 的 `data-*` → `app` 的 payload）——「加积木节点/套用模板」此前两个载荷都没被搬运 | `public/render.js`、`public/app.js` | `button-payload-contract.test.js` BP-1..3 + BF-2 真点击 |
+| ④ 积木编辑屏补齐**导入区**与**「确认丢弃」弹层**（此前点了毫无反应、脏草稿退不出编辑器） | `public/format.js`、`public/actions.js` | `ai-editor-actions.test.js` AE2-5/AE2-6 |
+| ⑤ 编辑自身条目时扣掉自身占用（对齐服务端 `excludeAiId`）——修前"打开自己的 AI 就报 ⚠ 节点不足" | `public/ai-blueprint.js`（`excludeOwnUsage`）、`public/format.js` | BF-2（断言不出现「⚠ 节点不足」） |
+| ⑥ 旧 AST 编辑器：「插入」= 当前选中节点（此前一律回落 `body`，三条分支是死代码）；「上移/下移」后光标跟随 | `public/actions.js` | AE2-1 |
+| ⑦ HTTP 解析层错误回 `bad_request` JSON 信封（此前 Node 回空 400）；配置槽 id 与 `aiId`/`replay`/`data` 同口径拒绝 `%2F`/`..`/空段 | `server/index.js` | `api-route-branches.test.js` RB-7/RB-12 |
+| ⑧ 测试设施换代：58 路由的**错误分支**逐条覆盖、**24 个从未被执行过的动作**逐条执行、`http.js` 显式 `content-length`（chunked DELETE 被解析层判成 `HPE_INVALID_METHOD` → 假状态码）、`store-warehouse-recovery` 随机夹具抖动改"按需多开几轮" | `tests/api/api-route-branches.test.js`（新）、`tests/frontend/ai-editor-actions.test.js`（新）、`tests/helpers/http.js`、`tests/unit/store-warehouse-recovery.test.js` | 全绿 |
+
+**教训（已固化为机器判定）**：`require()` 得到的绿不等于浏览器里的绿 —— 凡是"入口装配 / 字段搬运 / 注册表动作"这三类**跨文件契约**，
+必须有专门用例在**真实装配**下跑，否则"测试全绿 + 功能全坏"会同时成立。

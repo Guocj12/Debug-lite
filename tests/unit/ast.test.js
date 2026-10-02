@@ -48,31 +48,31 @@ test('AF-2 字段类型：合法字段类型通过、非法类型拒绝（带 pa
   assert.equal(r3.errors[0].path, 'body.s[0]');
 });
 
-test('AF-3 深度上限 32：33 层嵌套 → ai_too_deep', () => {
+test('AF-3 深度上限 128（D-178 积木层重标定）：129 层嵌套 → ai_too_deep', () => {
   let node = { type: 'action', name: 'wait' };
-  for (let i = 0; i < 33; i++) node = { type: 'seq', statements: [node] };
+  for (let i = 0; i < 129; i++) node = { type: 'seq', statements: [node] };
   const p = { type: 'program', version: 1, body: node };
   const r = ast.validateProgram(p);
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.code === 'ai_too_deep'), JSON.stringify(r.errors));
-  // 30 层包装（+body = 深度 32）恰好通过
+  // 126 层包装（+body = 深度 128）恰好通过
   let okNode = { type: 'action', name: 'wait' };
-  for (let i = 0; i < 30; i++) okNode = { type: 'seq', statements: [okNode] };
+  for (let i = 0; i < 126; i++) okNode = { type: 'seq', statements: [okNode] };
   const okP = { type: 'program', version: 1, body: { type: 'seq', statements: [okNode] } };
-  assert.equal(ast.validateProgram(okP).ok, true, '深度 32 内通过');
+  assert.equal(ast.validateProgram(okP).ok, true, '深度 128 内通过');
 });
 
-test('AF-4 节点数上限 2000：>2000 → ai_too_large', () => {
+test('AF-4 节点数上限 20000（D-178）：>20000 → ai_too_large', () => {
   const statements = [];
-  for (let i = 0; i < 2001; i++) statements.push({ type: 'action', name: 'wait' });
+  for (let i = 0; i < 20001; i++) statements.push({ type: 'action', name: 'wait' });
   const p = { type: 'program', version: 1, body: { type: 'seq', statements } };
   const r = ast.validateProgram(p);
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.code === 'ai_too_large'), JSON.stringify(r.errors));
 });
 
-test('AF-5 字节上限 256KB：超限 → ai_too_large', () => {
-  const big = 'x'.repeat(256 * 1024);
+test('AF-5 字节上限 512KB（D-178）：超限 → ai_too_large', () => {
+  const big = 'x'.repeat(512 * 1024);
   const p = { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'literal', value: big }] } };
   const r = ast.validateProgram(p);
   assert.equal(r.ok, false);
@@ -125,13 +125,14 @@ test('AF-9 边界结构：空 statements / 非数组 statements / 缺 version', 
   assert.ok(r3.errors.some((e) => e.code === 'bad_version'), JSON.stringify(r3.errors));
 });
 
-test('AF-10 limits 导出与全局阈值一致（depth 32/nodes 2000/bytes 256KB）', () => {
-  assert.equal(ast.limits.maxDepth, 32);
-  assert.equal(ast.limits.maxNodes, 2000);
-  assert.equal(ast.limits.maxBytes, 256 * 1024);
+test('AF-10 limits 导出与全局阈值一致（D-178：depth 128/nodes 20000/bytes 512KB）', () => {
+  assert.equal(ast.limits.maxDepth, 128);
+  assert.equal(ast.limits.maxNodes, 20000);
+  assert.equal(ast.limits.maxBytes, 512 * 1024);
   assert.equal(ast.limits.stepLimit, 10000);
-  assert.equal(ast.limits.traceLimit, 2000);
+  assert.equal(ast.limits.traceLimit, 20000);
   assert.equal(ast.limits.recursionLimit, 64);
+  assert.equal(ast.limits.analyzeDepth, 128, 'analyzeDepth 必须与 maxDepth 同级（否则深层分支被误判 branch_without_action）');
 });
 
 test('AF-12 补充分支：literal 缺 value / loop 缺 kind / expr 路径段 / 多错误并行', () => {
@@ -155,7 +156,7 @@ test('AF-12 补充分支：literal 缺 value / loop 缺 kind / expr 路径段 / 
   assert.ok(r3.errors.some((e) => typeof e.path === 'string' && e.path.includes('.expr')), JSON.stringify(r3.errors));
   // 多错误并行：未知节点 + 危险键 + 深度同时报
   let deep = { type: 'action', name: 'wait' };
-  for (let i = 0; i < 40; i++) deep = { type: 'seq', statements: [deep] };
+  for (let i = 0; i < 140; i++) deep = { type: 'seq', statements: [deep] };
   const p4 = { type: 'program', version: 1, body: { type: 'seq', statements: [{ type: 'eval' }, deep] } };
   const r4 = ast.validateProgram(p4);
   assert.ok(r4.errors.some((e) => e.code === 'unknown_node'), JSON.stringify(r4.errors));

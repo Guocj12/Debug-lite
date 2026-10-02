@@ -21,6 +21,7 @@ const crypto = require('node:crypto');
 const itemsMod = require('./core/items.js');
 const rngMod = require('./core/rng.js');
 const rankedMod = require('./ranked.js');
+const blueprintMod = require('./ai/blueprint.js'); // D-178：starter 的默认 AI = 绿档预设蓝图模板（编译成 AST）
 const { nullLogger } = require('../shared/log.js');
 
 const STARTER_ROLE_TEMPLATE = 'role_bal';
@@ -107,10 +108,14 @@ function buildStarter(input) {
   }
   const skillSlotTotal = skills.reduce((a, s) => a + (s.slots || []).length, 0);
 
-  // ---- 仓库四桶（先放角色与技能，插件随后依法入桶）----
+  // ---- 仓库六桶（先放角色与技能，插件随后依法入桶）----
   let warehouse = items.emptyWarehouse();
   warehouse.buckets.role.push(role);
   for (const s of skills) warehouse.buckets.skill.push(s);
+  // D-178：AI 积木节点 —— 新手自带**全部绿档节点**各 1 个。
+  //   理由：绿档 = 新手段位唯一能开到的节点（包品质 = 段位），必须保证"开箱前就能搭出完整 AI"；
+  //   每个槽位占用一个副本，故重复获取仍有价值（后续从 AI 节点包补齐同一节点的多份）。
+  for (const st of items.starterNodeStacks()) warehouse.buckets.aiNode.push(st);
 
   const assembled = [];
   // ---- 角色插件（1~2 个，按实际槽类型筛池；点数必须装得下）----
@@ -182,11 +187,17 @@ function buildStarter(input) {
   });
   warehouse.buckets.package.push(starterPackage);
 
-  // ---- AI：复用默认预设（不复制正文），并登记进 AI 库 ----
-  const aiProgram = rankedMod.buildDefaultLoadout({ publicId: o.publicId, playerId: o.playerId }).ai;
+  // ---- AI：复用身份派生的默认预设（D-159：出战 AI 必须等于 `buildDefaultLoadout` 的产物）----
+  //   D-178 起默认预设本身 = **绿档积木蓝图**（编译成 AST）→ 新号开局就有可编辑的蓝图，
+  //   且用量在新手自带节点预算内（见 tests/unit/ai-node-pack.test.js NP-6）。
+  const def = rankedMod.buildDefaultLoadout({ publicId: o.publicId, playerId: o.playerId });
+  const aiProgram = def.ai;
   const aiId = `ai_starter_${crypto.createHash('sha256')
     .update(`starter-ai|${o.publicId || ''}|${o.playerId || ''}`, 'utf8').digest('hex').slice(0, 8)}`;
-  const aiLibrary = [{ aiId, name: STARTER_AI_NAME, program: aiProgram }];
+  const aiLibrary = [{
+    aiId, name: STARTER_AI_NAME, program: aiProgram,
+    blueprint: def.aiBlueprint || null, traceMap: def.aiTraceMap || null, compilerVersion: def.aiCompilerVersion || null,
+  }];
 
   const loadout = {
     role: warehouse.buckets.role.find((x) => x.uid === role.uid) || role,
@@ -213,6 +224,7 @@ function buildStarter(input) {
       rolePlugin: warehouse.buckets.rolePlugin.length,
       skillPlugin: warehouse.buckets.skillPlugin.length,
       package: warehouse.buckets.package.length,
+      aiNode: warehouse.buckets.aiNode.length, // D-178：绿档节点堆叠数（每种 1 条）
     },
   };
   log.info('starter', 'store.starter.issued', `新手套装已生成（seed=${seed}）`, {

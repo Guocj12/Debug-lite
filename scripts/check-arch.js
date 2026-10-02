@@ -31,7 +31,10 @@ const LAYER_RULES = [
 ];
 
 // L5 允许的目标层（只依赖 L0/L1 + 数据/shared，不依赖 engine）
-const AI_ALLOWED_LAYERS = new Set([0, 1, -1]);
+//   2026-09-28（D-178）：+5 = **允许 L5 内部互相依赖**。L5 是一个子系统（AI 语言层）：
+//   ast.js 定义语言、blueprint.js 把积木层编译成该语言（编译契约 = 产物必过 ast.validate，故必须依赖 ast）、
+//   runtime.js 执行该语言。仍然禁止 L5 依赖 L2/L3/L4（engine/roles/skills/bullets）。
+const AI_ALLOWED_LAYERS = new Set([0, 1, 5, -1]);
 
 const CORE_FORBIDDEN = new Set(['fs', 'http', 'https', 'express', 'net', 'child_process', 'os', 'path']);
 

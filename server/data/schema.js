@@ -462,9 +462,13 @@ function validateStructure(dataDir, assetsDir) {
   //     ③ itemQualityCurve 每行和为 1，且**只能落在本级及以下两级**（最高档额外允许上一级）；
   //     ④ itemCountCurve / battleDropCountCurve / battleDropQualityCurve 每行和为 1；
   //     ⑤ dropPool 白名单里的模板 id 必须在对应内容表中真实存在（防"写错 id 静默空池"）。
+  //     D-178 补充：⑥ AI 节点包（packageKind='aiNode'，dropsKind=null）另有 `nodeQualityCurve`：
+  //       键 = 5 个品质（全覆盖）、值 = 该品质**及以下**品质的概率分布（和 = 1）；
+  //       `openable=true` 时 dropsKind 允许为 null（节点产出源是 ai-node-catalog，不是物品模板表）。
   const pc = tables.packageConfig;
   const PC_KINDS = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'aiNode'];
   const PC_DROPS_KINDS = ['role', 'skill', 'rolePlugin', 'skillPlugin'];
+  const NODE_QUALITY_RANK = Object.fromEntries(TIERS.map((t, i) => [t, i]));
   const bandPercentsOf = {};          // quality → [percent…]
   const percentToQuality = {};        // percent → quality（供 ③ 反查本级）
   if (!pc || typeof pc !== 'object' || Array.isArray(pc)) {
@@ -540,6 +544,26 @@ function validateStructure(dataDir, assetsDir) {
         if (Math.abs(sum - 1.0) > 1e-9) problems.push(`${name}[${rk}] 之和 = ${sum}，应为 1.0`);
       }
     }
+    // ⑥ AI 节点品质曲线（D-178）：5 行全覆盖；每行只允许"该品质及以下"；每行和 = 1
+    const nqc = pc.nodeQualityCurve;
+    if (!nqc || typeof nqc !== 'object' || Array.isArray(nqc)) {
+      problems.push('package-config.nodeQualityCurve 必须是对象（D-178：AI 节点包的品质分布）');
+    } else {
+      for (const t of TIERS) {
+        const row = nqc[t];
+        if (!row || typeof row !== 'object' || Array.isArray(row)) { problems.push(`nodeQualityCurve 缺品质行 ${t}`); continue; }
+        let sum = 0;
+        for (const [k, v] of Object.entries(row)) {
+          if (NODE_QUALITY_RANK[k] === undefined) { problems.push(`nodeQualityCurve[${t}] 含未知品质 ${k}`); continue; }
+          if (!isNum(v) || v < 0) { problems.push(`nodeQualityCurve[${t}].${k} 应为 ≥0 的数`); continue; }
+          if (NODE_QUALITY_RANK[k] > NODE_QUALITY_RANK[t]) {
+            problems.push(`nodeQualityCurve[${t}] 出现越界品质 ${k}（只允许本级及以下）`);
+          }
+          sum += v;
+        }
+        if (Math.abs(sum - 1.0) > 1e-9) problems.push(`nodeQualityCurve[${t}] 之和 = ${sum}，应为 1.0`);
+      }
+    }
     // ② packages 清单
     const list = Array.isArray(pc.packages) ? pc.packages : null;
     if (!list || list.length === 0) problems.push('package-config.packages 必须是非空数组');
@@ -555,8 +579,8 @@ function validateStructure(dataDir, assetsDir) {
         if (def.dropsKind !== null && !PC_DROPS_KINDS.includes(def.dropsKind)) {
           problems.push(`包 ${def.packageKind}: dropsKind 必须是 null 或 ${PC_DROPS_KINDS.join('/')}`);
         }
-        if (def.openable === true && !PC_DROPS_KINDS.includes(def.dropsKind)) {
-          problems.push(`包 ${def.packageKind}: openable=true 时 dropsKind 必须是具体物品类别`);
+        if (def.openable === true && def.packageKind !== 'aiNode' && !PC_DROPS_KINDS.includes(def.dropsKind)) {
+          problems.push(`包 ${def.packageKind}: openable=true 时 dropsKind 必须是具体物品类别（AI 节点包除外：产出源是 ai-node-catalog）`);
         }
       }
     }

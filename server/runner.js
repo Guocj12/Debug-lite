@@ -89,19 +89,50 @@ function projectSnapshot(state, owner) {
     displacement: typeof e.displacement === 'number' ? e.displacement : null,
     remaining: typeof e.remaining === 'number' ? e.remaining : null,
   }));
+  // D-178（用户裁定）：**只投影自己的技能数据**（供『我的技能射程/类型』等积木节点使用）；
+  //   数组下标 0..2 对应技能槽 skill1..3（与 AST 路径 `self.skills[0].range` 一致）；
+  //   `range` 归一化为**向前射程（格）**：数组型（近战 [lo,hi]）取 hi，标量原样；空槽位 → null。
+  const summarizeSkills = (p, cds) => {
+    const src = (p && p.skills) || {};
+    const cd = cds || {};
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const reach = (s) => {
+      const r = s.range;
+      if (Array.isArray(r)) return num(r[1]) === null ? num(r[0]) : num(r[1]);
+      return num(r);
+    };
+    return ['skill1', 'skill2', 'skill3'].map((key) => {
+      const s = src[key];
+      if (!s) return null;
+      const cost = s.cost || {};
+      return {
+        slotKey: key,
+        type: s.type === undefined ? null : String(s.type),
+        range: reach(s),
+        distance: num(s.distance),
+        bulletCount: num(s.bulletCount),
+        multiplier: num(s.multiplier),
+        costHp: num(cost.hp), costMp: num(cost.mp), costSp: num(cost.sp),
+        cooldown: num(s.cooldown),
+        level: num(s.bulletLevel),
+        ready: (typeof cd[key] === 'number' ? cd[key] : 0) === 0,
+      };
+    });
+  };
   const pick = (p, base) => ({
     hp: p.hp, maxHp: p.maxHp, mp: p.mp, maxMp: p.maxMp, sp: p.sp, maxSp: p.maxSp,
     atk: p.atk, def: p.def, x: fieldApi.cellOf(p.x), facing: p.facing, // x：px → 格（D-174；AI 只见格）
     baseHp: base.hp === undefined ? null : base.hp, // B26 修正：基地当前血量（原误填角色 maxHp）
     cooldowns: copyCooldowns(p),
     effects: summarizeEffects(p),
+    skills: summarizeSkills(p, p.cooldowns),
   });
   const pickBase = (base) => ({ hp: base.hp === undefined ? null : base.hp, maxHp: base.maxHp === undefined ? null : base.maxHp, def: base.def === undefined ? null : base.def });
   // 弹幕不跨 tick（生成当 tick 全解算完毕）→ 快照不再投影 bullets（AI 无法观测弹幕，设计如此）
   return {
     tick: state.tick,
     self: pick(me, myBase),
-    enemy: pick(foe, foeBase),
+    enemy: { ...pick(foe, foeBase), skills: [] }, // D-178：**不投影敌方技能数据**（用户裁定）
     bases: { self: pickBase(myBase), enemy: pickBase(foeBase) },
     field: { fieldPx: BATTLE_CFG.fieldPx, cellPx: BATTLE_CFG.cellPx },
   };

@@ -102,11 +102,36 @@
     var store = DL.store.createStore(DL.store.initialState());
 
     // 单一 DOM 写入点
+    // D-179：**渲染绝不外抛**。背景（用户实测）：某屏 viewModel/render 抛异常时，异常会沿
+    //   dispatch → 动作的 promise 链一路上抛，链尾的 `busy(ctx,false)` 永不执行 → 全局 busy 卡在 true
+    //   → 所有按钮变灰且点击被 `if (ctx.state.busy) return` 静默吞掉（刷新页面才恢复）。
+    //   故此处两级兜底：① viewModel 失败 → format.fatalViewModel（常量 vm，自身不可能再失败）；
+    //   ② 连 render 也失败 → 一段不含任何状态的最小 HTML（innerHTML 仍只在本文件出现）。
     function mount() {
-      var model = DL.format.viewModel(store.getState());
-      doc.title = model.pageTitle;
       var host = doc.getElementById('view');
-      if (host) host.innerHTML = DL.render.render(model);
+      var model;
+      try {
+        model = DL.format.viewModel(store.getState());
+      } catch (e) {
+        // 只改状态、不重绘（避免 mount → dispatch → mount 递归）；busy 复位是"按钮不永久变灰"的关键
+        if (store.getState().busy === true) store.dispatch({ type: 'busy.set', busy: false });
+        try {
+          model = DL.format.fatalViewModel(e && e.message ? e.message : String(e));
+        } catch (e2) {
+          model = null;
+        }
+      }
+      if (!host) return;
+      if (model === null) {
+        host.innerHTML = '<h2>界面内部错误</h2><p class="notice">渲染失败，请刷新页面。</p>';
+        return;
+      }
+      try {
+        doc.title = model.pageTitle;
+        host.innerHTML = DL.render.render(model);
+      } catch (e3) {
+        host.innerHTML = '<h2>界面内部错误</h2><p class="notice">渲染失败，请刷新页面。</p>';
+      }
     }
 
     function dispatch(action) {
@@ -130,16 +155,28 @@
 
     // 动作执行：白名单未命中 → 可见兜底提示（「按钮永不无声」的最后一道保险）
     //   payload = 行级动作的目标（来自被点按钮的 data-player-id / data-public-id，02-accounts.md §3.2）
+    // D-179：**动作绝不无声**。三类异常都必须落到可见提示并复位 busy：
+    //   ① run 同步抛（`Promise.resolve(def.run(...))` 之前就抛，旧实现连 catch 都进不去 → 点击毫无反应）；
+    //   ② run 返回的 promise 拒绝；③ 提示 DOM 本身渲染失败（已由 mount 兜底）。
+    function actionError(e) {
+      if (store.getState().busy === true) store.dispatch({ type: 'busy.set', busy: false });  // 只改状态，不重绘
+      dispatch({ type: 'notice.set', notice: { kind: 'error', text: '内部错误：' + (e && e.message ? e.message : String(e)) } });
+      return null;
+    }
+
     function run(action, payload) {
       var def = DL.actions.ACTIONS[action];
       if (!def || typeof def.run !== 'function') {
         dispatch({ type: 'notice.set', notice: { kind: 'error', text: '未实现的动作：' + action } });
         return Promise.resolve(null);
       }
-      return Promise.resolve(def.run(buildCtx(), payload || null)).catch(function (e) {
-        dispatch({ type: 'notice.set', notice: { kind: 'error', text: '内部错误：' + (e && e.message ? e.message : String(e)) } });
-        return null;
-      });
+      var out;
+      try {
+        out = def.run(buildCtx(), payload || null);
+      } catch (e) {
+        return Promise.resolve(actionError(e));
+      }
+      return Promise.resolve(out).catch(actionError);
     }
 
     // 从被点元素上取行级/元素级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
@@ -150,6 +187,9 @@
       if (!ds) return null;
       var out = {};
       var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId', 'tier', 'addr', 'field', 'value'];
+      // D-179：`node`/`preset` 是积木编辑器的「加节点」「套用模板」载荷 —— 此前 render.js 不写、此处不收，
+      //   于是这两个按钮点了毫无反应（与 format.js 的字段级契约由 button-payload-contract 测试钉死）。
+      keys.push('node', 'preset');
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;

@@ -128,6 +128,12 @@
     if (typeof button.addr === 'string' && button.addr !== '') out += ' data-addr="' + esc(button.addr) + '"';
     if (typeof button.field === 'string' && button.field !== '') out += ' data-field="' + esc(button.field) + '"';
     if (typeof button.value === 'string' && button.value !== '') out += ' data-value="' + esc(button.value) + '"';
+    // D-179 修复：积木编辑器的「添加积木节点」与「套用模板」两个按钮的载荷。
+    //   背景（用户实测复盘）：format.js 早就产出 `node`/`preset` 字段，但 render.js 不搬运、app.js 不收集
+    //   → 点击后 payload 为空 → ai-node-append 直接 return、ai-bp-preset 报"模板不在清单里"，
+    //   而积木编辑器的核心交互（加节点）就此完全失效。字段级契约见 tests/frontend/button-payload-contract.test.js。
+    if (typeof button.node === 'string' && button.node !== '') out += ' data-node="' + esc(button.node) + '"';
+    if (typeof button.preset === 'string' && button.preset !== '') out += ' data-preset="' + esc(button.preset) + '"';
     return out;
   }
 

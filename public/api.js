@@ -95,6 +95,8 @@
       openPackage: function (token, input) { return call('POST', '/api/v1/me/warehouse/open-package', input, token); },
       configs: function (token) { return call('GET', '/api/v1/me/configs', undefined, token); },
       aiList: function (token) { return call('GET', '/api/v1/me/ai', undefined, token); },
+      // D-178：积木节点目录 + 我的拥有/占用/空闲（空闲为服务端派生量）
+      aiNodes: function (token) { return call('GET', '/api/v1/me/ai/nodes', undefined, token); },
       // 提交③：出战配置编辑器（03 §3.7 两步顺序）——
       //   ① assemble/disassemble 改的是**仓库里那件物品**的 slots[]；
       //   ② saveConfig 把草稿写回配置槽（PUT /me/configs/:slotId）；③ activateConfig 才校验完整性。

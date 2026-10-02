@@ -36,6 +36,12 @@ const PACKAGE_CONFIG = require('../data/package-config.json');
 const PACKAGE_DEFS = PACKAGE_CONFIG.packages;
 const PACKAGE_BY_KIND = Object.fromEntries(PACKAGE_DEFS.map((p) => [p.packageKind, p]));
 const PACKAGE_KINDS = PACKAGE_DEFS.map((p) => p.packageKind);
+// D-178：积木节点目录（AI 节点包的产出源；节点品质由 nodeQualityCurve 决定、同品质内等概率抽）
+const AI_NODE_CATALOG = require('../data/ai-node-catalog.json').nodes;
+const AI_NODES_BY_QUALITY = AI_NODE_CATALOG.reduce((acc, n) => {
+  (acc[n.quality] = acc[n.quality] || []).push(n);
+  return acc;
+}, {});
 // 段位门控开关（unlock.json 的 gating.enabled 为单一数据源；字段缺失/非 false → 按启用处理，旧表行为不变）
 const GATING_DEFAULT = !require('../data/unlock.json').gating || require('../data/unlock.json').gating.enabled !== false;
 // 类型修饰系数（L9：数值在表，role-templates.json typeModifiers；schema T-DC-1 冻结校验）
@@ -528,6 +534,25 @@ function makeItems(logger, gating) {
     return generatePlugin(dropsKind, quality, rng, pool);
   }
 
+  // D-178：新手自带节点包（**全部绿档节点各 1 个**）。uid 由 nodeId 派生 → 确定性（starter 必须可复现，
+  //   且跨进程重启不撞车：不消耗模块级 uidSeq）。
+  // D-178：新手自带节点包（**全部绿档节点**；结构类节点给多份 —— 只给 1 个 `f_if` 就写不出嵌套分支，
+  //   与"十几个节点就能搭出完整 AI"的设计目标冲突）。uid 由 (nodeId, 序号) 派生 → 确定性、跨重启不撞车。
+  const STARTER_NODE_EXTRA = Object.freeze({ f_seq: 2, f_if: 3 });
+  function starterNodeStacks() {
+    const out = [];
+    for (const n of (AI_NODES_BY_QUALITY.common || [])) {
+      const count = STARTER_NODE_EXTRA[n.id] || 1;
+      for (let i = 0; i < count; i += 1) {
+        out.push({
+          uid: count === 1 ? `node_starter_${n.id}` : `node_starter_${n.id}_${i + 1}`,
+          kind: 'aiNode', nodeId: n.id, name: n.name, category: n.category, quality: n.quality, count: 1,
+        });
+      }
+    }
+    return out;
+  }
+
   // 开包（纯函数）：包 → 1~3 件物品。保留包（openable=false，如 AI 节点包）→ {reserved:true, items:[]}。
   //   调用方（L6）负责：校验包确实属于该玩家仓库、扣包、把 items 落 journal（package.opened）。
   function openPackage(rng, pkg, options) {
@@ -541,12 +566,39 @@ function makeItems(logger, gating) {
     if (step === null) {
       return { ok: false, code: 'package_invalid', message: `包质量 ${pkg.qualityPercent} 与品质 ${pkg.quality} 不匹配` };
     }
-    // AI 节点包（openable=false）：**保留包**——静默消耗但零产出；L6 回带 notice 供前端提示
+    // 保留包（openable=false）：静默消耗但零产出；L6 回带 notice 供前端提示（当前已无保留包，防御保留）
     if (def.openable !== true) {
       L.info('items', 'items.package.open', `保留包 ${def.packageKind}（未开放产出）`, {
         packageKind: def.packageKind, quality: pkg.quality, qualityPercent: pkg.qualityPercent, reserved: true,
       });
       return { ok: true, reserved: true, items: [] };
+    }
+    // AI 节点包（D-178）：产出**可堆叠的积木节点**——品质走 nodeQualityCurve（本级及以下均匀），
+    //   个数复用 itemCountCurve（**质量只影响个数，不影响品质**，用户口径）；同 nodeId 合并为一条堆叠（count++）。
+    if (def.packageKind === 'aiNode') {
+      const countKey = pickWeighted(rng, PACKAGE_CONFIG.itemCountCurve[String(step)], `itemCountCurve.${step}`);
+      const nodes = [];
+      const byId = new Map();
+      for (let i = 0; i < Number(countKey); i += 1) {
+        const qKey = pickWeighted(rng, PACKAGE_CONFIG.nodeQualityCurve[pkg.quality], `nodeQualityCurve.${pkg.quality}`);
+        const pool = AI_NODES_BY_QUALITY[qKey] || [];
+        if (pool.length === 0) {
+          L.warn('items', 'items.package.open', `节点品质 ${qKey} 无可用节点（目录为空）`, { quality: qKey });
+          continue;
+        }
+        const node = rng.pick(pool);
+        if (byId.has(node.id)) byId.get(node.id).count += 1;
+        else {
+          const entry = { uid: `node_${uidSeq++}`, kind: 'aiNode', nodeId: node.id, name: node.name, category: node.category, quality: node.quality, count: 1 };
+          byId.set(node.id, entry);
+          nodes.push(entry);
+        }
+      }
+      L.info('items', 'items.package.open', `开节点包 ${pkg.quality} ${pkg.qualityPercent}% → ${nodes.length} 种（共 ${nodes.reduce((a, x) => a + x.count, 0)} 个）`, {
+        packageKind: 'aiNode', quality: pkg.quality, qualityPercent: pkg.qualityPercent,
+        stacks: nodes.length, total: nodes.reduce((a, x) => a + x.count, 0),
+      });
+      return { ok: true, reserved: false, items: nodes };
     }
     const countKey = pickWeighted(rng, PACKAGE_CONFIG.itemCountCurve[String(step)], `itemCountCurve.${step}`);
     const count = Number(countKey);
@@ -643,10 +695,11 @@ function makeItems(logger, gating) {
   // ===== L3：仓库与装配（B18；同文件双分层——纯函数，输入仓库不变，成功返回新仓库）=====
 
   // 仓库规范骨架（分桶键；GET /api/v1/warehouse 返回）
-  // D-176：新增第 5 桶 `package`（包）。桶键与物品 `kind` 的对应：role/skill/rolePlugin/skillPlugin 同名，
-  //   包的 kind='package' 而桶键也是 'package'（包种类由物品字段 `packageKind` 区分）。
+  // D-176：新增第 5 桶 `package`（包）；D-178：新增第 6 桶 `aiNode`（可堆叠积木节点）。
+  //   桶键与物品 `kind` 的对应：role/skill/rolePlugin/skillPlugin 同名，包的 kind='package' 桶键也是 'package'，
+  //   节点的 kind='aiNode' 桶键也是 'aiNode'（节点条目 = 一个堆叠：{uid, kind:'aiNode', nodeId, quality, count}）。
   function emptyWarehouse() {
-    return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] } };
+    return { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] } };
   }
 
   function cloneWarehouse(wh) {
@@ -756,6 +809,8 @@ function makeItems(logger, gating) {
     // D-176/D-177：包（模块包）—— 生成、战斗掉落抽样、开包、白名单池与档位查询
     generatePackage, rollBattlePackages, openPackage, packageDefOf, packagePercentsOf, packageStepOf,
     packageDropPoolOf, pickWeighted,
+    // D-178：AI 积木节点（新手自带绿档节点的确定性堆叠）
+    starterNodeStacks,
     applyAffixes, buildRolePanel, applyTypeModifier, dropPool, pickFromPool, validateUnlock,
     emptyWarehouse, assemble, disassemble,
     // 实例自省：当前门控是否参与判定（测试/文档断言用；属性非函数）

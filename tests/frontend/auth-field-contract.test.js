@@ -111,6 +111,9 @@ async function capture() {
     // F5/D-172：AI 编辑器的四个新端点（校验 / 新建 / 编辑保存 / 删除）—— 契约路径的宿主响应
     const AI_OK_PROGRAM = { type: 'program', version: 2, body: { type: 'seq', statements: [{ type: 'action', name: 'wait' }] } };
     const aiVal = await post('/api/v1/me/ai/validate', { program: AI_OK_PROGRAM }, token);
+// D-178：积木节点目录 + 拥有/占用/空闲（AI 库屏的库存摘要 + 编辑器节点库）
+const aiNodesRes = await request(port, 'GET', '/api/v1/me/ai/nodes', undefined,
+  { Authorization: 'Bearer ' + token });
     assert.equal(aiVal.status, 200, `AI 校验应 200：${aiVal.raw.slice(0, 200)}`);
     const aiNew = await post('/api/v1/me/ai', { name: '契约AI', program: AI_OK_PROGRAM, status: 'draft' }, token);
     assert.equal(aiNew.status, 200, `新建 AI 应 200：${aiNew.raw.slice(0, 200)}`);
@@ -201,6 +204,7 @@ async function capture() {
       register: reg.body, login: login.body, me: me.body, password: pwd.body, logout: logout.body,
       warehouse: wh.body, box: boxResp.body, ai: ai.body, nickname: nick.body,
       aiValidate: aiVal.body, aiCreate: aiNew.body, aiUpdate: aiPut.body, aiDelete: aiDel.body,
+      aiNodes: aiNodesRes.body,
       configs: configs.body, assemble: asm.body, openPackage: openPkg.body,
       quick: quick.body, replay: replayResp.body, ranked: ranked.body, board: boardResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
@@ -239,6 +243,7 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'me/warehouse/open-package': { envelopes: [real.openPackage], anyOf: false },
     'me/box': { envelopes: [real.box], anyOf: false },
     'me/ai': { envelopes: [real.ai], anyOf: false },
+    'me/ai/nodes': { envelopes: [real.aiNodes], anyOf: false }, // D-178：积木节点库存
     // F5/D-172：AI 编辑器的四个端点
     'me/ai/validate': { envelopes: [real.aiValidate], anyOf: false },
     'me/ai/create': { envelopes: [real.aiCreate], anyOf: false },
@@ -404,8 +409,8 @@ test('FC-6 F3 三个新投影只用契约字段就能产出可见文本（真实
   assert.match(summary, /^契约 · common · 0 · 未读 进攻0\/防守0 · 在池$/, `hub 摘要内容：${summary}`);
   // 仓库容量行 + 物品行 + 物品详情（03 §3.3/§5.3）—— F8/D-176：五桶（含包）
   const capacity = format.warehouseCapacityText(real.warehouse);
-  assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500$/, `容量行：${capacity}`);
-  const buckets = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package'];
+  assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500 · AI节点 \d+\/500$/, `容量行：${capacity}`);
+  const buckets = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package', 'aiNode'];
   let items = 0;
   for (const bucket of buckets) {
     for (const item of format.bucketItems(real.warehouse, bucket)) {

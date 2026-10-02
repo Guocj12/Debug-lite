@@ -40,9 +40,9 @@
   var AI_NAME_FIELD = 'aiName';
   var SCREEN_FIELDS = Object.freeze([NICKNAME_FIELD, AI_NAME_FIELD]);
 
-  // F3/F8：仓库五桶（与 GET /me/warehouse 的 data.buckets 键逐条相等；03 §5.2）
-  //   **F8/D-176**：新增第 5 桶 `package`（包）
-  var WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
+  // F3/F8：仓库六桶（与 GET /me/warehouse 的 data.buckets 键逐条相等；03 §5.2）
+  //   **F8/D-176**：新增第 5 桶 `package`（包）；**D-178**：新增第 6 桶 `aiNode`（AI 积木节点，可堆叠）
+  var WAREHOUSE_BUCKETS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package', 'aiNode']);
   // F3：屏内弹窗种类（03 §3.7/§3.8；至多一个）。
   //   提交③ 新增两级选择弹窗：slot-pick（角色/技能模板）· plugin-pick（某插槽的插件）· ai-pick（AI 库）
   //   F6 新增 ai-logic（AI 逻辑查看器：只读展示我方 AI 程序树 + 本帧执行轨迹；04 §3.3）
@@ -127,6 +127,7 @@
   function emptyAiEditor() {
     return {
       list: null,        // GET /me/ai 的完整信封
+      nodes: null,       // D-178：GET /me/ai/nodes 的完整信封（积木节点目录 + 拥有/占用/空闲）
       mode: 'list',      // 'list' | 'edit'
       aiId: null,        // 正在编辑的库条目；null = 新建
       status: 'ready',   // 条目状态（'ready' | 'draft'）
@@ -403,24 +404,29 @@
       // 列表（GET /me/ai 信封；投影在 format.js）
       case 'ai.list.set':
         return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { list: action.envelope || null }) });
+      // D-178：积木节点库存（GET /me/ai/nodes 信封；目录 + 拥有/占用/空闲）
+      case 'ai.nodes.set':
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { nodes: action.envelope || null }) });
       // 打开编辑器：新建（aiId=null）或打开库内条目（带 name/program/status 初值）
       case 'ai.editor.open':
         return Object.assign({}, state, {
           aiEditor: Object.assign({}, emptyAiEditor(), {
             list: state.aiEditor.list,
+            nodes: state.aiEditor.nodes, // D-178：目录/库存是**屏级数据**，开关编辑器都必须保留
             mode: 'edit',
             aiId: action.aiId === undefined ? null : action.aiId,
             status: action.status === 'draft' ? 'draft' : 'ready',
             name: strOf(action.name),
             draft: action.program ? JSON.parse(JSON.stringify(action.program)) : null,
-            cursor: 'body',
+            // D-178：蓝图草稿的默认游标 = 蓝图地址语法（AST 程序仍用 'body'）
+            cursor: action.program && action.program.type === 'blueprint' ? (action.program.body && action.program.body.length > 0 ? 'body[0]' : '') : 'body',
             dirty: action.dirty === true,
           }),
         });
       // 关闭编辑器（回列表态；草稿丢弃——丢弃确认由 actions 层负责）
       case 'ai.editor.close':
         return Object.assign({}, state, {
-          aiEditor: Object.assign({}, emptyAiEditor(), { list: state.aiEditor.list }),
+          aiEditor: Object.assign({}, emptyAiEditor(), { list: state.aiEditor.list, nodes: state.aiEditor.nodes }),
         });
       // 草稿整体替换（结构操作 / 导入 JSON 都走这条；一并清掉未提交文本）
       case 'ai.draft.set':

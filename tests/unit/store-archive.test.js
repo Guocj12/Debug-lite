@@ -52,7 +52,7 @@ test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注
     'progress', 'rating', 'configs', 'pool', 'record', 'flags', 'warehouse', 'ai', 'updatedAt']) {
     assert.ok(Object.prototype.hasOwnProperty.call(a, key), `档案缺字段 ${key}`);
   }
-  assert.deepEqual(a.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] }, starterIssued: false, grantIds: [] },
+  assert.deepEqual(a.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] }, starterIssued: false, grantIds: [] },
     '未给仓库 → 空五桶（建号必带该段；D-176 新增 package）');
   assert.deepEqual(a.ai, { items: [] });
   assert.equal(arch.validateArchive(a, { config: DEFAULT_SERVICE_CONFIG }).ok, true);
@@ -86,7 +86,7 @@ test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注
   assert.equal(bot.progress.tier, 'epic');
   assert.equal(bot.rating.points, 500);
   assert.equal(bot.configs.slots.length, 0);
-  assert.deepEqual(bot.warehouse.buckets, { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] }, 'bot 也带空仓库段');
+  assert.deepEqual(bot.warehouse.buckets, { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] }, 'bot 也带空仓库段');
   assert.equal(bot.warehouse.starterIssued, false);
   // 工具
   assert.equal(arch.shardOf(PID1), '11', '分片取 pl_ 之后的前 2 个 hex（不是 "pl"）');
@@ -110,7 +110,7 @@ test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注
   // D-159/D-161：新段的上限常量与判据
   assert.equal(arch.warehouseMaxPerBucketOf(DEFAULT_SERVICE_CONFIG), 500);
   assert.equal(arch.aiMaxPerPlayerOf(DEFAULT_SERVICE_CONFIG), 100);
-  assert.deepEqual(arch.emptyWarehouse(), { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] } });
+  assert.deepEqual(arch.emptyWarehouse(), { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] } });
   assert.deepEqual(arch.emptyIncompleteLoadout(), { role: null, skills: [null, null, null], ai: null });
   assert.equal(arch.isLoadoutComplete(arch.emptyIncompleteLoadout()), false);
   assert.equal(arch.isLoadoutComplete({ role: {}, skills: [{}, {}, {}], ai: {} }), true);
@@ -261,7 +261,7 @@ test('ARC-4 迁移：v0 → v2 补齐字段（含空仓库/AI 库）并记 store
   assert.equal(res.archive.rating.points, 77, '保留 v0 已有字段');
   assert.equal(res.archive.progress.tier, 'common', '补齐缺失字段');
   // D-159：迁移只补**空**仓库（老账号**不**补发 starter）；D-161：补空 AI 库
-  assert.deepEqual(res.archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [] }, starterIssued: false, grantIds: [] });
+  assert.deepEqual(res.archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] }, starterIssued: false, grantIds: [] });
   assert.deepEqual(res.archive.ai, { items: [] });
   assert.equal(events[0].ev, 'store.migrate');
   assert.equal(events[0].ch, 'store');
@@ -282,7 +282,7 @@ test('ARC-4 迁移：v0 → v2 补齐字段（含空仓库/AI 库）并记 store
   assert.equal(res1.from, 1);
   assert.equal(res1.to, 2);
   assert.equal(res1.archive.warehouse.starterIssued, false, 'D-159：v1 存量档案迁移不补发 starter');
-  assert.deepEqual(arch.warehouseCounts(res1.archive.warehouse), { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0, package: 0 });
+  assert.deepEqual(arch.warehouseCounts(res1.archive.warehouse), { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0, package: 0, aiNode: 0 });
   assert.deepEqual(res1.archive.ai.items, []);
   const same = arch.migrateArchive(newArchive(), { logger });
   assert.equal(same.migrated, false);

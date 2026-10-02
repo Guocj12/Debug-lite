@@ -45,7 +45,18 @@ test('PK-1 配置表不变量：档位 / 概率和 / 种类 / 白名单', () => 
   // 五种包 + 权重正数
   assert.deepEqual(cfg.packages.map((p) => p.packageKind),
     ['role', 'skill', 'rolePlugin', 'skillPlugin', 'aiNode']);
-  assert.equal(cfg.packages.find((p) => p.packageKind === 'aiNode').openable, false, 'AI 节点包 = 保留包');
+  assert.equal(cfg.packages.find((p) => p.packageKind === 'aiNode').openable, true, 'D-178：AI 节点包已开放产出（积木节点）');
+  assert.equal(cfg.packages.find((p) => p.packageKind === 'aiNode').dropsKind, null, 'AI 节点包产出源是 ai-node-catalog，不是物品模板类别');
+  // D-178：节点品质曲线 —— 5 行全覆盖、每行只允许本级及以下、每行和为 1
+  assert.deepEqual(Object.keys(cfg.nodeQualityCurve).sort(), [...TIERS].sort(), 'nodeQualityCurve 覆盖全部品质');
+  for (let gi = 0; gi < TIERS.length; gi += 1) {
+    const t = TIERS[gi];
+    const row = cfg.nodeQualityCurve[t];
+    assert.ok(Math.abs(sum(row) - 1) < 1e-9, `nodeQualityCurve.${t} 和为 1`);
+    for (const q of Object.keys(row)) {
+      assert.ok(TIERS.indexOf(q) <= gi, `nodeQualityCurve.${t} 不得含更高品质 ${q}`);
+    }
+  }
   assert.ok(TIERS.every((t) => cfg.packageKindWeights[t] === undefined ? true : true));
   assert.ok(['role', 'skill', 'rolePlugin', 'skillPlugin', 'aiNode']
     .every((k) => typeof cfg.packageKindWeights[k] === 'number' && cfg.packageKindWeights[k] >= 0));
@@ -137,18 +148,38 @@ test('PK-4 openPackage：确定性 + 件数 1~3 + 品质落在允许集合内', 
   assert.equal(items.openPackage(createRng(1), null).code, 'package_invalid');
 });
 
-test('PK-5 AI 节点包 = 保留包：可掉落、开包零产出且不抛错', () => {
-  const pkg = items.generatePackage({ packageKind: 'aiNode', quality: 'rare', qualityPercent: 30, uid: 'pkg_ai' });
-  const r = items.openPackage(createRng(7), pkg);
-  assert.equal(r.ok, true);
-  assert.equal(r.reserved, true);
-  assert.deepEqual(r.items, []);
-  // 统计：100 个品质分布合理（不做精确断言，只保证不抛错且恒零产出）
+test('PK-5 [D-178] AI 节点包：产出可堆叠积木节点（品质 ≤ 包品质、同 id 合并、个数 1~3）', () => {
+  const catalog = require('../../server/data/ai-node-catalog.json').nodes;
+  const byId = Object.fromEntries(catalog.map((n) => [n.id, n]));
+  const tally = {};
   for (const tier of TIERS) {
-    const p = items.generatePackage({ packageKind: 'aiNode', quality: tier, qualityPercent: cfg.qualityPercentBands[tier][0], uid: `pkg_ai_${tier}` });
-    assert.deepEqual(items.openPackage(createRng(3), p).items, []);
+    const pkg = items.generatePackage({ packageKind: 'aiNode', quality: tier, qualityPercent: cfg.qualityPercentBands[tier][0], uid: `pkg_ai_${tier}` });
+    const r = items.openPackage(createRng(11), pkg);
+    assert.equal(r.ok, true);
+    assert.equal(r.reserved, false, 'D-178：不再是保留包');
+    const total = r.items.reduce((a, x) => a + x.count, 0);
+    assert.ok(total >= 1 && total <= 3, `件数 1~3（实际 ${total}）`);
+    assert.equal(new Set(r.items.map((x) => x.nodeId)).size, r.items.length, '同 nodeId 合并为一条堆叠');
+    for (const it of r.items) {
+      assert.equal(it.kind, 'aiNode');
+      assert.ok(byId[it.nodeId], `节点 ${it.nodeId} 在目录中`);
+      assert.equal(it.quality, byId[it.nodeId].quality, '条目品质 = 节点固定品质（品质=功能等级，不掷骰）');
+      assert.ok(TIERS.indexOf(it.quality) <= TIERS.indexOf(tier), '品质不高于包品质');
+      assert.ok(Number.isInteger(it.count) && it.count >= 1);
+    }
   }
-  // 白名单池：保留包没有可掉落模板
+  // 均匀性（青包 = 五档各 20%）：3000 次开包的节点品质分布应接近均匀
+  const rng = createRng(20260928);
+  for (let i = 0; i < 3000; i += 1) {
+    const pkg = items.generatePackage({ packageKind: 'aiNode', quality: 'mythic', qualityPercent: 85, uid: `pkg_${i}` });
+    for (const it of items.openPackage(rng, pkg).items) tally[it.quality] = (tally[it.quality] || 0) + it.count;
+  }
+  const n = TIERS.reduce((a, t) => a + (tally[t] || 0), 0);
+  for (const t of TIERS) {
+    const share = (tally[t] || 0) / n;
+    assert.ok(share > 0.16 && share < 0.24, `${t} 占比应接近 20%（实际 ${(share * 100).toFixed(1)}%）`);
+  }
+  // 白名单池：节点包没有"物品模板"池（产出源是节点目录）
   assert.deepEqual(items.packageDropPoolOf('aiNode', 30), []);
 });
 

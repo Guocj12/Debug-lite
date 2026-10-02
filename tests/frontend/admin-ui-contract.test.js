@@ -54,7 +54,9 @@ const F5_ACTIONS = ['ai-refresh', 'ai-new', 'ai-open', 'ai-delete', 'ai-confirm-
   'ai-select-node', 'ai-insert', 'ai-replace', 'ai-set-field', 'ai-set-literal-type', 'ai-field-commit',
   'ai-move-up', 'ai-move-down', 'ai-wrap-if', 'ai-delete-node', 'ai-slot-clear', 'ai-block-remove',
   'ai-validate', 'ai-save', 'ai-save-draft', 'ai-save-as', 'ai-import-open', 'ai-import-close', 'ai-import-apply',
-  'ai-close', 'ai-discard-yes', 'ai-discard-no'];
+  'ai-close', 'ai-discard-yes', 'ai-discard-no',
+  // D-178：积木编辑器动作（与积木编辑屏同批提交；06-ai-editor.md §16.3）
+  'ai-bp-new', 'ai-bp-preset', 'ai-node-append', 'ai-node-del', 'ai-node-up', 'ai-node-down', 'ai-param-set'];
 const EVENT_ONLY_ACTIONS = new Set(['ai-field-commit']);
 
 const ROW = {
@@ -151,9 +153,44 @@ const AI_F5_LIST = {
   },
 };
 
+// D-178：积木编辑屏的测试态（目录/库存/模板用真源，保证渲染出的节点库与真实目录一致）
+const AI_BP_SHOOT_ADMIN = {
+  type: 'blueprint', version: 1,
+  body: [{
+    uid: 'n1', node: 'f_if', params: {},
+    inputs: [
+      { uid: 'n2', node: 'c_gap_less', params: { x: 3 }, inputs: [] },
+      { uid: 'n3', node: 'a_skill', params: { slot: 1 }, inputs: [] },
+      { uid: 'n4', node: 'a_wait', params: {}, inputs: [] },
+    ],
+  }],
+};
+const AI_NODES_ENVELOPE_ADMIN = {
+  ok: true,
+  data: {
+    catalog: require('../../server/data/ai-node-catalog.json').nodes,
+    limits: { maxSlots: 128, maxDepth: 24, blueprintVersion: 1, effectScanSlots: 4 },
+    presets: require('../../server/data/ai-blueprint-presets.json').presets,
+    inventory: require('../../server/data/ai-node-catalog.json').nodes.map((n) => ({ nodeId: n.id, quality: n.quality, category: n.category, owned: 2, used: 0, free: 2 })),
+    counts: { ownedKinds: 0, ownedTotal: 0, usedTotal: 0 },
+  },
+};
+
 function adminAiState(mode, extra) {
   const state = adminState('ai-editor');
   state.aiEditor.list = AI_F5_LIST;
+  if (mode === 'edit-blueprint') {
+    // D-178：积木编辑屏（草稿 = 蓝图）——积木动作必须在这一态里渲染，否则 AU-1 会判"注册了没入口"
+    state.aiEditor.mode = 'edit';
+    state.aiEditor.aiId = 'ai_bp_1';
+    state.aiEditor.name = '我的积木AI';
+    state.aiEditor.cursor = 'body[0].inputs[0]';
+    state.aiEditor.draft = AI_BP_SHOOT_ADMIN;
+    state.aiEditor.nodes = AI_NODES_ENVELOPE_ADMIN;
+    state.aiEditor.validate = { ok: true, data: { ok: true, warnings: [], programHash: 'b'.repeat(64), slotCount: 4, compilerVersion: 1 } };
+    Object.assign(state.aiEditor, extra || {});
+    return state;
+  }
   if (mode !== 'list') {
     state.aiEditor.mode = 'edit';
     state.aiEditor.aiId = 'ai_f5_1';
@@ -290,6 +327,7 @@ function adminRenderings() {
   list.push(htmlFor(adminAiState('edit-import', { importOpen: true })));
   list.push(htmlFor(adminAiState('edit-discard', { confirm: { kind: 'discard' } })));
   list.push(htmlFor(adminAiState('edit-empty')));
+  list.push(htmlFor(adminAiState('edit-blueprint'))); // D-178：积木编辑屏
   return list;
 }
 

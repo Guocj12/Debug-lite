@@ -211,13 +211,20 @@ test('QB-4 轨迹侧位切换：轨迹行与当前帧 aiTrace 同源（条数一
     await h.run('viewer-trace-p1');
     assert.equal(h.state().viewer.traceOwner, 'p1');
     const p1Text = format.traceSummaryText(frames[idx], 'p1');
-    assert.ok(p1Text.indexOf(`（${format.traceEntriesOf(frames[idx], 'p1').length} 条）`) !== -1, p1Text);
+    // D-178⑩：**非管理员只看积木层**（执行步数 + "仅管理员可见"），底层 path 一律不外泄
     assert.ok(p1Text.indexOf('我方(进攻方)') === 0, p1Text);
+    assert.ok(p1Text.indexOf('仅管理员可见') !== -1, p1Text);
+    assert.equal(p1Text.indexOf('body.'), -1, `非管理员不得看到底层 path：${p1Text}`);
+    assert.ok(p1Text.indexOf(String(format.traceEntriesOf(frames[idx], 'p1').length) + ' 个执行步骤') !== -1, p1Text);
+    // 管理员态：逐条底层（path + nodeType）
+    const p1Admin = format.traceSummaryText(frames[idx], 'p1', true);
+    assert.ok(p1Admin.indexOf(`（底层，${format.traceEntriesOf(frames[idx], 'p1').length} 条）`) !== -1, p1Admin);
+    assert.ok(p1Admin.indexOf('body.') !== -1, `管理员应看到底层 path：${p1Admin}`);
     await h.run('viewer-trace-p2');
     assert.equal(h.state().viewer.traceOwner, 'p2');
     const p2Text = format.traceSummaryText(frames[idx], 'p2');
-    assert.ok(p2Text.indexOf(`（${format.traceEntriesOf(frames[idx], 'p2').length} 条）`) !== -1, p2Text);
     assert.ok(p2Text.indexOf('对手(防守方)') === 0, p2Text);
+    assert.ok(p2Text.indexOf('仅管理员可见') !== -1, p2Text);
     // 每条轨迹条目都带 owner/path/nodeType（形状断言）
     for (const entry of format.traceEntriesOf(frames[idx], 'p2')) {
       assert.equal(entry.owner, 'p2');
@@ -637,4 +644,34 @@ test('QB-10 busy 时全部按钮禁用；quick-run 不重入', async () => {
     await h.run('quick-run');
     assert.equal(h.counter.n, before + 1, '空闲时应能再次发起');
   });
+});
+
+/* ---------- QB-4b ---------- */
+
+test('QB-4b [D-178] 积木层高亮：有 traceMap 时非管理员看到"当前跑到积木节点"；管理员看底层；对手侧不用他人映射', () => {
+  const frame = {
+    diff: {
+      aiTrace: [
+        { owner: 'p1', seq: 0, path: 'body.s[0]', nodeType: 'if', depth: 1, result: null },
+        { owner: 'p1', seq: 1, path: 'body.s[0].then.s[0]', nodeType: 'action', depth: 2, result: 'wait' },
+        { owner: 'p2', seq: 0, path: 'body.s[0]', nodeType: 'if', depth: 1, result: null },
+      ],
+    },
+  };
+  const map = { 'body.s[0]': 'n1', 'body.s[0].then.s[0]': 'n2' };
+  // 非管理员 + 有映射：只报积木层（uid），**不出现任何底层 path**
+  const t1 = format.traceSummaryText(frame, 'p1', false, map);
+  assert.ok(t1.indexOf('我方(进攻方)') === 0, t1);
+  assert.ok(t1.indexOf('2 个积木步骤') !== -1, t1);
+  assert.ok(t1.indexOf('当前跑到积木节点 n2') !== -1, `应报最后一个积木节点：${t1}`);
+  assert.equal(t1.indexOf('body.'), -1, `非管理员不得看到底层 path：${t1}`);
+  // 管理员：逐条底层
+  const t2 = format.traceSummaryText(frame, 'p1', true, map);
+  assert.ok(t2.indexOf('（底层，2 条）') !== -1, t2);
+  assert.ok(t2.indexOf('body.s[0].then.s[0]') !== -1, t2);
+  // 对手侧：即便调用方给了映射也**不**套用（避免把对手路径标成自己的积木）
+  const t3 = format.traceSummaryText(frame, 'p2', false, map);
+  assert.ok(t3.indexOf('对手(防守方)') === 0, t3);
+  assert.ok(t3.indexOf('1 个执行步骤') !== -1, t3);
+  assert.equal(t3.indexOf('n1'), -1, `对手侧不得套用我方映射：${t3}`);
 });

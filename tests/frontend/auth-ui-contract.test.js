@@ -22,7 +22,7 @@ const appMod = require('../../public/app.js');
 const contract = require('../../public/contract.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
-const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
+const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'ai-blueprint.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
 // 02-accounts.md §4 的十七个管理动作（F2 十六 + D-170 一个；只在管理员态渲染，非管理员态**完全不出现**，A-1）
@@ -240,8 +240,50 @@ function aiEditState(cursor, program, extra) {
   return state;
 }
 
-function nonAdminRenderings() {
-  const list = store.VIEWS.map((view) => stateFor(view));
+// D-178：积木编辑屏的可达态（草稿 = 蓝图；节点目录/库存/模板来自 GET /me/ai/nodes 的信封）
+const AI_BP_SHOOT = {
+  type: 'blueprint', version: 1,
+  body: [{
+    uid: 'n1', node: 'f_if', params: {},
+    inputs: [
+      { uid: 'n2', node: 'c_gap_less', params: { x: 3 }, inputs: [] },
+      { uid: 'n3', node: 'a_skill', params: { slot: 1 }, inputs: [] },
+      { uid: 'n4', node: 'a_wait', params: {}, inputs: [] },
+    ],
+  }],
+};
+const AI_BP_EMPTY = { type: 'blueprint', version: 1, body: [] };
+// 目录用真源（服务端数据表）：保证 UI-2 渲染出的节点库与真实目录一致
+const AI_NODES_CATALOG = require('../../server/data/ai-node-catalog.json').nodes;
+const AI_NODES_PRESETS = require('../../server/data/ai-blueprint-presets.json').presets;
+const AI_NODES_ENVELOPE = {
+  ok: true,
+  data: {
+    catalog: AI_NODES_CATALOG,
+    limits: { maxSlots: 128, maxDepth: 24, blueprintVersion: 1, effectScanSlots: 4 },
+    presets: AI_NODES_PRESETS,
+    inventory: AI_NODES_CATALOG.map((n) => ({ nodeId: n.id, quality: n.quality, category: n.category, owned: 2, used: 0, free: 2 })),
+    counts: { ownedKinds: AI_NODES_CATALOG.length, ownedTotal: AI_NODES_CATALOG.length * 2, usedTotal: 0 },
+  },
+};
+function aiBpEditState(cursor, blueprint, extra) {
+  const state = stateFor('ai-editor');
+  state.aiEditor.list = AI_LIST_ENVELOPE;
+  state.aiEditor.nodes = AI_NODES_ENVELOPE;
+  state.aiEditor.mode = 'edit';
+  state.aiEditor.aiId = 'ai_bp_1';
+  state.aiEditor.name = '我的积木AI';
+  state.aiEditor.cursor = cursor;
+  state.aiEditor.draft = JSON.parse(JSON.stringify(blueprint === undefined ? AI_BP_SHOOT : blueprint));
+  state.aiEditor.validate = {
+    ok: true,
+    data: { ok: true, warnings: [], programHash: 'b'.repeat(64), slotCount: 4, compilerVersion: 1 },
+  };
+  Object.assign(state.aiEditor, extra || {});
+  return state;
+}
+
+function nonAdminRenderings() {  const list = store.VIEWS.map((view) => stateFor(view));
   const itemDetail = stateFor('warehouse');
   itemDetail.warehouse.envelope = WAREHOUSE_ENVELOPE;
   itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
@@ -284,6 +326,10 @@ function nonAdminRenderings() {
   list.push(aiEditState('body', AI_MIXED_PROGRAM, { importOpen: true }));
   list.push(aiEditState('body', AI_MIXED_PROGRAM, { confirm: { kind: 'discard' } }));
   list.push(aiEditState('body', null));
+  // D-178：积木编辑屏 —— 草稿是**蓝图**时必须纳入渲染集合（否则 ai-bp-new / ai-node-* / ai-param-set
+  //   会被 UI-2 判成"注册了没入口"）。节点目录由 AI_NODES_ENVELOPE 提供（含 inventory/presets）。
+  list.push(aiBpEditState('body[0].inputs[0]'));
+  list.push(aiBpEditState('', AI_BP_EMPTY));
   return list;
 }
 

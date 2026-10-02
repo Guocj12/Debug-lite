@@ -342,7 +342,7 @@ test('E2E-2 档案与仓库：/me 幂等且 401 三态；starter 落档；GET /m
   // ---- GET /me/warehouse = 真源（D-159；旧"未提交镜像 → 404 warehouse_missing"断言已废除）----
   const wh0 = F.whA;
   assert.equal(wh0.starterIssued, true, 'starter 已发放（D-159）');
-  assert.deepEqual(Object.keys(wh0.buckets).sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin'], '五桶齐备（D-176 增包桶）');
+  assert.deepEqual(Object.keys(wh0.buckets).sort(), ['aiNode', 'package', 'role', 'rolePlugin', 'skill', 'skillPlugin'], '六桶齐备（D-176 增包桶；D-178 增 AI 节点桶）');
   assert.equal(wh0.counts.role, 1, 'starter 恰 1 角色（D-159）');
   assert.equal(wh0.counts.skill, 3, 'starter 恰 3 技能（D-159）');
   assert.ok(wh0.counts.rolePlugin >= 1 && wh0.counts.rolePlugin <= 2,

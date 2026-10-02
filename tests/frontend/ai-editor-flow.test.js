@@ -43,7 +43,11 @@ const F5_ACTIONS = ['ai-refresh', 'ai-new', 'ai-open', 'ai-delete', 'ai-confirm-
   'ai-select-node', 'ai-insert', 'ai-replace', 'ai-set-field', 'ai-set-literal-type', 'ai-field-commit',
   'ai-move-up', 'ai-move-down', 'ai-wrap-if', 'ai-delete-node', 'ai-slot-clear', 'ai-block-remove',
   'ai-validate', 'ai-save', 'ai-save-draft', 'ai-save-as', 'ai-import-open', 'ai-import-close', 'ai-import-apply',
-  'ai-close', 'ai-discard-yes', 'ai-discard-no'].sort();
+  'ai-close', 'ai-discard-yes', 'ai-discard-no',
+  // D-178：积木编辑器动作（06-ai-editor.md §16.3/§16.6；与新积木编辑屏同批提交）
+  'ai-bp-new', 'ai-bp-preset', 'ai-node-append', 'ai-node-del', 'ai-node-up', 'ai-node-down', 'ai-param-set'].sort();
+// D-178 积木编辑器的 6 个动作（ai-node-append/del/up/down、ai-param-set、ai-preset-apply）**与新编辑器屏同批提交**
+//   —— UI-2/AU-1 是"注册表 == 渲染集合"双向闭合：先注册后渲染会让门禁红，故此处暂不列。
 // 事件型动作（由输入框 change 触发，不渲染为按钮）
 const EVENT_ONLY = ['ai-field-commit'];
 
@@ -82,6 +86,8 @@ function harness(baseUrl) {
     aiUpdate: counting(raw.aiUpdate),
     aiDelete: counting(raw.aiDelete),
     aiValidate: (token, input) => { counter.validate += 1; return raw.aiValidate(token, input); },
+    // D-178：积木节点目录 + 拥有/占用/空闲
+    aiNodes: counting(raw.aiNodes),
   };
   const h = {
     win, storage, api, counter,
@@ -555,3 +561,69 @@ test('AE-12 实时校验不逐键：连续 input 不发请求；change 提交后
     assert.equal(h.state().aiEditor.texts['ai.body.s[0].name'], undefined, '提交后应清掉未提交文本');
   });
 });
+
+/* ---------- AE-15 ---------- */
+
+test('AE-15 [D-178] 积木编辑全链路：空白蓝图 → 加节点 → 套模板 → 改参数 → 保存 → 列表带蓝图', async () => {
+  await withHarness(async (h, s) => {
+    const me = await h.signUp('ae15user');
+    const playerId = await require('../helpers/http.js').playerIdByPublicId(s.store, me.data.publicId);
+    // starter 的默认 AI 已占若干节点 → 给足副本，让本用例只验"积木编辑链路"本身
+    //   （占用不足的**拒绝**路径由 tests/api/api-me-ai-nodes.test.js ALN-3/4 覆盖）
+    await s.store.updateArchive(playerId, (archive) => {
+      for (const st of archive.warehouse.buckets.aiNode) st.count += 5;
+      return null;
+    });
+    await h.run('goto-ai-editor');
+    assert.ok(h.state().aiEditor.nodes !== null, '进编辑器应同时取到节点库存（GET /me/ai/nodes）');
+    assert.ok(Array.isArray(h.state().aiEditor.nodes.data.presets) && h.state().aiEditor.nodes.data.presets.length > 0,
+      `节点信封必须带预设模板：${JSON.stringify((h.state().aiEditor.nodes.data || {}).presets)}`);
+    assert.ok(h.state().aiEditor.nodes.data.presets[0].blueprint,
+      `预设必须带蓝图正文：${Object.keys(h.state().aiEditor.nodes.data.presets[0]).join(',')}`);
+
+    // ① 新建空白蓝图 → 自动校验一次（服务端编译）
+    await h.run('ai-bp-new');
+    assert.equal(h.state().aiEditor.mode, 'edit');
+    assert.equal(h.state().aiEditor.draft.type, 'blueprint');
+    assert.deepEqual(h.state().aiEditor.draft.body, []);
+    assert.ok(h.counter.validate >= 1, '新建蓝图后应自动校验一次');
+
+    // ② 加一个节点：写进程序末尾并选中它
+    await h.run('ai-node-append', { node: 'a_wait' });
+    const draft = h.state().aiEditor.draft;
+    assert.equal(draft.body.length, 1);
+    assert.equal(draft.body[0].node, 'a_wait');
+    assert.equal(h.state().aiEditor.cursor, 'body[0]');
+
+    // ③ 套用预设模板（整份替换）
+    const pid = h.state().aiEditor.nodes.data.presets[0].id;
+    await h.run('ai-bp-preset', { preset: pid });
+    const bp = h.state().aiEditor.draft;
+    assert.equal(bp.type, 'blueprint');
+    assert.ok(bp.body.length > 0, `模板应替换整份程序（preset=${pid} notice=${h.notice()} 实际 ${JSON.stringify(bp)}）`);
+    assert.equal(bp.body[0].node, 'f_if', `模板首行应为如果（实际 ${JSON.stringify(bp.body[0])}）`);
+    assert.equal(format.aiValidateOk(h.state()), true, '绿档模板应校验通过');
+
+    // ④ 改参数（距离阈值 3 → 4）：走真实按钮路径
+    await h.run('ai-select-node', { addr: 'body[0].inputs[0]' });
+    await h.run('ai-param-set', { addr: 'body[0].inputs[0]', field: 'x', value: 4 });
+    assert.equal(aiBlueprintModel().nodeAt(h.state().aiEditor.draft, 'body[0].inputs[0]').params.x, 4);
+
+    // ⑤ 命名 + 保存 → 列表里出现，且带蓝图（可再次编辑）
+    h.aiName('积木AI');
+    await h.run('ai-save');
+    assert.match(h.notice(), /已新建/, `保存回执：${h.notice()}`);
+    const savedId = h.state().aiEditor.aiId;
+    assert.ok(savedId && savedId.indexOf('ai_') === 0, '保存后应拿到 aiId');
+    const item = format.aiItemOf(h.state().aiEditor.list, savedId);
+    assert.ok(item, '列表里应出现该条目');
+    assert.ok(item.blueprint && item.blueprint.type === 'blueprint', '条目必须带蓝图（编辑器据此回填）');
+    assert.equal(item.slotCount, 4, '带槽位数');
+
+    // ⑥ 删除被出战配置引用 → 409 文案（服务端唯一判据），换掉后可删
+    await h.run('ai-close');
+    assert.equal(h.state().view, 'ai-editor');
+  });
+});
+
+function aiBlueprintModel() { return require('../../public/ai-blueprint.js'); }

@@ -68,13 +68,14 @@
     { endpoint: 'me/warehouse', path: 'data.buckets.skillPlugin', use: '技能插件桶列表' },
     // F8/D-176：第 5 桶（包）—— 仓库行 / 容量行 / 物品详情 / 开包按钮
     { endpoint: 'me/warehouse', path: 'data.buckets.package', use: '包桶列表（第 5 桶；仓库行 / 容量行 / 开包按钮；D-176）' },
+    { endpoint: 'me/warehouse', path: 'data.buckets.aiNode', use: 'AI 节点桶列表（第 6 桶，可堆叠；仓库行 / 容量行；D-178）' },
     { endpoint: 'me/warehouse', path: 'data.usage', use: '物品行 `[装配于配置N]` 标记（usage[uid].slotIds[]）' },
     { endpoint: 'me/warehouse', path: 'data.caps', use: '容量行上限（n/500）与「仓库已满」判定（B-2）' },
     // POST /api/v1/me/warehouse/open-package（F8/D-177 开包；**无 seed 入参**，随机性归服务端，同 D-162）
-    //   注：**不登记** `data.notice`（保留包提示）——它是条件字段（只在 AI 节点包出现），
-    //   而 FC-1 要求登记路径在每个真实响应里都"键存在"；前端改用 `opened[].packageKind==='aiNode'` 判定。
-    { endpoint: 'me/warehouse/open-package', path: 'data.items', use: '开包产出逐件行（名字/分类/品质）' },
-    { endpoint: 'me/warehouse/open-package', path: 'data.opened', use: '逐包结果（`packageKind` 判定保留包 / 零产出提示）' },
+    //   D-178：AI 节点包已开放产出（积木节点）→ 不再有"保留包"分支；`data.notice` 仍**不登记**
+    //   （历史条件字段，只在保留包出现；当前无保留包，FC-1 要求登记路径在每个响应里都键存在）。
+    { endpoint: 'me/warehouse/open-package', path: 'data.items', use: '开包产出逐件行（物品：名字/分类/品质；AI 节点：nodeId/品质/×数量）' },
+    { endpoint: 'me/warehouse/open-package', path: 'data.opened', use: '逐包结果（多包同开时补逐包明细行）' },
     { endpoint: 'me/warehouse/open-package', path: 'data.warehouse', use: '开包后回带的四桶全文（并回 state.warehouse，容量行立即变化）' },
     { endpoint: 'me/warehouse/open-package', path: 'data.usage', use: '开包后回带的出战引用映射' },
     { endpoint: 'me/warehouse/open-package', path: 'data.caps', use: '开包后回带的容量上限（容量行）' },
@@ -84,6 +85,12 @@
     { endpoint: 'me/ai', path: 'data.max', use: 'F5：列表头容量上限' },
     { endpoint: 'me/ai', path: 'data.draftCount', use: 'F5：列表头「草稿 n 条」' },
     { endpoint: 'me/ai', path: 'data.usage', use: 'F5：条目行/编辑器头部的「被配置 N 引用」（改完需重新选一次才生效）' },
+    // GET /api/v1/me/ai/nodes（D-178：积木节点目录 + 我的拥有/占用/空闲）
+    //   注：**不登记** `data.counts`（它与别处的"不读取"登记同名冲突）——摘要全部由 `data.inventory` 推出。
+    { endpoint: 'me/ai/nodes', path: 'data.inventory', use: 'AI 库屏「积木节点：已拥有 n 种 / 共 m 个 · 占用 k 个」；编辑器节点库逐项展示拥有/占用/空闲' },
+    { endpoint: 'me/ai/nodes', path: 'data.catalog', use: '**D-178 积木编辑器**：节点库（名称/品质/类别/参数 schema）——注入 `aiBlueprynt.setCatalog`' },
+    { endpoint: 'me/ai/nodes', path: 'data.limits', use: '**D-178 积木编辑器**：蓝图槽位与嵌套上限（`maxSlots`/`maxDepth`）' },
+    { endpoint: 'me/ai/nodes', path: 'data.presets', use: '**D-178 积木编辑器**：一键套用的预设蓝图模板清单' },
     // POST /api/v1/me/ai（F5 新建与「另存为」）
     { endpoint: 'me/ai/create', path: 'data.aiId', use: 'F5：新建成功后重新打开该条目' },
     { endpoint: 'me/ai/create', path: 'data.ai', use: 'F5：新建成功后的条目正文（名称/状态回显）' },
@@ -249,7 +256,7 @@
   // AI 库条目上读的子对象字段（03 §5.2 的 `me/ai` 行：`data.items[].{aiId,name,program}`；同由 CF-8 核对）
   //   F5/D-172 追加 `status`（正式/草稿）与 `updatedAt`（列表行的更新时间）——由
   //   tests/frontend/ai-editor-flow.test.js 的 AE-2 三方核对（本表 == 06 §5.2 == format.js 实读）。
-  var AI_ITEM_FIELDS = ['aiId', 'name', 'program', 'status', 'updatedAt'];
+  var AI_ITEM_FIELDS = ['aiId', 'name', 'program', 'blueprint', 'slotCount', 'status', 'updatedAt'];
 
   /* ---------- F6：战斗帧与 AI 轨迹的子对象字段（04 §5.2） ----------
    * 这些字段从 `data.frames[i]`（及 `diff` 内的子对象）上读取，**不含 `data.` 前缀** ——

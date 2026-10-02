@@ -1,4 +1,4 @@
-# F5 · AI 编辑器（查看 / 新建 / 编辑 / 删除）设计
+# F5 · AI 编辑器（查看 / 新建 / 编辑 / 删除）设计 —— **D-178 起已改为「积木节点编辑器」（见 §0.0）**
 
 > 版本：**v2 交付版（2026-09-25）**　状态：**设计已按用户裁决收口（§0.1 的 11 条）且已实现（§15 实现对账）**；四项定稿判定与走查结论仍须由 `docs/reviews/F5.md`（独立上下文）出具，**本分册不自署"全过"**（总纲 §2.10）。
 > 批次：**`F5`**（`format.js` 的 `EMPTY_PAGES` 已登记 `'ai-editor': { batch: 'F5' }`；按 FR-6，**不并入 §6 的「共 41 批」**）。
@@ -6,6 +6,46 @@
 > 权威链：`docs/decisions.md` > `docs/systems/*` > `docs/v3-design.md` > `docs/interfaces.md` > `docs/tasks.md` > `docs/frontend/*`。
 > 上级依据：`00-rules.md`（§1 绘制边界 / §1.4 绘制零逻辑 / §1.5 投影单一真源 + 禁抄战斗公式 / §2 反驳协议 / §4 验收机制）；`docs/systems/08-ai.md`（AI 语言、校验、快照、trace）；`server/ai/ast.js`（字段表/枚举/上限，**唯一实现真源**）；`docs/decisions.md` **D-80 / D-124 / D-137 / D-145 / D-146 / D-161 / D-162**；`docs/frontend/03-hub-warehouse-loadout.md` §3.7/§9.3（配置弹窗的 `ai-pick` 既成口径）。
 > 本文中凡标 **⏳ 未实现** 的，是"设计已写、代码 0 行"；凡标 **✅ 现状** 的，是本轮读码核实的既有能力。
+
+---
+
+## 0.0 ⚠️ 现状（D-178，2026-09-28）：编辑器已换成**积木节点编辑器**
+
+> **本节优先于下文一切旧描述。** F5 原设计的是"表单式 **AST** 编辑器"（16 类节点、`body.s[0].cond.right` 地址、
+> 49 条 `get` 路径下拉）；D-178 起玩家层改为**积木节点**（54 个原语，见 `docs/systems/12-ai-nodes.md`），
+> 编辑器随之改为**积木编辑器**。旧 AST 编辑器仅**作为过渡期兼容**保留：条目 `blueprint === null`（旧版程序）仍走它。
+
+**现在的编辑器是什么**（`format.js aiBlueprintViewModel` + `actions.js` 的 7 个动作 + `public/ai-blueprint.js` 模型）：
+
+| 区块 | 内容 | 关键约束 |
+|---|---|---|
+| 头部 | 名称 / 状态（正式·草稿）/ 库内条目与被配置引用 / `槽位 n/128` | 槽位上限来自 `GET /me/ai/nodes` 的 `data.limits.maxSlots` |
+| 节点库 | 按**类别**分组的目录按钮，标签 `名称（品质·空闲/拥有）` | `free=0` **只禁用不隐藏**（要看见"还没拿到/被别的 AI 占用"） |
+| 预设模板 | 4 套绿档模板，一键**整套替换** | 模板内容 = `server/data/ai-blueprint-presets.json` |
+| 程序树 | 缩进导轨 + 每行「选中/上移/下移/删除」 | 地址语法与服务端校验 `path` **完全一致**（`body[0].inputs[1]`） |
+| 参数区 | `slot`/`enum` → 取值按钮；`num`/`pct` → **−/+ 步进**（范围与到界禁用） | 参数 schema 来自目录，前端不写死 |
+| 占用提示 | `shortageOf` → "⚠ 节点不足：…" | **只提示**；判决永远在服务端（`400 ai_node_shortage`） |
+| 校验回执 | 服务端 `details[]` → `addrOfError` → 定位到具体节点行 | 前端**不复制编译器**（无编译器，全走 `POST /me/ai/validate {blueprint}`） |
+| 保存 | 蓝图 → `{name, blueprint, status}`；旧程序 → `{name, program, status}` | 保存时服务端编译并存 `program/blueprint/traceMap/compilerVersion` |
+
+**运行高亮**：默认**只显示积木层**（`aiBlueprint.highlightOf(trace, traceMap, false)` → 积木节点 uid 序列 + `current`）；
+**管理员/调试模式**才显示底层（完整 AST path + 未映射条目）。实现与测试见 §16.6 / `tests/frontend/ai-blueprint-model.test.js` AB-8。
+
+**下文 §1–§15 保留为历史记录**（F5 的 AST 编辑器设计 + 实现对账）；**§16 是 D-178 的重写方案与施工细节**。
+`public/ai-editor.js`（旧 AST 模型文件）仍在，但只服务"旧版程序"条目。
+
+### 0.0-b ⚠️ D-179 修复（2026-10-02，用户实测反馈驱动）
+
+| # | 缺陷（用户实测） | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 「新手 AI 打不开」；保存报 `Cannot read properties of undefined (reading 'setCatalog')`；战斗后整屏卡死、按钮全灰 | `public/index.html` **漏载 `/ai-blueprint.js`** → 浏览器里 `DL.aiBlueprint === undefined` → 触碰积木蓝图的屏抛异常 → `busy` 卡真 | 补脚本标签；**入口装配闭环**由 `tests/frontend/boot-wiring.test.js` BW-1..7 钉死（脚本清单 ↔ 模块依赖图 ↔ 磁盘三方一致 + 真实 UMD 装配 + 逐屏渲染） |
+| 2 | 「添加积木节点」「套用模板」点了毫无反应 | `format.js` 产出 `node`/`preset` 字段，但 `render.js targetAttrs` 不搬、`app.js payloadOf` 不收 → 动作收不到载荷 | 两侧补齐；**字段级契约**由 `button-payload-contract.test.js` BP-1..3 钉死 |
+| 3 | 点「导入 JSON」屏幕上什么都不出现（积木模式） | 积木屏不渲染导入区（旧 AST 屏才有） | 积木屏补齐 textarea + 应用/取消；导入解析按**草稿类型**分派（蓝图 → `aiBlueprint.importJson`） |
+| 4 | 有未保存改动时点「返回列表」无反应（退不出编辑器） | 积木屏不渲染「确认丢弃」弹层 | 同旧 AST 屏补齐 `confirm` |
+| 5 | 打开**自己的** AI 就显示「⚠ 节点不足」、节点库里自己用着的节点全是 `0` 空闲 | 前端把该条目**自身占用**算进了 `free`（服务端 `PUT` 用 `excludeAiId` 扣掉） | 新增 `aiBlueprint.excludeOwnUsage`，`aiBlueprintViewModel` 编辑既有条目时先扣自身 |
+| 6 | 旧 AST 编辑器「插入」永远落在最外层；「上移」后再「下移」操作到别的语句 | 插入按钮不带 `addr` → `aiAddrOf` 回落 `'body'`；移动后光标沿用旧地址 | 插入位置 = **当前选中节点**；移动后**光标跟随**（`shiftStmtAddr`） |
+
+**机器核对（D-179 新增）**：`boot-wiring.test.js`（BW-1..7）、`browser-flows.test.js`（BF-1..5，**浏览器等价装置** `tests/helpers/browser.js` 驱动）、`button-payload-contract.test.js`（BP-1..3）、`ai-editor-actions.test.js`（AE2-1..8，覆盖 24 个此前从未被执行过的动作）。
 
 ---
 
@@ -33,8 +73,14 @@
 | 10 | 校验接口 | **两个都做**：① 新增登录版实时校验接口；② **保存接口自身也校验**（硬闸门，防绕过界面直接调接口） |
 | 11 | 草稿 | **存到服务器，带「草稿」标记**；占一个库位（≤100）；**不能被配置选中**；校验通过后才能转正式 |
 
-### 0.2 两条读码新事实（裁决后补充，实现必须遵守）
+---
 
+> ## ⛔ 以下 §1 – §15 为 **F5 历史记录（AST 编辑器）**，已被 §0.0 取代
+> 它们描述的是"表单式 **AST** 编辑器"（16 类节点、`body.s[0].cond.right` 地址、49 条 `get` 路径下拉、区分语句/表达式槽）。
+> **D-178 起玩家层已是积木节点**（54 个原语），编辑器见 §0.0 与 §16；这些章节仅作为 F5 的交付留痕与决策依据保留，
+> **不得据此实现新功能**。旧 AST 模型文件 `public/ai-editor.js` 只服务 `blueprint === null` 的旧版程序。
+
+### 0.2 两条读码新事实（裁决后补充，实现必须遵守）
 **F-1｜`loadout.ai` 是程序**正文副本**，不是引用。**
 `archive.loadoutMissingOf` 要求 `loadout.ai` 为对象（`archive.js:153`）；`runtime.createContext(ld.ai)` 直接用这份正文（`battle.js:35`）；快照冻结的也是它（`snapshot-store.js:26-34`）。`loadout.aiId` 只是**来源标记**（`ai_in_use` 判定依据，`adapter-json.js:1199`）。后果两条：
 - ✅ **改 AI 不会改写历史回放**（回放按需重算用的是快照里的正文，内容寻址）。
@@ -278,6 +324,10 @@ aiEditor: {
 | `me/ai` | `data.max` | 列表头容量上限 |
 | `me/ai` | `data.draftCount` | 列表头「草稿 n 条」 |
 | `me/ai` | `data.usage` | 条目行与编辑器头部的「被配置 N 引用」 |
+| `me/ai/nodes` | `data.inventory` | **D-178**：AI 库屏的「积木节点：已拥有 n 种 / 共 m 个 · 占用 k 个 · 可用种类 j」；编辑器节点库逐项展示拥有/占用/空闲 |
+| `me/ai/nodes` | `data.catalog` | **D-178 积木编辑器**：节点库（54 个节点的名称/品质/类别/参数 schema）→ 注入 `aiBlueprint.setCatalog` |
+| `me/ai/nodes` | `data.limits` | **D-178 积木编辑器**：蓝图槽位与嵌套上限（`maxSlots` 128 / `maxDepth` 24） |
+| `me/ai/nodes` | `data.presets` | **D-178 积木编辑器**：一键套用的预设蓝图模板（贴身猛攻/风筝射手/防守反击/残血游走） |
 | `me/ai/create` | `data.aiId` | 新建成功后重新打开该条目 |
 | `me/ai/create` | `data.ai` | 新建成功后的条目正文（名称/状态回显） |
 | `me/ai/update` | `data.aiId` | 编辑保存后重新打开**同一条**（`aiId` 不变） |
@@ -294,9 +344,10 @@ aiEditor: {
 | `any` | `ok` / `error.code` / `error.message` / `error.details` | 统一信封（沿用既有登记） |
 
 **子对象字段（`public/contract.js` 的 `AI_ITEM_FIELDS`，由 AE-2 核对）**：`items[].aiId`、`items[].name`、
-`items[].program`、`items[].status`（`ready`/`draft`）、`items[].updatedAt`；写入回执上的 `ai.{aiId?}` 同形。
+`items[].program`、**`items[].blueprint`（D-178：积木蓝图；`null` = 旧版程序）**、**`items[].slotCount`（D-178：蓝图槽位数）**、
+`items[].status`（`ready`/`draft`）、`items[].updatedAt`；写入回执上的 `ai.{aiId?}` 同形。
 
-**结构性输入（提交给服务端，不属于"读响应"）**：`name`、`program`、`status`（`PUT` 的部分更新语义）。
+**结构性输入（提交给服务端，不属于"读响应"）**：`name`、`program` **或 `blueprint`（D-178：给了蓝图则服务端编译）**、`status`（`PUT` 的部分更新语义）。
 
 ### 5.3 ✅ 遗留端点依赖已被裁决 ⑩ 消除
 
@@ -521,3 +572,82 @@ aiEditor: {
 | 4 | §3.3 查看态（只读树） | 并入编辑态的树渲染（同一套行与地址）；`ai-logic` 弹窗仍保留 F6 的只读视图 | ⚠️ 合并实现（更少代码、行为等价；若独立审查要求分离，再拆） |
 | 5 | §4.2 `literal` 的"类型按钮组 + 单行输入" | 已实现（`ai-set-literal-type` + `ai.<addr>.value` 文本输入） | ✅ |
 
+
+---
+
+## §16 D-178 重写方案（把 AI 编辑器界面换成积木版；**待执行**）
+
+> 目标：把「编辑 AST 程序」的界面换成「编辑积木蓝图」的界面。**服务端已全部就绪**（编译/校验/占用/库存/模板），
+> 前端只做**展示与编辑**，一份判决都不复制。模型层已在 `public/ai-blueprint.js`（AB-1..8 已测）。
+
+### 16.1 数据来源
+| 数据 | 来源 | 已有 |
+|---|---|---|
+| 节点目录（54 个 + 参数 schema） | `GET /me/ai/nodes` 的 `data.catalog`（**待登记契约**） | 服务端 ✅ |
+| 我的拥有/占用/空闲 | 同上 `data.inventory` | 契约/文档 ✅（本轮已接） |
+| 预设模板 | 同上 `data.presets`（**待登记契约**） | 服务端 ✅ |
+| 编译产物高亮映射 | `GET /me/ai` 的 `data.items[].traceMap`（**待登记契约**） | 服务端 ✅ |
+| 蓝图正文 | 同上 `data.items[].blueprint`（**待登记契约**） | 服务端 ✅ |
+
+### 16.2 视图模型（`format.js`）
+`aiEditorViewModel` 的 `mode==='edit'` 分支整段重写为：
+1. **头部**：名称输入（复用 `ai-name`）、状态（正式/草稿）、槽位 `statsOf(draft).slots` / 上限 `limits.maxSlots`、被配置引用数（复用 `aiUsageText`）。
+2. **节点库**（左/上）：按 `catalog[].category` 分组，每个节点一个按钮
+   `{action:'ai-node-append', node:<catalog id>}`；标签 `名称（品质·拥有/空闲）`，`free===0` 时 `disabled:true` 并提示"没有空闲副本"。
+3. **程序树**（右/下）：`treeLines(draft, cursor)` → 每行一个 `{text, buttons:[选中/上移/下移/删除]}`；
+   行前缀沿用既有 `aiTreeIndentOf(depth)`（可见导轨 `│ `），表头/图例沿用 `AI_TREE_HEADING/LEGEND`。
+4. **参数表单**：`formOf(draft, cursor)` → 字段按 `type` 渲染：`slot` → 三选一按钮、`enum` → 枚举按钮、`int`/`num`/`pct` → 文本框（`change` 提交，沿用 AE-12 的"不逐键"约定）、`uid` → 下拉（同蓝图内该类别节点的 uid 列表）。
+5. **预设模板**：`presets[].map(p => button('一键套用：'+p.name, {action:'ai-preset-apply', preset:p.id}))`。
+6. **校验回执**：`validate` 信封的 `details[].path` 经 `addrOfError(draft, path)` 定位 → 命中行标记「← 这里有问题」；**草稿不阻断保存为草稿**。
+7. **占用提示**：`shortageOf(draft, inventory)` 非空 → 顶部一行"以下节点不足：…（可先存草稿）"。
+
+### 16.3 动作（`actions.js`；AE-1 双向注册表需同步）
+| 动作 | 行为 | 落点 |
+|---|---|---|
+| `ai-node-append` | `newNode(catalogId)` → `insertAfter(draft,'body[-1]',…)` → 自动校验 | 新 |
+| `ai-node-del` | `removeAt(draft, addr)` | 改名自旧 `ai-del` |
+| `ai-node-up` / `ai-node-down` | `moveAt(draft, addr, ∓1)` | 新 |
+| `ai-node-select` | 复用旧 `ai-select`（`cursor` = 蓝图地址） | 复用 |
+| `ai-param-set` | `setParam(draft, addr, key, value)` | 改名自旧 `ai-set-field` |
+| `ai-preset-apply` | `presets` 里取 id → 整份替换 draft | 新 |
+| `ai-import-*` / `ai-export` | 复用旧动作，改用 `importJson/exportText` | 复用 |
+| `ai-save` / `ai-save-draft` / `ai-open` / `ai-new` / `ai-delete` / `ai-refresh` | **不变**，但提交体由 `{program}` 改为 `{blueprint}` | 改体 |
+| `ai-validate`（后台自动） | `POST /me/ai/validate {blueprint}` | 改体 |
+
+### 16.4 删除清单
+- 删除 `public/ai-editor.js`（旧 AST 编辑器）→ 同步 `UI-1` 的 `EXPECTED_FILES`。
+- `format.js` 里只被旧编辑器使用的辅助函数（`aiFieldNameOf` / `aiTreeLinesOf` / 旧 `formOf` 调用点等）一并删除。
+- `actions.js` 里旧 AST 专有动作（`ai-add-node` 的 16 类、`ai-wrap-if`、`ai-set-field` 的 expr 槽处理）删除。
+
+### 16.5 测试改写（`tests/frontend/ai-editor-flow.test.js`）
+- AE-1：动作集合按 16.3 的新表重算（事件型动作仍单列）。
+- AE-3：`16 类默认节点` → **`54 个目录节点的参数表 == 服务端 ai-node-catalog`**（逐个 `newNode` + 编译通过）。
+- AE-4：地址往返改为蓝图地址（`body[0].inputs[1]`），并保留"兄弟槽位不串"的同型断言。
+- AE-6：错误定位改用 `addrOfError`（结构路径 + 规则错误 uid 两种）。
+- AE-7：全链路改为 **蓝图**：新建 → 套用预设 → 改参数 → 自动校验 → 保存（`aiId` 不变）→ 绑定配置 → 删除被拦 → 换掉 → 删除。
+- 新增：占用不足时保存正式条目 → 顶部提示 + 服务端 `ai_node_shortage` 呈现（前端**不**自行判决）。
+- 高亮：AE-15 用真实一局的 `aiTrace` + `traceMap` 断言"界面只显示积木行、管理员模式才显示底层 path"（模型函数 AB-8 已测，这里测**渲染**）。
+
+### 16.6 施工细节（Round 10 已验证，照此直接落）
+
+**A. `format.js` 需要先补 3 个内部辅助 + 1 个依赖注入**
+1. `format.js` 顶部工厂需注入 `aiBlueprint`（与 `actions.js` 同法：Node 分支 `require('./ai-blueprint.js')`，浏览器用 `root.DL.aiBlueprint`）。
+2. `aiBlueprintInventoryOf(env)` → `arrayOf(pick(env,'data.inventory'))`。
+3. `aiBlueprintStockLine(draft, inv)` → 「槽位 n/128 · 本次用到 k 种节点 · 其中 j 种余量不足」。
+4. `aiValidateDetailsOf(state)` → 从 `state.aiEditor.validate` 信封取 `details[]`（无 → `[]`）。
+5. 视图模型里判断"校验通过"用**既有**的 `aiValidateOk(state)`（勿新造名字）。
+
+**B. `aiEditViewModel` 的进入条件**（本轮已写好并验证过逻辑）
+```js
+function aiEditViewModel(state, notice, busy) {
+  var ed0 = aiEditorOf(state);
+  if (ed0 !== null && ed0.draft !== null && ed0.draft.type === 'blueprint') return aiBlueprintViewModel(state, notice, busy);
+  var ed = aiEditorOf(state);   // ← 旧 AST 程序继续走旧编辑器（过渡期兼容，AE-3/4/6/7 不受影响）
+```
+**C. 新屏用到的动作（7 个，必须与渲染同批提交）**：`ai-bp-new`（空白蓝图）、`ai-bp-preset`（套模板）、
+`ai-node-append`、`ai-node-del`、`ai-node-up`、`ai-node-down`、`ai-param-set`（数值型走 `fields` 的 `change`，
+即复用事件型提交机制：需要给 `ai-param-set` 注册一个 `EVENT_ONLY` 形态或在 `aiFieldCommit` 里识别 `bp.<addr>.<key>`）。
+**D. 测试侧同批改动**：
+- `tests/frontend/ai-editor-flow.test.js` 的 `F5_ACTIONS` 加上述 7 个名字；
+- `nonAdminRenderings()`（UI-2 的状态集）**必须加入一个"草稿是蓝图"的 aiEditor 状态**，否则新动作"注册了但没渲染"会让 UI-2 红；
+- 新增 AE-15：积木屏渲染断言（节点库按类别出现、`free=0` 的按钮禁用、树行带缩进导轨、参数按钮回显当前值、校验错误定位行）。

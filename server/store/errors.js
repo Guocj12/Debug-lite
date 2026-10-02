@@ -33,6 +33,7 @@ const STATUS_BY_CODE = Object.freeze({
   ai_in_use: 409,                    // 删除被出战配置引用的 AI；D-172：被引用的 AI 禁止降级为草稿
   ai_is_draft: 409,                  // D-172：出战配置（保存/出战）引用了库内存在的**草稿** AI
   ai_invalid: 400,                   // D-172：AI 程序不合法（结构/合法性/门控）；details 为逐条 {path,code,message}
+  ai_node_shortage: 400,             // D-178：积木节点不足（蓝图用量 > 仓库拥有量，跨 AI 独占）；details 逐条给节点名与缺口
   item_missing: 409,                 // 仓库内物品不存在（装配目标/插件）
   slot_type_mismatch: 409,           // 插件类型与插槽不匹配（core/items 装配拒绝）
   slot_occupied: 409,                // 插槽已占用

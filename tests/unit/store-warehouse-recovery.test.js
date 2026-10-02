@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const h = require('../helpers/http.js');
 const itemsApi = require('../../server/core/items.js');
 
-const BUCKETS = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package'];
+const BUCKETS = ['role', 'skill', 'rolePlugin', 'skillPlugin', 'package', 'aiNode'];
 
 function countsOf(warehouse) {
   const out = {};
@@ -54,28 +54,37 @@ test('WR-1/WR-2 档案丢失后仅靠 journal 重放即可恢复仓库与 AI 库
     const p = await freshPlayer(s, 'wr1');
 
     // 造出"三种来源"的状态：starter（account.created 携带）+ 开箱（box.opened）+ 装配（warehouse.assemble）
-    const box = await h.request(s.port, 'POST', '/api/v1/me/box', { times: 30 }, h.authed(p.token));
-    assert.equal(box.status, 200, box.raw);
-    const before = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token))).body.data;
+    // 抖动修复（D-179）：身份与开箱内容都是随机的（D-159 种子 / D-162 服务端随机），
+    //   单次 30 连开**偶尔**凑不出"空槽 × 槽型匹配 × 点数预算内"的组合 → 假红。
+    //   改为"按需多开几轮"，并在撞仓库上限（409 warehouse_full）时停止 —— 判定口径不变。
+    const scanTarget = (wh) => {
+      const used = new Set();
+      for (const b of ['role', 'skill']) {
+        for (const it of wh.buckets[b]) for (const sl of it.slots || []) if (sl.pluginUid) used.add(sl.pluginUid);
+      }
+      for (const role of wh.buckets.role) {
+        const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
+        if (idx < 0) continue;
+        const plugin = wh.buckets.rolePlugin.find((x) => !used.has(x.uid) && itemsApi.slotMatches(x.slot, role.slots[idx].type));
+        if (!plugin) continue;
+        const usedPoints = (role.slots || []).reduce((sum, sl) => {
+          if (!sl.pluginUid) return sum;
+          const q = wh.buckets.rolePlugin.find((x) => x.uid === sl.pluginUid);
+          return sum + (q && Number.isFinite(q.pointCost) ? q.pointCost : 0);
+        }, 0);
+        if (usedPoints + (plugin.pointCost || 0) > (role.pluginPoints || 0)) continue;
+        return { role, idx, plugin };
+      }
+      return null;
+    };
 
-    const used = new Set();
-    for (const b of ['role', 'skill']) {
-      for (const it of before.buckets[b]) for (const sl of it.slots || []) if (sl.pluginUid) used.add(sl.pluginUid);
-    }
+    let before = null;
     let target = null;
-    for (const role of before.buckets.role) {
-      const idx = (role.slots || []).findIndex((sl) => !sl.pluginUid);
-      if (idx < 0) continue;
-      const plugin = before.buckets.rolePlugin.find((x) => !used.has(x.uid) && itemsApi.slotMatches(x.slot, role.slots[idx].type));
-      if (!plugin) continue;
-      const usedPoints = (role.slots || []).reduce((sum, sl) => {
-        if (!sl.pluginUid) return sum;
-        const q = before.buckets.rolePlugin.find((x) => x.uid === sl.pluginUid);
-        return sum + (q && Number.isFinite(q.pointCost) ? q.pointCost : 0);
-      }, 0);
-      if (usedPoints + (plugin.pointCost || 0) > (role.pluginPoints || 0)) continue;
-      target = { role, idx, plugin };
-      break;
+    for (let round = 0; round < 4 && target === null; round += 1) {
+      const box = await h.request(s.port, 'POST', '/api/v1/me/box', { times: 30 }, h.authed(p.token));
+      if (box.status !== 200) break;   // 仓库满（409 warehouse_full）→ 用已有内容判定
+      before = (await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(p.token))).body.data;
+      target = scanTarget(before);
     }
     assert.ok(target, '需要一对可装配组合用于验证 warehouse.assemble 的重放');
     const asm = await h.request(s.port, 'POST', '/api/v1/me/warehouse/assemble', {

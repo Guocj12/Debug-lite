@@ -103,6 +103,8 @@ const ACTION_PREFIXES = ACTION_SPEC.parametric || ACTION_SPEC.params || []; // �
 //     · `x` = **格序号 0..cells−1**（D-174 用户裁定：AI 只读格；引擎内部仍是 px）
 //   self|enemy.cooldowns.<sid>      sid = 标识符（只读副本；未装配技能不出现）
 //   self|enemy.effects[<i>].<f>     f ∈ {uid,kind,stat,delta,displacement,remaining}
+//   self.skills[<i>].<f>            f ∈ {slotKey,type,range,distance,bulletCount,multiplier,costHp,costMp,costSp,cooldown,ready,level}
+//                                   （**只投影自己**，D-178 用户裁定：不读敌方技能数据；下标 0..2 = 技能槽 1..3）
 //   bases.self|enemy.<f>            f ∈ {hp,maxHp,def}
 //   field.fieldPx / field.cellPx
 //   容器（self / self.cooldowns / self.effects[i] / bases.self …）不可当值读；bullets 已从语言与快照移除 → 一律非法。
@@ -110,12 +112,14 @@ const ACTION_PREFIXES = ACTION_SPEC.parametric || ACTION_SPEC.params || []; // �
 //   绕过校验直接注入运行时的程序仍须安全退化（tests/unit/runtime-limit.test.js 的病态 fixtures 即此层）。
 const SNAPSHOT_ACTOR_FIELDS = new Set(['hp', 'maxHp', 'mp', 'maxMp', 'sp', 'maxSp', 'atk', 'def', 'x', 'facing', 'baseHp']);
 const SNAPSHOT_EFFECT_FIELDS = new Set(['uid', 'kind', 'stat', 'delta', 'displacement', 'remaining']);
+const SNAPSHOT_SKILL_FIELDS = new Set(['slotKey', 'type', 'range', 'distance', 'bulletCount', 'multiplier', 'costHp', 'costMp', 'costSp', 'cooldown', 'ready', 'level']);
 const SNAPSHOT_BASE_FIELDS = new Set(['hp', 'maxHp', 'def']);
-const SNAPSHOT_PATH_EXAMPLES = 'tick / self.hp / self.cooldowns.<sid> / self.effects[0].remaining / bases.enemy.hp / field.cellPx';
+const SNAPSHOT_PATH_EXAMPLES = 'tick / self.hp / self.cooldowns.<sid> / self.effects[0].remaining / self.skills[0].range / bases.enemy.hp / field.cellPx';
 const PATH_IDENT_SRC = '[A-Za-z_$][A-Za-z0-9_$]*';
 const RE_ACTOR_FIELD = new RegExp(`^(?:self|enemy)\\.(${PATH_IDENT_SRC})$`);
 const RE_COOLDOWN_FIELD = new RegExp(`^(?:self|enemy)\\.cooldowns\\.(${PATH_IDENT_SRC})$`);
 const RE_EFFECT_FIELD = new RegExp(`^(?:self|enemy)\\.effects\\[(\\d+)\\]\\.(${PATH_IDENT_SRC})$`);
+const RE_SKILL_FIELD = new RegExp(`^self\\.skills\\[(\\d+)\\]\\.(${PATH_IDENT_SRC})$`);
 const RE_BASE_FIELD = new RegExp(`^bases\\.(?:self|enemy)\\.(${PATH_IDENT_SRC})$`);
 const FORBIDDEN_PATH_SEGS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -129,6 +133,8 @@ function isAllowedSnapshotPath(p) {
   if (m) return !FORBIDDEN_PATH_SEGS.has(m[1]);
   m = RE_EFFECT_FIELD.exec(p);
   if (m) return SNAPSHOT_EFFECT_FIELDS.has(m[2]);
+  m = RE_SKILL_FIELD.exec(p);
+  if (m) return SNAPSHOT_SKILL_FIELDS.has(m[2]);
   m = RE_BASE_FIELD.exec(p);
   if (m) return SNAPSHOT_BASE_FIELDS.has(m[1]);
   return false;
@@ -138,14 +144,17 @@ function isAllowedSnapshotPath(p) {
 const EXPR_TYPES = new Set(['literal', 'get', 'getVar', 'arith', 'cmp', 'logic', 'random']);
 
 // 全局上限（systems §4.2①/§4.3；程序上限常量与战斗数值无关，撞值豁免见 cl:）
+// 2026-09-28（D-178）：积木节点层（blueprint）编译后 AST 会膨胀 3~10 倍，
+//   故按"积木层 128 节点上限"重标定：深度按最坏嵌套 ×3 取 128；节点/字节按 128 槽最坏情况取整。
+//   stepLimit 保持（128 槽单遍执行 ~5000 步）；traceLimit 提高以覆盖整 tick（调用方按积木层投影后再进帧）。
 const LIMITS = {
-  maxDepth: 32, // cl:32
-  maxNodes: 2000,
-  maxBytes: 256 * 1024, // cl:1024
+  maxDepth: 128, // cl:32,128 → D-178：积木嵌套 24 层 × 编译展开（128 与 dodgePx 撞值，属 AI 层常量）
+  maxNodes: 20000,
+  maxBytes: 512 * 1024, // cl:1024 → D-178
   stepLimit: 10000,
-  traceLimit: 2000,
+  traceLimit: 20000,
   recursionLimit: 64, // cl:64
-  analyzeDepth: 16, // cl:16 —— 静态分支分析防爆上限（B13）
+  analyzeDepth: 128, // cl:16,128 → D-178：必须与 maxDepth 同级，否则深层分支会被误判"分支缺少动作"
 };
 
 // 程序版本（A-10d/e）：版本高于 CURRENT_VERSION → ai_version_unsupported；低于且存在迁移链 → 逐级迁移（记 ai.migrate）
@@ -764,7 +773,7 @@ const FIELD_CHECKS = {
   arith: [['op', 'string'], ['left', 'node'], ['right', 'node']],
   cmp: [['op', 'string'], ['left', 'node'], ['right', 'node']],
   logic: [['op', 'string'], ['left', 'node'], ['right', 'node']],
-  random: [['prob', 'node'], ['then', 'node'], ['else', 'node']],
+  random: [['prob', 'node'], ['then', 'optional'], ['else', 'optional']],
   if: [['cond', 'node'], ['then', 'node'], ['else', 'optional']],
   loop: [['kind', 'string'], ['body', 'node']],
   break: [],

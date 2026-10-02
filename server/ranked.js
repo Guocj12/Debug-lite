@@ -24,6 +24,7 @@ const loadout = require('./loadout.js');
 const battle = require('./battle.js'); // buildPlayer 复用（面板聚合 → 战斗运行时）
 const runner = require('./runner.js'); // projectSnapshot
 const runtime = require('./ai/runtime.js');
+const blueprintMod = require('./ai/blueprint.js'); // D-178：默认 AI 预设 = 积木蓝图 → 编译成 AST
 const engine = require('./core/engine.js');
 const archiveMod = require('./store/archive.js');
 const ledger = require('./store/ledger.js');
@@ -79,6 +80,8 @@ const aiCmp = (op, left, right) => ({ type: 'cmp', op, left, right });
 const aiArith = (op, left, right) => ({ type: 'arith', op, left, right });
 const aiIf = (cond, thenNode, elseNode) => ({ type: 'if', cond, then: thenNode, else: elseNode });
 const aiGap = () => aiArith('-', aiGet('enemy.x'), aiGet('self.x')); // 敌我 x 差（正 = 敌在右）
+// D-178：积木蓝图的小构造器（与上面 AST 构造器一一对应）
+const aiBp = (uid, node, params, inputs) => ({ uid, node, params: params || {}, inputs: inputs || [] });
 
 const DEFAULT_AI_PRESETS = Object.freeze(['steady', 'aggressive', 'kite']);
 
@@ -138,8 +141,7 @@ function identityKeyOf(identity) {
   return null;
 }
 
-function variantOf(identity) {
-  const key = identityKeyOf(identity);
+function variantOf(identity) {  const key = identityKeyOf(identity);
   if (key === null) return { preset: DEFAULT_AI_PRESETS[0], sub: 0, hashed: false };
   const digest = crypto.createHash('sha256').update(`dl-default-ai|${key}`).digest();
   return {
@@ -151,6 +153,37 @@ function variantOf(identity) {
 
 function presetOf(identity) {
   return variantOf(identity).preset;
+}
+
+// D-178：默认 AI 预设的**积木蓝图**形式。约束（否则新号无法自洽）：
+//   ① **只用绿档节点** —— 新号只自带绿档（且 starter 的默认 AI 必须等于身份派生的默认 AI，D-159）；
+//   ② 每个节点用量 ≤ 新手自带上限（`f_if`≤3、`f_seq`≤2、其余每种 1）。
+//   语义与旧 AST 版（`aiProgramOf`）一致的三条分支：太远 → 推进；敌人已在身后 → 后撤；否则开火；
+//   残血（按**血量百分比**，比旧的绝对值阈值更稳健）→ 防御。
+//   逐节点建新对象（AST 校验的环检测按对象引用判重 → 禁止复用同一节点对象）。
+function blueprintOf(preset, sub) {
+  const table = AI_VARIANT_PARAMS[preset] || AI_VARIANT_PARAMS.steady;
+  const params = table[Number.isInteger(sub) && sub >= 0 && sub < table.length ? sub : 0];
+  const slot = Number(String(params.slot).replace('skill:skill', '')) || 1;
+  const fire = () => aiBp('bp_fire', 'a_skill', { slot });
+  const stepBack = () => aiBp('bp_back', 'f_if', {}, [
+    aiBp('bp_back_c', 'c_gap_less', { x: 0 }), // 敌人已不在前方（越过/贴身）→ 后撤
+    aiBp('bp_back_a', 'a_retreat'),
+    fire(),
+  ]);
+  const stepForward = () => aiBp('bp_fwd', 'f_if', {}, [
+    aiBp('bp_fwd_c', 'c_gap_greater', { x: params.threshold }),
+    aiBp('bp_fwd_a', 'a_advance'),
+    stepBack(),
+  ]);
+  const body = params.defendHp === null
+    ? [stepForward()]
+    : [aiBp('bp_def', 'f_if', {}, [
+      aiBp('bp_def_c', 'c_hp_below', { x: params.defendHp }),
+      aiBp('bp_def_a', 'a_defend'),
+      stepForward(),
+    ])];
+  return { type: 'blueprint', version: 1, body };
 }
 
 function buildDefaultLoadout(identity, options) {
@@ -171,6 +204,9 @@ function buildDefaultLoadout(identity, options) {
       unlockTier: t.unlockTier || 'common',
     });
   }
+  // D-178：默认 AI 走**积木蓝图**编译（编译不过时回退旧 AST 构造，保证"永远有可跑的 AI"）
+  const aiBlueprint = blueprintOf(preset, sub);
+  const compiled = blueprintMod.compileBlueprint(aiBlueprint);
   return {
     role: {
       uid: 'bot_role', kind: 'role', templateId: ROLE.id, quality: 'common', slotCount: 0, slots: [],
@@ -178,7 +214,12 @@ function buildDefaultLoadout(identity, options) {
       regen: ROLE.regen, pluginPoints: DEFAULT_PLUGIN_POINTS, unlockTier: 'common',
     },
     skills: skillItems,
-    ai: aiProgramOf(preset, sub),
+    ai: compiled.ok ? compiled.program : aiProgramOf(preset, sub),
+    aiBlueprint,
+    aiTraceMap: compiled.ok ? compiled.traceMap : null,
+    aiCompilerVersion: compiled.ok ? blueprintMod.limits.blueprintVersion : null,
+    preset,
+    sub,
   };
 }
 
@@ -1009,6 +1050,8 @@ module.exports = Object.assign(makeRanked(), {
   // 命名沿用（account.defaultLoadout / scripts/play.js 依赖；语义 = 新玩家默认出战配置，非"占位 bot 补齐"）
   buildDefaultLoadout,
   buildBotLoadout: buildDefaultLoadout,
+  blueprintOf, // D-178：默认 AI 预设的积木蓝图形式（测试等价比对 / 文档示例用）
+  aiProgramOfLegacy: aiProgramOf, // 旧 AST 构造（仅供等价比对测试；D-178 起生产路径走 blueprintOf + 编译）
   X_PROMOTE,
   TIERS,
   DEFAULT_BATCH_SIZE,

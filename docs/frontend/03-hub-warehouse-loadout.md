@@ -242,11 +242,11 @@
 
 | 端点 | 字段路径（约定） | 用途 |
 |---|---|---|
-| `me/warehouse` | `data.buckets.role[]` / `.skill[]` / `.rolePlugin[]` / `.skillPlugin[]` / `.package[]` | **五桶**列表（物品对象形状同 §5.1 `box`；`package` 桶为 **F8/D-176** 新增的「包」，形状见 `docs/interfaces.md` §4.14） |
+| `me/warehouse` | `data.buckets.role[]` / `.skill[]` / `.rolePlugin[]` / `.skillPlugin[]` / `.package[]` / `.aiNode[]` | **六桶**列表（物品对象形状同 §5.1 `box`；`package` 桶为 **F8/D-176** 新增的「包」，形状见 `docs/interfaces.md` §4.14；`aiNode` 桶为 **D-178** 新增的「AI 积木节点堆叠」，形状见 §9.6） |
 | `me/warehouse` | `data.usage[uid].slotIds[]` | 仓库行"装配于配置几"（可多处引用） |
-| `me/warehouse` | `data.caps.{role,skill,rolePlugin,skillPlugin,package}` | 容量行 `n/500` |
+| `me/warehouse` | `data.caps.{role,skill,rolePlugin,skillPlugin,package,aiNode}` | 容量行 `n/500` |
 | `me/warehouse/open-package` | `data.items` / `data.opened` / `data.warehouse` / `data.usage` / `data.caps` | **F8/D-177 开包**结果（`data.opened[].packageKind` 用于保留包提示；顶层 `notice` **前端不读** —— 条件字段） |
-| `me/ai` | `data.items[].{aiId,name,program,status,updatedAt}` / `data.caps.max=100` | AI 位置候选列表（`status`/`updatedAt` 由 **F5/D-172** 追加：F5 的 AI 编辑器读它们做"草稿/正式"与"更新时间"展示；F3 的 ai-pick 只用 `aiId`+`name`） |
+| `me/ai` | `data.items[].{aiId,name,program,blueprint,slotCount,status,updatedAt}` / `data.caps.max=100` | AI 位置候选列表（`status`/`updatedAt` 由 **F5/D-172** 追加：F5 的 AI 编辑器读它们做"草稿/正式"与"更新时间"展示；F3 的 ai-pick 只用 `aiId`+`name`；**`blueprint`/`slotCount` 由 D-178 追加**：积木编辑器据此回填蓝图与槽位数，`blueprint=null` = 旧版程序） |
 | `me/warehouse/assemble` | `data.warehouse` / `data.usage` | 装配后回带 |
 | `me/configs/:id/activate` | `data.activeSlotId` | 出战标记更新 |
 
@@ -366,7 +366,17 @@ settings: { nickname: '', result: null },
 - **开包**：`POST /api/v1/me/warehouse/open-package`（体 `{packageUids:[…]}`，1..100 不重复；**无 seed 入参**）→
   消耗包 + 产出 1~3 件物品（`package.opened` journal）；产出超上限 → 409 `warehouse_full` **零写入**；
   包已被消耗/不存在/不是包 → 409 `package_invalid`。
-- **保留包**：`packageKind='aiNode'`（`openable=false`）→ 200 + `items:[]` + `notice:'package_reserved'`，前端显示「保留包：暂未开放产出」（**不报错**）。
+- **保留包**：**D-178 起已无保留包**（原 `packageKind='aiNode'` 的保留包已开放产出，见 §9.6）。
+
+### 9.6 AI 积木节点桶与节点包（D-178）
+
+- **第 6 桶 `aiNode`**：`GET /me/warehouse` 的 `data.buckets.aiNode[]`（形状 `{uid, kind:'aiNode', nodeId, quality, count}`）——
+  一条 = **一个堆叠**（同 `nodeId` 自动累加 `count`，不占额外槽位；`count` = 该节点当前总拥有数）。
+- **AI 节点包**：`packageKind='aiNode'`、`openable=true`、`dropsKind=null` —— 开包产出 **1~3 个积木节点堆叠**；
+  节点**品质**走 `package-config.nodeQualityCurve`（该包品质**及以下均匀**），**质量百分比只决定产出个数**（复用 `itemCountCurve`）。
+- **新手自带**：注册 starter 发放**全部绿档节点各 1 个**（22 条堆叠），保证开箱前就能搭出完整 AI。
+- **展示**：容量行含 `AI节点 n/500`；仓库屏有「AI节点」分桶按钮；开包结果区对节点条目显示为 `AI节点 <nodeId>·<品质> ×<count>`。
+
 - **战斗掉落**：`POST /quick/run` 响应**恒带** `data.drops[]`（只有主动匹配的进攻方掉；胜 1~2 / 负平 0~1）；
   幂等重放（`duplicate:true`）照带回同一批但**不重复发放**（见 04 分册）。
 - **starter**：新号除既有套装外，另发 **1 个「角色模块包」**（品质 `common`、质量档 2）用于引导开包。

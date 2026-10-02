@@ -1,0 +1,110 @@
+{
+  "_comment": "预设蓝图模板（D-178）：给玩家的**可一键套用/可拆开改**的示例 AI。设计口径：只用**绿档节点**（新手段位唯一能开到的品质，且 starter 自带全部绿档节点各 1 个）→ 保证任何新账号都能直接套用；每个模板都必须能通过 `blueprint.compileBlueprint`（由 tests/unit/ai-blueprint-presets.test.js 机器核对）。",
+  "_contract": "docs/systems/12-ai-nodes.md §6；docs/interfaces.md §2（GET /me/ai/nodes 的 presets）",
+  "version": 1,
+  "presets": [
+    {
+      "id": "preset_rush",
+      "name": "贴身猛攻",
+      "desc": "距离 3 格内就放技能 1，否则一路推进。最简可用的近战思路。",
+      "blueprint": {
+        "type": "blueprint",
+        "version": 1,
+        "body": [
+          {
+            "uid": "rush_if", "node": "f_if", "params": {},
+            "inputs": [
+              { "uid": "rush_cond", "node": "c_gap_less", "params": { "x": 3 }, "inputs": [] },
+              { "uid": "rush_fire", "node": "a_skill", "params": { "slot": 1 }, "inputs": [] },
+              { "uid": "rush_adv", "node": "a_advance", "params": {}, "inputs": [] }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "preset_kite",
+      "name": "风筝射手",
+      "desc": "血量低于 30% 先撤；技能 1 就绪且距离 5 格内就开火，否则后撤拉扯。",
+      "blueprint": {
+        "type": "blueprint",
+        "version": 1,
+        "body": [
+          {
+            "uid": "kite_if", "node": "f_if", "params": {},
+            "inputs": [
+              { "uid": "kite_low", "node": "c_hp_below", "params": { "x": 30 }, "inputs": [] },
+              { "uid": "kite_flee", "node": "a_retreat", "params": {}, "inputs": [] },
+              {
+                "uid": "kite_if2", "node": "f_if", "params": {},
+                "inputs": [
+                  {
+                    "uid": "kite_and", "node": "c_and", "params": {},
+                    "inputs": [
+                      { "uid": "kite_ready", "node": "c_skill_ready", "params": { "slot": 1 }, "inputs": [] },
+                      { "uid": "kite_gap", "node": "c_gap_less", "params": { "x": 5 }, "inputs": [] }
+                    ]
+                  },
+                  { "uid": "kite_fire", "node": "a_skill", "params": { "slot": 1 }, "inputs": [] },
+                  { "uid": "kite_back", "node": "a_dodge_back", "params": {}, "inputs": [] }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "preset_guard",
+      "name": "防守反击",
+      "desc": "血量低于 50% 就防御；否则贴到 2 格内放技能 1，够不到就原地等待。",
+      "blueprint": {
+        "type": "blueprint",
+        "version": 1,
+        "body": [
+          {
+            "uid": "guard_if", "node": "f_if", "params": {},
+            "inputs": [
+              { "uid": "guard_low", "node": "c_hp_below", "params": { "x": 50 }, "inputs": [] },
+              { "uid": "guard_def", "node": "a_defend", "params": {}, "inputs": [] },
+              {
+                "uid": "guard_if2", "node": "f_if", "params": {},
+                "inputs": [
+                  { "uid": "guard_gap", "node": "c_gap_less", "params": { "x": 2 }, "inputs": [] },
+                  { "uid": "guard_fire", "node": "a_skill", "params": { "slot": 1 }, "inputs": [] },
+                  { "uid": "guard_wait", "node": "a_wait", "params": {}, "inputs": [] }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "preset_dodge",
+      "name": "残血游走",
+      "desc": "血量低于 40% 就闪避拉开；距离超过 4 格先推进，够得着就放技能 3。",
+      "blueprint": {
+        "type": "blueprint",
+        "version": 1,
+        "body": [
+          {
+            "uid": "dodge_if", "node": "f_if", "params": {},
+            "inputs": [
+              { "uid": "dodge_low", "node": "c_hp_below", "params": { "x": 40 }, "inputs": [] },
+              { "uid": "dodge_away", "node": "a_dodge_back", "params": {}, "inputs": [] },
+              {
+                "uid": "dodge_if2", "node": "f_if", "params": {},
+                "inputs": [
+                  { "uid": "dodge_far", "node": "c_gap_greater", "params": { "x": 4 }, "inputs": [] },
+                  { "uid": "dodge_adv", "node": "a_advance", "params": {}, "inputs": [] },
+                  { "uid": "dodge_fire", "node": "a_skill", "params": { "slot": 3 }, "inputs": [] }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

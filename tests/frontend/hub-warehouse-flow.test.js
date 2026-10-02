@@ -187,11 +187,12 @@ test('WH-3 仓库：容量行 / 五桶切换（本地）/ 行内名字 + [装配
     const wr = h.state().warehouse.envelope;
     assert.ok(wr, '仓库屏应已取到 GET /me/warehouse');
 
-    // 容量行：`角色 n/500 · 技能 n/500 · 角色插件 n/500 · 技能插件 n/500 · 包 n/500`（03 §3.3；F8 新增包桶）
+    // 容量行：`角色 n/500 · 技能 n/500 · 角色插件 n/500 · 技能插件 n/500 · 包 n/500 · AI节点 n/500`
+    //   （03 §3.3；F8 新增包桶；D-178 新增 AI 节点桶 —— starter 发全部绿档节点）
     const capacity = format.warehouseCapacityText(wr);
-    assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500$/, capacity);
+    assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500 · AI节点 \d+\/500$/, capacity);
     assert.ok(h.html().includes(capacity), '容量行必须渲染到屏幕上');
-    for (const label of ['角色', '技能', '角色插件', '技能插件', '包', '刷新', '返回主界面']) {
+    for (const label of ['角色', '技能', '角色插件', '技能插件', '包', 'AI节点', '刷新', '返回主界面']) {
       assert.ok(buttonLabels(h.html()).includes(label), `仓库缺少分桶/动作按钮：${label}`);
     }
 
@@ -294,12 +295,12 @@ test('WH-4 开包：包桶行有「开包」；请求体只有 packageUids；结
   });
 });
 
-test('WH-5 保留包（AI 节点包）：可开、零产出、有明确提示、不报错', async () => {
+test('WH-5 [D-178] AI 节点包：可开、产出积木节点、入库堆叠、不报错', async () => {
   await withHarness(async (h, s) => {
     const me = await h.signUp('wh5user');
     const playerId = await playerIdByPublicId(s.store, me.data.publicId);
     assert.ok(playerId, '应能用 publicId 反查到 playerId');
-    // 注入一个 AI 节点包（保留包；package-config.packages[].openable=false）
+    // 注入一个 AI 节点包（D-178 起 openable=true：产出积木节点）
     await s.store.updateArchive(playerId, (archive) => {
       archive.warehouse.buckets.package.push({
         uid: 'pkg_ainode_1', kind: 'package', packageKind: 'aiNode', name: 'AI节点包',
@@ -311,17 +312,27 @@ test('WH-5 保留包（AI 节点包）：可开、零产出、有明确提示、
     await h.run('warehouse-bucket', { bucket: 'package' });
     await h.run('package-open', { uid: 'pkg_ainode_1' });
     const env = h.pkgEnvelopes[0];
-    assert.equal(env.ok, true, '保留包开包必须 200（用户裁定：静默消耗 + 提示，不报错）');
-    assert.deepEqual(env.data.items, [], '保留包零产出');
-    assert.equal(env.data.opened[0].notice, 'package_reserved');
+    assert.equal(env.ok, true, '开 AI 节点包必须 200');
+    assert.ok(env.data.items.length >= 1 && env.data.items.length <= 3, '产出 1~3 条节点堆叠');
+    for (const it of env.data.items) {
+      assert.equal(it.kind, 'aiNode', '产出是积木节点条目');
+      assert.equal(it.quality, 'common', '绿包只出绿节点（本级及以下均匀 = 100% 本级）');
+      assert.ok(it.nodeId && it.count >= 1, '条目带 nodeId 与堆叠数量');
+    }
     const lines = h.state().packages.result.lines;
-    assert.equal(lines[0], '本次开包获得 0 件：');
-    assert.ok(lines.some((l) => l.includes('保留包')), `结果区必须提示保留包：${lines.join(' | ')}`);
-    assert.ok(h.html().includes('保留包'), '提示必须渲染到屏幕上');
-    assert.equal(h.notice(), format.PACKAGE_OK_TEXT, '不报错：仍是成功文案');
+    assert.equal(lines[0], '本次开包获得 ' + env.data.items.length + ' 件：');
+    assert.ok(lines.some((l) => l.includes('AI节点')), `结果区必须显示节点行：${lines.join(' | ')}`);
+    assert.equal(h.notice(), format.PACKAGE_OK_TEXT, '不报错：成功文案');
     // 包确实被消耗了
     assert.equal(format.bucketItems(h.state().warehouse.envelope, 'package')
-      .filter((p) => p.uid === 'pkg_ainode_1').length, 0, '保留包也被消耗（已提示）');
+      .filter((p) => p.uid === 'pkg_ainode_1').length, 0, '包被消耗');
+    // 产出的节点确实进了 aiNode 桶（且与 starter 的绿节点堆叠合并）
+    const stacks = format.bucketItems(h.state().warehouse.envelope, 'aiNode');
+    assert.ok(stacks.length >= 22, `aiNode 桶应含 starter 绿节点 + 本次产出（实际 ${stacks.length}）`);
+    for (const it of env.data.items) {
+      const st = stacks.find((x) => x.nodeId === it.nodeId);
+      assert.ok(st && st.count >= 1, `节点 ${it.nodeId} 应已入库`);
+    }
   });
 });
 
@@ -783,13 +794,15 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
     skillPluginExclusive: ['forTypes', 'exclusive'],
     // F8/D-176：包（模块包）—— 种类 + 质量百分比（03 §5.3 的包行）
     package: ['packageKind', 'qualityPercent'],
+    // D-178：AI 积木节点堆叠条目（03 §5.4 的节点行）—— 节点 id + 堆叠数量（品质见 COMMON_FIELDS）
+    aiNode: ['nodeId', 'count'],
   };
   // 子对象字段（slots[i].type / slots[i].pluginUid / affixes[i].params.v）在上面的清单里由容器覆盖，
   //   这里显式断言它们也能解析，并顺带核对"契约里的每个字段都有宿主（不会漏检）"
   const SUB_FIELDS = ['type', 'pluginUid', 'params.v'];
   const covered = new Set([...COMMON_FIELDS, ...FIELDS_BY_KIND.role, ...FIELDS_BY_KIND.skill,
     ...FIELDS_BY_KIND.rolePlugin, ...FIELDS_BY_KIND.skillPlugin, ...FIELDS_BY_KIND.skillPluginExclusive,
-    ...FIELDS_BY_KIND.package, ...SUB_FIELDS]);
+    ...FIELDS_BY_KIND.package, ...FIELDS_BY_KIND.aiNode, ...SUB_FIELDS]);
   assert.deepEqual([...declared].filter((f) => !covered.has(f)), [], '契约字段没有对应的真实响应核对项');
 
   await withHarness(async (h) => {
@@ -825,8 +838,8 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
         assert.notStrictEqual(format.pick(affix, 'params.v'), undefined, `${kind} ${uid} 的词条缺少 params.v`);
       }
     }
-    // F8/D-176：starter 必带 1 个包 → `package` 也必须在覆盖集合内
-    assert.deepEqual([...kinds].sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin'],
-      `starter 应覆盖五桶全部类别：${[...kinds].join(', ')}`);
+    // F8/D-176：starter 必带 1 个包 → `package` 也必须在覆盖集合内；D-178：新增 aiNode 桶
+    assert.deepEqual([...kinds].sort(), ['aiNode', 'package', 'role', 'rolePlugin', 'skill', 'skillPlugin'],
+      `starter 应覆盖六桶全部类别：${[...kinds].join(', ')}`);
   });
 });

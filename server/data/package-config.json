@@ -18,8 +18,17 @@
     { "packageKind": "skill", "name": "技能模块包", "dropsKind": "skill", "openable": true },
     { "packageKind": "rolePlugin", "name": "角色插件包", "dropsKind": "rolePlugin", "openable": true },
     { "packageKind": "skillPlugin", "name": "技能插件包", "dropsKind": "skillPlugin", "openable": true },
-    { "packageKind": "aiNode", "name": "AI节点包", "dropsKind": null, "openable": false, "_reserved": true }
+    { "packageKind": "aiNode", "name": "AI节点包", "dropsKind": null, "openable": true }
   ],
+
+  "_nodeQualityCurve_note": "**AI 节点包专用**（D-178）：键 = 包品质，值 = 产出节点品质的概率分布（和 = 1）。规则 = 该品质**及以下均匀**（绿包 100% 绿；蓝包 50/50；紫包各 1/3；橙包各 25%；青包各 20%）。包**质量**（百分比档）不决定品质，只决定**产出个数**（复用 itemCountCurve）。",
+  "nodeQualityCurve": {
+    "common": { "common": 1.0 },
+    "rare": { "common": 0.5, "rare": 0.5 },
+    "epic": { "common": 0.3333333333333333, "rare": 0.3333333333333333, "epic": 0.3333333333333334 },
+    "legendary": { "common": 0.25, "rare": 0.25, "epic": 0.25, "legendary": 0.25 },
+    "mythic": { "common": 0.2, "rare": 0.2, "epic": 0.2, "legendary": 0.2, "mythic": 0.2 }
+  },
 
   "_itemQualityCurve_note": "键 = 包质量百分比（字符串），值 = 该次掉落物品品质的概率分布（和 = 1）。本级为主，档位越高本级越集中；每级最高档（20/40/60/80/100）多出一次向上取一级的极小概率。",
   "itemQualityCurve": {
@@ -67,7 +76,7 @@
     "draw": { "1": 0.45, "2": 0.35, "3": 0.15, "4": 0.05 }
   },
 
-  "_packageKindWeights_note": "战斗掉落时**包种类**的相对权重（同 items-config.kindWeights 口径：插件包更常见）。aiNode 目前为保留包（可掉落、开包零产出，前端提示），权重可随时调低或置 0 停掉。",
+  "_packageKindWeights_note": "战斗掉落时**包种类**的相对权重（同 items-config.kindWeights 口径：插件包更常见）。",
   "packageKindWeights": {
     "role": 1, "skill": 1, "rolePlugin": 2, "skillPlugin": 2, "aiNode": 1
   },

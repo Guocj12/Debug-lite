@@ -24,6 +24,7 @@ const { deepClone, contentHash } = require('./store/canonical.js');
 const archiveMod = require('./store/archive.js');
 const loadoutMod = require('./loadout.js');
 const astMod = require('./ai/ast.js');   // D-172：AI 程序完整校验（结构 + 合法性 + 段位门控）
+const blueprintMod = require('./ai/blueprint.js'); // D-178：积木蓝图 → AST 编译 + 占用统计（服务端唯一编译点）
 const starterMod = require('./starter.js');
 const itemsMod = require('./core/items.js');
 
@@ -790,15 +791,107 @@ function createAccount(options) {
   /* ---------- D-161：AI 库；D-172：可编辑 + 草稿态 + 双校验 ---------- */
 
   function aiBrief(ai) {
+    const bp = ai.blueprint === undefined ? null : ai.blueprint;
     return {
       aiId: ai.aiId,
       name: ai.name,
       program: deepClone(ai.program),
+      // D-178：积木蓝图（编辑器源）+ 高亮映射 + 编译器版本；`blueprint=null` = 旧版程序（编辑器视为不可编辑）
+      blueprint: bp === null ? null : deepClone(bp),
+      compilerVersion: ai.compilerVersion === undefined ? null : ai.compilerVersion,
+      // D-178：AST 路径 → 积木节点 uid 的高亮映射（查看器据此把帧内 aiTrace 投影成积木层；管理员才看底层）
+      traceMap: ai.traceMap === undefined || ai.traceMap === null ? null : deepClone(ai.traceMap),
+      slotCount: bp ? blueprintMod.statsOf(bp).slots : null,
       createdAt: ai.createdAt === undefined ? null : ai.createdAt,
       updatedAt: ai.updatedAt === undefined ? null : ai.updatedAt,
       // D-172：`ready`（正式，可被配置选中）| `draft`（草稿，校验未通过时暂存；旧档案无该字段 → ready）
       status: archiveMod.aiStatusOf(ai),
     };
+  }
+
+  /* ---------- D-178：积木蓝图的编译 / 占用校验 / 节点库存 ---------- */
+
+  // 编译蓝图（纯函数）→ { ok, program, traceMap, compilerVersion, slotCount, stats } | { ok:false, details }
+  function compileBlueprintOf(blueprint) {
+    const r = blueprintMod.compileBlueprint(blueprint);
+    if (!r.ok) {
+      return {
+        ok: false,
+        details: (r.errors || []).map((e) => detailOf(e.code, e.message, e.path)),
+      };
+    }
+    return {
+      ok: true, program: r.program, traceMap: r.traceMap,
+      compilerVersion: blueprintMod.limits.blueprintVersion, slotCount: r.slotCount, stats: r.stats,
+    };
+  }
+
+  // 仓库里的节点拥有量（nodeId → count）
+  function ownedNodesOf(archive) {
+    const out = {};
+    const stacks = (archive && archive.warehouse && archive.warehouse.buckets && archive.warehouse.buckets.aiNode) || [];
+    for (const st of Array.isArray(stacks) ? stacks : []) {
+      if (!st || typeof st.nodeId !== 'string') continue;
+      const c = Number.isInteger(st.count) && st.count > 0 ? st.count : 1;
+      out[st.nodeId] = (out[st.nodeId] || 0) + c;
+    }
+    return out;
+  }
+
+  // 蓝图占用量（nodeId → count）：只统计 `ready` 条目（草稿不占用，D-178⑨）
+  function usedNodesOf(ais) {
+    const out = {};
+    for (const ai of Array.isArray(ais) ? ais : []) {
+      if (!ai || archiveMod.aiStatusOf(ai) !== 'ready' || !ai.blueprint) continue;
+      const stats = blueprintMod.statsOf(ai.blueprint);
+      for (const [nodeId, n] of Object.entries(stats.byNode || {})) out[nodeId] = (out[nodeId] || 0) + n;
+    }
+    return out;
+  }
+
+  // 跨 AI 独占校验：给定"结果态蓝图用量"不得超仓库拥有量。`excludeAiId` 用于编辑场景（先扣掉自身旧占用）
+  function occupancyDetails(archive, ais, excludeAiId) {
+    const owned = ownedNodesOf(archive);
+    const usable = (Array.isArray(ais) ? ais : []).filter((x) => x && x.aiId !== excludeAiId);
+    const used = usedNodesOf(usable);
+    const details = [];
+    for (const [nodeId, n] of Object.entries(used)) {
+      const have = owned[nodeId] || 0;
+      if (n > have) {
+        const cat = blueprintMod.nodeById(nodeId);
+        details.push(detailOf('ai_node_shortage',
+          `节点「${cat ? cat.name : nodeId}」不足：共需 ${n} 个（含其它 AI 的占用），仓库只有 ${have} 个`, `node:${nodeId}`));
+      }
+    }
+    return details;
+  }
+
+  // GET /me/ai/nodes：节点目录（静态）+ 我的拥有/占用/空闲（空闲 = 拥有 − 占用；派生量，不落库）
+  async function aiNodes(playerId) {
+    try {
+      const archive = await requireArchive(playerId);
+      const view = await store.listAi(playerId);
+      const owned = ownedNodesOf(archive);
+      const used = usedNodesOf(view.items || []);
+      const inventory = blueprintMod.catalog().map((n) => {
+        const own = owned[n.id] || 0;
+        const use = used[n.id] || 0;
+        return { nodeId: n.id, quality: n.quality, category: n.category, owned: own, used: use, free: own - use };
+      });
+      return ok({
+        catalog: blueprintMod.catalog(),
+        presets: blueprintMod.presets(), // D-178：一键套用的示例蓝图（只用绿档节点）
+        limits: blueprintMod.limits,
+        inventory,
+        counts: {
+          ownedKinds: Object.keys(owned).length,
+          ownedTotal: Object.values(owned).reduce((a, b) => a + b, 0),
+          usedTotal: Object.values(used).reduce((a, b) => a + b, 0),
+        },
+      });
+    } catch (err) {
+      return toFailure(err, log, 'aiNodes');
+    }
   }
 
   // D-172：程序对象的最低结构检查（名称/type 之外的第一道）——完整校验见 validateProgramOf
@@ -853,22 +946,40 @@ function createAccount(options) {
       const status = o.status === 'draft' ? 'draft' : 'ready';
       const nameDetails = aiNameDetails(o.name);
       if (nameDetails) return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, nameDetails);
-      const shapeDetails = programShapeDetails(o.program);
+      // D-178：优先走积木蓝图（服务端编译 → 冻结 AST）；无蓝图时退回 program（旧路径/机器人注入）
+      const hasBp = o.blueprint !== undefined && o.blueprint !== null;
+      let compiled = null;
+      if (hasBp) {
+        compiled = compileBlueprintOf(o.blueprint);
+        if (!compiled.ok) return fail('ai_invalid', '蓝图不合法，无法保存（可先「存为草稿」）', compiled.details);
+      }
+      const program = compiled ? compiled.program : o.program;
+      const shapeDetails = programShapeDetails(program);
       if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
       const archive = await requireArchive(o.playerId);
       let check = null;
       if (status === 'ready') {
-        check = validateProgramOf(o.program, archive.progress.tier);
+        check = validateProgramOf(program, archive.progress.tier);
         if (!check.ok) return fail('ai_invalid', 'AI 程序不合法，无法保存为正式条目（可先「存为草稿」）', check.details);
+        if (hasBp) {
+          // D-178⑨：跨 AI 独占 —— 结果态（既有 ready 条目 + 本条目）不得超出仓库拥有量
+          const ais = (await store.listAi(o.playerId)).items || [];
+          const details = occupancyDetails(archive, ais.concat([{ aiId: '__new__', status: 'ready', blueprint: o.blueprint }]));
+          if (details.length > 0) return fail('ai_node_shortage', '积木节点不足：请先开包获取更多节点，或减少其它 AI 的占用', details);
+        }
       }
       const res = await store.createAi({
-        playerId: o.playerId, name: o.name.trim(), program: o.program, status,
+        playerId: o.playerId, name: o.name.trim(), program, status,
+        blueprint: hasBp ? o.blueprint : undefined,
+        traceMap: compiled ? compiled.traceMap : undefined,
+        compilerVersion: compiled ? compiled.compilerVersion : undefined,
       });
-      logWrite('createAi', { playerId: o.playerId, aiId: res.ai.aiId, status });
+      logWrite('createAi', { playerId: o.playerId, aiId: res.ai.aiId, status, blueprint: hasBp });
       const view = await store.listAi(o.playerId);
       return ok({
         aiId: res.ai.aiId, ai: aiBrief(res.ai), count: (view.items || []).length, max: view.max,
         warnings: check ? check.warnings : [],
+        slots: compiled ? compiled.slotCount : null,
       });
     } catch (err) {
       return toFailure(err, log, 'createAi');
@@ -883,16 +994,22 @@ function createAccount(options) {
       const hasName = o.name !== undefined;
       const hasProgram = o.program !== undefined;
       const hasStatus = o.status !== undefined;
-      if (!hasName && !hasProgram && !hasStatus) {
-        return fail('bad_request', '至少给出 name / program / status 之一', [
-          detailOf('bad_request', 'PUT /me/ai/:aiId 是部分更新，至少给一项', 'name|program|status'),
+      const hasBlueprint = o.blueprint !== undefined && o.blueprint !== null;
+      if (!hasName && !hasProgram && !hasStatus && !hasBlueprint) {
+        return fail('bad_request', '至少给出 name / blueprint / program / status 之一', [
+          detailOf('bad_request', 'PUT /me/ai/:aiId 是部分更新，至少给一项', 'name|blueprint|program|status'),
         ]);
       }
       if (hasName) {
         const nameDetails = aiNameDetails(o.name);
         if (nameDetails) return fail('bad_request', `AI 名称需 1~${AI_NAME_MAX} 字符`, nameDetails);
       }
-      if (hasProgram) {
+      let compiled = null;
+      if (hasBlueprint) {
+        compiled = compileBlueprintOf(o.blueprint);
+        if (!compiled.ok) return fail('ai_invalid', '蓝图不合法，无法保存（可先「存为草稿」）', compiled.details);
+      }
+      if (hasProgram && !hasBlueprint) {
         const shapeDetails = programShapeDetails(o.program);
         if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
       }
@@ -905,23 +1022,33 @@ function createAccount(options) {
       const current = archiveMod.findAi(archive, o.aiId);
       if (!current) return fail('store_not_found', `AI ${o.aiId} 不存在`, [detailOf('store_not_found', 'AI 不存在', 'aiId')]);
       const nextStatus = hasStatus ? o.status : archiveMod.aiStatusOf(current);
-      const nextProgram = hasProgram ? o.program : current.program;
+      const nextProgram = compiled ? compiled.program : (hasProgram ? o.program : current.program);
+      const nextBlueprint = hasBlueprint ? o.blueprint : current.blueprint;
       let check = null;
       if (nextStatus === 'ready') {
         check = validateProgramOf(nextProgram, archive.progress.tier);
         if (!check.ok) return fail('ai_invalid', 'AI 程序不合法，无法保存为正式条目（可先「存为草稿」）', check.details);
+        if (nextBlueprint) {
+          const ais = (await store.listAi(o.playerId)).items || [];
+          const details = occupancyDetails(archive, ais.concat([{ aiId: o.aiId, status: 'ready', blueprint: nextBlueprint }]), o.aiId);
+          if (details.length > 0) return fail('ai_node_shortage', '积木节点不足：请先开包获取更多节点，或减少其它 AI 的占用', details);
+        }
       }
       const res = await store.updateAi({
         playerId: o.playerId, aiId: o.aiId,
         name: hasName ? o.name.trim() : undefined,
-        program: hasProgram ? o.program : undefined,
+        program: (compiled || hasProgram) ? nextProgram : undefined,
         status: hasStatus ? o.status : undefined,
+        blueprint: hasBlueprint ? o.blueprint : undefined,
+        traceMap: compiled ? compiled.traceMap : undefined,
+        compilerVersion: compiled ? compiled.compilerVersion : undefined,
       });
-      logWrite('updateAi', { playerId: o.playerId, aiId: o.aiId, status: nextStatus, fields: { name: hasName, program: hasProgram, status: hasStatus } });
+      logWrite('updateAi', { playerId: o.playerId, aiId: o.aiId, status: nextStatus, fields: { name: hasName, blueprint: hasBlueprint, program: hasProgram, status: hasStatus } });
       return ok({
         aiId: o.aiId, ai: aiBrief(res.ai), count: (res.items || []).length, max: res.max,
         referencedBy: res.referencedBy || [], active: !!res.active,
         warnings: check ? check.warnings : [],
+        slots: compiled ? compiled.slotCount : null,
       });
     } catch (err) {
       return toFailure(err, log, 'updateAi');
@@ -934,6 +1061,19 @@ function createAccount(options) {
   async function validateAi(input) {
     const o = input || {};
     try {
+      // D-178：编辑器改一下就校验一次 → 直接送**蓝图**（前端无编译器，服务端编译并回带逐条中文错误）
+      if (o.blueprint !== undefined && o.blueprint !== null) {
+        const archive0 = await requireArchive(o.playerId);
+        void archive0;
+        const compiled = compileBlueprintOf(o.blueprint);
+        if (!compiled.ok) return fail('ai_invalid', '蓝图不合法', compiled.details);
+        const check0 = validateProgramOf(compiled.program, archive0.progress.tier);
+        if (!check0.ok) return fail('ai_invalid', 'AI 程序不合法', check0.details);
+        return ok({
+          ok: true, warnings: check0.warnings, stats: compiled.stats, programHash: check0.programHash,
+          slotCount: compiled.slotCount, compilerVersion: compiled.compilerVersion,
+        });
+      }
       const shapeDetails = programShapeDetails(o.program);
       if (shapeDetails) return fail('bad_request', 'program 必须是 AI 程序对象（type=program）', shapeDetails);
       const archive = await requireArchive(o.playerId);
@@ -1197,6 +1337,8 @@ function createAccount(options) {
     updateAi,
     validateAi,
     deleteAi,
+    // D-178：积木节点目录 + 拥有/占用/空闲（空闲为派生量）
+    aiNodes,
     // 仓库镜像（D-130 遗留：只做引用校验）
     saveWarehouseMirror,
     getWarehouseMirror,

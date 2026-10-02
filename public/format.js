@@ -18,17 +18,17 @@
  *     表达式槽与语句块行、校验结果与逐条错误定位、草稿标记、被引用提示（06-ai-editor.md §3）。
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'));
-  else { root.DL = root.DL || {}; root.DL.format = factory(root.DL.aiEditor); }
-})(typeof self !== 'undefined' ? self : this, function (aiEd) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'), require('./ai-blueprint.js'));
+  else { root.DL = root.DL || {}; root.DL.format = factory(root.DL.aiEditor, root.DL.aiBlueprint); }
+})(typeof self !== 'undefined' ? self : this, function (aiEd, aiBlueprint) {
   'use strict';
 
   var PAGE_TITLE = 'Debug-Lite v3 · 账号';
 
   // F3/F8：仓库五桶的**显示名**（03 §3.3；容量行与开包结果都用它）
-  //   F8/D-176：新增 `package`（包）
-  var BUCKET_LABELS = Object.freeze({ role: '角色', skill: '技能', rolePlugin: '角色插件', skillPlugin: '技能插件', package: '包' });
-  var BUCKET_ORDER = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package']);
+  //   F8/D-176：新增 `package`（包）；D-178：新增 `aiNode`（AI 积木节点，可堆叠）
+  var BUCKET_LABELS = Object.freeze({ role: '角色', skill: '技能', rolePlugin: '角色插件', skillPlugin: '技能插件', package: '包', aiNode: 'AI节点' });
+  var BUCKET_ORDER = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin', 'package', 'aiNode']);
   // 每桶上限缺省值（正常一律以响应的 data.caps 为准；缺失时才回落，避免整屏崩）
   var CAP_FALLBACK = 500;
   // F3：空页的标题与计划批次（03 §3.6；FR-12）
@@ -39,6 +39,17 @@
   var ITEM_GONE_TEXT = '（仓库中已找不到该物品，可能已被清理：点「刷新」重新读取）';
   var NO_DATA_TEXT = '（尚未读取到档案数据）';
   var CLOSE_LABEL = '关闭';
+
+  // D-179：渲染兜底（**渲染自身抛异常**时的最后一道界面）。背景（用户实测）：
+  //   public/index.html 漏载某个运行时模块时，任意一屏的 viewModel 抛异常 → app.js 的 mount 中断
+  //   → 之前置位的 `busy` 永不复位 → **全屏按钮变灰、点任何键都无声**（刷新才恢复）。
+  //   故：viewModel 失败不再向外抛，而是投影成本屏（纯常量，不读 state → 自身不可能再失败）。
+  var FATAL_TITLE = '界面内部错误';
+  var FATAL_PREFIX = '这一屏渲染失败了：';
+  var FATAL_HINT = '界面已回退到可操作状态，**其他功能不受影响**（可点下方按钮回到主界面）。'
+    + '请把下面这行的内容反馈给开发者。';
+  var FATAL_BACK_LABEL = '返回主界面';
+  var FATAL_LOGOUT_LABEL = '退出登录';
 
   // 唯一的字段读取原语（路径为字面量，便于机器核对）
   function pick(obj, path) {
@@ -347,6 +358,7 @@
     if (bucket === 'rolePlugin') return arrayOf(pick(env, 'data.buckets.rolePlugin'));
     if (bucket === 'skillPlugin') return arrayOf(pick(env, 'data.buckets.skillPlugin'));
     if (bucket === 'package') return arrayOf(pick(env, 'data.buckets.package'));
+    if (bucket === 'aiNode') return arrayOf(pick(env, 'data.buckets.aiNode')); // D-178 第 6 桶
     return arrayOf(pick(env, 'data.buckets.role'));
   }
 
@@ -468,7 +480,7 @@
       lines.push('包种类：' + packageKindLabel(pkgKind));
       lines.push('质量：' + num(pick(item, 'qualityPercent')) + '%');
       lines.push(pkgKind === 'aiNode'
-        ? '说明：保留包 —— 当前开包不产出物品（暂未开放）'
+        ? '说明：开包消耗此包，随机掉出 1~3 个 AI 积木节点（品质不高于包品质；同种节点自动堆叠）'
         : '说明：开包消耗此包，随机掉出 1~3 件物品（种类由包种类决定）');
     } else {
       lines.push('插件 id：' + or(pick(item, 'id'), '未知'));
@@ -494,26 +506,32 @@
 
   /* ---------- F8/D-177：开包（POST /me/warehouse/open-package；**不传也不显示 seed**） ---------- */
 
-  // 逐件行：`<名字>（<分类>·<品质>）`；保留包（AI 节点包）另起一行提示「未开放产出」
-  //   注：**不读**响应顶层的 `notice`（条件字段，只在保留包出现）—— 改用 `opened[].packageKind`
-  //   判定（`pick(opened[i], …)` 是子对象读取，不进信封级契约）。
+  // 逐件行：`<名字>（<分类>·<品质>）`；D-178 起 AI 节点包产出**积木节点条目**（显示为「节点名 ×N」）
+  //   注：**不读**响应顶层的 `notice`（历史上的保留包条件字段）——一律按 `data.items` 如实显示。
   function packageResultLines(env) {
     var items = arrayOf(pick(env, 'data.items'));
     var opened = arrayOf(pick(env, 'data.opened'));
     var lines = ['本次开包获得 ' + items.length + ' 件：'];
-    for (var i = 0; i < items.length; i++) {
+    for (var i = 0; i < items.length; i += 1) {
       var kind = str(pick(items[i], 'kind'));
+      if (kind === 'aiNode') {
+        // 节点条目 = 堆叠：{kind:'aiNode', nodeId, quality, count}
+        var cnt = pick(items[i], 'count');
+        lines.push('AI节点 ' + or(pick(items[i], 'nodeId'), '未知')
+          + '·' + or(pick(items[i], 'quality'), '未知')
+          + ' ×' + (typeof cnt === 'number' ? cnt : 1));
+        continue;
+      }
       lines.push(or(pick(items[i], 'name'), '（未命名物品）')
         + '（' + (kind === null ? '未知' : bucketLabel(kind)) + '·' + or(pick(items[i], 'quality'), '未知') + '）');
     }
-    var reserved = false;
-    for (var j = 0; j < opened.length; j++) {
-      if (str(pick(opened[j], 'packageKind')) === 'aiNode') reserved = true;
-    }
-    if (items.length === 0) {
-      lines.push(reserved ? '（保留包：暂未开放产出）' : '（本次没有产出物品）');
-    } else if (reserved) {
-      lines.push('其中含保留包（AI 节点包）：已消耗但暂未开放产出');
+    if (items.length === 0) lines.push('（本次没有产出物品）');
+    // 多包同开（上限 100）时补逐包明细，玩家才知道哪个包给了什么
+    if (opened.length > 1) {
+      for (var k = 0; k < opened.length; k += 1) {
+        lines.push('第 ' + (k + 1) + ' 个包（' + packageKindLabel(str(pick(opened[k], 'packageKind')))
+          + '·' + num(pick(opened[k], 'qualityPercent')) + '%）→ ' + num(pick(opened[k], 'count')) + ' 件');
+      }
     }
     return lines;
   }
@@ -1366,12 +1384,47 @@
       + ' ' + or(pick(entry, 'nodeType'), '?') + (result === null ? '' : ' → ' + result);
   }
 
-  function traceSummaryText(frame, owner) {
+  // D-178⑩：**底层轨迹仅管理员可见**。普通玩家看"积木层"（有多少条积木事件、当前跑到哪个积木节点）；
+  //   管理员/调试模式才逐条显示底层 AST 路径与节点类型（排障用）。
+  function traceSummaryText(frame, owner, isAdmin, traceMap) {
     var label = owner === 'p2' ? '对手(防守方)' : '我方(进攻方)';
     var list = frame === null || frame === undefined ? [] : traceEntriesOf(frame, owner);
     if (list.length === 0) return label + ' AI 本帧轨迹：' + QUICK_NO_TRACE_TEXT;
-    return label + ' AI 本帧轨迹（' + String(list.length) + ' 条）：'
+    if (isAdmin !== true) {
+      // 映射优先级：帧自带的 `aiTraceMap[owner]`（服务端投影）> 调用方给的 traceMap（AI 记录，**仅自己那侧**）
+      var own = viewerTraceMapOf(frame, owner);
+      var map = own !== null && own !== undefined ? own : (owner === 'p1' && traceMap !== undefined ? traceMap : null);
+      var mapped = aiBlueprint.projectTrace(list, map);
+      if (map === null || mapped.events.length === 0) {
+        return label + ' AI 本帧：' + String(list.length) + ' 个执行步骤（底层节点明细仅管理员可见）';
+      }
+      var cur = mapped.current === null ? '（本帧没有可显示的积木节点）' : ('当前跑到积木节点 ' + mapped.current);
+      return label + ' AI 本帧：' + String(mapped.events.length) + ' 个积木步骤 · ' + cur
+        + '（底层节点明细仅管理员可见）';
+    }
+    return label + ' AI 本帧轨迹（底层，' + String(list.length) + ' 条）：'
       + list.map(traceEntryText).join(' ｜ ');
+  }
+
+  // D-178：查看器可用的积木高亮映射 —— 取 `state.viewer.ai`（GET /me/ai 信封）里**第一条带 traceMap 的条目**。
+  //   为什么能这么取：同一玩家所有 AI 由同一编译器产出、路径语法一致；且**只用于自己那一侧（p1）**，
+  //   对手（p2）在非管理员态只报执行步数（避免拿错映射把对手的路径标成自己的积木）。
+  function viewerTraceMapFromAiOf(state) {
+    var env = state && state.viewer ? state.viewer.ai : null;
+    var items = arrayOf(env === null || env === undefined ? null : pick(env, 'data.items'));
+    for (var i = 0; i < items.length; i += 1) {
+      var m = pick(items[i], 'traceMap');
+      if (m !== null && m !== undefined && typeof m === 'object') return m;
+    }
+    return null;
+  }
+
+  // 帧里若带 `aiTraceMap`（服务端投影时附上）就用它做积木层映射；没有则退化为"按路径原样计数"
+  function viewerTraceMapOf(frame, owner) {
+    var perOwner = pick(pick(frame, 'diff'), 'aiTraceMap');
+    if (perOwner === null || perOwner === undefined) return null;
+    var m = pick(perOwner, owner);
+    return m === null || m === undefined ? null : m;
   }
 
   // 帧数组与游标（查看器唯一数据源 = state.viewer）
@@ -1441,16 +1494,14 @@
   }
 
   // F8/D-177：本场掉落的包（`data.drops` **恒在**，无掉落 = `[]`）→ 结算区一行。
-  //   逐项只读子对象字段（`packageKind`/`quality`/`qualityPercent`/`name`），
-  //   保留包（AI 节点包）标注"暂未开放产出"，避免玩家以为拿到了能开的东西。
+  //   逐项只读子对象字段（`packageKind`/`quality`/`qualityPercent`/`name`）。
   function quickDropsText(env) {
     var drops = arrayOf(pick(env, 'data.drops'));
     if (drops.length === 0) return '本场掉落 0 个包';
     var parts = drops.map(function (d) {
       var kind = str(pick(d, 'packageKind'));
-      var suffix = kind === 'aiNode' ? '（保留包：暂未开放产出）' : '';
       return or(pick(d, 'name'), packageKindLabel(kind))
-        + '（' + or(pick(d, 'quality'), '?') + '·' + num(pick(d, 'qualityPercent')) + '%）' + suffix;
+        + '（' + or(pick(d, 'quality'), '?') + '·' + num(pick(d, 'qualityPercent')) + '%）';
     });
     return '本场掉落 ' + drops.length + ' 个包：' + parts.join(' / ');
   }
@@ -1728,7 +1779,7 @@
         else lines.push(active ? QUICK_NO_FRAMES_TEXT : QUICK_OTHER_BATTLE_TEXT);
       } else {
         lines = lines.concat(frameLines(frames[idx], idx, total));
-        lines.push(traceSummaryText(frames[idx], state.viewer ? state.viewer.traceOwner : 'p1'));
+        lines.push(traceSummaryText(frames[idx], state.viewer ? state.viewer.traceOwner : 'p1', state.session ? state.session.isAdmin === true : false, viewerTraceMapFromAiOf(state)));
       }
     }
     var noFrames = total === 0;
@@ -1863,7 +1914,7 @@
       if (frames.length > 0) {
         var fi = viewerIndex(state, frames.length);
         lines = lines.concat(frameLines(frames[fi], fi, frames.length));
-        lines.push(traceSummaryText(frames[fi], state.viewer ? state.viewer.traceOwner : 'p1'));
+        lines.push(traceSummaryText(frames[fi], state.viewer ? state.viewer.traceOwner : 'p1', state.session ? state.session.isAdmin === true : false, viewerTraceMapFromAiOf(state)));
       } else if (viewerFrames(state).length > 0) {
         lines.push('（当前查看器里是别处的战斗：点上面某场的「看这一场」载入本批的帧）');
       }
@@ -2232,6 +2283,9 @@
           name: or(pick(aiItem, 'name'), ''),
           status: pick(aiItem, 'status') === 'draft' ? 'draft' : 'ready',
           program: pick(aiItem, 'program'),
+          // D-178：积木蓝图（编辑器据此回填积木视图）+ 槽位数
+          blueprint: pick(aiItem, 'blueprint'),
+          slotCount: pick(aiItem, 'slotCount'),
         };
       }
     }
@@ -2263,10 +2317,37 @@
     return noticeText(env);
   }
 
+  // D-178：节点目录 / 限额 / 预设模板（GET /me/ai/nodes 信封 → 供积木编辑器注入模型）
+  function aiNodesCatalogOf(env) { return env === null ? null : pick(env, 'data.catalog'); }
+  function aiNodesLimitsOf(env) { return env === null ? null : pick(env, 'data.limits'); }
+  function aiNodesPresetsOf(env) { return arrayOf(env === null ? null : pick(env, 'data.presets')); }
+
+  // D-178：积木节点库存摘要（GET /me/ai/nodes 信封）——AI 库屏给一句"我有多少积木可用"。
+  //   全部由 `data.inventory` 推出（不读 `data.counts`：该路径名与别处的"不读取"登记冲突）。
+  function aiNodeStockText(env) {
+    if (env === null) return '积木节点：点「刷新」后显示（开 AI 节点包可获取更多）';
+    var inv = arrayOf(pick(env, 'data.inventory'));
+    var kinds = 0;
+    var total = 0;
+    var used = 0;
+    var freeKinds = 0;
+    for (var i = 0; i < inv.length; i++) {
+      var owned = pick(inv[i], 'owned');
+      var use = pick(inv[i], 'used');
+      var free = pick(inv[i], 'free');
+      if (typeof owned === 'number' && owned > 0) kinds += 1;
+      if (typeof owned === 'number') total += owned;
+      if (typeof use === 'number') used += use;
+      if (typeof free === 'number' && free > 0) freeKinds += 1;
+    }
+    return '积木节点：已拥有 ' + kinds + ' 种 / 共 ' + total + ' 个 · 占用 ' + used
+      + ' 个 · 可用种类 ' + freeKinds + '（开 AI 节点包可获取更多）';
+  }
+
   function aiListViewModel(state, notice, busy) {
     var ed = aiEditorOf(state);
     var env = ed.list;
-    var lines = [aiCountText(env), AI_LIST_HINT_TEXT];
+    var lines = [aiCountText(env), aiNodeStockText(ed.nodes), AI_LIST_HINT_TEXT];
     var items = aiItemsOf(env);
     if (env !== null && items.length === 0) lines.push(AI_EMPTY_LIST_TEXT);
     var rows = items.map(function (aiItem) {
@@ -2310,7 +2391,190 @@
   //   ⚠️ 这里必须用**有序区块** `blocks`：旧的扁平 vm 会让 render 把"所有文字行"先渲染、"所有行（含程序树）"
   //   后渲染，于是「程序」标题与程序树被拆到屏幕两端、分支标签与节点表单也各归各块 —— 用户实测反馈
   //   "几乎看不出各逻辑之间的关系"。blocks 让"小节标题 → 紧随其后的内容"按声明顺序出现。
+  /* ---------- D-178：积木编辑器屏（蓝图草稿；docs/frontend/06-ai-editor.md §16） ---------- */
+  //   进入条件：草稿是蓝图（`{type:'blueprint'}`）；旧 AST 程序继续走下面的旧编辑器（过渡期兼容）。
+  function aiBlueprintInventoryOf(env) { return arrayOf(env === null ? null : pick(env, 'data.inventory')); }
+
+  // 顶部状态行：槽位用量 + 本次用到的节点种类 + 余量不足的种类数（只提示；判决在服务端）
+  function aiBlueprintStockLine(draft, inv) {
+    var stats = aiBlueprint.statsOf(draft);
+    var shortage = aiBlueprint.shortageOf(draft, inv);
+    var kinds = 0;
+    var i;
+    for (i = 0; i < inv.length; i++) if (pick(inv[i], 'owned') > 0) kinds += 1;
+    return '槽位 ' + stats.slots + '/' + aiBlueprint.limits().maxSlots
+      + ' · 已拥有 ' + kinds + ' 种节点'
+      + (shortage.length > 0 ? ' · ⚠ 其中 ' + shortage.length + ' 种余量不足' : '');
+  }
+
+  // 校验回执的 details[]（服务端唯一判据；无回执 → 空数组）
+  function aiValidateDetailsOf(state) {
+    var ed = aiEditorOf(state);
+    if (ed === null || ed.validate === null) return [];
+    var env = ed.validate;
+    if (!isOk(env)) return arrayOf(pick(env, 'error.details'));
+    return [];
+  }
+
+  function aiBlueprintViewModel(state, notice, busy) {
+    var ed = aiEditorOf(state);
+    var draft = ed.draft;
+    var cursor = ed.cursor === undefined || ed.cursor === null ? '' : String(ed.cursor);
+    var eb = ed.nodes;
+    var catalog = aiNodesCatalogOf(eb);
+    if (catalog !== null) aiBlueprint.setCatalog(catalog, aiNodesLimitsOf(eb));
+    var inv = aiBlueprintInventoryOf(eb);
+    // D-179 修复：正在编辑的**既有条目**，其自身占用不该被算作"别人占着"。
+    //   服务端 `PUT /me/ai/:aiId` 用 excludeAiId 扣掉该条目自己的旧占用；前端此前不扣 →
+    //   打开自己的 AI 就显示「⚠ 节点不足」、节点库里自己用着的节点全是 0 空闲，
+    //   玩家会以为保存不了（实际能存），且"再加一个同类节点"被误判为不可用。
+    var selfItem = ed.aiId === null ? null : aiItemOf(ed.list, ed.aiId);
+    if (selfItem !== null && selfItem.blueprint) inv = aiBlueprint.excludeOwnUsage(inv, selfItem.blueprint);
+    var ok = aiValidateOk(state) === true;
+
+    var blocks = [];
+    blocks.push({ kind: 'lines', lines: [
+      '名称：' + (ed.name === '' ? '（未命名）' : ed.name) + ' · 状态：' + (ed.status === 'draft' ? '草稿' : '正式'),
+      ed.aiId === null ? '（新蓝图：保存后才会入库）' : ('库内条目：' + ed.aiId + ' · ' + aiUsageText(ed.list, ed.aiId)),
+      aiBlueprintStockLine(draft, inv),
+      '模板区：点一下即整套替换当前程序（套用后就是普通蓝图，可随意拆改）',
+    ] });
+    var presets = aiNodesPresetsOf(eb);
+    blocks.push({ kind: 'buttons', buttons: (presets.length > 0 ? presets.map(function (p) {
+      return { action: 'ai-bp-preset', label: '套用：' + p.name, kind: 'button', disabled: busy, preset: p.id };
+    }) : [{ action: 'ai-bp-new', label: '新建空白蓝图', kind: 'button', disabled: busy }]).concat(
+      presets.length > 0 ? [{ action: 'ai-bp-new', label: '清空重来', kind: 'button', disabled: busy }] : []) });
+
+    var groups = aiBlueprint.nodeLibrary(inv);
+    for (var gi = 0; gi < groups.length; gi += 1) {
+      blocks.push({ kind: 'lines', lines: [groups[gi].category + '（括注 = 空闲/拥有）：'] });
+      blocks.push({
+        kind: 'buttons',
+        buttons: groups[gi].items.map(function (it) {
+          return {
+            action: 'ai-node-append', kind: 'button', node: it.nodeId,
+            label: it.name + '（' + it.qualityLabel + '·' + it.free + '/' + it.owned + '）',
+            disabled: busy || it.disabled,
+          };
+        }),
+      });
+    }
+
+    blocks.push({ kind: 'lines', lines: ['程序结构（缩进 = 层级；「条件/那么/否则/循环体」是子节点位）：'] });
+    var rows = aiBlueprint.treeLines(draft, cursor).map(function (r) {
+      if (r.header === true) return { text: aiTreeIndentOf(r.depth) + r.text, buttons: [] };
+      return {
+        text: aiTreeIndentOf(r.depth) + r.text + (r.selected ? '　← 当前选中' : ''),
+        buttons: [
+          { action: 'ai-select-node', label: '选中', kind: 'button', disabled: busy, addr: r.addr },
+          { action: 'ai-node-up', label: '上移', kind: 'button', disabled: busy || r.depth !== 0, addr: r.addr },
+          { action: 'ai-node-down', label: '下移', kind: 'button', disabled: busy || r.depth !== 0, addr: r.addr },
+          { action: 'ai-node-del', label: '删除', kind: 'button', disabled: busy, addr: r.addr },
+        ],
+      };
+    });
+    blocks.push({ kind: 'rows', rows: rows.length > 0 ? rows : [{ text: '（空蓝图：先套用模板，或点上面的节点加入程序）', buttons: [] }] });
+
+    var form = aiBlueprint.formOf(draft, cursor);
+    if (form === null) {
+      blocks.push({ kind: 'lines', lines: ['参数区：先在程序结构里点「选中」一个节点'] });
+    } else {
+      blocks.push({ kind: 'lines', lines: ['参数区 —— ' + form.name + '：' + form.desc] });
+      if (form.fields.length === 0) blocks.push({ kind: 'lines', lines: ['（这个节点没有可调参数）'] });
+      for (var fi = 0; fi < form.fields.length; fi += 1) {
+        blocks.push({ kind: 'buttons', buttons: aiParamButtons(cursor, form.fields[fi], busy) });
+      }
+    }
+
+    var shortage = aiBlueprint.shortageOf(draft, inv);
+    if (shortage.length > 0) {
+      blocks.push({ kind: 'lines', lines: ['⚠ 节点不足：' + shortage.map(function (s) { return s.name + '（需 ' + s.need + ' 个 / 空闲 ' + s.free + ' 个）'; }).join('、') + ' —— 可先「存为草稿」，或开 AI 节点包补货'] });
+    }
+    var details = aiValidateDetailsOf(state);
+    if (details.length > 0) {
+      blocks.push({ kind: 'lines', lines: ['校验未通过（服务端唯一判据）：'].concat(
+        aiBlueprint.errorLines(draft, details).map(function (e) {
+          return '· ' + (e.addr === null ? '（全局）' : (e.addr + ' ← ')) + e.message;
+        })) });
+    } else if (ok) {
+      blocks.push({ kind: 'lines', lines: ['校验通过 ✓（服务端已确认，可保存为正式条目）'] });
+    } else {
+      blocks.push({ kind: 'lines', lines: ['（尚未校验：改动后会自动校验一次）'] });
+    }
+
+    // D-179 修复：积木编辑屏此前也不渲染**导入区** —— 点「导入 JSON」只置了状态，屏幕上不出现输入框，
+    //   于是"导入"这个功能在积木模式下完全够不着（按钮点了没反应）。此处与旧 AST 编辑屏同形补齐；
+    //   应用导入的解析按草稿类型分派（见 actions.js 的 ai-import-apply）。
+    if (ed.importOpen) {
+      blocks.push({ kind: 'lines', lines: ['导入 JSON：粘贴一份积木蓝图（会替换当前草稿；合法性仍由服务端校验）'] });
+      blocks.push({ kind: 'textarea', textarea: { name: 'aiImport', label: '蓝图 JSON', value: ed.importText } });
+      blocks.push({
+        kind: 'buttons',
+        buttons: [
+          { action: 'ai-import-apply', label: '应用导入', kind: 'button', disabled: busy },
+          { action: 'ai-import-close', label: '取消导入', kind: 'button', disabled: busy },
+        ],
+      });
+    }
+
+    // D-179 修复：积木编辑屏此前**不渲染**「确认丢弃」弹层 —— 而 ai-close 在脏草稿时只会
+    //   dispatch `ai.confirm.set {kind:'discard'}`，于是点「返回列表」屏幕上什么都不出现，
+    //   玩家以为按钮坏了（有未保存改动就再也退不出编辑器）。此处与旧 AST 编辑屏同形补齐。
+    var confirm = null;
+    if (ed.confirm && ed.confirm.kind === 'discard') {
+      confirm = {
+        text: '有未保存改动，确认丢弃并关闭？',
+        buttons: [
+          { action: 'ai-discard-yes', label: '确认丢弃', kind: 'button', disabled: busy },
+          { action: 'ai-discard-no', label: '取消', kind: 'button', disabled: busy },
+        ],
+      };
+    }
+
+    return vm('AI 编辑（积木）', {
+      notice: notice,
+      hint: '积木编辑器：点节点加入程序 → 在结构里「选中」→ 下方调参数 → 保存（保存前服务端会再校验）',
+      blocks: blocks,
+      confirm: confirm,
+      buttons: [
+        { action: 'ai-save', label: '保存', kind: 'button', disabled: busy || !ok },
+        { action: 'ai-save-draft', label: '存为草稿', kind: 'button', disabled: busy },
+        { action: 'ai-validate', label: '校验', kind: 'button', disabled: busy },
+        { action: 'ai-import-open', label: '导入 JSON', kind: 'button', disabled: busy },
+        { action: 'ai-close', label: '返回列表', kind: 'button', disabled: busy },
+      ],
+    });
+  }
+
+  // 参数控件：slot/enum → 直选按钮；int/num/pct → 「−/+」步进按钮（避免引入新的输入提交路径）
+  function aiParamButtons(addr, f, busy) {
+    var out = [];
+    var cur = f.value;
+    var isChoice = f.kind === 'slot' || f.kind === 'enum';
+    if (isChoice) {
+      out.push({ action: 'ai-param-set', label: f.label + '：当前 ' + or(String(cur), '未设置') + '（点右侧取值）', kind: 'button', disabled: true, addr: addr, field: f.key, value: cur });
+      (f.values || []).forEach(function (o) {
+        out.push({
+          action: 'ai-param-set', label: f.label + '=' + o, kind: 'button',
+          disabled: busy || String(o) === String(cur), addr: addr, field: f.key, value: o,
+        });
+      });
+      return out;
+    }
+    var step = f.type === 'pct' ? 5 : 1;
+    var now = typeof cur === 'number' ? cur : Number(cur);
+    if (!isFinite(now)) now = f.min === undefined ? 0 : f.min;
+    out.push({ action: 'ai-param-set', label: f.label + '：' + now + '（范围 ' + (f.min === undefined ? '?' : f.min) + '~' + (f.max === undefined ? '?' : f.max) + '）', kind: 'button', disabled: true, addr: addr, field: f.key, value: now });
+    out.push({ action: 'ai-param-set', label: '−' + step, kind: 'button', disabled: busy || (f.min !== undefined && now - step < f.min), addr: addr, field: f.key, value: round2num(now - step) });
+    out.push({ action: 'ai-param-set', label: '+' + step, kind: 'button', disabled: busy || (f.max !== undefined && now + step > f.max), addr: addr, field: f.key, value: round2num(now + step) });
+    return out;
+  }
+  function round2num(v) { return Math.round(v * 100) / 100; }
+
   function aiEditViewModel(state, notice, busy) {
+    var ed0 = aiEditorOf(state);
+    // D-178：蓝图草稿走积木编辑器屏；旧 AST 程序仍走下面的旧编辑器
+    if (ed0 !== null && ed0.draft !== null && ed0.draft.type === 'blueprint') return aiBlueprintViewModel(state, notice, busy);
     var ed = aiEditorOf(state);
     var draft = ed.draft;
     var cursor = ed.cursor || 'body';
@@ -2618,6 +2882,7 @@
         { action: 'warehouse-bucket', label: '角色插件', kind: 'button', disabled: busy, bucket: 'rolePlugin' },
         { action: 'warehouse-bucket', label: '技能插件', kind: 'button', disabled: busy, bucket: 'skillPlugin' },
         { action: 'warehouse-bucket', label: '包', kind: 'button', disabled: busy, bucket: 'package' },
+        { action: 'warehouse-bucket', label: 'AI节点', kind: 'button', disabled: busy, bucket: 'aiNode' },
         { action: 'refresh-warehouse', label: '刷新', kind: 'button', disabled: busy },
         { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
       ],
@@ -2727,6 +2992,21 @@
     });
   }
 
+  // D-179：渲染兜底 vm（**不读 state**，只拼常量 + 传入的错误文本）
+  //   由 public/app.js 的 mount() 在 viewModel 抛异常时调用；按钮只用注册表里的两个恒安全动作
+  //   （goto-hub / logout），因此 UI-2「渲染集合 ⊆ 注册表」对兜底屏同样成立。
+  function fatalViewModel(message) {
+    return vm(FATAL_TITLE, {
+      notice: { kind: 'error', text: FATAL_PREFIX + or(message, '未知错误') },
+      hint: FATAL_HINT,
+      lines: ['错误详情：' + or(message, '（无消息）')],
+      buttons: [
+        { action: 'goto-hub', label: FATAL_BACK_LABEL, kind: 'button', disabled: false },
+        { action: 'logout', label: FATAL_LOGOUT_LABEL, kind: 'button', disabled: false },
+      ],
+    });
+  }
+
   function viewModel(state) {
     var notice = noticeOf(state);
     var busy = state.busy === true;
@@ -2808,6 +3088,9 @@
     BUCKET_ORDER: BUCKET_ORDER,
     EMPTY_PAGES: EMPTY_PAGES,
     SKILL_SLOTS: SKILL_SLOTS,
+    // D-179：渲染兜底（app.js 的 mount 在 viewModel 抛异常时调用）
+    fatalViewModel: fatalViewModel,
+    FATAL_TITLE: FATAL_TITLE,
     CONFIG_ACTIVE_HINT: CONFIG_ACTIVE_HINT,
     CONFIG_INCOMPLETE_SAVE_TEXT: CONFIG_INCOMPLETE_SAVE_TEXT,
     CONFIG_DRAFT_HINT: CONFIG_DRAFT_HINT,
@@ -2853,6 +3136,11 @@
     bucketItems: bucketItems,
     capOf: capOf,
     warehouseCapacityText: warehouseCapacityText,
+    // D-178：积木节点（GET /me/ai/nodes）——目录/限额/模板/库存摘要
+    aiNodesCatalogOf: aiNodesCatalogOf,
+    aiNodesLimitsOf: aiNodesLimitsOf,
+    aiNodesPresetsOf: aiNodesPresetsOf,
+    aiNodeStockText: aiNodeStockText,
     usageText: usageText,
     itemLabel: itemLabel,
     itemRows: itemRows,

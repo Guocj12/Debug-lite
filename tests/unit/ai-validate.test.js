@@ -474,19 +474,25 @@ test('缺陷3 表达式位 random 不适用分支行动规则；语句位 random
 //   由中央把 docs/systems/08-ai.md §4.3 第 73 行（"else 缺省时视为空分支直接跳过"）改为"`else` 必填"，
 //   并说明"运行期仍容忍缺省（绕过校验直接注入时按空分支跳过）"——即既有的分层原则（校验层拒绝 + 运行层兜底）。
 //   本用例锁定代码侧不变量，避免后续被"顺手放宽"。
-test('缺陷4 random.else 必填（代码为准）：缺 else → bad_field 带精确 path；有 else 放行', () => {
-  const missingElse = P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]) }]));
-  const r = ast.validate(missingElse, 'mythic');
-  assert.equal(r.ok, false, 'random 缺 else 应被结构校验拒绝');
-  const e = r.errors.find((x) => x.code === 'bad_field');
-  assert.ok(e, JSON.stringify(r.errors));
-  assert.equal(e.path, 'body.s[0]', '错误 path 指向 random 节点');
-  assert.match(e.message, /random 缺必填字段 else/, '消息明确指向缺省字段 else');
-  // else 为 null 同样视为缺失（字段类型表 node 非 optional）
-  assert.equal(ast.validate(P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: null }])), 'mythic').ok, false, 'else=null 同样拒绝');
+test('缺陷4/[D-178] random 的 then/else 在结构层可选，语句位的分支条款由合法层把关', () => {
+  // 顶层 random 缺 else：**放行**（D-178 语义 = 概率不成立时"什么都不做"、直接落到下一条语句，
+  //   不是静默失效——语句被跳过而非整个程序失效）。这正是积木层『随机X%』条件需要的表达式位 random。
+  const topMissing = P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]) }]));
+  assert.equal(ast.validate(topMissing, 'mythic').ok, true, '顶层 random 缺 else 放行（D-178）');
+  // 循环体内的 random 缺 else：**拒绝**（branch_without_action，分支规则只在循环体内生效）
+  const inLoop = P2(seq([{ type: 'loop', kind: 'count', times: { type: 'literal', value: 2 }, body: seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]) }]) }]));
+  const rl = ast.validate(inLoop, 'mythic');
+  assert.equal(rl.ok, false, '循环体内 random 缺 else 仍被拒绝');
+  assert.ok(rl.errors.some((e) => e.code === 'branch_without_action'), JSON.stringify(rl.errors));
+  // else=null 在循环体内同样视为空分支
+  const inLoopNull = P2(seq([{ type: 'loop', kind: 'count', times: { type: 'literal', value: 2 }, body: seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: null }]) }]));
+  assert.equal(ast.validate(inLoopNull, 'mythic').ok, false, 'else=null 同样拒绝');
   // 带 else（哪怕空 seq）→ 结构通过（空分支由分支行动规则在循环体内把关）
   const withElse = P2(seq([{ type: 'random', prob: { type: 'literal', value: 0.5 }, then: seq([act('wait')]), else: seq([act('wait')]) }]));
   assert.equal(ast.validate(withElse, 'mythic').ok, true, '带 else 放行');
+  // 表达式位（if.cond 内）的 random：无 then/else 必须放行（积木层『随机X%』条件的编译产物）
+  const exprRandom = P2(seq([{ type: 'if', cond: { type: 'random', prob: { type: 'literal', value: 0.3 } }, then: seq([act('wait')]), else: seq([act('wait')]) }]));
+  assert.equal(ast.validate(exprRandom, 'mythic').ok, true, '表达式位 random 放行（D-178）');
   // fixtures 全量回归：random 夹具（coverageProgram）已带 else，不受影响
   assert.equal(ast.validate(prog('coverageProgram'), 'mythic').ok, true, 'coverageProgram（含 random.then/else）仍通过');
 });

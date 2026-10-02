@@ -10,9 +10,9 @@
  * 不读响应字段、不碰 DOM。
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'));
-  else { root.DL = root.DL || {}; root.DL.actions = factory(root.DL.aiEditor); }
-})(typeof self !== 'undefined' ? self : this, function (aiEd) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./ai-editor.js'), require('./ai-blueprint.js'));
+  else { root.DL = root.DL || {}; root.DL.actions = factory(root.DL.aiEditor, root.DL.aiBlueprint); }
+})(typeof self !== 'undefined' ? self : this, function (aiEd, aiBp) {
   'use strict';
 
   var USERNAME_RE = /^[A-Za-z0-9_-]{3,24}$/;   // 与服务端 auth.js 同规则（3~24、[A-Za-z0-9_-]）
@@ -1369,6 +1369,92 @@
     },
     // ---------- F5/D-172：AI 编辑器（查看 / 新建 / 编辑 / 删除；06-ai-editor.md §3） ----------
     'ai-refresh': { label: '刷新', run: function (ctx) { return loadAiLibrary(ctx, false); } },
+    // ---------- D-178：积木编辑器动作（与积木编辑屏同批提交；06-ai-editor.md §16.3/§16.6） ----------
+    'ai-bp-new': {
+      label: '新建空白蓝图',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        var blank = aiBp.emptyBlueprint();
+        ctx.dispatch({ type: 'ai.editor.open', aiId: null, name: '我的AI', program: blank, status: 'ready', dirty: true });
+        ctx.dispatch({ type: 'ai.import.close' });
+        return validateBpDraft(ctx, blank);
+      },
+    },
+    'ai-bp-preset': {
+      label: '套用模板',
+      run: function (ctx, payload) {
+        var p = payload !== null && payload && typeof payload === 'object' ? payload : {};
+        var ed = aiEdOf(ctx);
+        var list = ctx.format.aiNodesPresetsOf(ed === null ? null : ed.nodes);
+        var hit = null;
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === p.preset) hit = list[i];
+        if (hit === null || !hit.blueprint) {
+          noticeNotice(ctx, 'error', '这个模板不在本次读到的清单里：请先「刷新」。');
+          return Promise.resolve();
+        }
+        var blueprint = aiBp.clone(hit.blueprint);
+        ctx.dispatch({ type: 'ai.draft.set', program: blueprint, cursor: 'body[0]' });
+        return validateBpDraft(ctx, blueprint);
+      },
+    },
+    'ai-node-append': {
+      label: '添加积木节点',
+      run: function (ctx, payload) {
+        var nodeId = payload !== null && payload && typeof payload.node === 'string' ? payload.node : '';
+        if (nodeId === '') return Promise.resolve();
+        var ed = aiEdOf(ctx);
+        if (ed === null) return Promise.resolve();
+        aiBpUseCatalog(ctx, ed.nodes); // 目录兜底注入（正常已在 loadAiLibrary 注入过）
+        var draft = aiDraftIsBp(ed.draft) ? aiBp.clone(ed.draft) : aiBp.emptyBlueprint();
+        var node = aiBp.newNode(nodeId);
+        if (node === null) {
+          noticeNotice(ctx, 'error', '未知积木节点 ' + nodeId + '：节点目录可能过期，请点「刷新」。');
+          return Promise.resolve();
+        }
+        var next = aiBp.insertAfter(draft, 'body[-1]', node);
+        var limit = aiBp.limits().maxSlots;
+        if (aiBp.statsOf(next).slots > limit) {
+          noticeNotice(ctx, 'error', '槽位已满（' + limit + '）：先删掉一些节点，或分段保存多套 AI。');
+          return Promise.resolve();
+        }
+        return commitBpDraft(ctx, next, 'body[' + (next.body.length - 1) + ']');
+      },
+    },
+    'ai-node-del': {
+      label: '删除节点',
+      run: function (ctx, payload) {
+        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        if (addr === '') return Promise.resolve();
+        return mutateBpDraft(ctx, function (draft) { return aiBp.removeAt(draft, addr); }, aiBp.parentAddrOf(addr) || 'body[-1]');
+      },
+    },
+    'ai-node-up': {
+      label: '上移',
+      run: function (ctx, payload) {
+        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        if (addr === '') return Promise.resolve();
+        return mutateBpDraft(ctx, function (draft) { return aiBp.moveAt(draft, addr, -1); }, addr);
+      },
+    },
+    'ai-node-down': {
+      label: '下移',
+      run: function (ctx, payload) {
+        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        if (addr === '') return Promise.resolve();
+        return mutateBpDraft(ctx, function (draft) { return aiBp.moveAt(draft, addr, 1); }, addr);
+      },
+    },
+    'ai-param-set': {
+      label: '设置参数',
+      run: function (ctx, payload) {
+        var p = payload !== null && payload && typeof payload === 'object' ? payload : {};
+        var addr = typeof p.addr === 'string' ? p.addr : '';
+        var key = typeof p.field === 'string' ? p.field : '';
+        if (addr === '' || key === '') return Promise.resolve();
+        return mutateBpDraft(ctx, function (draft) { return aiBp.setParam(draft, addr, key, p.value); }, addr);
+      },
+    },
     'ai-new': {
       label: '新建 AI',
       run: function (ctx) {
@@ -1394,12 +1480,14 @@
           return Promise.resolve();
         }
         ctx.dispatch({ type: 'notice.set', notice: null });
+        // D-178：条目带蓝图 → 打开积木编辑器；旧条目（无蓝图）→ 仍是旧 AST 程序
+        var draft = item.blueprint !== undefined && item.blueprint !== null ? aiBp.clone(item.blueprint) : item.program;
         ctx.dispatch({
           type: 'ai.editor.open', aiId: item.aiId, name: item.name,
-          program: item.program, status: item.status, dirty: false,
+          program: draft, status: item.status, dirty: false,
         });
         ctx.dispatch({ type: 'ai.import.close' });
-        return validateDraft(ctx, item.program);
+        return aiDraftIsBp(draft) ? validateBpDraft(ctx, draft) : validateDraft(ctx, draft);
       },
     },
     'ai-delete': {
@@ -1455,7 +1543,15 @@
       label: '插入节点',
       run: function (ctx, payload) {
         if (ctx.state.busy) return Promise.resolve();
-        return insertContextual(ctx, aiAddrOf(payload), aiValueOf(payload));
+        // D-179 修复：插入位置 = **当前选中的节点**。按钮只带 `value`（节点类型），不带 addr；
+        //   此前 `aiAddrOf` 对缺 addr 一律回落 'body'，于是「插到语句后面 / 放进语句块 / 填进表达式槽」
+        //   三条分支全是死代码 —— 无论选中哪里，插入都落在最外层，与界面文案承诺的行为不符。
+        var p = payload !== null && payload && typeof payload.addr === 'string' && payload.addr !== '' ? payload.addr : null;
+        if (p === null) {
+          var ed = aiEdOf(ctx);
+          p = ed !== null && typeof ed.cursor === 'string' && ed.cursor !== '' ? ed.cursor : 'body';
+        }
+        return insertContextual(ctx, p, aiValueOf(payload));
       },
     },
     'ai-replace': {
@@ -1508,7 +1604,12 @@
       label: '导入 JSON',
       run: function (ctx) {
         var ed = aiEdOf(ctx);
-        ctx.dispatch({ type: 'ai.import.open', value: ed === null || ed.draft === null ? '' : aiEd.exportProgramText(ed.draft) });
+        // D-179：导出文本按草稿类型分派（积木草稿用 ai-blueprint 的导出，否则旧 AST 程序）
+        var text = '';
+        if (ed !== null && ed.draft !== null) {
+          text = aiDraftIsBp(ed.draft) ? aiBp.exportText(ed.draft) : aiEd.exportProgramText(ed.draft);
+        }
+        ctx.dispatch({ type: 'ai.import.open', value: text });
         return Promise.resolve();
       },
     },
@@ -1524,7 +1625,20 @@
       run: function (ctx) {
         if (ctx.state.busy) return Promise.resolve();
         var ed = aiEdOf(ctx);
-        var parsed = aiEd.importProgram(ed === null ? '' : ed.importText);
+        var text = ed === null ? '' : ed.importText;
+        // D-179：按**当前草稿类型**选解析器 —— 积木草稿此前走的是旧 AST 解析器，
+        //   于是"粘贴一份蓝图 → 应用导入"必然报"不是合法程序"，导入在积木模式下不可用。
+        if (aiDraftIsBp(ed === null ? null : ed.draft)) {
+          var bp = aiBp.importJson(text);
+          if (!bp.ok) {
+            noticeNotice(ctx, 'error', bp.message);
+            return Promise.resolve();
+          }
+          ctx.dispatch({ type: 'ai.import.close' });
+          noticeNotice(ctx, 'info', '已导入积木蓝图，正在校验…');
+          return commitBpDraft(ctx, bp.blueprint, 'body[0]');
+        }
+        var parsed = aiEd.importProgram(text);
         if (!parsed.ok) {
           noticeNotice(ctx, 'error', parsed.error);
           return Promise.resolve();
@@ -1601,6 +1715,16 @@
         return failFrom(ctx, result);
       }
       ctx.dispatch({ type: 'ai.list.set', envelope: result.envelope });
+      // D-178：顺手取一次积木节点库存（失败不阻断列表——库存只是辅助信息）
+      if (typeof ctx.api.aiNodes === 'function') {
+        return ctx.api.aiNodes(token).then(function (nr) {
+          if (nr && nr.transport !== 'error' && ctx.format.isOk(nr.envelope)) {
+            ctx.dispatch({ type: 'ai.nodes.set', envelope: nr.envelope });
+            aiBpUseCatalog(ctx, nr.envelope); // D-178：目录注入积木模型（否则 newNode 无从查 schema）
+          }
+          return undefined;
+        });
+      }
       return undefined;
     });
   }
@@ -1634,6 +1758,58 @@
   function commitDraft(ctx, program, cursor) {
     ctx.dispatch({ type: 'ai.draft.set', program: program, cursor: cursor });
     return validateDraft(ctx, program);
+  }
+
+  /* ---------- D-178：积木编辑器（蓝图草稿；docs/frontend/06-ai-editor.md §16） ---------- */
+
+  // 草稿是不是积木蓝图（过渡期两种草稿并存：旧 AST 程序 / 新蓝图）
+  function aiDraftIsBp(draft) { return !!(draft && typeof draft === 'object' && draft.type === 'blueprint'); }
+
+  // 目录注入（幂等）：GET /me/ai/nodes 的信封 → ai-blueprint 的目录与限额
+  function aiBpUseCatalog(ctx, env) {
+    if (env === null || env === undefined) return;
+    var catalog = ctx.format.aiNodesCatalogOf ? ctx.format.aiNodesCatalogOf(env) : null;
+    var limits = ctx.format.aiNodesLimitsOf ? ctx.format.aiNodesLimitsOf(env) : null;
+    if (catalog !== null) aiBp.setCatalog(catalog, limits);
+  }
+
+  // 蓝图草稿：改副本 → 提交 → 自动校验（服务端唯一判据）
+  function commitBpDraft(ctx, draft, cursor) {
+    ctx.dispatch({ type: 'ai.draft.set', program: draft, cursor: cursor });
+    return validateBpDraft(ctx, draft);
+  }
+  function mutateBpDraft(ctx, fn, cursor) {
+    var ed = aiEdOf(ctx);
+    if (ed === null || !aiDraftIsBp(ed.draft)) {
+      noticeNotice(ctx, 'error', '当前不是积木蓝图（旧版程序不可用积木编辑）。');
+      return Promise.resolve();
+    }
+    var draft = aiBp.clone(ed.draft);
+    var next = fn(draft);
+    if (next === null || next === undefined) return Promise.resolve();
+    var target = cursor === undefined ? ed.cursor : cursor;
+    return commitBpDraft(ctx, next, target);
+  }
+
+  // 蓝图校验（POST /me/ai/validate {blueprint}）；与 validateDraft 同构，仅请求体不同
+  function validateBpDraft(ctx, blueprintArg) {
+    var ed = aiEdOf(ctx);
+    var blueprint = blueprintArg !== undefined ? blueprintArg : (ed === null ? null : ed.draft);
+    var token = aiTokenOf(ctx);
+    if (blueprint === null || blueprint === undefined || !token) return Promise.resolve();
+    aiValidateSeq += 1;
+    var seq = aiValidateSeq;
+    return ctx.api.aiValidate(token, { blueprint: blueprint }).then(function (result) {
+      if (seq !== aiValidateSeq) return undefined;
+      if (result.transport === 'error') {
+        ctx.dispatch({ type: 'ai.validate.set', envelope: null });
+        noticeNotice(ctx, 'error', ctx.format.networkText(result.message));
+        return undefined;
+      }
+      if (!ctx.format.isOk(result.envelope) && ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+      ctx.dispatch({ type: 'ai.validate.set', envelope: result.envelope });
+      return undefined;
+    });
   }
 
   // 在草稿副本上做一次结构操作（改副本 → 提交 → 校验）
@@ -1725,7 +1901,10 @@
       return Promise.resolve();
     }
     var status = mode === 'draft' ? 'draft' : 'ready';
-    var body = { name: name, program: ed.draft, status: status };
+    // D-178：蓝图草稿走 `blueprint` 字段（服务端编译 → 冻结 AST）；旧 AST 程序仍走 `program`（过渡期兼容）
+    var body = aiDraftIsBp(ed.draft)
+      ? { name: name, blueprint: ed.draft, status: status }
+      : { name: name, program: ed.draft, status: status };
     var isCreate = mode === 'saveAs' || ed.aiId === null;
     busy(ctx, true);
     ctx.dispatch({ type: 'notice.set', notice: null });
@@ -1766,13 +1945,23 @@
     return payload !== null && payload && typeof payload.field === 'string' ? payload.field : '';
   }
 
+  // D-179 修复：移动后**光标跟随被移动的节点**。此前上下移把 cursor 留在原地址，
+  //   于是"上移一次再下移"操作的是另一个节点（上移后的同一地址已是别的语句）。
+  function shiftStmtAddr(addr, delta) {
+    const a = String(addr === undefined || addr === null ? '' : addr);
+    const m = /s\[(\d+)\]$/.exec(a);
+    if (!m) return a;
+    const next = Number(m[1]) + delta;
+    if (next < 0) return a;
+    return a.slice(0, m.index) + 's[' + next + ']';
+  }
   function aiMoveUp(ctx) {
     var addr = aiEdOf(ctx).cursor;
-    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, -1); }, addr);
+    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, -1); }, shiftStmtAddr(addr, -1));
   }
   function aiMoveDown(ctx) {
     var addr = aiEdOf(ctx).cursor;
-    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, 1); }, addr);
+    return mutateDraft(ctx, function (d) { return aiEd.moveNode(d, addr, 1); }, shiftStmtAddr(addr, 1));
   }
   function aiWrapIf(ctx) {
     var addr = aiEdOf(ctx).cursor;

@@ -28,7 +28,9 @@
 | `battle-config.json` | 冻结配置 | 全部战斗数值（D-117） | `tasks.md` §2.5.7 + `systems/06-field.md` §3 |
 | `skill-mechanics.json` | **机制** | 4 种技能类型机制（参数滚动/槽位/发射模式/bounds/precision/costDims） | `systems/03-skills.md` §2A/§3 |
 | `affix-registry.json` | **机制** | 词条注册表（27 条已登记词条：25 条单域 + 2 条 `both`；含 `caps.probability` 与 `_domainOfKind`） | `systems/01-items.md` §3A、`systems/03-skills.md` §4.2/§7 |
-| `ai-nodes.json` | **机制** | AI 真实节点类型（`base` 恒可用 + `nodes` 全量白名单；**数量以此表为准，schema 不硬编码**） | `systems/08-ai.md` §3 + `examples/09-unlock.md` §1 |
+| `ai-nodes.json` | **机制** | AI **执行层**真实节点类型（`base` 恒可用 + `nodes` 全量白名单；**数量以此表为准，schema 不硬编码**） | `systems/08-ai.md` §3 + `examples/09-unlock.md` §1 |
+| `ai-node-catalog.json` | **内容（D-178）** | **玩家层积木节点目录**（54 个原语；每节点固定品质：绿 24 / 蓝 10 / 紫 8 / 橙 6 / 青 6）：`inputs{min,max,kinds}` 子节点位 + `params` 参数 schema + `compile` 规则 id（规则实现在 `server/ai/blueprint.js`） | `systems/12-ai-nodes.md`、`decisions.md` D-178 |
+| `ai-blueprint-presets.json` | **内容（D-178）** | **预设蓝图模板**（4 套示例 AI：贴身猛攻/风筝射手/防守反击/残血游走；只用绿档节点、用量在新手预算内，可直接套用或拆改） | `systems/12-ai-nodes.md` §6 |
 | `service-config.json` | **参数** | 运行时参数：`auth`（scrypt 参数/用户名与密码长度/失败锁定/限速）、`session`、`config`（`maxSlots:3`）、`record`、`store`（缓存上限）、`journal`、`snapshot`、`replayCacheSize`、`pool`（`ttlDays` **无消费方**、`opponentCooldownHours`） | `systems/11-account-store.md` §10/§11 |
 | `rating-config.json` | **参数** | 积分与匹配参数（D-133）：`base/cap/scale/kBase/kMin/kMax/drawFactor/matchWindow*/opponentCooldownHours/dailyBattleLimit/rounding/promoteWins/batchSize` | `systems/11-account-store.md` §8.3 |
 | `package-config.json` | **参数（D-176/D-177）** | 包体系：`percentSteps`（20 档）/`qualityPercentBands`（品质→4 档）/`itemQualityCurve`（20×5，本级及以下两级 + 最高档升一级）/`itemCountCurve`（件数 1~3）/`battleDropCountCurve`（胜 1~2、负平 0~1）/`battleDropQualityCurve`/`packageKindWeights`/`dropPool`（默认全 `"all"`） | `content-design.md` §10 |

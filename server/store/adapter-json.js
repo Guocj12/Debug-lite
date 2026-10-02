@@ -1316,7 +1316,7 @@ function createJsonAdapter(options) {
       }
       const record = ledger.buildAiRecord({
         playerId: o.playerId, op: 'create', aiId, name: o.name, program: o.program, at: nowFn(),
-        status: o.status,
+        status: o.status, blueprint: o.blueprint, traceMap: o.traceMap, compilerVersion: o.compilerVersion,
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);
@@ -1356,6 +1356,7 @@ function createJsonAdapter(options) {
       const record = ledger.buildAiRecord({
         playerId: o.playerId, op: 'update', aiId: o.aiId, at: nowFn(),
         name: o.name, program: o.program, status: o.status,
+        blueprint: o.blueprint, traceMap: o.traceMap, compilerVersion: o.compilerVersion,
       });
       const appended = await journal.append(record);
       await applyForPlayer(appended, o.playerId);

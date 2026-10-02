@@ -135,19 +135,25 @@ test('OP-3 负例：401 / 400 / 409 package_invalid', async () => {
   }, QUIET);
 });
 
-test('OP-4 AI 节点包：200 + 零产出 + notice（保留包，不报错）', async () => {
+test('OP-4 [D-178] AI 节点包：200 + 产出积木节点 + 入 aiNode 桶（不再是保留包）', async () => {
   await h.withServer(null, async (s) => {
     const a = await freshPlayer(s, 'ope');
     const b0 = await h.request(s.port, 'GET', '/api/v1/me/warehouse', undefined, h.authed(a.token));
     const beforePkg = b0.body.data.counts.package;
+    const beforeNodes = b0.body.data.counts.aiNode;
     await injectPackage(s, a.playerId, PKG('pkg_ai_1', { packageKind: 'aiNode', name: 'AI节点包' }));
     const r = await h.request(s.port, 'POST', '/api/v1/me/warehouse/open-package',
       { packageUids: ['pkg_ai_1'] }, h.authed(a.token));
     assert.equal(r.status, 200, r.raw);
-    assert.deepEqual(r.body.data.items, [], '保留包零产出');
-    assert.equal(r.body.data.opened[0].notice, 'package_reserved');
-    assert.equal(r.body.data.notice, 'package_reserved', '顶层也回带提示（便于前端直接显示）');
-    assert.equal(r.body.data.counts.package, beforePkg, '保留包仍被消耗（用户裁定：静默消耗 + 提示）');
+    assert.ok(r.body.data.items.length >= 1 && r.body.data.items.length <= 3, '产出 1~3 条节点堆叠');
+    for (const it of r.body.data.items) {
+      assert.equal(it.kind, 'aiNode', '产出条目是积木节点');
+      assert.ok(it.nodeId, '条目带 nodeId');
+      assert.ok(Number.isInteger(it.count) && it.count >= 1, '条目带堆叠数量');
+    }
+    assert.equal(r.body.data.counts.package, beforePkg, '包被消耗');
+    assert.ok(r.body.data.counts.aiNode >= beforeNodes, 'aiNode 桶必须有节点（starter 绿节点 + 本次产出）');
+    assert.equal(r.body.data.notice, undefined, 'D-178：不再有保留包提示');
   }, QUIET);
 });
 

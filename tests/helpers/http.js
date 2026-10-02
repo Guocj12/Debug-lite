@@ -30,10 +30,18 @@ function removeTempDir(dir) {
 }
 
 // HTTP 请求（可选 headers；body 为对象或字符串）
+// D-179：显式写 `content-length`（此前靠 Node 自动 chunked）。chunked 的 DELETE 会被
+//   HTTP 解析层判成 HPE_INVALID_METHOD → 回一个空 400，让"分支覆盖"用例拿到假状态码；
+//   分块语义仍有专门的 `requestChunks`（413 用例）覆盖，故此处的确定性分帧不影响任何既有语义。
 function request(port, method, urlPath, body, headers) {
   return new Promise((resolve, reject) => {
     const h = { ...(headers || {}) };
-    if (body !== undefined && h['content-type'] === undefined) h['content-type'] = 'application/json';
+    let payload;
+    if (body !== undefined) {
+      if (h['content-type'] === undefined) h['content-type'] = 'application/json';
+      payload = typeof body === 'string' ? body : JSON.stringify(body);
+      if (h['content-length'] === undefined) h['content-length'] = Buffer.byteLength(payload);
+    }
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, headers: h }, (res) => {
       // 跨 chunk 多字节字符必须整段解码（`data += chunk` 会对每个 chunk 各自 toString → U+FFFD 假红）
       const chunks = [];
@@ -46,7 +54,7 @@ function request(port, method, urlPath, body, headers) {
       });
     });
     req.on('error', reject);
-    if (body !== undefined) req.write(typeof body === 'string' ? body : JSON.stringify(body));
+    if (payload !== undefined) req.write(payload);
     req.end();
   });
 }

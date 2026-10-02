@@ -1376,7 +1376,7 @@ function createHandler(logger, extraRoutes, runtime) {
         const body = bodyOf(ctx);
         if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
         return respond(await rt.account.createAi({
-          playerId: ctx.player.playerId, name: body.name, program: body.program, status: body.status,
+          playerId: ctx.player.playerId, name: body.name, program: body.program, status: body.status, blueprint: body.blueprint,
         }));
       },
     },
@@ -1562,6 +1562,12 @@ function createHandler(logger, extraRoutes, runtime) {
         badUri = true;
       }
       if (badUri) return failStatus(400, 'bad_request', `非法槽位 id ${parts[0]}`);
+      // D-179：与 `/me/ai/:aiId`、`/replay/:id`、`/data/:table` 同口径 —— 解码后再查一次分节符
+      //   （`%2F` 解码成 `/`、空段、`..` 一律拒绝）。此前只有 aiId 分支做了这一步，
+      //   同一类输入在配置槽分支会悄悄走进"未知槽位"（404）而不是"非法输入"（400）。
+      if (slotId === '' || slotId.includes('/') || slotId.includes('..')) {
+        return failStatus(400, 'bad_request', `非法槽位 id ${parts[0]}`);
+      }
       if (parts.length === 1 && req.method === 'PUT') {
         return runEntry({
           auth: true,
@@ -1594,13 +1600,20 @@ function createHandler(logger, extraRoutes, runtime) {
     const aiPrefix = '/api/v1/me/ai/';
     if (urlPath.startsWith(aiPrefix)) {
       const rest = urlPath.slice(aiPrefix.length);
+      // D-178：GET /me/ai/nodes —— 积木节点目录 + 我的拥有/占用/空闲（空闲为派生量）
+      if (req.method === 'GET' && rest === 'nodes') {
+        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.aiNodes(c.player.playerId)) }, ctx);
+      }
       if (req.method === 'POST' && rest === 'validate') {
         return runEntry({
           auth: true,
           handler: async (c) => {
             const body = bodyOf(c);
             if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
-            return respond(await rt.account.validateAi({ playerId: c.player.playerId, program: body.program }));
+            // D-178：优先按**蓝图**校验（前端无编译器，服务端编译并回带逐条中文错误）；退回 program（旧路径）
+            return respond(await rt.account.validateAi({
+              playerId: c.player.playerId, program: body.program, blueprint: body.blueprint,
+            }));
           },
         }, ctx);
       }
@@ -1626,7 +1639,7 @@ function createHandler(logger, extraRoutes, runtime) {
             if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
             return respond(await rt.account.updateAi({
               playerId: c.player.playerId, aiId,
-              name: body.name, program: body.program, status: body.status,
+              name: body.name, program: body.program, status: body.status, blueprint: body.blueprint,
             }));
           },
         }, ctx);
@@ -1698,6 +1711,27 @@ async function start(options) {
   const logger = opts.logger || createLogger();
   const runtime = await createRuntime(logger, opts); // 失败（锁占用/版本拒绝）原样冒泡 → 调用方 exit 1
   const server = http.createServer(createHandler(logger, opts.routes, runtime));
+  // D-179：HTTP **解析层**错误（畸形请求行、坏的 chunk 框架、方法不合法…）此前由 Node 直接回
+  //   "空 400"（无 content-type、无信封），违反"每个响应都是 JSON 信封"的既有契约 ——
+  //   客户端拿到的是无法解析的响应（只能显示"服务端返回非 JSON"）。这里统一回 bad_request 信封。
+  //   实测触发：`DELETE` + 无 content-length 的 chunked 体（HPE_INVALID_METHOD）。
+  server.on('clientError', (err, socket) => {
+    const code = err && err.code ? err.code : 'parse_error';
+    if (code === 'ECONNRESET' || !socket || socket.destroyed || !socket.writable) {
+      if (socket && !socket.destroyed) { try { socket.destroy(); } catch (e) { /* 已断开：忽略 */ } }
+      return;
+    }
+    try {
+      logger.warn('api', 'api.reject', `HTTP 解析失败（${code}）`, { code });
+      const body = JSON.stringify(errEnvelope('bad_request', `HTTP 请求解析失败（${code}）`));
+      socket.end('HTTP/1.1 400 Bad Request\r\n'
+        + 'content-type: application/json; charset=utf-8\r\n'
+        + `content-length: ${Buffer.byteLength(body)}\r\n`
+        + 'connection: close\r\n\r\n' + body);
+    } catch (e) {
+      try { socket.destroy(); } catch (e2) { /* 已断开：忽略 */ }
+    }
+  });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(opts.port || 0, opts.host || DEFAULT_HOST, resolve);

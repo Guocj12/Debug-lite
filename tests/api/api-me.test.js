@@ -192,7 +192,7 @@ test('ME-3 服务端权威仓库：GET 真源（不再 404）/ PUT 形状校验 
     assert.equal(get0.status, 200, get0.raw);
     assert.equal(get0.body.data.starterIssued, true);
     assert.deepEqual(Object.keys(get0.body.data).sort(), ['buckets', 'caps', 'counts', 'starterIssued', 'usage']);
-    assert.deepEqual(Object.keys(get0.body.data.buckets).sort(), ['package', 'role', 'rolePlugin', 'skill', 'skillPlugin']);
+    assert.deepEqual(Object.keys(get0.body.data.buckets).sort(), ['aiNode', 'package', 'role', 'rolePlugin', 'skill', 'skillPlugin']);
     assert.equal(get0.body.data.counts.role, 1);
     assert.equal(get0.body.data.counts.skill, 3);
     // 技能插件恒为 1 专属 + 1 通用（§6.2 + starter 固定发放规则）
