@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* public/store.js —— 自研状态容器（D-124：无框架 + 自研 store；设计依据 docs/frontend/01-auth.md §7
  *   + F2 增量 docs/frontend/02-accounts.md §7 + F3 增量 docs/frontend/03-hub-warehouse-loadout.md §7）
  *
@@ -157,6 +157,8 @@
       booted: false,
       adminToken: '',  // **仅内存**（Q3 A）：不写 localStorage；刷新页面后需重填（A-9）
       admin: emptyAdmin(),
+      // F9：布局表驱动的主界面 —— 当前**显示**的配置（只影响显示，不等于服务端出战）+ 弹窗栈（径向插槽流）
+      hub: { slot: 0, modals: [] },   // 0 = follow activeSlotId; 1..3 = user picked one
       warehouse: emptyWarehouse(),
       warehouseBucket: 'role',
       // F8/D-177：最近一次 POST /me/warehouse/open-package 的结果（`lines` 由 format.js 投影；同 F3 开箱结果的口径）
@@ -256,6 +258,24 @@
         return nextModal === null ? state : Object.assign({}, state, { modal: nextModal });
       }
       // 03 §7：仓库整包（GET /me/warehouse 的**响应信封**）＋ 当前桶
+      // F9：布局表驱动的主界面 —— 当前**显示**的配置（只影响显示，≠ 服务端"出战"）＋ 弹窗栈（径向插槽流）
+      case 'hub.slot.set': {
+        var hubSlot = Math.min(3, Math.max(1, Number(action.slot) || 1));
+        return state.hub.slot === hubSlot ? state
+          : Object.assign({}, state, { hub: { slot: hubSlot, modals: [] } });
+      }
+      case 'hub.modal.push': {
+        var hubStack = state.hub.modals.concat([{ name: String(action.screen), ctx: action.ctx || {} }]);
+        return Object.assign({}, state, { hub: { slot: state.hub.slot, modals: hubStack } });
+      }
+      case 'hub.modal.pop': {
+        if (!state.hub.modals.length) return state;
+        return Object.assign({}, state, { hub: { slot: state.hub.slot, modals: state.hub.modals.slice(0, -1) } });
+      }
+      case 'hub.modals.clear': {
+        if (!state.hub.modals.length) return state;
+        return Object.assign({}, state, { hub: { slot: state.hub.slot, modals: [] } });
+      }
       case 'warehouse.set':
         return Object.assign({}, state, {
           warehouse: { envelope: action.envelope || null, loading: false },

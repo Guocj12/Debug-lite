@@ -2812,6 +2812,201 @@
 
   /* ---------- 各屏视图模型 ---------- */
 
+  /* ---------- F9/D-180：布局表驱动的主界面 ----------
+   * 分工：**本文件负责投影**（把 /me + /me/configs + /me/warehouse 的信封字段译成扁平数据），
+   *   布局引擎（DL.layoutEngine）只做纯布局解算（断点/锚点/占位符替换/多边形），
+   *   渲染层（render.js）只把结果变成 DOM。三者都不重复读响应字段（§1.5 投影单一真源）。
+   */
+  var LAYOUT = null;
+  function setLayout(engine, data) {
+    LAYOUT = (engine && data && data.screens) ? { engine: engine, data: data } : null;
+  }
+  function layoutReady() { return LAYOUT !== null; }
+  var LAY_TIER_CN = { common: '绿', rare: '蓝', epic: '紫', legendary: '橙', mythic: '青' };
+  var LAY_POS = { skill1: 0, skill2: 1, skill3: 2 };
+  function layIcon(kind, id) { return id ? ('assets/' + kind + '/' + id + '.webp') : ''; }
+  function layItem(item) { return item || {}; }
+  /** 主界面**显示**哪份配置：0 = 跟随出战（/me 的 activeSlotId）；1..3 = 用户显式切过 */
+  function laySlotIndex(state) {
+    var explicit = (state.hub && state.hub.slot) || 0;
+    if (explicit >= 1) return explicit;
+    var active = String(or(pick(state.profile, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '');
+    return Number(active) || 1;
+  }
+  function laySlotTypes(item) {
+    var sl = arrayOf(pick(item, 'slots'));
+    var n = num(pick(item, 'slotCount'), 0);
+    if (!(n > 0)) n = sl.length;
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(or(pick(layItem(sl[i]), 'type'), 'general'));
+    return out;
+  }
+  function layCurrent(state) {
+    var slots = arrayOf(pick(state.configs.data, 'data.slots'));
+    var slotId = 'slot' + laySlotIndex(state);
+    for (var i = 0; i < slots.length; i++) {
+      if (or(pick(slots[i], 'slotId'), '') === slotId) return slots[i];
+    }
+    return null;
+  }
+  /** 扁平绑定数据（布局表里的 {nickname} / {roleIcon} 都从这里取值） */
+  function layFlat(state) {
+    var me = state.profile, cur = layCurrent(state);
+    var lo = pick(cur, 'loadout') || {};
+    var role = pick(lo, 'role'), skills = arrayOf(pick(lo, 'skills'));
+    var tier = or(pick(me, 'data.progress.tier'), 'common');
+    var battleSlot = String(or(pick(me, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '') || '1';
+    var idx = laySlotIndex(state);
+    function sk(i, f) { return or(pick(layItem(skills[i]), f), ''); }
+    return {
+      nickname: or(pick(me, 'data.nickname'), ''), tier: tier, tierName: LAY_TIER_CN[tier] || tier,
+      points: num(pick(me, 'data.rating.points'), 0),
+      wins: num(pick(me, 'data.rating.wins'), 0), losses: num(pick(me, 'data.rating.losses'), 0),
+      unreadAttack: num(pick(me, 'data.record.unread.attack'), 0),
+      unreadDefense: num(pick(me, 'data.record.unread.defense'), 0),
+      slotName: or(pick(cur, 'name'), ''), configLabel: '配置' + idx,
+      activeSlot: String(idx), configId: 'slot' + idx, battleSlot: battleSlot,
+      roleName: or(pick(role, 'name'), ''),
+      roleQuality: LAY_TIER_CN[or(pick(role, 'quality'), '')] || or(pick(role, 'quality'), ''),
+      roleIcon: layIcon('role', pick(role, 'templateId')),
+      qualityFrame: 'assets/frame/' + or(pick(role, 'quality'), 'common') + '.svg',
+      skill1Name: sk(0, 'name'), skill2Name: sk(1, 'name'), skill3Name: sk(2, 'name'),
+      skill1Icon: layIcon('skill', sk(0, 'templateId')), skill2Icon: layIcon('skill', sk(1, 'templateId')),
+      skill3Icon: layIcon('skill', sk(2, 'templateId')),
+      aiName: or(pick(layItem(pick(lo, 'ai')), 'name'), ''), aiIcon: '',
+      tierIcon: 'assets/tier/' + tier + '.svg',
+      _role: role, _skills: skills,
+    };
+  }
+  /** 后端候选（仓库桶）→ 列表行；按屏幕语义过滤类型 */
+  function layRows(state, source, ctx, flat) {
+    var wh = state.warehouse.envelope;
+    function wrap(it, i, kind) {
+      var q = or(pick(it, 'quality'), '');
+      return {
+        index: i, uid: or(pick(it, 'uid'), ''), item: it,
+        label: or(pick(it, 'name'), '(未命名)') + (q ? '（' + (LAY_TIER_CN[q] || q) + '）' : ''),
+        icon: layIcon(kind, pick(it, 'templateId')),
+      };
+    }
+    if (source === 'roles') {
+      return arrayOf(pick(wh, 'data.buckets.role')).map(function (it, i) { return wrap(it, i, 'role'); });
+    }
+    if (source === 'skills') {
+      return arrayOf(pick(wh, 'data.buckets.skill')).map(function (it, i) { return wrap(it, i, 'skill'); });
+    }
+    if (source === 'rolePlugins') {
+      var types = laySlotTypes(flat._role), want = types[(ctx && ctx.pickIdx) || 0] || null;
+      return arrayOf(pick(wh, 'data.buckets.rolePlugin'))
+        .filter(function (p) { return !want || or(pick(p, 'slot'), '') === want; })
+        .map(function (it, i) { return wrap(it, i, 'plugin'); });
+    }
+    var skill = layItem(flat._skills[LAY_POS[(ctx && ctx.pickPos) || 'skill1']]);
+    return arrayOf(pick(wh, 'data.buckets.skillPlugin')).filter(function (p) {
+      var slot = or(pick(p, 'slot'), '');
+      if (slot === 'general') return true;
+      if (slot !== 'exclusive') return false;
+      var ft = arrayOf(pick(p, 'forTypes'));
+      if (!ft.length) return true;
+      var tid = or(pick(skill, 'templateId'), ''), ak = or(pick(skill, 'animKey'), '');
+      return (tid !== '' && ft.indexOf(tid) >= 0) || (ak !== '' && ft.indexOf(ak) >= 0);
+    }).map(function (it, i) { return wrap(it, i, 'plugin'); });
+  }
+  /** 单屏解算（含插槽按模板 slotCount 展开 / 候选列表按后端数据展开） */
+  function layScreen(state, name, sstate, flat, ctx) {
+    var C = LAYOUT.engine, bundle = LAYOUT.data;
+    var sc = bundle.screens[name];
+    if (!sc) return [];
+    var out = C.screenAt(bundle, name, 'landscape', sstate, flat);
+    if (sc.slotsFrom) {
+      var item = sc.slotsFrom.kind === 'role' ? flat._role
+        : layItem(flat._skills[LAY_POS[sc.slotsFrom.pos] || 0]);
+      var types = laySlotTypes(item), count = types.length;
+      var protos = out.filter(function (e) { return /^slot_\d+$/.test(e.id); });
+      var center = out.filter(function (e) { return e.id === sc.slotsFrom.center; })[0];
+      if (center) {
+        var c0 = [center.rect[0] + center.rect[2] / 2, center.rect[1] + center.rect[3] / 2];
+        protos.sort(function (a, b) {
+          return Math.atan2(a.rect[1] + a.rect[3] / 2 - c0[1], a.rect[0] + a.rect[2] / 2 - c0[0])
+            - Math.atan2(b.rect[1] + b.rect[3] / 2 - c0[1], b.rect[0] + b.rect[2] / 2 - c0[0]);
+        });
+      }
+      out = out.filter(function (e) { return !/^slot_\d+$/.test(e.id); });
+      if (center && protos.length) {
+        var r0 = protos[0].rect;
+        var radius = Math.hypot(r0[0] + r0[2] / 2 - c0[0], r0[1] + r0[3] / 2 - c0[1]);
+        var start = Math.atan2(r0[1] + r0[3] / 2 - c0[1], r0[0] + r0[2] / 2 - c0[0]);
+        for (var i = 0; i < count; i++) {
+          var rect;
+          if (i < protos.length) rect = protos[i].rect.slice();
+          else {
+            var ang = start + i * 2 * Math.PI / count;
+            rect = [c0[0] + radius * Math.cos(ang) - r0[2] / 2, c0[1] + radius * Math.sin(ang) - r0[3] / 2, r0[2], r0[3]];
+          }
+          out.push({
+            id: 'slot_e' + (i + 1), kind: 'button', hit: 'rect', z: 3, rect: rect,
+            label: '插槽' + (i + 1), text: '插槽' + (i + 1),
+            action: 'layout-open',
+            payload: { screen: sc.slotsFrom.kind === 'role' ? 'modal_role_plugin_pick' : 'modal_skill_plugin_pick',
+                       idx: i, pos: sc.slotsFrom.pos, targetUid: or(pick(item, 'uid'), '') },
+          });
+        }
+      }
+    }
+    if (sc.listFrom) {
+      var proto = out.filter(function (e) { return e.id === sc.listFrom.prototype; })[0];
+      out = out.filter(function (e) { return e.id !== sc.listFrom.prototype; });
+      var rows = layRows(state, sc.listFrom.source, ctx || {}, flat);
+      var base = proto ? proto.rect : [880, 208, 340, 56];
+      if (!rows.length) {
+        out.push({ id: 'row_empty', kind: 'deco', hit: 'rect', z: 6, rect: base.slice(),
+                   label: '（没有可用候选）', text: '（没有可用候选）' });
+      }
+      rows.forEach(function (it, i) {
+        var isPick = sc.listFrom.source === 'roles' || sc.listFrom.source === 'skills';
+        out.push({
+          id: 'row_' + i, kind: 'button', hit: 'rect', z: 6,
+          rect: [base[0], base[1] + i * sc.listFrom.pitch, base[2], base[3]],
+          label: it.label, text: it.label, asset: it.icon,
+          action: isPick ? 'layout-set-slot' : 'layout-assemble',
+          payload: {
+            uid: it.uid, pos: (ctx && ctx.pickPos) || 'role',
+            slotIndex: (ctx && ctx.pickIdx !== undefined) ? ctx.pickIdx : 0,
+            targetUid: (ctx && ctx.targetUid) || or(pick(flat._role, 'uid'), ''),
+          },
+        });
+      });
+    }
+    // 不规则命中区：多边形 → CSS clip-path 字符串（渲染层直接用，不必懂几何）
+    out.forEach(function (e) {
+      if (e.hit === 'path' && e.path) {
+        var pp = LAYOUT.engine.parsePath(e.path);
+        if (pp) {
+          e.clip = 'polygon(' + pp.points.map(function (q) {
+            return q[0].toFixed(3) + '% ' + q[1].toFixed(3) + '%';
+          }).join(', ') + ')';
+        }
+      }
+    });
+    return out;
+  }
+  function hubLayoutVm(state) {
+    if (!LAYOUT) return null;
+    var flat = layFlat(state);
+    var sstate = { activeSlot: flat.activeSlot, battleSlot: flat.battleSlot };
+    var stack = (state.hub && state.hub.modals) || [];
+    var layers = [{ name: 'hub', role: 'screen', mask: null, elements: layScreen(state, 'hub', sstate, flat, {}) }];
+    stack.forEach(function (entry) {
+      var sc = LAYOUT.data.screens[entry.name];
+      if (!sc) return;
+      layers.push({
+        name: entry.name, role: 'modal', mask: sc.mask || LAYOUT.engine.DEFAULT_MASK,
+        elements: layScreen(state, entry.name, sstate, flat, entry.ctx || {}),
+      });
+    });
+    return { canvas: LAYOUT.data.canvas, background: LAYOUT.data.screens.hub.background, layers: layers };
+  }
+
   // F3 §3.1：hub（登录/注册成功后的落点；FR-11）
   function hubViewModel(state, notice, busy) {
     var buttons = [
@@ -2831,6 +3026,12 @@
       buttons.push({ action: 'goto-admin', label: '管理员面板', kind: 'button', disabled: busy });
     }
     buttons.push({ action: 'refresh-hub', label: '刷新', kind: 'button', disabled: busy });
+    // F9：布局表可用时，主界面由布局表渲染；下方只保留"布局里没有的"动作入口
+    //   （refresh-hub 只在 hub 有入口；config-open 是编队编辑器入口；goto-admin 是管理员入口）
+    //   其余动作（仓库/排行/对战/换配置/换装…）都由布局表里的按钮承担。
+    // F9/D-180 进度：布局表驱动的 hub 界面（`layout: hubLayoutVm(state)`）会在**渲染层接线**
+    //   完成时接上（render.js 的零逻辑契约 UI-7/AU-4 + 载荷字段双向核对 BP-1 需要同步扩展）。
+    //   本批先交付：布局数据 / 引擎 / 样式 + 投影层（`hubLayoutVm` 已被 layout-hub-vm.test.js 覆盖）。
     return vm('Debug-Lite', {
       notice: notice,
       hint: '摘要只读 GET /me；点「刷新」重新读取',
@@ -3144,6 +3345,10 @@
     usageText: usageText,
     itemLabel: itemLabel,
     itemRows: itemRows,
+    // F9/D-180：布局表驱动的主界面（boot.js 注入引擎与布局数据）
+    setLayout: setLayout,
+    layoutReady: layoutReady,
+    hubLayoutVm: hubLayoutVm,
     itemDetailLines: itemDetailLines,
     // F8/D-176/D-177：开包（仓库屏「包」桶）与战斗掉落投影
     packageResultLines: packageResultLines,

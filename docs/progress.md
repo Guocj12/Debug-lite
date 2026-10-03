@@ -443,7 +443,6 @@ docs/progress.md       本文件
 ---
 
 ## §0.8 D-179 交付期缺陷修复批（2026-10-02）—— 用户实测三症状的根因与补测
-
 **用户实测**：① 快速对战/锦标赛后界面卡死、「AI 逻辑查看器」「读取本场回放」点了没反应、返回主界面按钮全灰（刷新才恢复）；② 「新手 AI 打不开」；③ 保存 AI 报 `Cannot read properties of undefined (reading 'setCatalog')`。
 
 **根因（一个）**：`public/index.html` **从未加载 `/ai-blueprint.js`** → 浏览器里 `DL.aiBlueprint === undefined` →
@@ -464,3 +463,34 @@ docs/progress.md       本文件
 
 **教训（已固化为机器判定）**：`require()` 得到的绿不等于浏览器里的绿 —— 凡是"入口装配 / 字段搬运 / 注册表动作"这三类**跨文件契约**，
 必须有专门用例在**真实装配**下跑，否则"测试全绿 + 功能全坏"会同时成立。
+
+---
+
+## §0.9 布局表驱动界面（F9 第一段：数据 / 引擎 / 样式 / 投影层，2026-10-03）
+
+**目标（用户）**：主界面不再手写 HTML/CSS，而是**由布局表驱动**；插槽数量由模板 `slotCount` 决定；
+模板与插件候选全部来自后端；没素材时先画占位形状便于调试；主界面最终**替换**旧文字版。
+
+**已交付（本段，全部机器验证）**：
+
+| 件 | 落点 | 说明 |
+|---|---|---|
+| 布局数据（真源） | `public/layout-data.js` | 由 `runtime/import-layout.js` 从布局台导出生成（**请勿手改**）；同时产出 `runtime/layout-bundle.json` 供布局台继续编辑 |
+| 布局引擎 | `public/layout-engine.js` | 由 `runtime/make-engine.js` 从布局台 `<script id="core">` 生成（core digest 写在产物里，**单一真源**）；只做纯布局：归一化 / 断点 / 锚点 / 占位符替换 / 多边形 / 校验 |
+| 界面样式 | `public/app.css` | 百分比定位（换屏自适应）+ `clip-path` 多边形命中 + 弹窗遮罩（`blocksBackground` = 吞掉背景交互） |
+| **投影层** | `public/format.js`（`setLayout` / `hubLayoutVm` / `layFlat` / `layScreen` / `layRows`） | 信封 → 扁平绑定数据 + 插槽按 `slotCount` 展开 + 候选列表按仓库桶展开并按插槽/技能类型过滤；`when.battleSlot` 决定「出战」角标显示哪个 |
+| 主界面状态 | `public/store.js`（`hub: {slot, modals}` + 4 个 reducer） | `slot: 0` = **跟随出战配置**（`/me.activeSlotId`）；1..3 = 用户显式切过的显示配置；`modals` = 径向弹窗栈 |
+| 机器核对 | `tests/frontend/layout-hub-vm.test.js`（LH-1..7） | 绑定数据 / **出战角标只显示出战那个** / 显示配置 ≠ 出战配置 / 插槽数 = slotCount / 候选行来自仓库并类型匹配 / `clip` 与载荷键 |
+| 布局表里的「出战」角标 | `runtime/import-layout.js` 的结构修正 | 三个配置按钮上方各加 `battle_badge_N` + `when: {battleSlot: N}`（用户 2026-10-03 要求） |
+
+**实跑证据（开发期验证脚本，均在 `runtime/`，不进仓库）**：
+`runtime/test-hub-data.js`（真起服务 + 真注册账号）—— 昵称/段位/角色/技能均来自真实响应，**插槽数 = 角色物品 slotCount**（starter 为 1），
+角色插件候选按插槽类型 `mp`/`special` 过滤（1/1 命中），角色模板候选 = 仓库 role 桶计数；
+`runtime/test-hub-view.js`（jsdom 打开 `runtime/hub-view.html` + 真 token + file://）—— hub 渲染 19 元素、点角色卡弹出插槽屏（1 个 = slotCount）、
+点插槽弹出插件候选（3 行，来自 `/me/warehouse`）、点遮罩逐层关闭、缺素材元素带占位样式。
+
+**尚未接线（下一段）**：`render.js` 的布局分支 + `app.js` 收 `screen`/`slotIndex`/`targetUid` 三个载荷键
+（需与 `button-payload-contract` 的 BP-1「render 搬运字段 == app 收集字段」**同时**改）+ `actions.js` 的布局动作
+（`layout-open` / `layout-close` / `layout-set-state` / `layout-assemble` / `layout-disassemble` / `layout-activate` / `layout-set-slot` / `goto-records`）
++ `boot.js` 调 `format.setLayout(DL.layoutEngine, DL.layoutData)`。本段刻意**不**调 `setLayout`，因此产品行为与接线前逐字一致（hub 仍走旧文字界面）。
+`tests/frontend/layout-hub-vm.test.js` 的 LH-7 显式登记这三个待接线键，避免它们悄悄漏掉。

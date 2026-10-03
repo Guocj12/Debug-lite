@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* tests/frontend/auth-ui-contract.test.js —— F1 界面契约（总纲 §4.1「按钮永不无声」+ §1.5「投影单一真源」）
  *   （F3 提交②同步：非管理员态口径从「F1 四屏恰好 9 个动作」改为「非管理动作集合」，见 UW-2）
  *
@@ -22,7 +22,9 @@ const appMod = require('../../public/app.js');
 const contract = require('../../public/contract.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
-const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'ai-blueprint.js', 'format.js', 'render.js', 'actions.js', 'contract.js'];
+const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'ai-blueprint.js', 'format.js', 'render.js', 'actions.js', 'contract.js',
+  // 布局表驱动界面（运行时增量）：引擎（纯逻辑）+ 布局数据（由 runtime/import-layout.js 生成）+ 样式
+  'layout-engine.js', 'layout-data.js', 'app.css'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 
 // 02-accounts.md §4 的十七个管理动作（F2 十六 + D-170 一个；只在管理员态渲染，非管理员态**完全不出现**，A-1）

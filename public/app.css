@@ -1,0 +1,40 @@
+/* public/app.css —— 布局表驱动的界面样式（由布局引擎输出 + 本文件决定外观）
+ *
+ * 设计要点：
+ *   · 位置用**百分比**（rect / canvas）：换屏幕尺寸不用重算，等比自适应；
+ *   · `hit: "path"` 的按钮用 clip-path：**点击判定也跟着多边形走**（CSS 的 clip-path 影响命中测试），
+ *     所以不规则按钮既好看又好点；
+ *   · 弹窗：遮罩铺满 + 高 z-index，**只要有弹窗，背景一律不可交互**（mask.blocksBackground）。
+ */
+:root{
+  --dl-bg:#0a0e16; --dl-panel:#1e2430; --dl-line:#3a4458; --dl-text:#e2eaf6; --dl-dim:#8b98ac;
+  --dl-accent:#4c84fa; --dl-accent2:#3a6cdc;
+  --dl-common:#2ecc71; --dl-rare:#3498db; --dl-epic:#9b59b6; --dl-legendary:#e67e22; --dl-mythic:#1abc9c;
+}
+/* 屏幕容器：等比画布（--w/--h 由渲染层按基准画布写入） */
+.dl-screen{position:relative;width:100%;aspect-ratio:var(--dl-w,1280)/var(--dl-h,720);
+  background:var(--dl-bg) center/cover no-repeat;overflow:hidden;color:var(--dl-text);
+  font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;user-select:none}
+.dl-screen-bg{position:absolute;inset:0;background:center/cover no-repeat;pointer-events:none}
+.dl-el{position:absolute;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+.dl-el>img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+.dl-btn{cursor:pointer;border:0;background:transparent;color:inherit;font:inherit;padding:0;
+  -webkit-tap-highlight-color:transparent}
+.dl-btn:focus-visible{outline:2px solid var(--dl-accent);outline-offset:2px}
+.dl-btn:hover{filter:brightness(1.12)}
+.dl-btn:active{transform:translateY(1px)}
+.dl-deco{color:var(--dl-dim);pointer-events:none}
+.dl-deco.dl-deco-text{color:var(--dl-text)}
+/* 不规则按钮：多边形命中区。渲染层把 path 转成 polygon() 写进 --dl-clip */
+.dl-hit-path{clip-path:var(--dl-clip)}
+.dl-hit-ellipse{border-radius:50%}
+.dl-txt{position:relative;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
+  padding:0 4px;text-shadow:0 1px 2px #000a}
+/* 弹窗层 */
+.dl-modal{position:absolute;inset:0;z-index:100}
+.dl-modal[data-depth="2"]{z-index:200}
+.dl-modal[data-depth="3"]{z-index:300}
+.dl-mask{position:absolute;inset:0;cursor:pointer}
+.dl-modal .dl-el{pointer-events:auto}
+/* 小屏：整屏等比缩放由 aspect-ratio 负责，这里只压字号 */
+@media (max-width:560px){ .dl-screen{font-size:12px} }

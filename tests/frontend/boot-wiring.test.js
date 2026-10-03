@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* tests/frontend/boot-wiring.test.js —— 入口装配契约（D-179）
  *
  * 背景（用户实测，2026 年交付期复盘）：`public/index.html` 漏载 `/ai-blueprint.js`。
@@ -92,7 +92,7 @@ test('BW-4 按 index.html 清单装配后 window.DL 的运行时命名空间齐�
   const h = await createBrowser();
   assert.deepEqual(h.errors, [], '脚本装配抛异常');
   assert.equal(h.loaded.length, SRC_LIST.length, '有脚本没加载成功');
-  for (const name of ['store', 'aiEditor', 'aiBlueprint', 'format', 'render', 'actions', 'api', 'app']) {
+  for (const name of ['store', 'aiEditor', 'aiBlueprint', 'layoutEngine', 'layoutData', 'format', 'render', 'actions', 'api', 'app']) {
     assert.ok(h.DL[name], `window.DL.${name} 缺失 —— index.html 很可能漏载了对应脚本`);
   }
   assert.equal(typeof h.DL.aiBlueprint.setCatalog, 'function', 'ai-blueprint 的对外接口应可用');
