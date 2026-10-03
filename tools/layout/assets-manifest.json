@@ -55,17 +55,17 @@
   }
  },
  "summary": {
-  "total": 151,
-  "present": 0,
-  "inInbox": 0,
-  "missing": 147,
+  "total": 155,
+  "present": 1,
+  "inInbox": 1,
+  "missing": 150,
   "optional": 4,
-  "requiredMissing": 147,
+  "requiredMissing": 150,
   "byKind": {
    "role": {
     "total": 11,
-    "present": 0,
-    "missing": 11,
+    "present": 1,
+    "missing": 10,
     "inbox": 0,
     "optional": 0
    },
@@ -112,9 +112,9 @@
     "optional": 0
    },
    "package": {
-    "total": 1,
+    "total": 5,
     "present": 0,
-    "missing": 1,
+    "missing": 5,
     "inbox": 0,
     "optional": 0
    },
@@ -133,7 +133,7 @@
     "optional": 0
    }
   },
-  "coreMissing": 51
+  "coreMissing": 50
  },
  "entries": [
   {
@@ -147,10 +147,10 @@
    "id": "role_bal",
    "label": "均衡",
    "source": "server/data/role-templates.json",
-   "present": false,
-   "inbox": null,
-   "status": "缺",
-   "bytes": 0
+   "present": true,
+   "inbox": "role_bal.png",
+   "status": "已有",
+   "bytes": 554
   },
   {
    "format": "webp",
@@ -2167,9 +2167,74 @@
    "note": "包/宝箱图标，透明底",
    "optional": false,
    "priority": "secondary",
-   "path": "assets/package/undefined.webp",
+   "path": "assets/package/role.webp",
    "kind": "package",
+   "id": "role",
    "label": "角色模块包",
+   "source": "server/data/package-config.json",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
+  },
+  {
+   "format": "webp",
+   "size": "256×256",
+   "note": "包/宝箱图标，透明底",
+   "optional": false,
+   "priority": "secondary",
+   "path": "assets/package/skill.webp",
+   "kind": "package",
+   "id": "skill",
+   "label": "技能模块包",
+   "source": "server/data/package-config.json",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
+  },
+  {
+   "format": "webp",
+   "size": "256×256",
+   "note": "包/宝箱图标，透明底",
+   "optional": false,
+   "priority": "secondary",
+   "path": "assets/package/rolePlugin.webp",
+   "kind": "package",
+   "id": "rolePlugin",
+   "label": "角色插件包",
+   "source": "server/data/package-config.json",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
+  },
+  {
+   "format": "webp",
+   "size": "256×256",
+   "note": "包/宝箱图标，透明底",
+   "optional": false,
+   "priority": "secondary",
+   "path": "assets/package/skillPlugin.webp",
+   "kind": "package",
+   "id": "skillPlugin",
+   "label": "技能插件包",
+   "source": "server/data/package-config.json",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
+  },
+  {
+   "format": "webp",
+   "size": "256×256",
+   "note": "包/宝箱图标，透明底",
+   "optional": false,
+   "priority": "secondary",
+   "path": "assets/package/aiNode.webp",
+   "kind": "package",
+   "id": "aiNode",
+   "label": "AI节点包",
    "source": "server/data/package-config.json",
    "present": false,
    "inbox": null,

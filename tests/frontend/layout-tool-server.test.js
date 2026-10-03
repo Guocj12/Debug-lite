@@ -78,3 +78,21 @@ test('LS-4 CORS：GET 带 allow-origin；OPTIONS 预检 204', () => withServer(a
   assert.match(opt.headers.get('access-control-allow-methods') || '', /POST/);
   assert.match(opt.headers.get('access-control-allow-headers') || '', /content-type/);
 }));
+
+test('LS-5 入口路由：常见打开方式都能进布局台；浏览器敲错路径回首页（不是把 JSON 当页面）', () => withServer(async (base) => {
+  const nav = { headers: { accept: 'text/html,application/xhtml+xml' } };
+  // 人习惯敲的几种入口都要能进（此前只认 / 与 /lab.html，敲 /index.html 会看到一段 JSON）
+  for (const entry of ['/', '/index.html', '/lab', '/lab.html', '/tools/layout/lab.html']) {
+    const r = await fetch(base + entry, nav);
+    assert.equal(r.status, 200, entry + ' 应能进布局台');
+    assert.match(r.headers.get('content-type') || '', /text\/html/, entry + ' 应回 HTML');
+    assert.ok((await r.text()).includes('id="toolPanel"'), entry + ' 应是布局台页面');
+  }
+  // 浏览器导航到打错的路径 → 302 回首页（否则用户会把 JSON 错误页当成"坏了"）
+  const wrong = await fetch(base + '/not-a-real-page', Object.assign({ redirect: 'manual' }, nav));
+  assert.equal(wrong.status, 302, '浏览器导航打错路径应重定向');
+  assert.equal(wrong.headers.get('location'), '/', '应重定向到首页');
+  // 但页面脚本 fetch 打错的 API 仍必须是 JSON（LS-3 的语义不能被这条改掉）
+  const api404 = await fetch(base + '/api/nope', { headers: { accept: '*/*' } });
+  assert.match(api404.headers.get('content-type') || '', /json/, 'fetch 打错 /api 仍回 JSON');
+}));

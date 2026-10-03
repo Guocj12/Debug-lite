@@ -1145,11 +1145,13 @@ var LAYOUT_CORE = (function () {
   var C = LAYOUT_CORE;
   var $ = function (id) { return document.getElementById(id); };
   // 已注册动作（用于 datalist 建议 + 校验时判断"是否是死按钮"）。
-  //   `goto-records` 是**计划中**的战绩屏动作：现在还没实现 → 只作建议，不当默认值。
+  //   `goto-records` 已在 F9/D-180 接线时注册进 `public/actions.js`（点了给明确提示）→ 从"计划"挪进已知动作。
   var KNOWN_ACTIONS = ['goto-hub','goto-profile','goto-warehouse','goto-ai-editor','goto-settings','goto-quick',
     'goto-tournament','goto-leaderboard','config-open','item-open','package-open','modal-close',
-    'refresh-hub','refresh-warehouse','warehouse-bucket','logout','tournament-open-battle','board-points','quick-run'];
-  var PLANNED_ACTIONS = ['goto-records'];
+    'refresh-hub','refresh-warehouse','warehouse-bucket','logout','tournament-open-battle','board-points','quick-run',
+    'goto-records','layout-open','layout-switch-config','layout-activate','layout-set-slot',
+    'layout-assemble','layout-disassemble'];
+  var PLANNED_ACTIONS = [];   // 目前全部已知动作都已实现；将来规划的屏写在这里（只作建议，不当默认值）
 
   var DEFAULT_LAYOUT = C.DEFAULT_BUNDLE.screens.hub;
   DEFAULT_LAYOUT.canvas = C.DEFAULT_BUNDLE.canvas;
@@ -2052,7 +2054,11 @@ var LAYOUT_CORE = (function () {
    * 只有通过 node tools/layout/lab-server.js 打开时这些才可用：浏览器页面本身不能往工作区写文件。
    */
   // 本地服务地址：先用同源（npm run lab 打开时就是它），失败再试默认端口（file:// 或从别的本地页面打开时）
-  var LAB_PORT = (new URLSearchParams(location.search)).get('port') || '4319';
+  var LAB_PORT = '4319';
+  try {                                             // 防御：极老的宿主可能没有 URLSearchParams
+    var labQ = new URLSearchParams((location && location.search) || '');
+    if (labQ.get('port')) LAB_PORT = labQ.get('port');
+  } catch (e) { /* 用默认端口 */ }
   var LAB_DEFAULT = 'http://127.0.0.1:' + LAB_PORT;
   var LAB_API = undefined;   // undefined = 未探测；null = 探测过但服务没起；'' 或 'http://…' = 可用
   function toolInfo(msg, kind) { $('toolInfo').textContent = msg; $('toolInfo').style.color = kind === 'err' ? '#ff9a9a' : (kind === 'ok' ? '#8ef0b0' : ''); }
@@ -2062,6 +2068,9 @@ var LAYOUT_CORE = (function () {
   }
   /** 探测某个 base 是不是本地服务：必须回 JSON 且 ok === true */
   function probeBase(base) {
+    if (typeof fetch !== 'function') {
+      return Promise.reject(new Error('当前环境没有 fetch（请用系统浏览器打开；file:// 下 Chrome/Edge 均可）'));
+    }
     return fetch(base + '/api/status', { method: 'GET' })
       .then(function (r) {
         var ct = r.headers.get('content-type') || '';
@@ -2162,7 +2171,7 @@ var LAYOUT_CORE = (function () {
   $('btnStatus').addEventListener('click', refreshToolStatus);
   $('btnMissing').addEventListener('click', function () { doManifest(false); });
   $('btnMissingAll').addEventListener('click', function () { doManifest(true); });
-  refreshToolStatus();
+  try { refreshToolStatus(); } catch (e) { toolInfo('本地服务探测失败：' + (e && e.message ? e.message : e)); }
   if (location.protocol === 'file:') {
     toolInfo('直接打开文件（file://）：正在尝试连接本机服务 ' + LAB_DEFAULT + ' …\n' +
       '若失败，请先在仓库根目录执行 npm run lab（或 node tools/layout/lab-server.js），再点「刷新状态」。');

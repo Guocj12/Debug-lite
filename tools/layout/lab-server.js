@@ -31,6 +31,12 @@ const MIME = {
   '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.woff2': 'font/woff2',
 };
 
+/** 这个请求是浏览器"打开页面"（而不是 fetch/脚本）？用于决定 404 该回 HTML 还是 JSON */
+function wantsHtml(req) {
+  const accept = String(req.headers.accept || '');
+  return accept.indexOf('text/html') >= 0;
+}
+
 function send(res, status, type, body) {
   // 本地开发服务：允许从别的本地页面（file:// 或 GUI 预览 iframe）调用，只监听 127.0.0.1
   res.writeHead(status, {
@@ -69,6 +75,7 @@ function serveFile(res, absPath) {
   if (!ok || !fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
     return sendJson(res, { ok: false, error: 'not_found', path: absPath, hint: '静态资源不存在（只服务 tools/layout/ 与 public/）' }, 404);
   }
+  void 0;   // 静态缺失一律 JSON（调用方是页面脚本；浏览器导航的那条在路由兜底里回首页）
   const ext = path.extname(absPath).toLowerCase();
   return send(res, 200, MIME[ext] || 'application/octet-stream', fs.readFileSync(absPath));
 }
@@ -144,7 +151,9 @@ async function handleRequest(req, res) {
   const p = decodeURIComponent(url.pathname);
   try {
     if (req.method === 'OPTIONS') return send(res, 204, 'text/plain', '');
-    if (req.method === 'GET' && (p === '/' || p === '/lab.html')) return serveFile(res, LAB);
+    // 布局台的常用入口都认（人习惯敲 index.html / lab / 完整文件路径）
+    if (req.method === 'GET' && (p === '/' || p === '/lab' || p === '/lab.html' || p === '/index.html'
+      || p === '/index.htm' || p.endsWith('/lab.html') || p.endsWith('/index.html'))) return serveFile(res, LAB);
     if (req.method === 'GET' && p === '/favicon.ico') return send(res, 204, 'text/plain', '');
     if (req.method === 'GET' && p.startsWith('/public/')) return serveFile(res, path.join(ROOT, 'public', p.slice('/public/'.length)));
     if (req.method === 'GET' && p.startsWith('/assets/')) return serveFile(res, path.join(ROOT, 'public', 'assets', p.slice('/assets/'.length)));
@@ -157,10 +166,17 @@ async function handleRequest(req, res) {
       if (!saved.ok) return sendJson(res, saved);
       return sendJson(res, { ok: true, saved: saved, manifest: runManifest(true), assets: runApplyAssets() });
     }
+    // 浏览器**导航**打错路径：重定向回首页（否则用户会在页面上看到一段 JSON，以为坏了）
+    if (req.method === 'GET' && p.indexOf('/api/') !== 0 && wantsHtml(req)) {
+      res.writeHead(302, { location: '/', 'cache-control': 'no-store' });
+      return res.end();
+    }
     return sendJson(res, {
       ok: false, error: 'not_found', path: p,
-      routes: ['GET /', 'GET /api/status', 'POST /api/save-layout', 'POST /api/manifest', 'POST /api/apply-assets', 'POST /api/apply-all'],
-      hint: '路径打错了；若是页面报错，请确认用 npm run lab 启动并访问 http://127.0.0.1:' + PORT + '/',
+      routes: ['GET /', 'GET /lab.html', 'GET /api/status', 'POST /api/save-layout',
+        'POST /api/manifest', 'POST /api/apply-assets', 'POST /api/apply-all'],
+      hint: '路径打错了。这个服务的首页就是布局台：http://127.0.0.1:' + PORT + '/ ；'
+        + '页面里的按钮只会调用上面列出的 /api/* 接口。',
     }, 404);
   } catch (e) {
     return sendJson(res, { ok: false, error: e && e.message ? e.message : String(e) });

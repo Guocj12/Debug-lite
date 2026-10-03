@@ -551,5 +551,30 @@ docs/progress.md       本文件
 `ok:false` 的 `error`/`hint` 直接显示在素材面板，「刷新状态」每次重新探测（服务刚起/刚停都能自愈）。
 回归钉：`tests/frontend/layout-tool-server.test.js`（LS-1..4，其中 LS-3 就是本次缺陷：未匹配路由 / 静态缺失 / 坏请求体一律 JSON）。
 
+**⑥.2 入口路由兜底（2026-10-03，用户实测）**：用户按习惯访问 `http://127.0.0.1:4319/index.html`
+（此前只认 `/` 与 `/lab.html`）→ 浏览器把 JSON 错误当页面显示。
+修复：`/`、`/index.html`、`/lab`、`/lab.html`、任意 `*/lab.html` 都指向布局台；
+浏览器**导航**打错的路径 → `302` 回首页，而页面脚本 fetch 打错的 `/api/*` 仍回 JSON（两种语义分开）。
+回归钉：`tests/frontend/layout-tool-server.test.js` LS-5（入口路由 + 导航兜底 + API 仍 JSON）。
+
+**⑥.3 交付前全功能验证（2026-10-03）—— 验证脚本抓出的 4 处真问题**
+
+写了 `runtime/verify-delivery.js`（真起服务 + 真改布局 + 真放素材，逐项打勾，自动清理），
+连同布局台自带的两套测试（`test-layout-lab.js` 核心 13 组 / `test-layout-lab-browser.js` jsdom 12 组）、
+`test-hub-live.js`（真浏览器装配 + 真服务）、`test-hub-view.js`（预览页）一起跑，抓出并修掉：
+
+1. **布局台动作清单过期**：`goto-records` 已在 F9 接线时注册进 `actions.js`，布局台却仍把它当"计划动作"
+   → 挪进 `KNOWN_ACTIONS`，并把 `layout-*` 六个动作也登记进去（现在"计划动作"为空合法，核心测试的哨兵随之改为"能解析出数组 + 已知动作足够多"）。
+2. **没有 fetch 的宿主会让布局台白屏**：工具面板在加载时同步抛 `ReferenceError`，把后面的初始化渲染**整段截断**
+   → `probeBase` 先检查 `typeof fetch`，初始探测包 `try/catch`（jsdom / 老浏览器不再白屏）。
+3. **`URLSearchParams` 缺失即启动失败** → 端口读取改防御式（`try` 包裹，失败用默认端口）。
+4. **素材清单拼出 `assets/package/undefined.webp`**：`package-config.json` 的键是 `packageKind`（没有 id/kind）
+   → 按 `id/kind/packageKind/dropsKind` 取，取不到就跳过并打印；另加"任何路径不得含 undefined"的哨兵。
+   包图从 1 项（且文件名错误）变成 5 项正确（role/skill/rolePlugin/skillPlugin/aiNode），清单总数 151 → 155。
+
+**验证结果**：`verify-delivery.js` 23/23 项通过（含"改布局表 → 前端渲染出的 HTML 跟着变"与"收件夹 PNG →
+自动归位成 512×512 WebP → 服务端按 image/webp 提供 → 角色卡真的引用它"）；布局台核心 13 组 + jsdom 12 组通过；
+应用端到端（含真装配/清空写库）通过；`npm test` 1261/1261、`npm run gate` 9 PASS、`npm run check:docs` PASS、`npm run e2e` 22/22。
+
 **⑦ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
 → 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。

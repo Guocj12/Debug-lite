@@ -87,8 +87,13 @@ function collect() {
   });
   listOf(readJsonIf(path.join(DATA_DIR, 'ai-node-catalog.json')), ['nodes'])
     .forEach((n) => add({ path: 'assets/ai/' + n.id + '.webp', kind: 'ai', id: n.id, label: n.name + '（' + (n.category || '') + '）', source: 'server/data/ai-node-catalog.json' }));
-  listOf(readJsonIf(path.join(DATA_DIR, 'package-config.json')), ['packages'])
-    .forEach((p) => add({ path: 'assets/package/' + (p.id || p.kind) + '.webp', kind: 'package', id: p.id || p.kind, label: p.name || p.id, source: 'server/data/package-config.json' }));
+  // 包：数据表的键是 packageKind（没有 id/kind）→ 缺 id 的条目直接跳过，
+  //   绝不能拼出 "undefined.webp"（那种文件名用户永远对不上）
+  listOf(readJsonIf(path.join(DATA_DIR, 'package-config.json')), ['packages']).forEach((p) => {
+    const id = p.id || p.kind || p.packageKind || p.dropsKind;
+    if (!id) { console.log('⚠ package-config.json 有条目缺少可用的 id/packageKind，已跳过：' + JSON.stringify(p).slice(0, 80)); return; }
+    add({ path: 'assets/package/' + id + '.webp', kind: 'package', id: id, label: p.name || id, source: 'server/data/package-config.json' });
+  });
 
   // ② 布局表：背景图 + 元素建议图名（没有素材的元素 = 需要你出图）
   const bundle = layoutBundle();
@@ -110,6 +115,8 @@ function collect() {
 
   // 优先级：core = 主界面/对局里立刻看得见的；secondary = 图鉴/编辑器类（可以后补）
   const CORE = { bg: 1, ui: 1, role: 1, skill: 1, frame: 1, tier: 1 };
+  // 兜底哨兵：任何条目都不允许出现"undefined"路径（宁可少一项，也不给用户一个对不上的文件名）
+  entries.forEach((e) => { if (String(e.path).indexOf('undefined') >= 0) throw new Error('素材清单出现 undefined 路径：' + e.path); });
   return entries.map((e) => {
     const spec = SPEC[e.kind] || SPEC.ui;
     return Object.assign({

@@ -4,16 +4,16 @@
 > 出图规范：把文件按 **文件名 = 清单里的 ID** 丢进仓库根目录的 `assets-inbox/`，
 > 然后跑 `node tools/layout/apply-assets.js` —— 它会改名/转格式/缩放并放进 `public/assets/` 对应目录。
 
-**总览**：共 151 项 ｜ 已有 0 ｜ 收件夹待归位 0 ｜ **缺 147**（可选 4）
+**总览**：共 155 项 ｜ 已有 1 ｜ 收件夹待归位 1 ｜ **缺 150**（可选 4）
 
 | 类别 | 总数 | 已有 | 待归位 | 缺 | 建议规格 | 说明 |
 |---|---|---|---|---|---|---|
 | 背景图 | 1 | 0 | 0 | 1 | 1920×1080 · webp | 背景图，等比铺满（cover） |
-| 角色 | 11 | 0 | 0 | 11 | 512×512 · webp | 角色立绘/图标，透明底，正方形 |
+| 角色 | 11 | 1 | 0 | 10 | 512×512 · webp | 角色立绘/图标，透明底，正方形 |
 | 技能 | 4 | 0 | 0 | 4 | 256×256 · webp | 技能图标，透明底，正方形 |
 | 插件 | 41 | 0 | 0 | 41 | 128×128 · webp | 插件图标，透明底，正方形 |
 | AI 积木节点 | 54 | 0 | 0 | 54 | 128×128 · webp | AI 积木节点图标，透明底 |
-| 包/宝箱 | 1 | 0 | 0 | 1 | 256×256 · webp | 包/宝箱图标，透明底 |
+| 包/宝箱 | 5 | 0 | 0 | 5 | 256×256 · webp | 包/宝箱图标，透明底 |
 | 界面按钮/控件 | 25 | 0 | 0 | 25 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
 | 品质边框 | 5 | 0 | 0 | 5 | 256×256 · svg | 品质边框（矢量，颜色按 qualities.json 的 color） |
 | 段位图标 | 5 | 0 | 0 | 5 | 64×64 · svg | 段位图标（矢量，颜色按 qualities.json 的 color） |
@@ -29,7 +29,7 @@
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
-| ❌ 缺 | ★ 先做 | `role_bal.webp` | `assets/role/role_bal.webp` | 均衡 | server/data/role-templates.json |
+| ✅ 已有 | ★ 先做 | `role_bal.webp` | `assets/role/role_bal.webp` | 均衡 | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_hp.webp` | `assets/role/role_spc_hp.webp` | 特化·HP | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_atk.webp` | `assets/role/role_spc_atk.webp` | 特化·攻击 | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_def.webp` | `assets/role/role_spc_def.webp` | 特化·防御 | server/data/role-templates.json |
@@ -155,11 +155,15 @@
 | ❌ 缺 | · 后补 | `s_effect_left.webp` | `assets/ai/s_effect_left.webp` | 我的效果剩余帧（感知） | server/data/ai-node-catalog.json |
 | ❌ 缺 | · 后补 | `c_any_skill_ready.webp` | `assets/ai/c_any_skill_ready.webp` | 有技能就绪（条件） | server/data/ai-node-catalog.json |
 
-## 包/宝箱（1）
+## 包/宝箱（5）
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
-| ❌ 缺 | · 后补 | `undefined.webp` | `assets/package/undefined.webp` | 角色模块包 | server/data/package-config.json |
+| ❌ 缺 | · 后补 | `role.webp` | `assets/package/role.webp` | 角色模块包 | server/data/package-config.json |
+| ❌ 缺 | · 后补 | `skill.webp` | `assets/package/skill.webp` | 技能模块包 | server/data/package-config.json |
+| ❌ 缺 | · 后补 | `rolePlugin.webp` | `assets/package/rolePlugin.webp` | 角色插件包 | server/data/package-config.json |
+| ❌ 缺 | · 后补 | `skillPlugin.webp` | `assets/package/skillPlugin.webp` | 技能插件包 | server/data/package-config.json |
+| ❌ 缺 | · 后补 | `aiNode.webp` | `assets/package/aiNode.webp` | AI节点包 | server/data/package-config.json |
 
 ## 界面按钮/控件（25）
 
