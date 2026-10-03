@@ -593,5 +593,12 @@ docs/progress.md       本文件
 **机器核对**：`tests/frontend/layout-tool-server.test.js` 追加 LS-6（`GET /api/layout` 与磁盘真源一致）、
 LS-7（`/api/manifest` 的 GET=读缓存 / POST=重算语义）。
 
+**⑥.5 交付物一致性：清单不能标着不存在的文件"已有"（2026-10-03）**
+
+验证脚本会在收件夹里造素材、点归位、跑完再删掉；但**清单是当时生成的** → 提交出去的
+`tools/layout/assets-manifest.json` / `docs/frontend/assets-manifest.md` 里 `assets/skill/skill_melee.webp`
+被标成"✅ 已有"，而文件早已删除（假状态）。已修：两个验证脚本的清理分支**补上重算清单**，
+并立刻重算一次修正当前提交（重算后 155 项 / 已有 0 / 缺 151 / 主界面优先 51，过期标记 0）。
+
 **⑦ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
 → 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。

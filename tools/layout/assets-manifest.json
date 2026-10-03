@@ -56,11 +56,11 @@
  },
  "summary": {
   "total": 155,
-  "present": 1,
-  "inInbox": 1,
-  "missing": 150,
+  "present": 0,
+  "inInbox": 0,
+  "missing": 151,
   "optional": 4,
-  "requiredMissing": 150,
+  "requiredMissing": 151,
   "byKind": {
    "role": {
     "total": 11,
@@ -71,8 +71,8 @@
    },
    "skill": {
     "total": 4,
-    "present": 1,
-    "missing": 3,
+    "present": 0,
+    "missing": 4,
     "inbox": 0,
     "optional": 0
    },
@@ -133,7 +133,7 @@
     "optional": 0
    }
   },
-  "coreMissing": 50
+  "coreMissing": 51
  },
  "entries": [
   {
@@ -323,10 +323,10 @@
    "id": "skill_melee",
    "label": "近战",
    "source": "server/data/skill-templates.json",
-   "present": true,
-   "inbox": "skill_melee.png",
-   "status": "已有",
-   "bytes": 200
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
   },
   {
    "format": "webp",
