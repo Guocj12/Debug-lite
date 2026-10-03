@@ -348,6 +348,7 @@
         <summary>存盘 / 素材（需要本地服务：node tools/layout/lab-server.js）</summary>
         <div class="hint" id="toolInfo" style="margin:6px 0">检测中…</div>
         <div class="row">
+          <button id="btnReloadWs" style="flex:1" title="丢弃本地草稿，重新读工作区里的布局表">⟲ 从工作区载入</button>
           <button id="btnStatus" style="flex:1">刷新状态</button>
           <button id="btnMissing" style="flex:1">看缺哪些图</button>
           <button id="btnMissingAll" style="flex:1">全部（含图鉴类）</button>
@@ -2105,7 +2106,9 @@ var LAYOUT_CORE = (function () {
         }
         return r.json();
       }).then(function (j) {
-        if (j && j.ok === false && j.error) throw new Error(String(j.error) + (j.hint ? '\n' + j.hint : ''));
+        if (j && j.ok === false && j.error) {
+          throw new Error(String(j.error) + (j.path ? '（' + j.path + '）' : '') + (j.hint ? '\n' + j.hint : ''));
+        }
         return j;
       });
     });
@@ -2115,11 +2118,11 @@ var LAYOUT_CORE = (function () {
     $('json').value = title + '\n' + (lines || []).join('\n');
     flash(title);
   }
-  function refreshToolStatus() {
+  function refreshToolStatus(prefix) {
     LAB_API = undefined;                                  // 每次刷新都重新探测（服务可能刚起来 / 刚停掉）
     labApi('/api/status').then(function (s) {
       var m = s.manifest;
-      toolInfo('工作区：' + s.root + '\n导出：' + (s.rawExists ? '已存在' : '还没有') +
+      toolInfo((prefix ? prefix + '\n' : '') + '工作区：' + s.root + '\n导出：' + (s.rawExists ? '已存在' : '还没有') +
         (s.stale ? '（比生成物新 → 需重新生成）' : '') +
         '\n素材：' + (m ? ('共 ' + m.total + ' ｜已有 ' + m.present + ' ｜缺 ' + m.missing + '（主界面优先 ' + m.coreMissing + '）') : '还没生成清单') +
         '\n收件夹文件：' + s.inboxFiles, 'ok');
@@ -2131,18 +2134,19 @@ var LAYOUT_CORE = (function () {
       if (!r.ok) return toolInfo('存盘失败：' + (r.error || (r.importLog || []).join(' ')), 'err');
       toolInfo('已写入：' + r.raw + '\n生成：' + r.data, 'ok');
       showLines('✅ 已存到工作区', [r.raw, r.data, ''].concat(r.importLog || []));
-      refreshToolStatus();
+      refreshToolStatus('✅ 已存到工作区：' + r.raw);
     }).catch(function (e) { toolInfo(e.message, 'err'); });
   }
   function doManifest(full) {
     toolInfo('正在算素材清单…');
-    labApi('/api/manifest' + (full ? '?full=1' : '')).then(function (r) {
+    labApi('/api/manifest' + (full ? '?full=1' : ''), {}).then(function (r) {   // 必须 POST：GET 只读上次结果
       if (!r.ok) return toolInfo('生成失败：' + r.error, 'err');
       var m = r.summary;
       toolInfo('素材：共 ' + m.total + ' ｜已有 ' + m.present + ' ｜待归位 ' + m.inInbox + ' ｜缺 ' + m.missing +
         '（主界面优先 ' + m.coreMissing + '）\n清单文档：' + r.doc, 'ok');
       showLines('📋 缺失素材' + (full ? '（全部）' : '（主界面优先）') + '：' + r.missing.length + ' / 共 ' + r.missingTotal + ' 项缺失',
         r.missing.map(function (e) { return (e.priority === 'core' ? '★ ' : '· ') + e.file + '   ← ' + e.label; }));
+      refreshToolStatus('📋 清单已刷新：缺 ' + m.missing + ' 项（主界面优先 ' + m.coreMissing + '）');
     }).catch(function (e) { toolInfo(e.message, 'err'); });
   }
   function doAssets() {
@@ -2151,7 +2155,7 @@ var LAYOUT_CORE = (function () {
       if (!r.ok) return toolInfo('归位失败：' + (r.log || []).join(' '), 'err');
       toolInfo('归位完成；素材还剩 ' + r.summary.missing + ' 项缺失（主界面优先 ' + r.summary.coreMissing + '）', 'ok');
       showLines('🎨 素材归位结果', r.log);
-      refreshToolStatus();
+      refreshToolStatus('🎨 素材已归位：还剩 ' + r.summary.missing + ' 项缺失（主界面优先 ' + r.summary.coreMissing + '）');
     }).catch(function (e) { toolInfo(e.message, 'err'); });
   }
   function doApplyAll() {
@@ -2161,9 +2165,37 @@ var LAYOUT_CORE = (function () {
       var m = r.manifest.summary || {};
       toolInfo('完成：' + r.saved.raw + '\n生成物已更新；素材缺 ' + (m.missing || '?') + '（主界面优先 ' + (m.coreMissing || '?') + '）', 'ok');
       showLines('⚡ 一键应用完成', [].concat(r.saved.importLog || [], [''], r.manifest.log || [], [''], r.assets.log || []));
-      refreshToolStatus();
+      refreshToolStatus('⚡ 一键应用完成（存盘 + 清单 + 归位）');
     }).catch(function (e) { toolInfo(e.message, 'err'); });
   }
+  /** 从工作区读当前布局表（用户点「⟲ 从工作区载入」或首次打开且没有本地草稿时用） */
+  function loadFromWorkspace(announce) {
+    return labApi('/api/layout').then(function (r) {
+      push();
+      state.bundle = C.normalizeBundle(r.bundle);
+      useScreen(state.bundle.screens.hub ? 'hub' : Object.keys(state.bundle.screens)[0]);
+      state.sel = null;
+      syncAll();
+      saveSoon();   // 走布局台自己的自动保存（本机草稿）
+      toolInfo((announce ? announce + '\n' : '') + '已从工作区载入：' + r.path, 'ok');
+      flash('已从工作区载入布局表');
+      return true;
+    });
+  }
+  $('btnReloadWs').addEventListener('click', function () {
+    loadFromWorkspace('⟲ 从工作区载入').catch(function (e) { toolInfo('载入失败：' + e.message, 'err'); });
+  });
+  // 启动后：本地草稿（未存盘的编辑）优先；没有草稿就载入工作区当前的布局表
+  (function bootstrapFromWorkspace() {
+    var hasDraft = false;
+    try { hasDraft = !!window.localStorage.getItem('dl_layout_lab_v2'); } catch (e) { hasDraft = false; }
+    if (hasDraft) return;                                  // 尊重未存盘的本地草稿
+    loadFromWorkspace('').then(function () {
+      if (location.protocol === 'file:') toolInfo('已连上本地服务并载入工作区布局表。');
+    }).catch(function (e) {
+      toolInfo('未从工作区载入（' + e.message + '）\n当前用的是布局台内置示例；点「⟲ 从工作区载入」可重试。', 'err');
+    });
+  })();
   $('btnSaveWs').addEventListener('click', doSaveWs);
   $('btnApplyAll').addEventListener('click', doApplyAll);
   $('btnManifest').addEventListener('click', doManifest);

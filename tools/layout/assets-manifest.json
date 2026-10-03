@@ -64,15 +64,15 @@
   "byKind": {
    "role": {
     "total": 11,
-    "present": 1,
-    "missing": 10,
+    "present": 0,
+    "missing": 11,
     "inbox": 0,
     "optional": 0
    },
    "skill": {
     "total": 4,
-    "present": 0,
-    "missing": 4,
+    "present": 1,
+    "missing": 3,
     "inbox": 0,
     "optional": 0
    },
@@ -147,10 +147,10 @@
    "id": "role_bal",
    "label": "均衡",
    "source": "server/data/role-templates.json",
-   "present": true,
-   "inbox": "role_bal.png",
-   "status": "已有",
-   "bytes": 554
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0
   },
   {
    "format": "webp",
@@ -323,10 +323,10 @@
    "id": "skill_melee",
    "label": "近战",
    "source": "server/data/skill-templates.json",
-   "present": false,
-   "inbox": null,
-   "status": "缺",
-   "bytes": 0
+   "present": true,
+   "inbox": "skill_melee.png",
+   "status": "已有",
+   "bytes": 200
   },
   {
    "format": "webp",

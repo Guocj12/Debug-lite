@@ -96,3 +96,25 @@ test('LS-5 入口路由：常见打开方式都能进布局台；浏览器敲错
   const api404 = await fetch(base + '/api/nope', { headers: { accept: '*/*' } });
   assert.match(api404.headers.get('content-type') || '', /json/, 'fetch 打错 /api 仍回 JSON');
 }));
+test('LS-6 GET /api/layout 返回工作区当前的布局表（布局台启动靠它载入，否则会拿内置示例覆盖现有设计）', () => withServer(async (base) => {
+  const body = await asJson(await fetch(base + '/api/layout'), 'GET /api/layout');
+  assert.equal(body.ok, true, '工作区已有布局表时应 ok:true：' + JSON.stringify(body).slice(0, 120));
+  assert.ok(body.bundle && body.bundle.screens && body.bundle.screens.hub, '应返回完整 bundle');
+  assert.ok(body.path && body.path.indexOf('layout-bundle.raw.json') >= 0, '应给出文件路径');
+  // 与磁盘上的真源一致（读的是同一份）
+  const onDisk = JSON.parse(require('node:fs').readFileSync(body.path, 'utf8'));
+  assert.deepEqual(Object.keys(body.bundle.screens).sort(), Object.keys(onDisk.screens).sort(), '返回的画面集合应与真源一致');
+  assert.equal(body.bundle.screens.hub.elements.length, onDisk.screens.hub.elements.length, 'hub 元素数应与真源一致');
+}));
+
+test('LS-7 /api/manifest 的 GET/POST 语义（页面必须 POST；GET 只读上次结果）', () => withServer(async (base) => {
+  const got = await fetch(base + '/api/manifest');
+  const gbody = await asJson(got, 'GET /api/manifest');
+  // 已生成过 → ok:true + cached；没生成过 → ok:false 且给出可操作提示。两种都不许是非 JSON。
+  if (gbody.ok) assert.equal(gbody.cached, true, 'GET 应标记为 cached（不重算）');
+  else assert.ok(gbody.hint && gbody.hint.length > 0, 'GET 未生成时应给 hint');
+  const post = await fetch(base + '/api/manifest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  const pbody = await asJson(post, 'POST /api/manifest');
+  assert.equal(pbody.ok, true, 'POST 应重算并成功：' + JSON.stringify(pbody).slice(0, 140));
+  assert.ok(pbody.summary && pbody.summary.total > 100, '应给出清单总览');
+}));

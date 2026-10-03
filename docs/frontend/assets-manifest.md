@@ -9,8 +9,8 @@
 | 类别 | 总数 | 已有 | 待归位 | 缺 | 建议规格 | 说明 |
 |---|---|---|---|---|---|---|
 | 背景图 | 1 | 0 | 0 | 1 | 1920×1080 · webp | 背景图，等比铺满（cover） |
-| 角色 | 11 | 1 | 0 | 10 | 512×512 · webp | 角色立绘/图标，透明底，正方形 |
-| 技能 | 4 | 0 | 0 | 4 | 256×256 · webp | 技能图标，透明底，正方形 |
+| 角色 | 11 | 0 | 0 | 11 | 512×512 · webp | 角色立绘/图标，透明底，正方形 |
+| 技能 | 4 | 1 | 0 | 3 | 256×256 · webp | 技能图标，透明底，正方形 |
 | 插件 | 41 | 0 | 0 | 41 | 128×128 · webp | 插件图标，透明底，正方形 |
 | AI 积木节点 | 54 | 0 | 0 | 54 | 128×128 · webp | AI 积木节点图标，透明底 |
 | 包/宝箱 | 5 | 0 | 0 | 5 | 256×256 · webp | 包/宝箱图标，透明底 |
@@ -29,7 +29,7 @@
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
-| ✅ 已有 | ★ 先做 | `role_bal.webp` | `assets/role/role_bal.webp` | 均衡 | server/data/role-templates.json |
+| ❌ 缺 | ★ 先做 | `role_bal.webp` | `assets/role/role_bal.webp` | 均衡 | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_hp.webp` | `assets/role/role_spc_hp.webp` | 特化·HP | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_atk.webp` | `assets/role/role_spc_atk.webp` | 特化·攻击 | server/data/role-templates.json |
 | ❌ 缺 | ★ 先做 | `role_spc_def.webp` | `assets/role/role_spc_def.webp` | 特化·防御 | server/data/role-templates.json |
@@ -45,7 +45,7 @@
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
-| ❌ 缺 | ★ 先做 | `skill_melee.webp` | `assets/skill/skill_melee.webp` | 近战 | server/data/skill-templates.json |
+| ✅ 已有 | ★ 先做 | `skill_melee.webp` | `assets/skill/skill_melee.webp` | 近战 | server/data/skill-templates.json |
 | ❌ 缺 | ★ 先做 | `skill_straight.webp` | `assets/skill/skill_straight.webp` | 平射 | server/data/skill-templates.json |
 | ❌ 缺 | ★ 先做 | `skill_vertical.webp` | `assets/skill/skill_vertical.webp` | 定点 | server/data/skill-templates.json |
 | ❌ 缺 | ★ 先做 | `skill_displace.webp` | `assets/skill/skill_displace.webp` | 位移 | server/data/skill-templates.json |

@@ -127,6 +127,12 @@ function runApplyAssets() {
   };
 }
 
+/** 读工作区当前布局表（布局台启动时载入；没有就返回 null） */
+function readLayout() {
+  if (!fs.existsSync(RAW)) return null;
+  try { return JSON.parse(fs.readFileSync(RAW, 'utf8')); } catch (e) { return null; }
+}
+
 function status() {
   const raw = fs.existsSync(RAW) ? fs.statSync(RAW).mtimeMs : 0;
   const data = fs.existsSync(path.join(ROOT, 'public', 'layout-data.js')) ? fs.statSync(path.join(ROOT, 'public', 'layout-data.js')).mtimeMs : 0;
@@ -158,8 +164,23 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && p.startsWith('/public/')) return serveFile(res, path.join(ROOT, 'public', p.slice('/public/'.length)));
     if (req.method === 'GET' && p.startsWith('/assets/')) return serveFile(res, path.join(ROOT, 'public', 'assets', p.slice('/assets/'.length)));
     if (req.method === 'GET' && p === '/api/status') return sendJson(res, status());
+    // 布局台启动时用它载入**工作区当前的布局表**（没有这个，页面只会拿内置示例当起点，一点存盘就覆盖现有设计）
+    if (req.method === 'GET' && p === '/api/layout') {
+      if (!fs.existsSync(RAW)) return sendJson(res, { ok: false, error: '工作区还没有布局表（' + RAW + '）', hint: '先在布局台里画一版，点「存到工作区」就会生成' });
+      let bundle = null;
+      try { bundle = JSON.parse(fs.readFileSync(RAW, 'utf8')); }
+      catch (e) { return sendJson(res, { ok: false, error: '布局表不是合法 JSON：' + e.message, path: RAW }); }
+      return sendJson(res, { ok: true, path: RAW, bundle: bundle, mtime: fs.statSync(RAW).mtimeMs });
+    }
     if (req.method === 'POST' && p === '/api/save-layout') return sendJson(res, saveLayout(await readBody(req)));
     if (req.method === 'POST' && p === '/api/manifest') return sendJson(res, runManifest(url.searchParams.get('full') === '1'));
+    // GET = 读**上次**生成的清单（不重算）：方便在浏览器地址栏或 curl 里看，也让"只读"语义站得住
+    if (req.method === 'GET' && p === '/api/manifest') {
+      if (!fs.existsSync(MANIFEST_JSON)) {
+        return sendJson(res, { ok: false, error: '还没生成过素材清单', hint: '点布局台的「📋 素材清单」，或跑 npm run assets:manifest' });
+      }
+      return sendJson(res, Object.assign({ ok: true, cached: true }, manifestSummary(url.searchParams.get('full') === '1')));
+    }
     if (req.method === 'POST' && p === '/api/apply-assets') return sendJson(res, runApplyAssets());
     if (req.method === 'POST' && p === '/api/apply-all') {
       const saved = saveLayout(await readBody(req));
@@ -173,7 +194,7 @@ async function handleRequest(req, res) {
     }
     return sendJson(res, {
       ok: false, error: 'not_found', path: p,
-      routes: ['GET /', 'GET /lab.html', 'GET /api/status', 'POST /api/save-layout',
+      routes: ['GET /', 'GET /lab.html', 'GET /api/status', 'GET /api/layout', 'POST /api/save-layout',
         'POST /api/manifest', 'POST /api/apply-assets', 'POST /api/apply-all'],
       hint: '路径打错了。这个服务的首页就是布局台：http://127.0.0.1:' + PORT + '/ ；'
         + '页面里的按钮只会调用上面列出的 /api/* 接口。',
@@ -186,7 +207,7 @@ async function handleRequest(req, res) {
 const portArg = process.argv.indexOf('--port');
 const PORT = portArg >= 0 ? Number(process.argv[portArg + 1]) : 4319;
 
-module.exports = { createLabServer, status, saveLayout, runManifest, runApplyAssets, RAW, LAB, ROOT, PORT };
+module.exports = { createLabServer, status, saveLayout, runManifest, runApplyAssets, readLayout, RAW, LAB, ROOT, PORT };
 
 if (require.main === module) createLabServer().listen(PORT, '127.0.0.1', () => {
   console.log('布局工具已启动：http://127.0.0.1:' + PORT + '/');

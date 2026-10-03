@@ -576,5 +576,22 @@ docs/progress.md       本文件
 自动归位成 512×512 WebP → 服务端按 image/webp 提供 → 角色卡真的引用它"）；布局台核心 13 组 + jsdom 12 组通过；
 应用端到端（含真装配/清空写库）通过；`npm test` 1261/1261、`npm run gate` 9 PASS、`npm run check:docs` PASS、`npm run e2e` 22/22。
 
+**⑥.4 交付前验证第二轮：在真实 DOM 里点四个按钮（2026-10-03）**
+
+`runtime/test-lab-buttons.js` 用 jsdom 打开布局台、**真的点**「存到工作区 / 素材清单 / 归位素材 / 一键应用」，
+又抓出 4 个只有"点下去"才会暴露的问题：
+
+1. **布局台启动不读工作区**（最严重）：页面从内置示例起步，用户一进来点「存到工作区」就会把现有设计覆盖掉。
+   → 新增 `GET /api/layout`；页面启动时若**没有**未存盘的本地草稿，就自动载入工作区当前的布局表；
+   并加「⟲ 从工作区载入」按钮（明确丢弃本地草稿重读）。验证脚本里加了"存盘后画面集合/元素数必须与工作区一致"的断言。
+2. **「素材清单」发了 GET 而服务端只认 POST** → 点了报 `not_found`。→ 页面显式 POST；
+   服务端同时支持 `GET /api/manifest` = 读**上次**结果（方便地址栏/curl，且语义清楚）。
+3. **成功文案被状态行覆盖**：点完「存到工作区」结果一闪就被 `刷新状态` 刷掉 → `refreshToolStatus(prefix)`
+   把"刚做完什么"和"当前状态"一起显示。
+4. **错误文案不带路径**：只显示 `not_found` 无法定位 → 服务端错误里的 `path` 一并显示。
+
+**机器核对**：`tests/frontend/layout-tool-server.test.js` 追加 LS-6（`GET /api/layout` 与磁盘真源一致）、
+LS-7（`/api/manifest` 的 GET=读缓存 / POST=重算语义）。
+
 **⑦ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
 → 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。
