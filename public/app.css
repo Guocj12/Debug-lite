@@ -1,4 +1,4 @@
-﻿/* public/app.css —— 布局表驱动的界面样式（由布局引擎输出 + 本文件决定外观）
+/* public/app.css —— 布局表驱动的界面样式（由布局引擎输出 + 本文件决定外观）
  *
  * 设计要点：
  *   · 位置用**百分比**（rect / canvas）：换屏幕尺寸不用重算，等比自适应；
@@ -32,6 +32,9 @@
 .dl-hit-ellipse{border-radius:50%}
 .dl-txt{position:relative;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
   padding:0 4px;text-shadow:0 1px 2px #000a}
+/* 尺寸类（渲染层按元素高度加）：大控件用大字号，小角标用小字号 */
+.dl-el.dl-lg .dl-txt{font-size:22px;font-weight:600}
+.dl-el.dl-sm .dl-txt{font-size:11px}
 /* 弹窗层 */
 .dl-modal{position:absolute;inset:0;z-index:100}
 .dl-modal[data-depth="2"]{z-index:200}

@@ -104,7 +104,7 @@ function collect() {
     (sc.elements || []).forEach((el) => {
       if (el.asset && el.asset.indexOf('{') < 0) {
         add({ path: el.asset, kind: 'ui', id: el.id, label: (el.label || el.id) + ' 素材', source: '布局表 ' + name, usedBy: [name] });
-      } else if (el.kind === 'button') {
+      } else if (el.kind === 'button' && !el.asset) {   // 已有 {占位符} 素材的元素（角色卡/技能盘）不需要再出 UI 底图
         // 没有素材的按钮：给一个建议文件名（用户按名出图 → 我把 asset 填进布局表）
         add({ path: 'assets/ui/' + safeName(el.id) + '.webp', kind: 'ui', id: el.id,
           label: (el.label || el.id) + (el.hit === 'path' ? '（不规则形状：PNG 透明底，我会描轮廓）' : ''),
@@ -148,12 +148,29 @@ function statusOf(entries) {
   });
 }
 
+/** 程序生成的占位素材登记表（tools/layout/make-placeholder-assets.py 维护） */
+function placeholderSet() {
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(__dirname, 'placeholders.json'), 'utf8'));
+    return new Set(p.generated || []);
+  } catch (e) { return new Set(); }
+}
+
 function build() {
-  const entries = statusOf(collect());
+  const ph = placeholderSet();
+  const entries = statusOf(collect()).map((e) => {
+    const isPh = ph.has(e.path);
+    return Object.assign({}, e, {
+      placeholder: isPh,
+      // 口径：真素材 > 程序占位 > 收件夹待归位 > 缺
+      status: e.present ? (isPh ? '占位' : '已有') : e.status,
+    });
+  });
   const byKind = {};
-  entries.forEach((e) => { byKind[e.kind] = byKind[e.kind] || { total: 0, present: 0, missing: 0, inbox: 0, optional: 0 }; 
+  entries.forEach((e) => { byKind[e.kind] = byKind[e.kind] || { total: 0, present: 0, missing: 0, inbox: 0, optional: 0, placeholder: 0, real: 0 };
     const b = byKind[e.kind]; b.total += 1;
-    if (e.present) b.present += 1; else if (e.inbox) b.inbox += 1; else if (e.optional) b.optional += 1; else b.missing += 1; });
+    if (e.present) { b.present += 1; if (e.placeholder) b.placeholder += 1; else b.real += 1; }
+    else if (e.inbox) b.inbox += 1; else if (e.optional) b.optional += 1; else b.missing += 1; });
   const missing = entries.filter((e) => e.status === '缺' && !e.optional);
   return {
     generatedAtNote: '由 node tools/layout/asset-manifest.js 生成（勿手改）',
@@ -162,6 +179,8 @@ function build() {
     spec: SPEC,
     summary: {
       total: entries.length, present: entries.filter((e) => e.present).length,
+      placeholder: entries.filter((e) => e.present && e.placeholder).length,
+      real: entries.filter((e) => e.present && !e.placeholder).length,
       inInbox: entries.filter((e) => e.inbox).length,
       missing: missing.length, optional: entries.filter((e) => e.optional && !e.present).length,
       requiredMissing: missing.filter((e) => e.required !== false).length,
@@ -179,9 +198,14 @@ function toMarkdown(m) {
   lines.push('> 生成命令：`node tools/layout/asset-manifest.js`（也可以用布局台的「素材清单」按钮）');
   lines.push('> 出图规范：把文件按 **文件名 = 清单里的 ID** 丢进仓库根目录的 `assets-inbox/`，');
   lines.push('> 然后跑 `node tools/layout/apply-assets.js` —— 它会改名/转格式/缩放并放进 `public/assets/` 对应目录。');
+  lines.push('> 🧩 = 程序生成的**占位图**（界面已经不再显示虚线框，但还不是美术成品）；替换方式见下方说明。');
   lines.push('');
   const s = m.summary;
-  lines.push('**总览**：共 ' + s.total + ' 项 ｜ 已有 ' + s.present + ' ｜ 收件夹待归位 ' + s.inInbox + ' ｜ **缺 ' + s.missing + '**（可选 ' + s.optional + '）');
+  lines.push('**总览**：共 ' + s.total + ' 项 ｜ ✅ 你的真素材 ' + (s.real || 0) + ' ｜ 🧩 程序占位 '
+    + (s.placeholder || 0) + ' ｜ 📥 收件夹待归位 ' + s.inInbox + ' ｜ **缺 ' + s.missing + '**（可选 ' + s.optional + '）');
+  lines.push('');
+  lines.push('> 换成真图：把同名文件放进 `assets-inbox/` 跑 `npm run assets:apply`，或直接覆盖 `public/assets/` 下的同名文件。');
+  lines.push('> 重新跑生成脚本**不会**覆盖你的真图 —— 脚本只覆盖登记在 `tools/layout/placeholders.json` 里的文件。');
   lines.push('');
   lines.push('| 类别 | 总数 | 已有 | 待归位 | 缺 | 建议规格 | 说明 |');
   lines.push('|---|---|---|---|---|---|---|');
@@ -202,7 +226,8 @@ function toMarkdown(m) {
     lines.push('| 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |');
     lines.push('|---|---|---|---|---|---|');
     list.forEach((e) => {
-      const mark = e.present ? '✅ 已有' : (e.inbox ? '📥 待归位' : (e.optional ? '➖ 可选' : '❌ 缺'));
+      const mark = e.present ? (e.placeholder ? '🧩 占位' : '✅ 真素材')
+        : (e.inbox ? '📥 待归位' : (e.optional ? '➖ 可选' : '❌ 缺'));
       const base = path.basename(e.path, path.extname(e.path));
       lines.push('| ' + mark + ' | ' + (e.priority === 'core' ? '★ 先做' : '· 后补') + ' | `' + base + path.extname(e.path) + '` | `' + e.path + '` | ' + (e.label || e.id) + ' | ' + (e.usedBy ? e.usedBy.join(' / ') : e.source) + ' |');
     });
@@ -220,10 +245,13 @@ function main() {
 
   if (argv.indexOf('--json') >= 0) { console.log(JSON.stringify(m, null, 1)); return; }
   const s = m.summary;
-  console.log('素材清单：共 ' + s.total + ' 项 ｜ ✅ 已有 ' + s.present + ' ｜ 📥 收件夹待归位 ' + s.inInbox + ' ｜ ❌ 缺 ' + s.missing + '（可选 ' + s.optional + '）');
+  console.log('素材清单：共 ' + s.total + ' 项 ｜ ✅ 真素材 ' + (s.real || 0) + ' ｜ 🧩 占位 ' + (s.placeholder || 0)
+    + ' ｜ 📥 待归位 ' + s.inInbox + ' ｜ ❌ 缺 ' + s.missing + '（可选 ' + s.optional + '）');
   Object.keys(s.byKind).forEach((k) => {
     const b = s.byKind[k];
-    console.log('  · ' + k.padEnd(8) + ' 共 ' + String(b.total).padStart(3) + ' ｜ 已有 ' + String(b.present).padStart(3) + ' ｜ 待归位 ' + String(b.inbox).padStart(2) + ' ｜ 缺 ' + String(b.missing + b.optional).padStart(3));
+    console.log('  · ' + k.padEnd(8) + ' 共 ' + String(b.total).padStart(3) + ' ｜ 真素材 ' + String(b.real || 0).padStart(2)
+      + ' ｜ 占位 ' + String(b.placeholder || 0).padStart(3) + ' ｜ 待归位 ' + String(b.inbox).padStart(2)
+      + ' ｜ 缺 ' + String(b.missing + b.optional).padStart(3));
   });
   const missing = m.entries.filter((e) => e.status === '缺');
   if (missing.length && argv.indexOf('--quiet') < 0) {

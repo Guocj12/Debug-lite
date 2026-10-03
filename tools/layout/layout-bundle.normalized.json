@@ -44,7 +44,8 @@
             36,
             64,
             64
-          ]
+          ],
+          "asset": "assets/ui/用户头像.webp"
         },
         {
           "id": "段位图标",
@@ -73,7 +74,8 @@
             64,
             64
           ],
-          "label": "仓库"
+          "label": "仓库",
+          "asset": "assets/ui/btn_warehouse.webp"
         },
         {
           "id": "btn_ai",
@@ -87,7 +89,8 @@
             256,
             96
           ],
-          "label": "AI 编辑"
+          "label": "AI 编辑",
+          "asset": "assets/ui/btn_ai.webp"
         },
         {
           "id": "btn_settings",
@@ -101,7 +104,8 @@
             256,
             96
           ],
-          "label": "设置"
+          "label": "设置",
+          "asset": "assets/ui/btn_settings.webp"
         },
         {
           "id": "btn_board",
@@ -115,7 +119,8 @@
             64,
             64
           ],
-          "label": "排行"
+          "label": "排行",
+          "asset": "assets/ui/btn_board.webp"
         },
         {
           "id": "btn_tournament",
@@ -129,7 +134,8 @@
             256,
             96
           ],
-          "label": "锦标赛"
+          "label": "锦标赛",
+          "asset": "assets/ui/btn_tournament.webp"
         },
         {
           "id": "btn_quick",
@@ -144,6 +150,7 @@
             96
           ],
           "label": "快速对战",
+          "asset": "assets/ui/btn_quick.webp",
           "z": 2
         },
         {
@@ -159,7 +166,7 @@
             306
           ],
           "target": "modal_role_slots",
-          "label": "角色卡",
+          "label": "{roleName}",
           "payload": {
             "slot": "slot1"
           },
@@ -244,7 +251,8 @@
           "setState": {
             "activeSlot": 1
           },
-          "label": "1"
+          "label": "1",
+          "asset": "assets/ui/slot_1.webp"
         },
         {
           "id": "slot_2",
@@ -261,7 +269,8 @@
           "setState": {
             "activeSlot": 2
           },
-          "label": "2"
+          "label": "2",
+          "asset": "assets/ui/slot_2.webp"
         },
         {
           "id": "slot_3",
@@ -278,7 +287,8 @@
           "setState": {
             "activeSlot": 3
           },
-          "label": "3"
+          "label": "3",
+          "asset": "assets/ui/slot_3.webp"
         },
         {
           "id": "设为出战（将当前配置设为出战）",
@@ -295,7 +305,8 @@
           "label": "设为出战",
           "payload": {
             "slot": "{configId}"
-          }
+          },
+          "asset": "assets/ui/设为出战（将当前配置设为出战）.webp"
         },
         {
           "id": "对战历史",
@@ -309,7 +320,8 @@
             192,
             64
           ],
-          "label": "对战历史"
+          "label": "对战历史",
+          "asset": "assets/ui/对战历史.webp"
         },
         {
           "id": "段位名",
@@ -419,6 +431,7 @@
           ],
           "target": "modal_role_pick",
           "label": "角色（再点一次看角色模板）",
+          "asset": "assets/ui/center_role.webp",
           "path": "M50,0 L93.3,25 L93.3,75 L50,100 L6.7,75 L6.7,25 Z",
           "z": 2
         },
@@ -441,6 +454,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_1.webp",
           "z": 3
         },
         {
@@ -462,6 +476,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_2.webp",
           "z": 3
         },
         {
@@ -483,6 +498,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_3.webp",
           "z": 3
         },
         {
@@ -504,6 +520,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_4.webp",
           "z": 3
         },
         {
@@ -525,6 +542,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_5.webp",
           "z": 3
         },
         {
@@ -546,6 +564,7 @@
             "slot": "{configId}",
             "pos": "role"
           },
+          "asset": "assets/ui/slot_6.webp",
           "z": 3
         }
       ],
@@ -617,6 +636,7 @@
             "slot": "slot1",
             "pos": "{pickPos}"
           },
+          "asset": "{rowIcon}",
           "z": 6
         }
       ],
@@ -687,6 +707,7 @@
             "slot": "slot1",
             "pos": "{pickPos}"
           },
+          "asset": "{rowIcon}",
           "z": 6
         }
       ],
@@ -756,6 +777,7 @@
           "payload": {
             "slotIndex": "{pickIdx}"
           },
+          "asset": "{rowIcon}",
           "z": 6
         }
       ],
@@ -825,6 +847,7 @@
           "payload": {
             "slotIndex": "{pickIdx}"
           },
+          "asset": "{rowIcon}",
           "z": 6
         }
       ],
@@ -866,6 +889,7 @@
             "slot": "{configId}",
             "pos": "skill2"
           },
+          "asset": "assets/ui/new_1.webp",
           "path": "M50,65 L93.3,40 L93.3,75 L50,100 L6.7,75 L6.7,40 Z"
         },
         {
@@ -887,6 +911,7 @@
             "slot": "{configId}",
             "pos": "skill2"
           },
+          "asset": "assets/ui/slot_1.webp",
           "z": 3
         },
         {
@@ -908,6 +933,7 @@
             "slot": "{configId}",
             "pos": "skill2"
           },
+          "asset": "assets/ui/slot_2.webp",
           "z": 3
         },
         {
@@ -929,6 +955,7 @@
             "slot": "{configId}",
             "pos": "skill2"
           },
+          "asset": "assets/ui/slot_3.webp",
           "z": 3
         },
         {
@@ -950,6 +977,7 @@
             "slot": "{configId}",
             "pos": "skill2"
           },
+          "asset": "assets/ui/slot_4.webp",
           "z": 3
         }
       ],
@@ -992,6 +1020,7 @@
             "slot": "{configId}",
             "pos": "skill3"
           },
+          "asset": "assets/ui/new_1.webp",
           "path": "M56.5,3.8 L86.8,21.3 L6.7,67.5 L6.7,32.5 Z"
         },
         {
@@ -1013,6 +1042,7 @@
             "slot": "{configId}",
             "pos": "skill3"
           },
+          "asset": "assets/ui/slot_1.webp",
           "z": 3
         },
         {
@@ -1034,6 +1064,7 @@
             "slot": "{configId}",
             "pos": "skill3"
           },
+          "asset": "assets/ui/slot_2.webp",
           "z": 3
         },
         {
@@ -1055,6 +1086,7 @@
             "slot": "{configId}",
             "pos": "skill3"
           },
+          "asset": "assets/ui/slot_3.webp",
           "z": 3
         },
         {
@@ -1076,6 +1108,7 @@
             "slot": "{configId}",
             "pos": "skill3"
           },
+          "asset": "assets/ui/slot_4.webp",
           "z": 3
         }
       ],
@@ -1114,6 +1147,7 @@
           ],
           "target": "modal_skill_pick",
           "label": "新元素",
+          "asset": "assets/ui/new_1.webp",
           "path": "M43.5,3.8 L13.2,21.3 L93.3,67.5 L93.3,32.5 Z"
         },
         {
@@ -1134,6 +1168,7 @@
             "idx": 0,
             "slot": "{configId}"
           },
+          "asset": "assets/ui/slot_1.webp",
           "z": 3
         },
         {
@@ -1154,6 +1189,7 @@
             "idx": 1,
             "slot": "{configId}"
           },
+          "asset": "assets/ui/slot_2.webp",
           "z": 3
         },
         {
@@ -1174,6 +1210,7 @@
             "idx": 2,
             "slot": "{configId}"
           },
+          "asset": "assets/ui/slot_3.webp",
           "z": 3
         },
         {
@@ -1194,6 +1231,7 @@
             "idx": 3,
             "slot": "{configId}"
           },
+          "asset": "assets/ui/slot_4.webp",
           "z": 3
         }
       ],

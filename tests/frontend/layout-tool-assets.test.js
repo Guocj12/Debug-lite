@@ -76,7 +76,12 @@ test('LT-4 清单里的 id 都真实存在于数据表（防拼错 / 防过期�
     if (e.kind === 'frame' || e.kind === 'tier') assert.ok(qualityIds.has(e.id), '品质/段位图 id 不在数据表：' + e.id);
   });
   assert.ok(manifest.summary.total > 100, '清单规模可疑地小：' + manifest.summary.total);
-  assert.ok(manifest.summary.coreMissing >= 1, '主界面优先的缺失项应当被算出来');
+  // 主界面优先的条目必须能被识别出来，且**全部到位**（占位图也算到位；这里不能要求"必须有缺失"，
+  //   否则"把所有素材补齐"这个正确状态反而会把测试判红 —— 与 PLANNED_ACTIONS 哨兵同一类问题）
+  const core = manifest.entries.filter((e) => e.priority === 'core');
+  assert.ok(core.length >= 40, '主界面优先的条目太少（实际 ' + core.length + '）');
+  const coreGap = core.filter((e) => !e.present && !e.optional);
+  assert.deepEqual(coreGap.map((e) => e.path), [], '主界面优先的素材不该有缺口');
 });
 
 test('LT-5 归位脚本认这几种文件名写法', () => {

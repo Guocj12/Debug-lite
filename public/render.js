@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* public/render.js —— 纯渲染：视图模型 → HTML 字符串（总纲 §1.4「绘制方法零逻辑」）
  *
  * 硬约束（由 tests/frontend/auth-ui-contract.test.js 与 admin-ui-contract.test.js 机器核对）：
@@ -192,6 +192,8 @@
     if (el.hit === 'ellipse') cls += ' dl-hit-ellipse';
     if (!el.asset && !isDeco) cls += ' dl-ph';
     if (el.muted) cls += ' dl-muted';   // 候选不匹配：标灰（原因写在 label 里）
+    // 尺寸类：让 CSS 能给大控件配大字号（角色卡 300px 高，用 14px 字太小）
+    if (el.rect[3] >= 160) cls += ' dl-lg'; else if (el.rect[3] <= 28) cls += ' dl-sm';
     var style = 'left:' + layPct(el.rect[0], canvas.w) + ';top:' + layPct(el.rect[1], canvas.h)
       + ';width:' + layPct(el.rect[2], canvas.w) + ';height:' + layPct(el.rect[3], canvas.h)
       + ';z-index:' + String(10 + (el.z || 1));

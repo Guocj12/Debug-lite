@@ -98,7 +98,39 @@ npm run assets:manifest          # = node tools/layout/asset-manifest.js
 | 布局表 | 背景图 + **每个没有素材的按钮**都会给出建议文件名 `assets/ui/<元素id>.webp` |
 | 前端拼路径规则（`public/format.js`） | `assets/{role,skill,plugin,ai,frame,tier}/<id>.<ext>` 的命名与扩展名 |
 
-### 3.2 出图与归位
+### 3.2 占位素材（已经生成好了，界面不再显示虚线框）
+
+仓库里现在有 **143 张程序生成的占位图**（`public/assets/**`），主界面 / 仓库 / 编辑器都能正常显示图，
+只是还不是美术成品。生成器：
+
+```bash
+python tools/layout/make-placeholder-assets.py           # 只补缺失的（不会覆盖你的真图）
+python tools/layout/make-placeholder-assets.py --force    # 连占位图也重画
+```
+
+> 需要 Pillow（本仓库自带的 Python 运行时里就有）。占位图是**按清单的 ID 与规格**生成的，文件名与目录完全对得上。
+
+**安全约定**：生成器只覆盖登记在 `tools/layout/placeholders.json` 里的文件。
+你把真图放进 `assets-inbox/` 跑 `npm run assets:apply`（或直接覆盖 `public/assets/` 下的同名文件）之后，
+再跑生成器**不会**动你的真图；清单里也会从 `🧩 占位` 变成 `✅ 真素材`。
+
+占位素材的风格（都**不带文字**，文字由界面自己渲染，避免重影）：
+
+| 类别 | 画的是什么 |
+|---|---|
+| 背景 | 深蓝渐变 + 中央光晕 + 极淡六边形暗纹 + 平滑暗角 |
+| 角色 | 六边形盾牌（按 id 取色）+ 内圈 + 徽记 |
+| 技能 | 菱形盘 + 按技能类型的方向符号（斩击 / 箭头 / 定点 / 位移） |
+| 插件 | 圆角方牌；角色插件=圆环、技能插件=三角，右上角小点表示点数 |
+| AI 节点 | 代码块样式的圆角块（左侧类别色条 + 代码条） |
+| 包 | 箱体 + 缎带 |
+| 品质框 / 段位 | SVG（颜色取自 `server/data/qualities.json`，段位用星点表示档位） |
+| 界面按钮 | 按元素框生成的底版；多边形元素直接画成同形多边形，被 clip-path 裁切后完全贴合 |
+
+素材接进布局表由 `tools/layout/wire-assets-into-layout.js` 负责（幂等；给缺 `asset` 的元素补路径）。
+它和生成器都以**修正后**的布局为准（真源里「设为出战 / 对战历史」还是 deco，导入期才变成 button）。
+
+### 3.3 出图与归位
 
 把图按**清单里的 ID** 命名，丢进仓库根的 **`assets-inbox/`**（可以带子目录、可以 PNG/JPG），然后：
 

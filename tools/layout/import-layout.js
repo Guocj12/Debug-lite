@@ -74,6 +74,14 @@ function applyStructuralFixes(bundle, log) {
     if (sk && sk.target === 'model_skill1_slots') sk.target = 'modal_skill1_slots';
     log.push({ id: 'model_skill1_slots', why: '屏幕名笔误（model→modal）→ 改名并同步 hub 的 target' });
   }
+  // ①b 角色卡的文字：设计期占位名（"角色卡"）→ 绑定 {roleName}，这样它会跟着当前显示配置变
+  {
+    const crest = bundle.screens.hub.elements.find((e) => e.id === 'crest_role');
+    if (crest && (crest.label === '角色卡' || !crest.label)) {
+      crest.label = '{roleName}';
+      log.push({ id: 'crest_role', why: '角色卡文字是设计期占位名 → 改为 {roleName}（随显示的配置切换）' });
+    }
+  }
   // ② 技能插槽弹窗的中心点：布局台新建元素留下的默认值（goto-hub / 新元素）
   SKILLS.forEach(function (sk) {
     const sc = bundle.screens[sk.screen];
