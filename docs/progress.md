@@ -465,32 +465,59 @@ docs/progress.md       本文件
 必须有专门用例在**真实装配**下跑，否则"测试全绿 + 功能全坏"会同时成立。
 
 ---
-
-## §0.9 布局表驱动界面（F9 第一段：数据 / 引擎 / 样式 / 投影层，2026-10-03）
+## §0.9 布局表驱动界面（F9，2026-10-03）—— 主界面由布局表渲染并接后端
 
 **目标（用户）**：主界面不再手写 HTML/CSS，而是**由布局表驱动**；插槽数量由模板 `slotCount` 决定；
-模板与插件候选全部来自后端；没素材时先画占位形状便于调试；主界面最终**替换**旧文字版。
+模板与插件候选全部来自后端；没素材时先画占位形状便于调试；**直接替换旧主界面**且每个按钮都能用。
 
-**已交付（本段，全部机器验证）**：
+**① 数据 / 引擎 / 样式（本批前半）**
 
 | 件 | 落点 | 说明 |
 |---|---|---|
 | 布局数据（真源） | `public/layout-data.js` | 由 `runtime/import-layout.js` 从布局台导出生成（**请勿手改**）；同时产出 `runtime/layout-bundle.json` 供布局台继续编辑 |
-| 布局引擎 | `public/layout-engine.js` | 由 `runtime/make-engine.js` 从布局台 `<script id="core">` 生成（core digest 写在产物里，**单一真源**）；只做纯布局：归一化 / 断点 / 锚点 / 占位符替换 / 多边形 / 校验 |
-| 界面样式 | `public/app.css` | 百分比定位（换屏自适应）+ `clip-path` 多边形命中 + 弹窗遮罩（`blocksBackground` = 吞掉背景交互） |
-| **投影层** | `public/format.js`（`setLayout` / `hubLayoutVm` / `layFlat` / `layScreen` / `layRows`） | 信封 → 扁平绑定数据 + 插槽按 `slotCount` 展开 + 候选列表按仓库桶展开并按插槽/技能类型过滤；`when.battleSlot` 决定「出战」角标显示哪个 |
-| 主界面状态 | `public/store.js`（`hub: {slot, modals}` + 4 个 reducer） | `slot: 0` = **跟随出战配置**（`/me.activeSlotId`）；1..3 = 用户显式切过的显示配置；`modals` = 径向弹窗栈 |
-| 机器核对 | `tests/frontend/layout-hub-vm.test.js`（LH-1..7） | 绑定数据 / **出战角标只显示出战那个** / 显示配置 ≠ 出战配置 / 插槽数 = slotCount / 候选行来自仓库并类型匹配 / `clip` 与载荷键 |
-| 布局表里的「出战」角标 | `runtime/import-layout.js` 的结构修正 | 三个配置按钮上方各加 `battle_badge_N` + `when: {battleSlot: N}`（用户 2026-10-03 要求） |
+| 布局引擎 | `public/layout-engine.js` | 由 `runtime/make-engine.js` 从布局台 `<script id="core">` 生成（core digest 写在产物里，**单一真源**）：归一化 / 断点 / 锚点 / 占位符替换 / 多边形 / 校验 |
+| 界面样式 | `public/app.css` | 百分比定位（换屏自适应）+ `clip-path` 多边形命中 + 弹窗遮罩 + 缺素材占位形状（`.dl-ph`）+ 不匹配候选标灰（`.dl-muted`） |
+| 导入期修正（15 条，逐条打印） | `runtime/import-layout.js` | 屏幕名笔误 `model_skill1_slots→modal_skill1_slots`；技能弹窗中心点默认值 →「再看一次 = 换技能」；用户写在名字里的功能（设为出战 / 对战历史）；错挂素材的装饰件改文字绑定；插槽屏标出中心与原型；四个候选屏改「列表屏」；**新增出战角标 `battle_badge_N` + `when.battleSlot`** |
 
-**实跑证据（开发期验证脚本，均在 `runtime/`，不进仓库）**：
-`runtime/test-hub-data.js`（真起服务 + 真注册账号）—— 昵称/段位/角色/技能均来自真实响应，**插槽数 = 角色物品 slotCount**（starter 为 1），
-角色插件候选按插槽类型 `mp`/`special` 过滤（1/1 命中），角色模板候选 = 仓库 role 桶计数；
-`runtime/test-hub-view.js`（jsdom 打开 `runtime/hub-view.html` + 真 token + file://）—— hub 渲染 19 元素、点角色卡弹出插槽屏（1 个 = slotCount）、
-点插槽弹出插件候选（3 行，来自 `/me/warehouse`）、点遮罩逐层关闭、缺素材元素带占位样式。
+**② 接线（本批后半：主界面真的换掉了）**
 
-**尚未接线（下一段）**：`render.js` 的布局分支 + `app.js` 收 `screen`/`slotIndex`/`targetUid` 三个载荷键
-（需与 `button-payload-contract` 的 BP-1「render 搬运字段 == app 收集字段」**同时**改）+ `actions.js` 的布局动作
-（`layout-open` / `layout-close` / `layout-set-state` / `layout-assemble` / `layout-disassemble` / `layout-activate` / `layout-set-slot` / `goto-records`）
-+ `boot.js` 调 `format.setLayout(DL.layoutEngine, DL.layoutData)`。本段刻意**不**调 `setLayout`，因此产品行为与接线前逐字一致（hub 仍走旧文字界面）。
-`tests/frontend/layout-hub-vm.test.js` 的 LH-7 显式登记这三个待接线键，避免它们悄悄漏掉。
+| 件 | 落点 | 说明 |
+|---|---|---|
+| 投影层 | `public/format.js` | `setLayout` / `hubLayoutVm(state, busy)` / `layFlat` / `layScreen` / `layRows` / `hubSlotId` / `hubLoadout`：信封 → 扁平绑定数据；插槽按 `slotCount` 展开；候选行来自仓库桶（**全部列出、不匹配标灰 + 写原因**，沿用旧编辑器 B-8 口径）；`path` 预计算 `clip` |
+| 主界面状态 | `public/store.js` | `hub: {slot, modals}` + 4 reducer：`slot: 0` = **跟随出战配置**（`/me.activeSlotId`）；1..3 = 用户显式切过的显示配置；`modals` = 径向弹窗栈 |
+| 渲染层 | `public/render.js` | 布局分支：`dl-screen` + 百分比定位 + `--dl-clip` + `disabled` + `dl-ph`/`dl-muted`；载荷字段一律 `data-*`（**显式 `button.<字段>` 读法**，新增字段立刻被 BP-1 抓到） |
+| 动作层 | `public/actions.js` | 新增 7 个：`layout-open`（压弹窗层，带 `pickPos`/`pickIdx`/`targetUid`）、`layout-switch-config`（只切显示）、`layout-set-slot`（`PUT /me/configs`）、`layout-assemble` / `layout-disassemble`（装配 / 卸下）、`layout-activate`（设为出战）、`goto-records`（计划动作，明确提示）；`goto-hub`/`refresh-hub` 改为取**三份数据**；`modal-close` 先关布局层 |
+| 载荷键 | `public/app.js` | `payloadOf` 收 `screen`/`slotIndex`/`targetUid`（与 render 搬运字段双向相等，BP-1 机器核对） |
+| 引导 | `public/boot.js` | `format.setLayout(DL.layoutEngine, DL.layoutData)` |
+
+**③ 契约细化（用户授权：过时的约束直接删）**
+
+`UI-7`/`AU-4` 原来用 `/\bstate\b/` 扫 render.js 源码判「不接触应用状态对象」——那是**实现代理**：
+它会把 HTML 属性名（`data-set-state`）与动作名这类**字符串**误判成"接触状态"。已换成真正的不变量：
+不访问 `ctx.state` / 不读状态字段 / 不派发 / 不依赖 store / 不自取数据 / 不发请求 / 不出现契约字段字面量。
+保留并**满足**了 `BP-1`（render 搬运字段 == app 收集字段，双向）、`UI-2`/`AU-1`（渲染集合 == 注册表，双向）、
+`UI-5`（busy 时按钮全禁用——布局按钮也遵守）、`ESC-*`（转义不变量；`<img` 因应用现在渲染自己的素材而改为
+「必须是 `assets/` 路径 + 属性已转义 + 形状固定」+ 事件处理器属性注入检测）。
+
+**④ 机器核对与实跑证据**
+
+- `npm test` **1249 / 1249 通过**（`tests/frontend/layout-hub-vm.test.js` LH-1..7：绑定数据 / 出战角标只显示出战那个 /
+  显示配置 ≠ 出战配置 / 插槽数 = `slotCount` / 候选行来自仓库且标灰原因正确 / `clip` 与载荷键；
+  `hub-warehouse-flow.test.js` WH-1 改为核**布局渲染 + 三份数据 + 径向弹窗层 + 插槽数 = 角色 slotCount**）。
+- `runtime/test-hub-data.js`（真起服务 + 真注册）：昵称/段位/角色/技能来自真实响应，插槽数 = 角色物品 `slotCount`（starter = 1），
+  角色插件候选按插槽类型过滤命中，角色模板候选 = 仓库 role 桶计数。
+- `runtime/test-hub-view.js`（jsdom + file:// + 真 token）：hub 渲染 19 元素、点角色卡→插槽屏（1 个 = slotCount）、
+  点插槽→插件候选（3 行，来自 `/me/warehouse`）、点遮罩逐层关闭、缺素材元素带占位样式。
+- `runtime/hub-view.html`：独立预览页（`?token=`/`?base=`），可在系统浏览器里直接点每个按钮打真接口。
+
+**⑤ 两条实测结论（已固化进代码与测试）**
+
+1. **`/me/configs` 是快照**：卸下插件后 `/me/warehouse` 里那件物品已经 `pluginUid: null`，但 `/me/configs` 仍返回旧值。
+   因此「这个插槽装了什么」**一律读仓库**（`format.layInstalled`），插槽按钮上直接显示已装插件名（例：`插槽1·闪避`）。
+   验证脚本 `runtime/probe-plugin-state.js` 打印了两边的差异。
+2. **启动时的预取不能占全局 `busy`**：动作层普遍有 `if (ctx.state.busy) return` 守卫，落地主界面时若用前台方式补
+   `/me/configs` + `/me/warehouse`，会把用户随后立刻发生的点击**静默吞掉**（实测把 AE2-2/4/5/6/7 与 BF-2 打红）。
+   现在走 `refresh-hub` 的 `{ skipProfile: true, background: true }`：不占 busy、不写提示（`/me` 由启动自检那次复用，不多发请求）。
+
+**⑥ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
+→ 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。

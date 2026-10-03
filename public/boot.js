@@ -9,6 +9,10 @@
   if (typeof document === 'undefined') return;
   var DL = typeof window !== 'undefined' ? window.DL : null;
   if (!DL || !DL.app || typeof DL.app.createApp !== 'function') return;
+  // F9/D-180：把布局引擎与布局数据交给投影层 —— 之后主界面由布局表渲染（径向插槽流）
+  if (DL.format && typeof DL.format.setLayout === 'function' && DL.layoutEngine && DL.layoutData) {
+    DL.format.setLayout(DL.layoutEngine, DL.layoutData);
+  }
   var app = DL.app.createApp({ doc: document, win: window, DL: DL });
   window.DL.currentApp = app;
   app.start();

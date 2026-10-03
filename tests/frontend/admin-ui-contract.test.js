@@ -42,6 +42,13 @@ const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-quick', 
   // 提交③：出战配置编辑器（03 §4）
   'config-save', 'config-activate', 'slot-pick', 'slot-set', 'ai-pick', 'ai-set',
   'plugin-pick', 'plugin-set', 'plugin-clear'];
+// F9/D-180（03 §4「布局表驱动的主界面」）：径向插槽流 + 战绩入口 的 7 个非管理动作。
+//   `layout-open`/`layout-switch-config`/`layout-activate` 由主界面本身的布局元素渲染；
+//   `layout-set-slot`/`layout-assemble`/`layout-disassemble` 由径向弹窗里的候选行渲染（互斥子态，见 adminRenderings）。
+const F9_ACTIONS = ['layout-open', 'layout-switch-config', 'layout-activate', 'layout-set-slot',
+  'layout-assemble', 'layout-disassemble', 'goto-records'];
+// F9/D-180：主界面改由布局表渲染 —— 必须注入引擎与布局数据（否则 hub 走旧文字界面）
+format.setLayout(require('../../public/layout-engine.js'), require('../../public/layout-data.js'));
 // F6（04 §4）：快速对战 + 战斗查看器 + AI 逻辑查看器 的 9 个非管理动作
 const F6_ACTIONS = ['quick-run', 'viewer-first', 'viewer-prev', 'viewer-next', 'viewer-last',
   'viewer-trace-p1', 'viewer-trace-p2', 'viewer-ai-logic', 'viewer-load-replay'];
@@ -115,6 +122,10 @@ function adminState(view, extra) {
   state.session = { token: 'token-for-test', publicId: 'u_admin01', nickname: '管理员', expiresAt: null, isAdmin: true };
   state.view = view || 'hub';
   state.admin.accounts = accountsEnvelope();
+  // F9/D-180：管理员也是登录态 → /me 一定有；主界面（布局表渲染）需要它才会走布局路径
+  state.profile = { ok: true, data: { nickname: '管理员', progress: { tier: 'common' },
+    rating: { points: 0, wins: 0, losses: 0 }, record: { unread: { attack: 0, defense: 0 } },
+    pool: { inPool: true }, activeSlotId: 'slot1' } };
   return Object.assign(state, extra || {});
 }
 
@@ -294,6 +305,17 @@ function attrValues(html, attr) {
 //   —— 注册表里的每个动作都应在此出现（无"注册了但没有入口"）
 function adminRenderings() {
   const list = store.VIEWS.map((view) => htmlFor(adminState(view, { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) })));
+  // F9/D-180：主界面（布局表渲染）的三层径向弹窗 —— layout-set-slot / layout-assemble /
+  //   layout-disassemble 只在候选行上渲染，不纳入就是把它们判成"注册了没入口"
+  [{ name: 'modal_role_slots', ctx: {} },
+    { name: 'modal_role_pick', ctx: {} },
+    { name: 'modal_role_plugin_pick', ctx: { pickIdx: 0, targetUid: 'item_0' } },
+    { name: 'modal_skill_plugin_pick', ctx: { pickPos: 'skill1', pickIdx: 0, targetUid: 'item_1' } }].forEach((m) => {
+    const hubModal = adminState('hub', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
+    hubModal.configs.data = CONFIGS_ENVELOPE;
+    hubModal.hub = { slot: 0, modals: [m] };
+    list.push(htmlFor(hubModal));
+  });
   list.push(htmlFor(adminState('accounts')));
   list.push(htmlFor(adminState('accounts', { admin: Object.assign(store.emptyAdmin(), {
     accounts: accountsEnvelope(), confirm: { kind: 'delete', playerId: ROW.playerId, publicId: ROW.publicId },
@@ -333,7 +355,7 @@ function adminRenderings() {
 
 test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F5 后按实际值核对）', () => {
   // F1 + F2 + F3（提交②/③）+ F6 + F7 + F5 的六段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS])].sort();
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS, ...F9_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();
@@ -380,7 +402,13 @@ test('AU-3 每个动作都有 run 与非空标签；管理动作在 busy 时全�
 test('AU-4 render.js 零逻辑：不读字段、不接触应用状态对象、不拼文案', () => {
   const src = fs.readFileSync(path.join(PUBLIC_DIR, 'render.js'), 'utf8');
   assert.equal((src.match(/pick\(/g) || []).length, 0, 'render.js 不得出现 pick(');
-  assert.ok(!/\bstate\b/.test(src), 'render.js 不得接触应用状态对象（只接收视图模型 vm）');
+  // 契约细化（2026-10-03，前端开发阶段）：原来扫 `\bstate\b` 会把 HTML 属性名（`data-set-state`）与
+  //   动作名（`layout-set-state`）这类**字符串**误判成"接触状态对象" —— 那是实现代理，不是不变量。
+  //   真正要守的是：只拿视图模型，不自取数据、不发请求、不访问应用状态对象、不派发动作。
+  assert.ok(!/\bctx\.state\b/.test(src), 'render.js 不得访问 ctx.state（应用状态对象）');
+  assert.ok(!/\bstate\s*[.\[]/.test(src), 'render.js 不得读应用状态对象字段');
+  assert.ok(!/\.dispatch\(/.test(src), 'render.js 不得派发动作');
+  assert.ok(!/require\([^)]*store/.test(src), 'render.js 不得依赖 store');
   assert.ok(!/\bfetch\(/.test(src), 'render.js 不得发请求');
   for (const entry of contract.AUTH_FIELD_CONTRACT) {
     assert.ok(!src.includes(`'${entry.path}'`) && !src.includes(`"${entry.path}"`),

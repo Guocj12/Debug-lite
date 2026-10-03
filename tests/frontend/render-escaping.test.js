@@ -37,11 +37,20 @@ const ATTR_PAYLOAD = '"><img src=x onerror=alert(1)>';
 // **标记**注入成功后才会出现的子串（转义正确时一个都不该出现）。
 // 注意：只列标记本身 —— 形如 `onerror=`、` src=x` 的**纯文本**在转义后仍会出现且无害，
 // 拿它们当判据会得到假红（第一版就是这么错的）。
-const FORBIDDEN = ['<b>hack', '<img', '<script', '<svg'];
+// F9/D-180：应用现在会渲染**自己的**图片（布局表的素材位）→ `<img` 不再是"未转义载荷"的判据；
+//   改成更强的口径：任何 <img> 都必须是「我们自己的素材路径 + 形状固定 + 属性已转义」。
+const FORBIDDEN = ['<b>hack', '<script', '<svg'];
 
 function assertClean(html, label) {
   for (const bad of FORBIDDEN) {
     assert.ok(!html.includes(bad), `${label}：输出出现了未转义的 ${bad}\n${html}`);
+  }
+  // 事件处理器属性只可能通过"未转义的引号闭合属性"注入 → 要求 on*= 后面紧跟**原始**引号
+  //   （转义后的载荷长这样：class="…&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"，不会命中）
+  assert.ok(!/<[a-zA-Z][^>]*\son[a-z]+\s*=\s*"/.test(html), `${label}：出现了事件处理器属性注入\n${html}`);
+  for (const m of html.matchAll(/<img[^>]*>/g)) {
+    assert.ok(/^<img src="assets\/[^"<>]*" alt="">$/.test(m[0]),
+      `${label}：<img> 只允许我们自己的素材路径（属性已转义、形状固定），实际：${m[0]}`);
   }
 }
 

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* tests/frontend/auth-ui-contract.test.js —— F1 界面契约（总纲 §4.1「按钮永不无声」+ §1.5「投影单一真源」）
  *   （F3 提交②同步：非管理员态口径从「F1 四屏恰好 9 个动作」改为「非管理动作集合」，见 UW-2）
  *
@@ -26,6 +26,9 @@ const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js',
   // 布局表驱动界面（运行时增量）：引擎（纯逻辑）+ 布局数据（由 runtime/import-layout.js 生成）+ 样式
   'layout-engine.js', 'layout-data.js', 'app.css'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
+// F9/D-180：主界面改由布局表渲染 —— 本文件必须注入引擎与布局数据（否则 hub 走旧的文字界面，
+//   布局路径的动作会判成"注册了没入口"）
+format.setLayout(require('../../public/layout-engine.js'), require('../../public/layout-data.js'));
 
 // 02-accounts.md §4 的十七个管理动作（F2 十六 + D-170 一个；只在管理员态渲染，非管理员态**完全不出现**，A-1）
 const ADMIN_ACTIONS = new Set(['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'accounts-next',
@@ -305,6 +308,29 @@ function nonAdminRenderings() {  const list = store.VIEWS.map((view) => stateFor
   // F6（04 §4）：快速对战屏的**两种**可达态 —— 有内联帧（步进/轨迹/AI 查看器按钮）与
   //   无内联帧但有对局 id（「读取本场回放」按钮）。二者互斥，故必须都纳入渲染集合，
   //   否则 viewer-load-replay 会判成"注册了但没入口"。
+  // F9/D-180：主界面（布局表渲染）的**四个互斥可达态** —— 主界面本身 + 三层径向弹窗
+  //   （插槽 / 候选角色技能 / 候选插件）。不纳入本集合，layout-open / layout-switch-config /
+  //   layout-activate / layout-set-slot / layout-assemble / layout-disassemble / goto-records 会判成"没入口"。
+  const hubLayout = stateFor('hub');
+  hubLayout.profile = { ok: true, data: { nickname: '甲', progress: { tier: 'common' },
+    rating: { points: 0, wins: 0, losses: 0 }, record: { unread: { attack: 0, defense: 0 } },
+    pool: { inPool: true }, activeSlotId: 'slot1' } };
+  hubLayout.configs.data = CONFIGS_ENVELOPE;
+  hubLayout.warehouse.envelope = WAREHOUSE_ENVELOPE;
+  list.push(hubLayout);
+  [
+    { name: 'modal_role_slots', ctx: {} },
+    { name: 'modal_role_pick', ctx: {} },
+    { name: 'modal_role_plugin_pick', ctx: { pickIdx: 0, targetUid: 'item_0' } },
+    { name: 'modal_skill_plugin_pick', ctx: { pickPos: 'skill1', pickIdx: 0, targetUid: 'item_1' } },
+  ].forEach((m) => {
+    const hubModal = stateFor('hub');
+    hubModal.profile = hubLayout.profile;
+    hubModal.configs.data = CONFIGS_ENVELOPE;
+    hubModal.warehouse.envelope = WAREHOUSE_ENVELOPE;
+    hubModal.hub = { slot: 0, modals: [m] };
+    list.push(hubModal);
+  });
   list.push(quickState({ frames: QUICK_FRAMES, battleId: 'b_fe6', index: 0 }));
   list.push(quickState({ frames: null, battleId: 'b_fe6', index: 0 }));
   // F6：AI 逻辑查看器弹窗（只读；非管理员态也可打开）
@@ -431,7 +457,13 @@ test('UI-6 输入框数值来自状态（受控输入），且视图模型不含
 test('UI-7 render.js 零逻辑：不读响应字段、不接触应用状态对象、不做投影', () => {
   const src = readPublic('render.js');
   assert.equal((src.match(/pick\(/g) || []).length, 0, 'render.js 不得出现 pick(');
-  assert.ok(!/\bstate\b/.test(src), 'render.js 不得接触应用状态对象（只接收视图模型 vm）');
+  // 契约细化（2026-10-03，前端开发阶段）：原来扫 `\bstate\b` 会把 HTML 属性名（`data-set-state`）与
+  //   动作名（`layout-set-state`）这类**字符串**误判成"接触状态对象" —— 那是实现代理，不是不变量。
+  //   真正要守的是：只拿视图模型，不自取数据、不发请求、不访问应用状态对象、不派发动作。
+  assert.ok(!/\bctx\.state\b/.test(src), 'render.js 不得访问 ctx.state（应用状态对象）');
+  assert.ok(!/\bstate\s*[.\[]/.test(src), 'render.js 不得读应用状态对象字段');
+  assert.ok(!/\.dispatch\(/.test(src), 'render.js 不得派发动作');
+  assert.ok(!/require\([^)]*store/.test(src), 'render.js 不得依赖 store');
   for (const entry of contract.AUTH_FIELD_CONTRACT) {
     assert.ok(!src.includes(`'${entry.path}'`) && !src.includes(`"${entry.path}"`),
       `render.js 不得出现契约字段字面量：${entry.path}`);

@@ -60,6 +60,8 @@ const WAREHOUSE_CACHE_MAX = 200;                // 缺陷 B：进程内仓库镜
  * `public/` 不存在 → 分支整体不生效（行为与改动前逐字一致）。
  */
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+// 静态资源白名单（**只按扩展名给类型，未知扩展名一律 404**）。
+//   F9/D-180：布局表驱动的界面要放素材图 → 补图片/音频/字体类型（此前只有 html/js/css/json/svg/ico）。
 const STATIC_EXT_TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -67,6 +69,15 @@ const STATIC_EXT_TYPES = Object.freeze({
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.woff2': 'font/woff2',
 });
 
 /* ---------- 通用工具（P0-8 基线，行为不变） ---------- */

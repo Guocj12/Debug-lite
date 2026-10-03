@@ -158,14 +158,65 @@
   // 取仓库真源（03 §3.3）。成功落 warehouse.set（**仓库屏与开箱屏共用这一份状态**，不产生第二个数据源）。
   //   opts.quiet = true 时不写成功提示（也不清旧提示）—— 用于"进入开箱屏 / 开箱成功后的静默刷新"；
   //   **失败一律可见**（网络文案 / 401 统一登出），且不影响调用方已渲染的内容。
+  // F9/D-180：布局路径的写操作（装配插件 / 清空插槽 / 设为出战）——统一 busy 与错误处理，
+  //   成功后刷新「主界面三份数据」（/me 供出战角标、/me/configs 供装备、/me/warehouse 供候选）
+  function hubWrite(ctx, label, invoke) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    return invoke(token, ctx.api).then(function (result) {
+      busy(ctx, false);
+      if (result.transport === 'error') return failFrom(ctx, result);
+      if (!ctx.format.isOk(result.envelope)) {
+        if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+        return failFrom(ctx, result);
+      }
+      noticeNotice(ctx, 'info', label + '成功');
+      return Promise.all([
+        loadProfile(ctx, token),
+        loadWarehouse(ctx, { quiet: true }),
+        loadConfigs(ctx),
+      ]).then(function () { return undefined; });
+    });
+  }
+
+  // F9：进入主界面要三份数据（布局表驱动的界面全靠它们）；并在进入时收起布局弹窗。
+  //   与「刷新」同一件事：清掉旧提示 → 成功后给一致的成功文案（否则旧的错误提示会留在屏幕上）。
+  //   opts.skipProfile = true 时跳过 /me（启动自检已经取过一次，省一次请求）。
+  function loadHub(ctx, opts) {
+    if (!(opts && opts.background === true) && ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    var ok = true;
+    var jobs = [];
+    if (!(opts && opts.skipProfile === true)) {
+      jobs.push(loadProfile(ctx, token).then(function (env) { if (env === undefined) ok = false; }));
+    }
+    jobs.push(loadWarehouse(ctx, { quiet: true, background: !!(opts && opts.background === true) }));   // 失败时自己会写可见提示
+    jobs.push(loadConfigs(ctx));
+    return Promise.all(jobs).then(function () {
+      ctx.dispatch({ type: 'hub.modals.clear' });
+      if (!ok) return undefined;   // 失败文案已由上面写入
+      // 后台预取（启动补齐主界面数据）**不写提示**：否则会把用户此刻看到的提示冲掉
+      if (!(opts && opts.background === true)) noticeNotice(ctx, 'info', ctx.format.REFRESH_OK_TEXT);
+      return undefined;
+    });
+  }
+
   function loadWarehouse(ctx, opts) {
     var quiet = opts !== undefined && opts !== null && opts.quiet === true;
-    if (ctx.state.busy) return Promise.resolve();
+    // background = 后台预取（启动时补齐主界面数据）：**不占全局 busy**，否则会把随后立即发生的
+    //   用户点击静默吞掉（动作层普遍有 `if (ctx.state.busy) return` 守卫）。前台调用行为不变。
+    var background = opts !== undefined && opts !== null && opts.background === true;
+    if (!background && ctx.state.busy) return Promise.resolve();
     if (!ctx.state.session.token) return sessionLost(ctx, null);
-    busy(ctx, true);
+    if (!background) busy(ctx, true);
     if (!quiet) ctx.dispatch({ type: 'notice.set', notice: null });
     return ctx.api.warehouse(ctx.state.session.token).then(function (result) {
-      busy(ctx, false);
+      if (!background) busy(ctx, false);
       if (result.transport === 'error') return failFrom(ctx, result);
       if (!ctx.format.isOk(result.envelope)) {
         if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
@@ -820,9 +871,10 @@
      *   ai-pick / ai-set / plugin-pick / plugin-set / plugin-clear）→ 注册表 51 = F1 9 + F2 16 + ② 17 + ③ 9。
      */
 
+    // F9：进主界面取三份数据（/me + /me/configs + /me/warehouse）——布局表驱动的界面全靠它们
     'goto-hub': {
       label: '返回主界面',
-      run: function (ctx) { return goView(ctx, 'hub'); },
+      run: function (ctx) { goView(ctx, 'hub'); return loadHub(ctx); },
     },
 
     'goto-profile': {
@@ -874,7 +926,7 @@
 
     'refresh-hub': {
       label: '刷新',
-      run: function (ctx) { return refreshProfile(ctx); },
+      run: function (ctx, payload) { return loadHub(ctx, payload); },
     },
 
     'refresh-warehouse': {
@@ -1324,8 +1376,135 @@
     'modal-close': {
       label: '关闭',
       run: function (ctx) {
+        // F9：径向布局弹窗（hub.modals 栈）优先关它自己那一层；没有布局层时才关旧编辑器弹窗
+        if (ctx.state.hub && ctx.state.hub.modals && ctx.state.hub.modals.length) {
+          ctx.dispatch({ type: 'hub.modal.pop' });
+          return Promise.resolve();
+        }
         ctx.dispatch({ type: 'modal.close' });
         ctx.dispatch({ type: 'configs.draft.set', draft: null });
+        return Promise.resolve();
+      },
+    },
+
+    /* ---------- F9/D-180：布局表驱动的主界面（径向插槽流） ----------
+     * 与旧编辑器的分工：布局路径**直接打服务端**（装配 / 清空 / 设出战 / 换装），
+     *   旧编辑器（`config-open` 进来那套）继续用草稿 + 保存，两者互不干扰。
+     */
+    // 打开一层布局弹窗（角色插槽 / 技能插槽 / 候选角色 / 候选技能 / 插件候选）。
+    //   上下文一并带上：候选行要知道"换哪个位置的哪一类"（pickPos / pickIdx / targetUid）。
+    'layout-open': {
+      label: '打开',
+      run: function (ctx, payload) {
+        var screen = payload && typeof payload.screen === 'string' ? payload.screen : '';
+        if (screen === '') {
+          noticeNotice(ctx, 'error', '缺少子画面名（layout-open 需要 data-screen）');
+          return Promise.resolve();
+        }
+        var idx = intOf(payload === null || payload === undefined ? null : payload.idx);
+        ctx.dispatch({
+          type: 'hub.modal.push', screen: screen,
+          ctx: {
+            pickIdx: idx === null ? 0 : idx,
+            pickPos: payload && typeof payload.pos === 'string' ? payload.pos : 'role',
+            targetUid: payload && typeof payload.targetUid === 'string' ? payload.targetUid : '',
+          },
+        });
+        return Promise.resolve();
+      },
+    },
+
+    // 只切换「主界面显示哪份配置」（不碰服务端的出战配置）
+    'layout-switch-config': {
+      label: '查看配置',
+      run: function (ctx, payload) {
+        var slot = intOf(payload === null || payload === undefined ? null : payload.slot);
+        ctx.dispatch({ type: 'hub.slot.set', slot: slot === null ? 1 : slot });
+        return Promise.resolve();
+      },
+    },
+
+    // 装配插件（POST /me/warehouse/assemble）：插件 uid + 目标物品 uid + 插槽序号
+    'layout-assemble': {
+      label: '装配',
+      run: function (ctx, payload) {
+        var pluginUid = uidOf(payload);
+        var targetUid = payload && typeof payload.targetUid === 'string' ? payload.targetUid : '';
+        var idx = intOf(payload === null || payload === undefined ? null : payload.slotIndex);
+        if (pluginUid === null || targetUid === '' || idx === null) {
+          noticeNotice(ctx, 'error', '装配信息不全（需要插件 uid、目标物品 uid、插槽序号）');
+          return Promise.resolve();
+        }
+        return hubWrite(ctx, '装配插件', function (token, api) {
+          return api.assemble(token, { targetUid: targetUid, pluginUid: pluginUid, slotIndex: idx });
+        });
+      },
+    },
+
+    // 卸下插件（POST /me/warehouse/disassemble）：目标物品 uid + 插槽序号
+    'layout-disassemble': {
+      label: '清空此槽',
+      run: function (ctx, payload) {
+        var targetUid = uidOf(payload);
+        var idx = intOf(payload === null || payload === undefined ? null : payload.slotIndex);
+        if (targetUid === null || idx === null) {
+          noticeNotice(ctx, 'error', '卸下信息不全（需要目标物品 uid 与插槽序号）');
+          return Promise.resolve();
+        }
+        return hubWrite(ctx, '清空插槽', function (token, api) {
+          return api.disassemble(token, { targetUid: targetUid, slotIndex: idx });
+        });
+      },
+    },
+
+    // 把「当前显示的配置」设为出战（POST /me/configs/:slotId/activate）——服务端会校验完整性
+    'layout-activate': {
+      label: '设为出战',
+      run: function (ctx, payload) {
+        return hubWrite(ctx, '设为出战', function (token, api) {
+          return api.activateConfig(token, slotIdOf(payload, ctx.format.hubSlotId(ctx.state)));
+        });
+      },
+    },
+
+    // 换角色 / 换技能（PUT /me/configs/:slotId，体 = 整份 loadout）
+    'layout-set-slot': {
+      label: '替换',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var loadout = ctx.format.hubLoadout(ctx.state);
+        if (loadout === null) {
+          noticeNotice(ctx, 'error', '配置还没加载出来，请先刷新主界面');
+          return Promise.resolve();
+        }
+        var next = ctx.format.applySlotChoice(ctx.state, loadout, { pos: posOf(payload), uid: uidOf(payload), empty: false });
+        if (next === null) {
+          noticeNotice(ctx, 'error', '这件物品不在你的仓库里（或位置不合法）');
+          return Promise.resolve();
+        }
+        var slotId = ctx.format.hubSlotId(ctx.state);
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.saveConfig(token, slotId, { loadout: next }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          noticeNotice(ctx, 'info', '已替换 ' + slotId + ' 的装备');
+          return loadConfigs(ctx);
+        });
+      },
+    },
+
+    // 对战历史：战绩屏尚未实现（登记为计划动作，点了给明确提示而不是无声）
+    'goto-records': {
+      label: '对战历史',
+      run: function (ctx) {
+        noticeNotice(ctx, 'info', '对战历史屏尚未实现（计划批次：战绩与回放列表）');
         return Promise.resolve();
       },
     },

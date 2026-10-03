@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* public/app.js —— 外壳引导：store 装配 + **单一 DOM 写入点** + 事件委托（总纲 §1.5；设计依据 01-auth.md §7）
  *
  * 硬约束（机器核对见 tests/frontend/auth-ui-contract.test.js）：
@@ -190,6 +190,8 @@
       // D-179：`node`/`preset` 是积木编辑器的「加节点」「套用模板」载荷 —— 此前 render.js 不写、此处不收，
       //   于是这两个按钮点了毫无反应（与 format.js 的字段级契约由 button-payload-contract 测试钉死）。
       keys.push('node', 'preset');
+      // F9/D-180：布局表驱动的按钮载荷（子画面 / 候选行 / 插槽序号 / 装配目标）
+      keys.push('screen', 'slotIndex', 'targetUid');
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;
@@ -297,6 +299,10 @@
         // FR-11：登录态下的落点 = 主界面 hub（F1 的 home 已降级为 profile 子屏）
         dispatch({ type: 'view.go', view: 'hub' });
         dispatch({ type: 'booted.set', booted: true });
+        // F9/D-180：主界面由布局表渲染，落地时就要备齐**三份数据**（/me + /me/configs + /me/warehouse），
+        //   否则装备/技能/候选是空的。放在 booted 之后**不阻塞**启动自检（`ready()` 只看 booted）。
+        // background: 预取不占全局 busy（否则会把用户随后的点击静默吞掉）
+        run('refresh-hub', { skipProfile: true, background: true });
         return result;
       });
     }

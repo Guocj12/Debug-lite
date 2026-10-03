@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* public/render.js —— 纯渲染：视图模型 → HTML 字符串（总纲 §1.4「绘制方法零逻辑」）
  *
  * 硬约束（由 tests/frontend/auth-ui-contract.test.js 与 admin-ui-contract.test.js 机器核对）：
@@ -163,7 +163,77 @@
     }).filter(function (part) { return part !== ''; }).join('\n');
   }
 
+  /* ---------- F9/D-180：布局表驱动的界面（主界面 + 径向弹窗） ----------
+   * 只做「渲染指令 → HTML 字符串」：不读数据、不算几何（clip 与文案都由 format.js 算好）。
+   * 载荷字段一律落到 data-*，与 app.js 的 payloadOf 收集表**双向相等**（BP-1 机器核对）——
+   * 因此这里刻意用显式的 `button.<字段>` 读法，新增字段会被 BP-1 立刻发现。
+   */
+  function layPct(v, total) { return ((v / total) * 100).toFixed(4) + '%'; }
+
+  function layAttrs(button) {
+    var out = '';
+    if (button.slot !== undefined && button.slot !== null && button.slot !== '') out += ' data-slot="' + esc(String(button.slot)) + '"';
+    if (button.idx !== undefined && button.idx !== null && button.idx !== '') out += ' data-idx="' + esc(String(button.idx)) + '"';
+    if (button.pos) out += ' data-pos="' + esc(String(button.pos)) + '"';
+    if (button.uid) out += ' data-uid="' + esc(String(button.uid)) + '"';
+    if (button.screen) out += ' data-screen="' + esc(String(button.screen)) + '"';
+    if (button.slotIndex !== undefined && button.slotIndex !== null) out += ' data-slot-index="' + esc(String(button.slotIndex)) + '"';
+    if (button.targetUid) out += ' data-target-uid="' + esc(String(button.targetUid)) + '"';
+    return out;
+  }
+
+  function layoutElHtml(el, canvas) {
+    // 只有**载荷**用 `button.` 读（BP-1 用 `button.<字段>` 提取"被搬运的载荷字段"，
+    //   展示字段（rect/hit/asset/…）走 `el.`，否则会把展示字段误算成载荷）
+    var button = el.payload || {};
+    var isDeco = el.kind === 'deco';
+    var cls = 'dl-el ' + (isDeco ? 'dl-deco' : 'dl-btn');
+    if (el.hit === 'path') cls += ' dl-hit-path';
+    if (el.hit === 'ellipse') cls += ' dl-hit-ellipse';
+    if (!el.asset && !isDeco) cls += ' dl-ph';
+    if (el.muted) cls += ' dl-muted';   // 候选不匹配：标灰（原因写在 label 里）
+    var style = 'left:' + layPct(el.rect[0], canvas.w) + ';top:' + layPct(el.rect[1], canvas.h)
+      + ';width:' + layPct(el.rect[2], canvas.w) + ';height:' + layPct(el.rect[3], canvas.h)
+      + ';z-index:' + String(10 + (el.z || 1));
+    if (el.rot) style += ';transform:rotate(' + Number(el.rot) + 'deg)';
+    if (el.clip) style += ';--dl-clip:' + el.clip;
+    var attrs = ' class="' + cls + '" style="' + style + '" title="' + esc(el.id) + '"' + layAttrs(button);
+    if (!isDeco && el.action) attrs += ' data-action="' + esc(el.action) + '"';
+    if (!isDeco && el.disabled) attrs += ' disabled';
+    var inner = '';
+    if (el.asset) inner += '<img src="' + esc(el.asset) + '" alt="">';
+    if (el.text) inner += '<span class="dl-txt">' + esc(el.text) + '</span>';
+    return '<' + (isDeco ? 'div' : 'button type="button"') + attrs + '>' + inner + '</' + (isDeco ? 'div' : 'button') + '>';
+  }
+
+  function layoutHtml(layout) {
+    var canvas = layout.canvas, parts = [];
+    parts.push('<div class="dl-screen" style="aspect-ratio:' + canvas.w + '/' + canvas.h + '">');
+    (layout.layers || []).forEach(function (layer, idx) {
+      if (layer.role === 'modal') {
+        var m = layer.mask || {};
+        parts.push('<div class="dl-modal" data-depth="' + String(idx + 1) + '">');
+        parts.push('<div class="dl-mask" data-action="modal-close" style="background:' + esc(m.color || '#000000')
+          + ';opacity:' + String(m.opacity === undefined ? 0.5 : m.opacity) + '"></div>');
+        parts.push('<div class="dl-layer">');
+      }
+      layer.elements.forEach(function (el) { parts.push(layoutElHtml(el, canvas)); });
+      if (layer.role === 'modal') parts.push('</div></div>');
+    });
+    parts.push('</div>');
+    return parts.join('');
+  }
+
   function render(vm) {
+    if (vm && vm.layout && Array.isArray(vm.layout.layers)) {
+      var lay = ['<h2>' + esc(vm.title) + '</h2>'];
+      var layNotice = noticeHtml(vm);
+      if (layNotice !== '') lay.push(layNotice);
+      lay.push(layoutHtml(vm.layout));
+      if (vm.buttons && vm.buttons.length > 0) lay.push('<div class="buttons">' + buttonsHtml(vm.buttons) + '</div>');
+      lay.push(modalHtml(vm));
+      return lay.filter(function (x) { return x !== ''; }).join('\n');
+    }
     var parts = [];
     parts.push('<h2>' + esc(vm.title) + '</h2>');
     var notice = noticeHtml(vm);

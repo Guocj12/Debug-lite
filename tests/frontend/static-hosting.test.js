@@ -10,7 +10,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { startServer, request, makeTempDataDir, removeTempDir } = require('../helpers/http.js');
 
-const PUBLIC_ASSETS = ['/index.html', '/app.js', '/api.js', '/store.js', '/format.js', '/render.js', '/actions.js', '/boot.js', '/contract.js'];
+const PUBLIC_ASSETS = ['/index.html', '/app.js', '/api.js', '/store.js', '/format.js', '/render.js', '/actions.js', '/boot.js', '/contract.js', '/app.css', '/layout-engine.js', '/layout-data.js'];
+const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 
 test('SH-1 根路径返回 index.html（唯一入口）', async () => {
   const s = await startServer({ prefix: 'dl-fe-static-', level: 'warn' });
@@ -35,9 +36,36 @@ test('SH-2 public/ 下全部前端资源可达且类型正确', async () => {
       const type = r.headers['content-type'];
       if (asset.endsWith('.html')) assert.match(type, /text\/html/);
       else if (asset.endsWith('.js')) assert.match(type, /javascript/);
+      else if (asset.endsWith('.css')) assert.match(type, /text\/css/, `${asset} 应以 text/css 返回`);
       assert.ok(r.raw.length > 0, `${asset} 不应为空`);
     }
   } finally {
+    await s.cleanup();
+  }
+});
+
+test('SH-2b F9/D-180：素材类型白名单（图片/音频/字体可放，未知扩展名仍 404）', async () => {
+  const s = await startServer({ prefix: 'dl-fe-static-', level: 'warn' });
+  const allowed = { 'asset-probe.webp': 'image/webp', 'asset-probe.png': 'image/png',
+    'asset-probe.woff2': 'font/woff2', 'asset-probe.mp3': 'audio/mpeg' };
+  const written = [];
+  try {
+    for (const [name, type] of Object.entries(allowed)) {
+      const p = path.join(PUBLIC_DIR, name);
+      fs.writeFileSync(p, 'x');
+      written.push(p);
+      const r = await request(s.port, 'GET', '/' + name);
+      assert.equal(r.status, 200, `${name} 应可访问（布局表的素材要能放进来）`);
+      assert.equal(r.headers['content-type'], type, `${name} 的 content-type 应为 ${type}`);
+    }
+    // 未登记扩展名仍然拒绝（白名单语义不变）
+    const bad = path.join(PUBLIC_DIR, 'asset-probe.exe');
+    fs.writeFileSync(bad, 'x');
+    written.push(bad);
+    const r2 = await request(s.port, 'GET', '/asset-probe.exe');
+    assert.equal(r2.status, 404, '未登记扩展名应 404（不因新增类型而放松）');
+  } finally {
+    written.forEach((p) => { try { fs.unlinkSync(p); } catch (e) { /* ignore */ } });
     await s.cleanup();
   }
 });

@@ -59,6 +59,7 @@ function stateWith(opts) {
 const byId = (els) => { const m = {}; els.forEach((e) => { m[e.id] = e; }); return m; };
 
 test('LH-1 注入引擎/布局数据前后', () => {
+  format.setLayout(null, null);          // 测试进程内可能已被别的文件注入过 → 先归零
   assert.equal(format.layoutReady(), false, '默认未注入');
   assert.equal(format.hubLayoutVm(stateWith()), null, '未注入时返回 null（hub 走旧文字界面）');
   format.setLayout(engine, layoutData);
@@ -116,21 +117,25 @@ test('LH-5 插槽数量 = 模板 slotCount（不足用手放方向、超出按�
   assert.equal(one.length, 1, 'slotCount=1 时只生成 1 个');
 });
 
-test('LH-6 候选列表 = 仓库桶 + 类型过滤', () => {
+test('LH-6 候选列表 = 仓库桶（全部列出；不匹配的标灰 + 写原因）', () => {
   const st = stateWith();
   st.hub = { slot: 2, modals: [{ name: 'modal_role_pick', ctx: {} }] };
   let rows = format.hubLayoutVm(st).layers[1].elements.filter((e) => /^row_\d+$/.test(e.id));
   assert.equal(rows.length, 3, '角色候选 = 仓库 role 桶（3 个）');
   assert.ok(rows[0].payload.uid, '候选行必须带真实 uid');
-  // 角色插件：按当前角色第 0 个插槽类型（mp）过滤
+  // 角色插件：**全部列出**，只把不匹配当前插槽类型的标灰 + 写原因（口径沿用旧编辑器 B-8）
   st.hub = { slot: 2, modals: [{ name: 'modal_role_plugin_pick', ctx: { pickIdx: 0 } }] };
   rows = format.hubLayoutVm(st).layers[1].elements.filter((e) => /^row_\d+$/.test(e.id));
-  assert.deepEqual(rows.map((r) => r.payload.uid), ['p_mp'], '只保留类型匹配的角色插件');
-  // 技能插件：通用 + 专属（forTypes 匹配该技能）
+  assert.deepEqual(rows.map((r) => r.payload.uid), ['p_mp', 'p_atk', 'p_sp'], '所有角色插件都应列出');
+  assert.deepEqual(rows.map((r) => r.muted), [false, true, true], '只有类型匹配（mp）的不标灰');
+  assert.ok(rows[1].label.indexOf('该插槽是「mp」类型') >= 0, '不匹配的必须写明原因：' + rows[1].label);
+  // 技能插件：通用 + 专属（专属按 forTypes 与该技能的模板/动画名比对，不匹配则标灰）
   st.hub = { slot: 2, modals: [{ name: 'modal_skill_plugin_pick', ctx: { pickPos: 'skill1' } }] };
   rows = format.hubLayoutVm(st).layers[1].elements.filter((e) => /^row_\d+$/.test(e.id));
-  // 配置2 的 skill1 = skill_displace：通用插件全给，专属只给 forTypes 命中 skill_displace 的
-  assert.deepEqual(rows.map((r) => r.payload.uid).sort(), ['sp_gen', 'sp_other'], '通用 + 命中该技能的专属');
+  assert.deepEqual(rows.map((r) => r.payload.uid).sort(), ['sp_gen', 'sp_melee', 'sp_other'], '所有技能插件都应列出');
+  assert.deepEqual(rows.filter((r) => !r.muted).map((r) => r.payload.uid).sort(), ['sp_gen', 'sp_other'],
+    '通用插件 + forTypes 命中该技能（skill_displace）的专属插件可用');
+  assert.deepEqual(rows.filter((r) => r.muted).map((r) => r.payload.uid), ['sp_melee'], '不匹配的专属插件标灰');
 });
 
 test('LH-7 path 元素带 clip；payload 键名与 app.js 的 dataset 键一致', () => {

@@ -1,4 +1,4 @@
-# F3 设计与实现冻结：主界面 / 用户 / 仓库 / 开箱 / 设置 / 出战配置
+﻿# F3 设计与实现冻结：主界面 / 用户 / 仓库 / 开箱 / 设置 / 出战配置
 
 > 版本：**v1**　创建：2026-09-22　更新：2026-09-22（**提交① 后端契约已落地**，见 §15 实现对账）
 > 状态：**口径已由用户逐条拍板（本轮 30+ 项问答）；提交① 已实施（D-159…D-162 + 附录 A 已写入 `docs/decisions.md`、附录 B 已同步 `docs/interfaces.md`）；提交② /③（前端屏与出战配置编辑器）待做**
@@ -180,7 +180,7 @@
 
 ## 4. 按钮 ↔ 动作白名单（规则 4.1）
 
-`public/actions.js` 的 `ACTIONS` 仍是唯一注册表。**本批（F3）新增 26 个动作**（下表 `logout` 与 `goto-password` 是 F1 既有动作的重用；F1 的 9 + F2 的 16 = 25）。**F8/D-176 后合计 = 50**（删 `goto-box`/`box-open`、加 `package-open`；数字以实际注册表为准）。
+`public/actions.js` 的 `ACTIONS` 仍是唯一注册表。**本批（F3）新增 26 个动作**（下表 `logout` 与 `goto-password` 是 F1 既有动作的重用；F1 的 9 + F2 的 16 = 25）。**F8/D-176 后合计 = 50**（删 `goto-box`/`box-open`、加 `package-open`；数字以实际注册表为准）。**F9/D-180 后合计 = 57**（下表「布局表驱动的主界面」7 个动作；数字一律以实际注册表为准）。
 
 | 动作 | 触发 | 行为 | 成功可见文本 | 失败可见文本 |
 |---|---|---|---|---|
@@ -205,6 +205,13 @@
 | `plugin-set` | `plugin-pick`·某插件 | `POST /me/warehouse/assemble {targetUid,pluginUid,slotIndex}` | `已装配` | 409 文案（含 `slot_type_mismatch` 的**可读改写**） |
 | `plugin-clear` | `plugin-pick`·`清空此槽` | `POST /me/warehouse/disassemble {targetUid,slotIndex}` | `已拆卸` | 404 `slot_empty` 文案 |
 | `modal-close` | 任何弹窗·背景 / 关闭 / 取消 | 关弹窗 + 丢弃未提交输入 | 回到发起屏 | — |
+| `layout-open` | 主界面·角色卡 / 技能1-3 / 插槽 | 压入一层布局弹窗（`hub.modals`），带上下文（`pickPos`/`pickIdx`/`targetUid`） | 弹窗层出现 | 缺少 `data-screen` → 可见文案 |
+| `layout-switch-config` | 主界面·配置 1/2/3 | **只切「显示哪份配置」**（`hub.slot`）：不发请求、不改服务端出战 | 角色/技能/出战角标随之重绘 | — |
+| `layout-set-slot` | 径向弹窗·候选角色 / 候选技能 | `PUT /me/configs/:slotId {loadout}`（整份 loadout，用 `applySlotChoice` 改一处） | `已替换 slotN 的装备` | 服务端文案；物品不在仓库 → 可见文案 |
+| `layout-assemble` | 径向弹窗·候选插件 | `POST /me/warehouse/assemble {targetUid,pluginUid,slotIndex}` | `装配插件成功` | 信息不全 → 可见文案；409 文案 |
+| `layout-disassemble` | 径向弹窗·`清空此槽` | `POST /me/warehouse/disassemble {targetUid,slotIndex}` | `清空插槽成功` | 信息不全 → 可见文案；404 文案 |
+| `layout-activate` | 主界面·设为出战 | `POST /me/configs/:slotId/activate`（槽位 = 当前**显示**的配置） | `设为出战成功` | 409 `loadout_invalid` 文案 |
+| `goto-records` | 主界面·对战历史 | 战绩屏尚未实现 → 只给明确提示（计划批次） | `对战历史屏尚未实现（计划批次：战绩与回放列表）` | — |
 | `settings-nickname-save` | 设置·保存昵称 | 预校验（≤16）→ `PUT /me/nickname` | `昵称已更新为 <n>` | 服务端文案 |
 | `logout` | 设置·登出（F1 既有动作，**入口移位**） | 同 F1 §4 | 切 `login` + `已登出` | 同 F1（失败也清本地会话） |
 | `goto-password` | profile·设置密码；settings·修改密码（F1 既有动作，**新增一个入口**） | 同 F1 §4 | 设置密码屏 | — |

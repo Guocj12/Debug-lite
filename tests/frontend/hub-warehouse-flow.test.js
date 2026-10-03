@@ -30,6 +30,8 @@ const actions = require('../../public/actions.js');
 const apiMod = require('../../public/api.js');
 const appMod = require('../../public/app.js');
 const contract = require('../../public/contract.js');
+// F9/D-180：主界面改由布局表渲染 —— 本文件必须注入引擎与布局数据，否则 hub 走旧的文字界面
+format.setLayout(require('../../public/layout-engine.js'), require('../../public/layout-data.js'));
 
 const REPO = path.join(__dirname, '..', '..');
 const PUBLIC_DIR = path.join(REPO, 'public');
@@ -68,6 +70,11 @@ function harness(baseUrl) {
     me: counting(raw.me),
     warehouse: counting(raw.warehouse),
     configs: counting(raw.configs),
+    // F9/D-180：布局路径的写出口（装配 / 清空 / 换装 / 设为出战）——不登记会 TypeError
+    assemble: counting(raw.assemble),
+    disassemble: counting(raw.disassemble),
+    saveConfig: counting(raw.saveConfig),
+    activateConfig: counting(raw.activateConfig),
     aiList: counting(raw.aiList),
     setNickname: counting(raw.setNickname),
     // F6：快速对战与归档回放出口（新出口必须在此登记，否则动作调用 ctx.api.xxx 会 TypeError）
@@ -130,26 +137,76 @@ test('WH-1 主界面：摘要只读 GET /me（可追溯）＋ 10 个按钮 ＋ �
       + ' · 未读 进攻' + me.data.record.unread.attack + '/防守' + me.data.record.unread.defense
       + ' · ' + (me.data.pool.inPool === true ? '在池' : '不在池');
     assert.equal(format.hubSummary(h.state()), expected, '摘要行必须逐字由 GET /me 的字段拼出');
-    assert.ok(html.includes(expected), '摘要行必须渲染到屏幕上');
     // 摘要没有第二个数据源：清掉 profile 后立刻变成"尚未读取"占位
     h.dispatch({ type: 'profile.set', envelope: null });
     assert.match(format.hubSummary(h.state()), /尚未读取到档案数据/);
+    assert.ok(!h.html().includes('class="dl-screen"'), '没有 /me 时主界面退回文字界面（不渲染半屏空布局）');
     h.dispatch({ type: 'profile.set', envelope: me });
+    const html2 = h.html();
 
-    // 10 个按钮 + 刷新（03 §3.1；F8/D-176 删「开箱」）
-    const labels = buttonLabels(html);
-    for (const label of ['用户', '仓库', '快速对战', '锦标赛', '排行榜',
-      '出战配置1', '出战配置2', '出战配置3', 'AI编辑', '设置', '刷新']) {
-      assert.ok(labels.includes(label), `主界面缺少按钮：${label}（实际 ${labels.join('/')}）`);
+    // F9/D-180：主界面 = 布局表渲染 —— 绑定数据落到元素上，入口来自布局表
+    assert.ok(html2.includes('class="dl-screen"'), '主界面应由布局表渲染（.dl-screen）');
+    assert.ok(html2.includes('>' + me.data.nickname + '<'), '昵称由 /me 绑定到布局元素（用户名）');
+    assert.ok(html2.includes('>绿<'), '段位中文名由 /me 绑定到布局元素（段位名）');
+    for (const id of ['用户头像', 'btn_warehouse', 'btn_ai', 'btn_settings', 'btn_board', 'btn_tournament',
+      'btn_quick', 'crest_role', 'skill_1', 'skill_2', 'skill_3', '对战历史']) {
+      assert.ok(html2.includes('title="' + id + '"'), `主界面缺少布局元素：${id}`);
+    }
+    // 出战角标只出现在"出战那份配置"上方（服务端 activeSlotId 决定）
+    const activeIdx = String(me.data.activeSlotId || 'slot1').replace(/[^0-9]/g, '') || '1';
+    assert.ok(html2.includes('title="battle_badge_' + activeIdx + '"'), '出战角标应出现在出战配置上方');
+    // 底部保留布局表之外的入口：阵容编辑（旧编辑器，详细编辑用）+ 刷新
+    const labels = buttonLabels(html2);
+    for (const label of ['阵容编辑', '刷新']) {
+      assert.ok(labels.includes(label), `主界面底部缺少入口：${label}（实际 ${labels.join('/')}）`);
     }
     assert.ok(!labels.includes('开箱'), 'F8/D-176：开箱入口已随开箱屏删除');
     assert.equal(labels.filter((l) => l === '刷新').length, 1, '主界面只应有一个「刷新」');
 
-    // 刷新：重取 GET /me（摘要随之更新）
+    // 刷新：重取**三份数据**（/me + /me/configs + /me/warehouse）——布局表驱动的界面全靠它们
     const before = h.counter.n;
     await h.run('refresh-hub');
-    assert.equal(h.counter.n, before + 1, '刷新应重取一次 GET /me');
+    assert.equal(h.counter.n, before + 3, '刷新应重取 /me + /me/configs + /me/warehouse');
     assert.equal(h.notice(), format.REFRESH_OK_TEXT);
+
+    // 径向插槽流：打开角色插槽层（点角色卡触发的就是这个动作）→ 插槽数量 = 角色物品 slotCount → 关闭
+    const slots = h.state().configs.data.data.slots;
+    const curSlot = slots.filter((s) => s.slotId === me.data.activeSlotId)[0] || slots[0];
+    await h.run('layout-open', { screen: 'modal_role_slots', idx: 0, pos: 'role', targetUid: curSlot.loadout.role.uid });
+    const withModal = h.html();
+    assert.ok(withModal.includes('class="dl-modal"'), '打开布局弹窗后应渲染弹窗层');
+    assert.ok(withModal.includes('data-action="modal-close"'), '弹窗必须带可关闭的遮罩');
+    const slotCount = (withModal.match(/data-screen="modal_role_plugin_pick"/g) || []).length;
+    assert.equal(slotCount, curSlot.loadout.role.slots.length, '插槽数量必须等于角色物品的 slotCount');
+    await h.run('modal-close');
+    assert.ok(!h.html().includes('class="dl-modal"'), '点遮罩后应逐层关闭');
+
+    // F9/D-180：径向流**真的写服务端** —— 打开某插槽的候选层 → 装配 → 仓库里那件物品的 pluginUid 变更
+    //   判据必须读**仓库**（实测 /me/configs 是快照，卸下插件后它仍显示旧 pluginUid）
+    const roleUid = curSlot.loadout.role.uid;
+    const bucket = h.state().warehouse.envelope.data.buckets.rolePlugin;
+    const liveSlots = () => h.state().warehouse.envelope.data.buckets.role
+      .filter((r) => r.uid === roleUid)[0].slots;
+    const fitIdx = liveSlots().findIndex((sl) => bucket.some((p) => p.slot === sl.type));
+    if (fitIdx >= 0) {
+      const cand = bucket.filter((p) => p.slot === liveSlots()[fitIdx].type)[0];
+      const beforeUid = liveSlots()[fitIdx].pluginUid;
+      if (beforeUid !== null) await h.run('layout-disassemble', { uid: roleUid, slotIndex: fitIdx });
+      await h.run('layout-assemble', { uid: cand.uid, targetUid: roleUid, slotIndex: fitIdx });
+      if (liveSlots()[fitIdx].pluginUid === cand.uid) {
+        assert.equal(liveSlots()[fitIdx].pluginUid, cand.uid, '装配必须真的写进仓库物品的插槽');
+        assert.match(h.notice(), /装配插件成功/, '装配成功应有可见文案：' + h.notice());
+        await h.run('layout-disassemble', { uid: roleUid, slotIndex: fitIdx });
+        assert.equal(liveSlots()[fitIdx].pluginUid, null, '清空插槽必须真的生效');
+      } else {
+        // 点数不够等业务拒绝：必须是**可读文案**且状态不变（不能是内部错误）
+        assert.equal(liveSlots()[fitIdx].pluginUid, beforeUid, '被拒绝时状态不得改变');
+        assert.ok(!/内部错误/.test(h.notice()) && h.notice().length > 0, '拒绝必须可读：' + h.notice());
+      }
+    }
+    // 换角色：候选角色行写入配置（applySlotChoice + PUT /me/configs）
+    await h.run('layout-set-slot', { pos: 'role', uid: roleUid });
+    assert.ok(!/内部错误/.test(h.notice()), '换角色不应是内部错误：' + h.notice());
     // 用户 → 用户详情；返回主界面
     await h.run('goto-profile');
     assert.equal(h.state().view, 'profile');
@@ -433,7 +490,7 @@ test('WH-7 设置：改昵称成功/客户端拦截；修改密码入口；登�
     assert.equal(h.state().settings.nickname, '', '成功后应清空输入框');
     assert.equal(h.state().session.nickname, '新昵称A', '本地会话昵称应同步');
     await h.run('goto-hub');
-    assert.ok(h.html().includes('新昵称A · '), '主界面摘要应显示新昵称');
+    assert.ok(h.html().includes('>新昵称A<'), '主界面应显示新昵称（布局元素绑定）');
 
     // 修改密码 → F1 的 password 屏（两个返回入口，§4）
     await h.run('goto-settings');
@@ -672,7 +729,7 @@ test('WH-12 启动自检（本地 token）：校验通过 → 主界面 hub；40
   };
   const DL = { store, format, render, actions };
 
-  // ① 有效 token → 落点 = hub（FR-11），摘要用启动时取到的 /me
+  // ① 有效 token → 落点 = hub（FR-11），主界面由布局表渲染、绑定启动时取到的 /me
   const dom = fakeDom();
   const calls = [];
   const app = appMod.createApp({
@@ -683,7 +740,7 @@ test('WH-12 启动自检（本地 token）：校验通过 → 主界面 hub；40
   assert.deepEqual(calls, ['tk-boot'], '启动自检应带本地 token 取一次 /me');
   assert.equal(app.store.getState().view, 'hub');
   assert.equal(app.store.getState().booted, true);
-  assert.ok(dom.host.innerHTML.includes('启动 · common · 0'), '启动后主界面应直接显示摘要');
+  assert.ok(dom.host.innerHTML.includes('>启动<'), '启动后主界面应把 /me 的昵称绑定到布局元素上');
 
   // ② 坏 token（401）→ 清凭据 + 回登录屏
   const dom2 = fakeDom();

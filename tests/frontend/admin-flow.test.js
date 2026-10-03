@@ -51,6 +51,10 @@ function harness(baseUrl) {
   const api = {
     call: count(raw.call), register: count(raw.register), login: count(raw.login), logout: count(raw.logout),
     changePassword: count(raw.changePassword), me: count(raw.me), admin: count(raw.admin),
+    // F9/D-180：主界面（布局表渲染）现在取三份数据：/me + /me/configs + /me/warehouse
+    configs: count(raw.configs), warehouse: count(raw.warehouse),
+    assemble: count(raw.assemble), disassemble: count(raw.disassemble),
+    saveConfig: count(raw.saveConfig), activateConfig: count(raw.activateConfig),
   };
   return {
     win, storage, api, counter,

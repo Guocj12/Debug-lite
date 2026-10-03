@@ -2830,7 +2830,7 @@
   function laySlotIndex(state) {
     var explicit = (state.hub && state.hub.slot) || 0;
     if (explicit >= 1) return explicit;
-    var active = String(or(pick(state.profile, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '');
+    var active = String(or(layPick(state.profile, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '');
     return Number(active) || 1;
   }
   function laySlotTypes(item) {
@@ -2842,34 +2842,35 @@
     return out;
   }
   function layCurrent(state) {
-    var slots = arrayOf(pick(state.configs.data, 'data.slots'));
+    var slots = arrayOf(layPick(state.configs ? state.configs.data : null, 'data.slots'));
     var slotId = 'slot' + laySlotIndex(state);
     for (var i = 0; i < slots.length; i++) {
       if (or(pick(slots[i], 'slotId'), '') === slotId) return slots[i];
     }
     return null;
   }
-  /** 扁平绑定数据（布局表里的 {nickname} / {roleIcon} 都从这里取值） */
+  /** 安全投影：信封还没到时（未登录 / 首次进屏）不许抛，一律按"空"处理 */
+  function layPick(obj, path) { return (obj === null || obj === undefined) ? undefined : pick(obj, path); }
   function layFlat(state) {
     var me = state.profile, cur = layCurrent(state);
-    var lo = pick(cur, 'loadout') || {};
-    var role = pick(lo, 'role'), skills = arrayOf(pick(lo, 'skills'));
-    var tier = or(pick(me, 'data.progress.tier'), 'common');
-    var battleSlot = String(or(pick(me, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '') || '1';
+    var lo = layPick(cur, 'loadout') || {};
+    var role = layPick(lo, 'role'), skills = arrayOf(layPick(lo, 'skills'));
+    var tier = or(layPick(me, 'data.progress.tier'), 'common');
+    var battleSlot = String(or(layPick(me, 'data.activeSlotId'), 'slot1')).replace(/[^0-9]/g, '') || '1';
     var idx = laySlotIndex(state);
-    function sk(i, f) { return or(pick(layItem(skills[i]), f), ''); }
+    function sk(i, f) { return or(layPick(layItem(skills[i]), f), ''); }
     return {
-      nickname: or(pick(me, 'data.nickname'), ''), tier: tier, tierName: LAY_TIER_CN[tier] || tier,
-      points: num(pick(me, 'data.rating.points'), 0),
-      wins: num(pick(me, 'data.rating.wins'), 0), losses: num(pick(me, 'data.rating.losses'), 0),
-      unreadAttack: num(pick(me, 'data.record.unread.attack'), 0),
-      unreadDefense: num(pick(me, 'data.record.unread.defense'), 0),
-      slotName: or(pick(cur, 'name'), ''), configLabel: '配置' + idx,
+      nickname: or(layPick(me, 'data.nickname'), ''), tier: tier, tierName: LAY_TIER_CN[tier] || tier,
+      points: num(layPick(me, 'data.rating.points'), 0),
+      wins: num(layPick(me, 'data.rating.wins'), 0), losses: num(layPick(me, 'data.rating.losses'), 0),
+      unreadAttack: num(layPick(me, 'data.record.unread.attack'), 0),
+      unreadDefense: num(layPick(me, 'data.record.unread.defense'), 0),
+      slotName: or(layPick(cur, 'name'), ''), configLabel: '配置' + idx,
       activeSlot: String(idx), configId: 'slot' + idx, battleSlot: battleSlot,
-      roleName: or(pick(role, 'name'), ''),
-      roleQuality: LAY_TIER_CN[or(pick(role, 'quality'), '')] || or(pick(role, 'quality'), ''),
-      roleIcon: layIcon('role', pick(role, 'templateId')),
-      qualityFrame: 'assets/frame/' + or(pick(role, 'quality'), 'common') + '.svg',
+      roleName: or(layPick(role, 'name'), ''),
+      roleQuality: LAY_TIER_CN[or(layPick(role, 'quality'), '')] || or(layPick(role, 'quality'), ''),
+      roleIcon: layIcon('role', layPick(role, 'templateId')),
+      qualityFrame: 'assets/frame/' + or(layPick(role, 'quality'), 'common') + '.svg',
       skill1Name: sk(0, 'name'), skill2Name: sk(1, 'name'), skill3Name: sk(2, 'name'),
       skill1Icon: layIcon('skill', sk(0, 'templateId')), skill2Icon: layIcon('skill', sk(1, 'templateId')),
       skill3Icon: layIcon('skill', sk(2, 'templateId')),
@@ -2880,7 +2881,7 @@
   }
   /** 后端候选（仓库桶）→ 列表行；按屏幕语义过滤类型 */
   function layRows(state, source, ctx, flat) {
-    var wh = state.warehouse.envelope;
+    var wh = state.warehouse ? state.warehouse.envelope : null;
     function wrap(it, i, kind) {
       var q = or(pick(it, 'quality'), '');
       return {
@@ -2896,28 +2897,54 @@
       return arrayOf(pick(wh, 'data.buckets.skill')).map(function (it, i) { return wrap(it, i, 'skill'); });
     }
     if (source === 'rolePlugins') {
+      // 口径（沿用旧编辑器 B-8「全部列出；不匹配的标灰 + 写原因」）：不在这里过滤，交给渲染标灰
       var types = laySlotTypes(flat._role), want = types[(ctx && ctx.pickIdx) || 0] || null;
-      return arrayOf(pick(wh, 'data.buckets.rolePlugin'))
-        .filter(function (p) { return !want || or(pick(p, 'slot'), '') === want; })
-        .map(function (it, i) { return wrap(it, i, 'plugin'); });
+      return arrayOf(pick(wh, 'data.buckets.rolePlugin')).map(function (it, i) {
+        var row = wrap(it, i, 'plugin');
+        row.fits = (want === null) || (or(pick(it, 'slot'), '') === want);
+        row.reason = '该插槽是「' + (want === null ? '未知' : want) + '」类型，装不上';
+        return row;
+      });
     }
     var skill = layItem(flat._skills[LAY_POS[(ctx && ctx.pickPos) || 'skill1']]);
-    return arrayOf(pick(wh, 'data.buckets.skillPlugin')).filter(function (p) {
-      var slot = or(pick(p, 'slot'), '');
-      if (slot === 'general') return true;
-      if (slot !== 'exclusive') return false;
-      var ft = arrayOf(pick(p, 'forTypes'));
-      if (!ft.length) return true;
+    return arrayOf(pick(wh, 'data.buckets.skillPlugin')).map(function (it, i) {
+      var row = wrap(it, i, 'plugin');
+      var slot = or(pick(it, 'slot'), '');
+      var ft = arrayOf(pick(it, 'forTypes'));
       var tid = or(pick(skill, 'templateId'), ''), ak = or(pick(skill, 'animKey'), '');
-      return (tid !== '' && ft.indexOf(tid) >= 0) || (ak !== '' && ft.indexOf(ak) >= 0);
-    }).map(function (it, i) { return wrap(it, i, 'plugin'); });
+      var fits = slot === 'general' || (slot === 'exclusive' && (!ft.length
+        || (tid !== '' && ft.indexOf(tid) >= 0)
+        || (ak !== '' && (ft.indexOf(ak) >= 0 || ft.some(function (t) { return ak.indexOf(t) >= 0; })))));
+      row.fits = fits;
+      row.reason = '专属插件，不适用于这个技能';
+      return row;
+    });
   }
   /** 单屏解算（含插槽按模板 slotCount 展开 / 候选列表按后端数据展开） */
-  function layScreen(state, name, sstate, flat, ctx) {
+  function layScreen(state, name, sstate, flat, ctx, busy) {
     var C = LAYOUT.engine, bundle = LAYOUT.data;
     var sc = bundle.screens[name];
     if (!sc) return [];
     var out = C.screenAt(bundle, name, 'landscape', sstate, flat);
+    // 布局表 → 产品动作（F9）：布局表只描述"这块是什么、点了该去哪"，具体端点由 actions.js 负责。
+    //   · 带 target 的元素 = 打开该子画面     → layout-open（把目标画面与上下文带给动作）
+    //   · 带 setState 的元素 = 只切显示配置   → layout-switch-config（不改服务端"出战"）
+    //   · config-activate 依赖旧编辑器的草稿  → layout-activate（布局路径直接打服务端）
+    out.forEach(function (e) {
+      if (e.setState) {
+        e.action = 'layout-switch-config';
+        e.payload = { slot: e.setState.activeSlot };
+        return;
+      }
+      if (e.target && bundle.screens[e.target]) {
+        var pos = (e.payload && e.payload.pos) || 'role';
+        var item = pos === 'role' ? flat._role : layItem(flat._skills[LAY_POS[pos] || 0]);
+        e.action = 'layout-open';
+        e.payload = { screen: e.target, idx: 0, pos: pos, targetUid: or(pick(item, 'uid'), '') };
+        return;
+      }
+      if (e.action === 'config-activate') e.action = 'layout-activate';
+    });
     if (sc.slotsFrom) {
       var item = sc.slotsFrom.kind === 'role' ? flat._role
         : layItem(flat._skills[LAY_POS[sc.slotsFrom.pos] || 0]);
@@ -2936,7 +2963,9 @@
         var r0 = protos[0].rect;
         var radius = Math.hypot(r0[0] + r0[2] / 2 - c0[0], r0[1] + r0[3] / 2 - c0[1]);
         var start = Math.atan2(r0[1] + r0[3] / 2 - c0[1], r0[0] + r0[2] / 2 - c0[0]);
+        var itemUid = or(layPick(item, 'uid'), '');
         for (var i = 0; i < count; i++) {
+          var installed = layInstalled(state, itemUid, i);
           var rect;
           if (i < protos.length) rect = protos[i].rect.slice();
           else {
@@ -2945,7 +2974,8 @@
           }
           out.push({
             id: 'slot_e' + (i + 1), kind: 'button', hit: 'rect', z: 3, rect: rect,
-            label: '插槽' + (i + 1), text: '插槽' + (i + 1),
+            label: '插槽' + (i + 1) + (installed === '' ? '' : '·' + installed),
+            text: '插槽' + (i + 1) + (installed === '' ? '' : '·' + installed),
             action: 'layout-open',
             payload: { screen: sc.slotsFrom.kind === 'role' ? 'modal_role_plugin_pick' : 'modal_skill_plugin_pick',
                        idx: i, pos: sc.slotsFrom.pos, targetUid: or(pick(item, 'uid'), '') },
@@ -2967,7 +2997,9 @@
         out.push({
           id: 'row_' + i, kind: 'button', hit: 'rect', z: 6,
           rect: [base[0], base[1] + i * sc.listFrom.pitch, base[2], base[3]],
-          label: it.label, text: it.label, asset: it.icon,
+          label: it.fits === false ? it.label + '（' + it.reason + '）' : it.label,
+          text: it.fits === false ? it.label + '（' + it.reason + '）' : it.label,
+          asset: it.icon, muted: it.fits === false,
           action: isPick ? 'layout-set-slot' : 'layout-assemble',
           payload: {
             uid: it.uid, pos: (ctx && ctx.pickPos) || 'role',
@@ -2976,6 +3008,19 @@
           },
         });
       });
+      // 插件候选屏末尾补一行「清空此槽」（布局表里没有这一行，但"卸下插件"必须有入口）
+      if (sc.listFrom.source === 'rolePlugins' || sc.listFrom.source === 'skillPlugins') {
+        out.push({
+          id: 'row_clear', kind: 'button', hit: 'rect', z: 6,
+          rect: [base[0], base[1] + rows.length * sc.listFrom.pitch, base[2], base[3]],
+          label: '清空此槽', text: '清空此槽', action: 'layout-disassemble',
+          payload: { uid: (ctx && ctx.targetUid) || '', slotIndex: (ctx && ctx.pickIdx) || 0 },
+        });
+      }
+    }
+    // busy（有请求在飞）时**所有布局按钮一律禁用**（UI-5：防重复提交）；装饰件不受影响
+    if (busy) {
+      out.forEach(function (e) { if (e.kind !== 'deco') e.disabled = true; });
     }
     // 不规则命中区：多边形 → CSS clip-path 字符串（渲染层直接用，不必懂几何）
     out.forEach(function (e) {
@@ -2990,18 +3035,37 @@
     });
     return out;
   }
-  function hubLayoutVm(state) {
-    if (!LAYOUT) return null;
+  // 插槽的"装了什么"一律读**仓库**里那件物品（实测：/me/configs 是快照，卸下插件后它仍显示旧 pluginUid）
+  function layInstalled(state, itemUid, idx) {
+    var env = state.warehouse ? state.warehouse.envelope : null;
+    if (env === null || !itemUid) return '';
+    var item = findItem(env, itemUid);
+    if (item === null) return '';
+    var uid = str(pick(layItem(arrayOf(pick(item, 'slots'))[idx]), 'pluginUid'));
+    return uid === null ? '' : pluginLabelOf(state, uid);
+  }
+  /** 当前「显示哪份配置」的槽位 id（投影归 format，动作层不读响应字段） */
+  function hubSlotId(state) { return 'slot' + laySlotIndex(state); }
+  /** 当前显示配置的 loadout（布局路径的装配 / 换装都以它为基准） */
+  function hubLoadout(state) {
+    var cur = layCurrent(state);
+    if (cur === null) return null;
+    var lo = pick(cur, 'loadout');
+    return lo === undefined ? null : lo;
+  }
+  function hubLayoutVm(state, busy) {
+    // 无登录态（无 /me）时不走布局：让 hub 继续用旧文字界面，避免"半屏空数据"
+    if (!LAYOUT || !state.profile || state.profile.data === null || state.profile.data === undefined) return null;
     var flat = layFlat(state);
     var sstate = { activeSlot: flat.activeSlot, battleSlot: flat.battleSlot };
     var stack = (state.hub && state.hub.modals) || [];
-    var layers = [{ name: 'hub', role: 'screen', mask: null, elements: layScreen(state, 'hub', sstate, flat, {}) }];
+    var layers = [{ name: 'hub', role: 'screen', mask: null, elements: layScreen(state, 'hub', sstate, flat, {}, busy) }];
     stack.forEach(function (entry) {
       var sc = LAYOUT.data.screens[entry.name];
       if (!sc) return;
       layers.push({
         name: entry.name, role: 'modal', mask: sc.mask || LAYOUT.engine.DEFAULT_MASK,
-        elements: layScreen(state, entry.name, sstate, flat, entry.ctx || {}),
+        elements: layScreen(state, entry.name, sstate, flat, entry.ctx || {}, busy),
       });
     });
     return { canvas: LAYOUT.data.canvas, background: LAYOUT.data.screens.hub.background, layers: layers };
@@ -3026,12 +3090,26 @@
       buttons.push({ action: 'goto-admin', label: '管理员面板', kind: 'button', disabled: busy });
     }
     buttons.push({ action: 'refresh-hub', label: '刷新', kind: 'button', disabled: busy });
-    // F9：布局表可用时，主界面由布局表渲染；下方只保留"布局里没有的"动作入口
-    //   （refresh-hub 只在 hub 有入口；config-open 是编队编辑器入口；goto-admin 是管理员入口）
-    //   其余动作（仓库/排行/对战/换配置/换装…）都由布局表里的按钮承担。
-    // F9/D-180 进度：布局表驱动的 hub 界面（`layout: hubLayoutVm(state)`）会在**渲染层接线**
-    //   完成时接上（render.js 的零逻辑契约 UI-7/AU-4 + 载荷字段双向核对 BP-1 需要同步扩展）。
-    //   本批先交付：布局数据 / 引擎 / 样式 + 投影层（`hubLayoutVm` 已被 layout-hub-vm.test.js 覆盖）。
+    // F9/D-180：布局表可用时，主界面 = 布局表渲染（含径向插槽弹窗）；
+    //   下方保留"布局里没有的动作入口"：阵容编辑（config-open —— 旧编辑器仍在，作详细编辑用）、刷新、管理员面板。
+    //   其余动作（仓库/排行/对战/切显示配置/装配/清空插槽…）全部由布局表里的按钮承担。
+    if (layoutReady() && state.profile) {
+      var keep = { 'refresh-hub': 1, 'config-open': 1, 'goto-admin': 1 };
+      var seen = {};
+      var footer = [];
+      buttons.forEach(function (b) {
+        if (keep[b.action] !== 1 || seen[b.action] === 1) return;   // 同类只留一个入口
+        seen[b.action] = 1;
+        footer.push(b.action === 'config-open' ? Object.assign({}, b, { label: '阵容编辑' }) : b);
+      });
+      return vm('Debug-Lite', {
+        notice: notice,
+        layout: hubLayoutVm(state, busy),
+        lines: [],
+        buttons: footer,
+        modal: modalViewModel(state, busy),
+      });
+    }
     return vm('Debug-Lite', {
       notice: notice,
       hint: '摘要只读 GET /me；点「刷新」重新读取',
@@ -3347,6 +3425,9 @@
     itemRows: itemRows,
     // F9/D-180：布局表驱动的主界面（boot.js 注入引擎与布局数据）
     setLayout: setLayout,
+    // F9：布局路径要用的投影（动作层不读响应字段，只能问 format 要）
+    hubSlotId: hubSlotId,
+    hubLoadout: hubLoadout,
     layoutReady: layoutReady,
     hubLayoutVm: hubLayoutVm,
     itemDetailLines: itemDetailLines,

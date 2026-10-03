@@ -1,4 +1,4 @@
-/* public/app.css —— 布局表驱动的界面样式（由布局引擎输出 + 本文件决定外观）
+﻿/* public/app.css —— 布局表驱动的界面样式（由布局引擎输出 + 本文件决定外观）
  *
  * 设计要点：
  *   · 位置用**百分比**（rect / canvas）：换屏幕尺寸不用重算，等比自适应；
@@ -25,6 +25,8 @@
 .dl-btn:active{transform:translateY(1px)}
 .dl-deco{color:var(--dl-dim);pointer-events:none}
 .dl-deco.dl-deco-text{color:var(--dl-text)}
+/* 候选不匹配：标灰（原因写在文字里） */
+.dl-muted{opacity:.45}
 /* 不规则按钮：多边形命中区。渲染层把 path 转成 polygon() 写进 --dl-clip */
 .dl-hit-path{clip-path:var(--dl-clip)}
 .dl-hit-ellipse{border-radius:50%}
