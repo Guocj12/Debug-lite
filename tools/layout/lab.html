@@ -2051,15 +2051,55 @@ var LAYOUT_CORE = (function () {
   /* ---------- 本地服务（一键存盘 / 素材清单 / 归位）----------
    * 只有通过 node tools/layout/lab-server.js 打开时这些才可用：浏览器页面本身不能往工作区写文件。
    */
-  var LAB_API = (location.protocol === 'http:' || location.protocol === 'https:') ? '' : null;
+  // 本地服务地址：先用同源（npm run lab 打开时就是它），失败再试默认端口（file:// 或从别的本地页面打开时）
+  var LAB_PORT = (new URLSearchParams(location.search)).get('port') || '4319';
+  var LAB_DEFAULT = 'http://127.0.0.1:' + LAB_PORT;
+  var LAB_API = undefined;   // undefined = 未探测；null = 探测过但服务没起；'' 或 'http://…' = 可用
   function toolInfo(msg, kind) { $('toolInfo').textContent = msg; $('toolInfo').style.color = kind === 'err' ? '#ff9a9a' : (kind === 'ok' ? '#8ef0b0' : ''); }
+  function noServerMsg() {
+    return '本地服务没在跑 → 这些按钮不可用。\n请在仓库根目录执行：npm run lab（或 node tools/layout/lab-server.js）\n' +
+      '然后访问 http://127.0.0.1:' + LAB_PORT + '/ ；已经开着这个页面也行，点「刷新状态」会自动连上。';
+  }
+  /** 探测某个 base 是不是本地服务：必须回 JSON 且 ok === true */
+  function probeBase(base) {
+    return fetch(base + '/api/status', { method: 'GET' })
+      .then(function (r) {
+        var ct = r.headers.get('content-type') || '';
+        if (ct.indexOf('json') < 0) throw new Error('不是本地服务（返回 ' + (ct || '未知类型') + '）');
+        return r.json();
+      })
+      .then(function (j) { return (j && j.ok === true) ? base : Promise.reject(new Error('响应不是本地服务')); })
+      .catch(function () { return Promise.reject(new Error('连不上 ' + (base || '同源'))); });
+  }
+  function detectApi() {
+    var same = (location.protocol === 'http:' || location.protocol === 'https:') ? '' : null;
+    var chain = (same === null) ? probeBase(LAB_DEFAULT)
+      : probeBase(same).catch(function () { return probeBase(LAB_DEFAULT); });
+    return chain.then(function (base) { LAB_API = base; return base; })
+      .catch(function () { LAB_API = null; return null; });
+  }
   function labApi(p, body) {
-    if (LAB_API === null) return Promise.reject(new Error('未通过本地服务打开：先跑 node tools/layout/lab-server.js，再访问 http://127.0.0.1:4319/'));
-    return fetch(LAB_API + p, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
-    }).then(function (r) { return r.json(); });
+    var ready = (LAB_API === undefined) ? detectApi() : Promise.resolve(LAB_API);
+    return ready.then(function (base) {
+      if (base === null) throw new Error(noServerMsg());
+      return fetch(base + p, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+      }).then(function (r) {
+        var ct = r.headers.get('content-type') || '';
+        // 关键：非 JSON 一律翻成人话（历史缺陷：服务端回纯文本 404 → r.json() 抛 "Unexpected token 'o'"）
+        if (ct.indexOf('json') < 0) {
+          return r.text().then(function (txt) {
+            throw new Error('本地服务返回了非 JSON（HTTP ' + r.status + '）：' + String(txt).slice(0, 120) + '\n' + noServerMsg());
+          });
+        }
+        return r.json();
+      }).then(function (j) {
+        if (j && j.ok === false && j.error) throw new Error(String(j.error) + (j.hint ? '\n' + j.hint : ''));
+        return j;
+      });
+    });
   }
   function showLines(title, lines) {                      // 复用 JSON 面板：可复制、可整段发给我
     $('jsonPanel').open = true;
@@ -2067,6 +2107,7 @@ var LAYOUT_CORE = (function () {
     flash(title);
   }
   function refreshToolStatus() {
+    LAB_API = undefined;                                  // 每次刷新都重新探测（服务可能刚起来 / 刚停掉）
     labApi('/api/status').then(function (s) {
       var m = s.manifest;
       toolInfo('工作区：' + s.root + '\n导出：' + (s.rawExists ? '已存在' : '还没有') +
@@ -2121,8 +2162,11 @@ var LAYOUT_CORE = (function () {
   $('btnStatus').addEventListener('click', refreshToolStatus);
   $('btnMissing').addEventListener('click', function () { doManifest(false); });
   $('btnMissingAll').addEventListener('click', function () { doManifest(true); });
-  if (LAB_API !== null) refreshToolStatus();
-  else toolInfo('当前是直接打开文件（file://）→「存到工作区 / 素材清单 / 归位素材」不可用。\n请改为：node tools/layout/lab-server.js 然后访问 http://127.0.0.1:4319/', 'err');
+  refreshToolStatus();
+  if (location.protocol === 'file:') {
+    toolInfo('直接打开文件（file://）：正在尝试连接本机服务 ' + LAB_DEFAULT + ' …\n' +
+      '若失败，请先在仓库根目录执行 npm run lab（或 node tools/layout/lab-server.js），再点「刷新状态」。');
+  }
   $('btnImport').addEventListener('click', function () {
     var inp = document.createElement('input');
     inp.type = 'file'; inp.accept = '.json,application/json';

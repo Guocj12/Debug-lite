@@ -542,5 +542,14 @@ docs/progress.md       本文件
 + `public/format.js` 的路径规则（机器核对 LT-3 会比对两者是否同步）。
 插件同族（`rp_atk_pct` / `_c1` / `_c3`）收敛成族根一张图，63 → 41 张。
 
+**⑥.1 交付期缺陷修复（2026-10-03，用户实测）**：页面报
+`Unexpected token 'o', "not found: "... is not valid JSON`。
+根因两处：① 本地服务对**未知路径 / 静态缺失**回了 `text/plain` 的 `not found: …`，而页面统一 `r.json()`；
+② 页面把所有请求打向**同源**，从 `file://` 或别的本地页面打开时请求落到别的服务上。
+修复：服务端**所有响应一律 JSON**（含 404，并附可用路由清单）+ CORS/`OPTIONS` 预检 + 结构改为 `createLabServer()` 工厂；
+页面先探测服务（同源 → 默认 4319，`?port=` 可覆盖，要求"回 JSON 且 ok:true"），非 JSON 响应翻译成可读文案，
+`ok:false` 的 `error`/`hint` 直接显示在素材面板，「刷新状态」每次重新探测（服务刚起/刚停都能自愈）。
+回归钉：`tests/frontend/layout-tool-server.test.js`（LS-1..4，其中 LS-3 就是本次缺陷：未匹配路由 / 静态缺失 / 坏请求体一律 JSON）。
+
 **⑦ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
 → 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。

@@ -161,7 +161,7 @@
           "target": "modal_role_slots",
           "label": "角色卡",
           "payload": {
-            "slot": "{configId}"
+            "slot": "slot1"
           },
           "asset": "{roleIcon}",
           "path": "M50,0 L91.9,25 L91.9,75 L50,100 L8.1,75 L8.1,25 Z"
@@ -181,7 +181,7 @@
           "target": "modal_skill1_slots",
           "label": "{skill1Name}",
           "payload": {
-            "slot": "{configId}",
+            "slot": "slot1",
             "pos": "skill1"
           },
           "asset": "{skill1Icon}",
@@ -202,7 +202,7 @@
           "target": "modal_skill2_slots",
           "label": "{skill2Name}",
           "payload": {
-            "slot": "{configId}",
+            "slot": "slot1",
             "pos": "skill2"
           },
           "asset": "{skill2Icon}",
@@ -223,7 +223,7 @@
           "target": "modal_skill3_slots",
           "label": "{skill3Name}",
           "payload": {
-            "slot": "{configId}",
+            "slot": "slot1",
             "pos": "skill3"
           },
           "asset": "{skill3Icon}",
@@ -614,7 +614,7 @@
           ],
           "label": "{rowLabel}",
           "payload": {
-            "slot": "{configId}",
+            "slot": "slot1",
             "pos": "{pickPos}"
           },
           "z": 6
@@ -684,7 +684,7 @@
           ],
           "label": "{rowLabel}",
           "payload": {
-            "slot": "{configId}",
+            "slot": "slot1",
             "pos": "{pickPos}"
           },
           "z": 6
@@ -722,7 +722,7 @@
             380,
             420
           ],
-          "label": "该插槽的角色插件候选",
+          "label": "该插槽的**角色插件**候选",
           "z": 5
         },
         {
@@ -791,7 +791,7 @@
             380,
             420
           ],
-          "label": "该插槽的技能插件候选",
+          "label": "该插槽的**技能插件**候选",
           "z": 5
         },
         {

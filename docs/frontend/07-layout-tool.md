@@ -13,8 +13,22 @@ npm run lab          # = node tools/layout/lab-server.js（只监听 127.0.0.1:4
 # 浏览器打开 http://127.0.0.1:4319/
 ```
 
-也可以直接双击 `tools/layout/lab.html`——但那样是 `file://`，浏览器不允许写文件，
-「存到工作区 / 素材清单 / 归位素材」这几个按钮会提示你先用上面的方式启动。
+也可以直接双击 `tools/layout/lab.html`（`file://`）：页面会自动去连 `http://127.0.0.1:4319`
+（本地服务已开 CORS，所以跨源也能用）；连不上时按钮会给出"先执行 npm run lab"的提示，
+服务起来之后点**「刷新状态」**即可自动连上，无需重开页面。
+
+> 端口不是 4319 时用 `?port=xxxx` 打开页面，例如 `lab.html?port=5000`。
+
+### 本地服务的接口契约（有回归测试钉住）
+
+| 约定 | 为什么 |
+|---|---|
+| **所有响应都是 JSON**（含未匹配路由、静态文件缺失、坏请求体） | 页面统一走 `r.json()`；回纯文本会让它抛 `Unexpected token 'o', "not found: "...`（真实发生过的缺陷） |
+| 响应带 `access-control-allow-origin: *` 并处理 `OPTIONS` 预检 | 页面可能从 `file://` 或别的本地页面（如 GUI 预览）打开 |
+| `ok:false` 时一律带 `error`（必要时带 `hint`） | 页面把 `error`+`hint` 直接显示在素材面板上，用户能照做 |
+| 只监听 `127.0.0.1` | 这是本机开发工具，不对外 |
+
+机器核对：`tests/frontend/layout-tool-server.test.js`（LS-1..4）。
 
 ### 界面速览
 

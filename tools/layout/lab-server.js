@@ -32,10 +32,19 @@ const MIME = {
 };
 
 function send(res, status, type, body) {
-  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
+  // 本地开发服务：允许从别的本地页面（file:// 或 GUI 预览 iframe）调用，只监听 127.0.0.1
+  res.writeHead(status, {
+    'content-type': type, 'cache-control': 'no-store',
+    'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+  });
   res.end(body);
 }
-function sendJson(res, obj) { send(res, obj.ok === false ? 400 : 200, MIME['.json'], JSON.stringify(obj, null, 1)); }
+// **所有**响应都是 JSON：页面统一 r.json()，回纯文本会让它抛 "Unexpected token" （实际发生过的缺陷）
+function sendJson(res, obj, status) {
+  const code = status !== undefined ? status : (obj.ok === false ? 400 : 200);
+  send(res, code, MIME['.json'], JSON.stringify(obj, null, 1));
+}
 
 function runNode(script, args, timeout) {
   const r = spawnSync(process.execPath, [path.join(__dirname, script)].concat(args || []), {
@@ -57,7 +66,9 @@ function readBody(req) {
 function serveFile(res, absPath) {
   const roots = [__dirname, path.join(ROOT, 'public')];
   const ok = roots.some((r) => absPath === r || absPath.startsWith(r + path.sep));
-  if (!ok || !fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) return send(res, 404, 'text/plain', 'not found');
+  if (!ok || !fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
+    return sendJson(res, { ok: false, error: 'not_found', path: absPath, hint: '静态资源不存在（只服务 tools/layout/ 与 public/）' }, 404);
+  }
   const ext = path.extname(absPath).toLowerCase();
   return send(res, 200, MIME[ext] || 'application/octet-stream', fs.readFileSync(absPath));
 }
@@ -123,10 +134,16 @@ function status() {
   };
 }
 
-const server = http.createServer(async (req, res) => {
+/** 工厂：返回 http.Server（测试可以 listen(0) 后直接打接口，不必起子进程） */
+function createLabServer() {
+  return http.createServer(handleRequest);
+}
+
+async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = decodeURIComponent(url.pathname);
   try {
+    if (req.method === 'OPTIONS') return send(res, 204, 'text/plain', '');
     if (req.method === 'GET' && (p === '/' || p === '/lab.html')) return serveFile(res, LAB);
     if (req.method === 'GET' && p === '/favicon.ico') return send(res, 204, 'text/plain', '');
     if (req.method === 'GET' && p.startsWith('/public/')) return serveFile(res, path.join(ROOT, 'public', p.slice('/public/'.length)));
@@ -140,15 +157,22 @@ const server = http.createServer(async (req, res) => {
       if (!saved.ok) return sendJson(res, saved);
       return sendJson(res, { ok: true, saved: saved, manifest: runManifest(true), assets: runApplyAssets() });
     }
-    return send(res, 404, 'text/plain', 'not found: ' + p);
+    return sendJson(res, {
+      ok: false, error: 'not_found', path: p,
+      routes: ['GET /', 'GET /api/status', 'POST /api/save-layout', 'POST /api/manifest', 'POST /api/apply-assets', 'POST /api/apply-all'],
+      hint: '路径打错了；若是页面报错，请确认用 npm run lab 启动并访问 http://127.0.0.1:' + PORT + '/',
+    }, 404);
   } catch (e) {
     return sendJson(res, { ok: false, error: e && e.message ? e.message : String(e) });
   }
-});
+}
 
 const portArg = process.argv.indexOf('--port');
 const PORT = portArg >= 0 ? Number(process.argv[portArg + 1]) : 4319;
-server.listen(PORT, '127.0.0.1', () => {
+
+module.exports = { createLabServer, status, saveLayout, runManifest, runApplyAssets, RAW, LAB, ROOT, PORT };
+
+if (require.main === module) createLabServer().listen(PORT, '127.0.0.1', () => {
   console.log('布局工具已启动：http://127.0.0.1:' + PORT + '/');
   console.log('  工作区：' + ROOT);
   console.log('  导出 JSON → ' + RAW + '（「存到工作区」按钮）');
