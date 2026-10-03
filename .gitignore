@@ -11,3 +11,8 @@ runtime/
 .tmp-*
 .probe-tmp/
 .poll*.txt
+
+# 素材收件夹（用户把原图丢这里；归位后落到 public/assets/ 才入库）
+assets-inbox/*
+!assets-inbox/README.md
+!assets-inbox/.gitkeep

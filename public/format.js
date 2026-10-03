@@ -2825,6 +2825,12 @@
   var LAY_TIER_CN = { common: '绿', rare: '蓝', epic: '紫', legendary: '橙', mythic: '青' };
   var LAY_POS = { skill1: 0, skill2: 1, skill3: 2 };
   function layIcon(kind, id) { return id ? ('assets/' + kind + '/' + id + '.webp') : ''; }
+  // 插件图标按**族根**命名（数据表里 rp_atk_pct 是族根，rp_atk_pct_c1/_c3 是点数变体，共用一张图）
+  function layPluginIconKey(item) {
+    var tid = or(layPick(item, 'templateId'), '');
+    if (tid !== '') return tid;
+    return or(layPick(item, 'id'), '').replace(/_c\d+$/, '');
+  }
   function layItem(item) { return item || {}; }
   /** 主界面**显示**哪份配置：0 = 跟随出战（/me 的 activeSlotId）；1..3 = 用户显式切过 */
   function laySlotIndex(state) {
@@ -2887,7 +2893,7 @@
       return {
         index: i, uid: or(pick(it, 'uid'), ''), item: it,
         label: or(pick(it, 'name'), '(未命名)') + (q ? '（' + (LAY_TIER_CN[q] || q) + '）' : ''),
-        icon: layIcon(kind, pick(it, 'templateId')),
+        icon: kind === 'plugin' ? layIcon('plugin', layPluginIconKey(it)) : layIcon(kind, pick(it, 'templateId')),
       };
     }
     if (source === 'roles') {

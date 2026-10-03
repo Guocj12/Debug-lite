@@ -19,6 +19,10 @@
     "demo:log": "node scripts/demo.js --log-level trace",
     "cli": "node cli/index.js",
     "hooks:install": "git config core.hooksPath .githooks",
-    "load-test": "node scripts/load-test.js"
+    "load-test": "node scripts/load-test.js",
+    "lab": "node tools/layout/lab-server.js",
+    "layout:apply": "node tools/layout/import-layout.js",
+    "assets:manifest": "node tools/layout/asset-manifest.js",
+    "assets:apply": "node tools/layout/apply-assets.js"
   }
 }

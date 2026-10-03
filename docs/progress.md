@@ -519,5 +519,28 @@ docs/progress.md       本文件
    `/me/configs` + `/me/warehouse`，会把用户随后立刻发生的点击**静默吞掉**（实测把 AE2-2/4/5/6/7 与 BF-2 打红）。
    现在走 `refresh-hub` 的 `{ skipProfile: true, background: true }`：不占 busy、不写提示（`/me` 由启动自检那次复用，不多发请求）。
 
-**⑥ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
+**⑥ 布局工具（tools/layout/，已入库）**
+
+主界面既然由「布局表 + 素材文件」两样东西驱动，工具也必须入库（`runtime/` 是 gitignore 的临时区，
+放那里会导致新克隆缺工具、`layout-tool-assets.test.js` 直接红）。因此工具落在 **`tools/layout/`**：
+
+| 命令 | 作用 |
+|---|---|
+| `npm run lab` | 起本地服务（127.0.0.1:4319）→ 浏览器打开布局台；**页面才能往工作区写文件** |
+| `npm run layout:apply` | 导出 JSON → 意图修正 → `public/layout-data.js`（+ 归一化副本） |
+| `npm run assets:manifest` | 算出**所有缺失的 UI 图片及名字** → `docs/frontend/assets-manifest.md` + `tools/layout/assets-manifest.json` |
+| `npm run assets:apply` | 把 `assets-inbox/` 里的图**改名 / 转 WebP / 缩放**后落到 `public/assets/`，并报"仍缺什么 / 认不出的文件" |
+
+布局台新增四个按钮（`存到工作区` / `素材清单` / `归位素材` / `一键应用`），走 `tools/layout/lab-server.js` 的本地接口；
+直接双击 `lab.html`（file://）时按钮会明确提示"请先用 npm run lab 启动"。
+完整用法见 [`docs/frontend/07-layout-tool.md`](frontend/07-layout-tool.md)，素材清单见
+[`docs/frontend/assets-manifest.md`](frontend/assets-manifest.md)（按类别分组、标注 ★ 优先与已有/缺失），
+出图规范见 [`assets-inbox/README.md`](../assets-inbox/README.md)。
+
+**素材清单是三处合成的**（所以不会漏）：`server/data/*.json`（角色 11 / 技能 4 / 插件族 41 / 品质 5 / 段位 5 / AI 节点 54 / 包 1）
++ 布局表（背景图 + **每个没素材的按钮**给出建议名 `assets/ui/<元素id>.webp`，共 25 项）
++ `public/format.js` 的路径规则（机器核对 LT-3 会比对两者是否同步）。
+插件同族（`rp_atk_pct` / `_c1` / `_c3`）收敛成族根一张图，63 → 41 张。
+
+**⑦ 素材待办**：真图未就位（`assets/role/*.webp`、`assets/skill/*.webp`、`assets/tier/*.svg`、`assets/frame/*.svg`）
 → 现在画占位形状；`public/index.html` 也还没引 `app.css`（接线时补；静态托管需同时扩 `STATIC_EXT_TYPES` 才支持图片）。

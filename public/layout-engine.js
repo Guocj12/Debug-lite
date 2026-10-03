@@ -1,6 +1,6 @@
 'use strict';
-/* public/layout-engine.js —— **由 runtime/make-engine.js 生成，请勿手改**
- * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: 78bf1041dafc3278）
+/* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
+ * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: feb4900cd5a65392）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -338,7 +338,7 @@
                     fit: (src.background && src.background.fit) === 'contain' ? 'contain' : 'cover' },
       elements: (Array.isArray(src.elements) ? src.elements : []).map(normalizeElement)
     };
-    // 结构元数据（由 runtime/import-layout.js 写入）：插槽屏 / 列表屏的展开规则，必须随归一化保留
+    // 结构元数据（由 tools/layout/import-layout.js 写入）：插槽屏 / 列表屏的展开规则，必须随归一化保留
     if (src.slotsFrom && typeof src.slotsFrom === 'object') out.slotsFrom = src.slotsFrom;
     if (src.listFrom && typeof src.listFrom === 'object') out.listFrom = src.listFrom;
     if (out.role === 'modal') {
@@ -773,6 +773,6 @@
     normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout
   };
 })();
-  CORE.CORE_DIGEST = "78bf1041dafc3278";
+  CORE.CORE_DIGEST = "feb4900cd5a65392";
   return CORE;
 });

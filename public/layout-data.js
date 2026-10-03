@@ -1,7 +1,7 @@
 'use strict';
-/* public/layout-data.js —— **由 runtime/import-layout.js 生成，请勿手改**
+/* public/layout-data.js —— **由 tools/layout/import-layout.js 生成，请勿手改**
  * 真源：布局台导出的 JSON（runtime/layout-bundle.raw.json）。
- * 生成方式：node runtime/import-layout.js
+ * 生成方式：node tools/layout/import-layout.js
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutData，Node 可 require）。
  */
 (function (root, factory) {

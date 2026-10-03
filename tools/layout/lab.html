@@ -1,0 +1,2423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debug-Lite · 布局台（dev 原型）</title>
+<style>
+  :root{
+    --bg:#0e121a; --panel:#161b26; --panel2:#1e2430; --line:#2c3547; --line2:#3a4458;
+    --text:#e2eaf6; --dim:#8b98ac; --accent:#4c84fa; --accent2:#3a6cdc;
+    --ok:#2ecc71; --warn:#e6a23c; --err:#e05c5c;
+    --c-common:#2ecc71; --c-rare:#3498db; --c-epic:#9b59b6; --c-legendary:#e67e22; --c-mythic:#1abc9c;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--text);font:13px/1.5 "Microsoft YaHei",system-ui,sans-serif;display:flex;flex-direction:column}
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:5px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.on{background:var(--accent2);border-color:#9bbdff}
+  button.danger:hover{border-color:var(--err);color:#ffd9d9}
+  input,select,textarea{background:#0f1420;border:1px solid var(--line);border-radius:7px;padding:4px 7px;width:100%}
+  textarea{font-family:Consolas,monospace;font-size:11.5px;line-height:1.45;resize:vertical}
+  header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .grow{flex:1}
+  header .tag{color:var(--dim);font-size:12px}
+  main{flex:1;display:flex;min-height:0}
+  .col{display:flex;flex-direction:column;min-height:0}
+  .left{width:260px;background:var(--panel);border-right:1px solid var(--line)}
+  .right{width:330px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
+  .center{flex:1;display:flex;flex-direction:column;min-width:0;background:repeating-linear-gradient(45deg,#0b0f16,#0b0f16 10px,#0d1220 10px,#0d1220 20px)}
+  .sect{padding:8px 10px;border-bottom:1px solid var(--line)}
+  .sect h3{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:600;letter-spacing:.5px}
+  .list{overflow:auto;flex:1;padding:6px}
+  .item{display:flex;gap:6px;align-items:center;padding:5px 7px;border:1px solid transparent;border-radius:7px;cursor:pointer}
+  .item:hover{background:#1b2231}
+  .item.sel{background:#22304d;border-color:var(--accent)}
+  .item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .ac{color:var(--dim);font-size:11px;font-family:Consolas,monospace}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+  .dot.deco{background:#5a6478}
+  .bp-badge{font-size:10px;color:var(--warn);border:1px solid var(--warn);border-radius:4px;padding:0 3px}
+  .stagewrap{flex:1;overflow:auto;display:flex;padding:14px}
+  /* 关键：CSS transform 不改变布局尺寸 → 放大后滚动条到不了边缘。
+     所以外面套一层 stagebox，用真实宽高撑出正确滚动区域（margin:auto 负责居中，
+     内容比容器大时 auto 自动退化为 0，滚动正常）。 */
+  #stagebox{margin:auto;position:relative;flex:none}
+  #stage{position:relative;background:#0a0e16 center/cover no-repeat;box-shadow:0 0 0 1px var(--line2),0 12px 40px #0008;transform-origin:top left}
+  #stage .grid{position:absolute;inset:0;pointer-events:none;
+    background-image:linear-gradient(to right,#22304d 1px,transparent 1px),linear-gradient(to bottom,#22304d 1px,transparent 1px);
+    background-size:80px 80px,80px 80px;opacity:.5}
+  .el{position:absolute;border:1px dashed #4a5772;border-radius:4px;cursor:move;display:flex;align-items:center;justify-content:center;overflow:visible}
+  .el img{width:100%;height:100%;object-fit:contain;pointer-events:none;image-rendering:auto}
+  .el .ph{position:absolute;inset:0;background:#ffffff10;border-radius:4px;pointer-events:none}
+  .el .lb{position:absolute;left:3px;top:2px;font-size:10px;color:#cfe0ff;background:#0009;padding:0 3px;border-radius:3px;pointer-events:none;max-width:100%;overflow:hidden;white-space:nowrap}
+  .el .ac{position:absolute;right:3px;bottom:2px;font-size:9.5px;color:#9fb6e0;background:#0009;padding:0 3px;border-radius:3px;pointer-events:none;max-width:100%;overflow:hidden;white-space:nowrap}
+  .el.sel{border:1px solid var(--accent);box-shadow:0 0 0 1px #4c84fa80,0 0 14px #4c84fa40}
+  .el .hitov{position:absolute;inset:0;pointer-events:none}
+  .el .hitov path{fill:#4c84fa22;stroke:#7fb0ff;stroke-width:1.5;stroke-dasharray:4 3}
+  .h{position:absolute;width:13px;height:13px;background:#0b0f16;border:1.5px solid var(--accent);border-radius:3px;z-index:9}
+  .h:hover{background:var(--accent)}
+  .h.nw{left:-7px;top:-7px;cursor:nwse-resize}.h.n{left:calc(50% - 6.5px);top:-7px;cursor:ns-resize}.h.ne{right:-7px;top:-7px;cursor:nesw-resize}
+  .h.w{left:-7px;top:calc(50% - 6.5px);cursor:ew-resize}.h.e{right:-7px;top:calc(50% - 6.5px);cursor:ew-resize}
+  .h.sw{left:-7px;bottom:-7px;cursor:nesw-resize}.h.s{left:calc(50% - 6.5px);bottom:-7px;cursor:ns-resize}.h.se{right:-7px;bottom:-7px;cursor:nwse-resize}
+  .h.rot{left:calc(50% - 5px);top:-26px;border-radius:50%;cursor:grab}
+  /* 多边形顶点：位置用 left/top（舞台单位），再用 --inv 反向缩放，保证任何缩放级别都好抓 */
+  .vp,.vm{position:absolute;border-radius:50%;z-index:6;transform:translate(-50%,-50%) scale(var(--inv,1))}
+  .vp{width:12px;height:12px;background:#ffd166;border:1.5px solid #6b4e00;cursor:grab}
+  .vp:hover{background:#fff}
+  .vp.alt:hover{background:#ff8b8b;cursor:not-allowed}
+  .vm{width:9px;height:9px;background:#4c84fa99;border:1px solid #bcd4ff;cursor:copy}
+  .vm:hover{background:#9bbdff}
+  .guide{position:absolute;background:#ff5fa2;pointer-events:none;z-index:4}
+  .guide.v{width:1px;top:0;bottom:0}.guide.h{height:1px;left:0;right:0}
+  .prevs{display:flex;gap:8px;padding:8px 10px;flex-wrap:wrap}
+  .prev{background:#0a0e16;border:1px solid var(--line);border-radius:8px;position:relative;overflow:hidden;flex:none}
+  .prev .cap{position:absolute;left:4px;top:2px;font-size:10px;color:var(--dim);z-index:3}
+  .prev .dot{position:absolute;z-index:2;background:#ffffff22;border:1px solid #ffffff33;border-radius:2px}
+  .prev .dot.img{background:#0000;border:0}
+  .prev .dot.img img{width:100%;height:100%;object-fit:contain;display:block}
+  .row{display:flex;gap:6px;align-items:center;margin:4px 0}
+  .row label{width:76px;color:var(--dim);font-size:12px;flex:none}
+  .row .seg{display:flex;gap:4px;flex:1}
+  .row .seg button{flex:1;padding:3px 4px;font-size:12px}
+  .issues{max-height:120px;overflow:auto;font-size:11.5px}
+  .issues div{padding:2px 0}
+  .err{color:var(--err)}.warn{color:var(--warn)}.ok{color:var(--ok)}
+  .bar{padding:6px 12px;border-top:1px solid var(--line);background:var(--panel);color:var(--dim);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  .kbd{font-family:Consolas,monospace;background:#0f1420;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  .hint{color:var(--dim);font-size:11.5px;padding:2px 0}
+  #banner{margin:8px 10px 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.6;
+    background:#2a2314;border:1px solid var(--warn);color:#ffe1a8;display:flex;gap:10px;align-items:flex-start}
+  #banner[hidden]{display:none}
+  #banner .grow{flex:1}
+  #saveInfo{color:var(--dim);font-size:11.5px}
+  details summary{cursor:pointer;color:var(--dim);font-size:12px}
+  .swatch{width:10px;height:10px;border-radius:2px;flex:none}
+  /* 预览弹窗流程：叠加在中间列上 */
+  #pv{position:absolute;inset:0;z-index:40;background:#080b11ee;display:flex;flex-direction:column}
+  #pv[hidden]{display:none}
+  .pvbar{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:12px}
+  .pvwrap{flex:1;overflow:auto;display:flex;padding:10px}
+  #pvbox{margin:auto;position:relative;flex:none;background:#0a0e16;box-shadow:0 0 0 1px var(--line2)}
+  #pvstage{position:relative;transform-origin:top left}
+  .pvel{position:absolute;display:flex;align-items:center;justify-content:center;font-size:10px;color:#cfe0ff;overflow:hidden}
+  .pvel.btn{cursor:pointer;border:1px solid #4c84fa66;border-radius:4px}
+  .pvel.btn:hover{outline:2px solid #7fb0ff;outline-offset:-1px}
+  .pvel.deco{color:#8b98ac;border:1px dashed #3a4458;border-radius:4px}
+  .pvel img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+  .pvmask{position:absolute;left:0;top:0;right:0;bottom:0;cursor:pointer}
+  .pvhit{position:absolute;inset:0;pointer-events:none}
+  .pvhit path{fill:#4c84fa22;stroke:#7fb0ff;stroke-width:1.5}
+  .center{position:relative}
+  @media (max-width:900px){ main{flex-direction:column} .left,.right{width:auto;max-height:40vh} }
+</style>
+</head>
+<body>
+
+<header>
+  <strong>布局台</strong>
+  <span class="tag">dev 原型 · 单文件 · 无依赖 · 编辑的是数据（JSON）</span>
+  <span class="grow"></span>
+  <label class="tag">画面</label>
+  <select id="screenSel" style="width:150px"></select>
+  <input id="screenNewName" placeholder="新画面名（例 modal_role）" style="width:170px">
+  <button id="btnScreenAdd" title="新增整屏画面（切场景用）">＋整屏</button>
+  <button id="btnScreenModal" title="新增弹窗画面（覆盖在当前画面之上）">＋弹窗</button>
+  <button id="btnScreenDel" class="danger" title="删除当前画面（点两次确认）">删画面</button>
+  <label class="tag">编辑断点</label>
+  <select id="editBp" style="width:190px"></select>
+  <label class="tag">吸附</label>
+  <select id="grid" style="width:96px">
+    <option value="0">关</option><option value="4">4px</option><option value="8" selected>8px</option><option value="16">16px</option>
+  </select>
+  <button id="btnGuides" class="on" title="对齐辅助线">辅助线</button>
+  <span class="grow"></span>
+  <button id="btnUndo">撤销</button>
+  <button id="btnRedo">重做</button>
+  <span class="seg" style="flex:none">
+    <button id="btnZoomOut" title="缩小（Ctrl/⌘ + -）">－</button>
+    <button id="btnZoom100" title="实际大小（Ctrl/⌘ + 1）">100%</button>
+    <button id="btnZoomIn" title="放大（Ctrl/⌘ + +）">＋</button>
+    <button id="btnFit" title="适应窗口（Ctrl/⌘ + 0）">适应</button>
+  </span>
+  <button id="btnAdd">＋元素</button>
+  <button id="btnDup">复制</button>
+  <button id="btnDel" class="danger">删除</button>
+  <button id="btnImport">导入 JSON</button>
+  <button id="btnExport">导出 JSON</button>
+  <button id="btnCheck">校验</button>
+  <button id="btnPreview" title="预览弹窗流程：点带 target 的元素会弹出目标画面">▶ 预览弹窗流程</button>
+  <!-- 需要本地服务（node tools/layout/lab-server.js）才能用：直接双击打开时这些按钮会提示 -->
+  <span class="vb"></span>
+  <button id="btnSaveWs" class="primary" title="把布局表写进工作区 tools/layout/layout-bundle.raw.json 并自动生成 public/layout-data.js">💾 存到工作区</button>
+  <button id="btnManifest" title="算出所有缺失的 UI 图片及名字（写 docs/frontend/assets-manifest.md）">📋 素材清单</button>
+  <button id="btnAssets" title="把 assets-inbox/ 里的素材改名/转 WebP/缩放后放进 public/assets/">🎨 归位素材</button>
+  <button id="btnApplyAll" class="primary" title="存盘 → 生成 → 清单 → 归位，一次做完">⚡ 一键应用</button>
+</header>
+
+<main>
+  <aside class="col left">
+    <div class="sect">
+      <h3>元素（点选 → 拖动）</h3>
+      <div class="hint">虚线 = 命中区。<span class="dot deco" style="display:inline-block"></span> 装饰件不需要 action。</div>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="sect">
+      <h3>素材（可选，仅本地预览）</h3>
+      <div class="row"><button id="btnAssetDir" style="flex:1">选整个素材目录…</button></div>
+      <div class="hint" id="assetInfo">未载入素材：按文件名自动匹配 <span class="kbd">asset</span> 路径的最后一段。</div>
+    </div>
+  </aside>
+
+  <section class="center col">
+    <div id="banner" hidden>
+      <span class="grow" id="bannerText"></span>
+      <button id="bannerReset" title="清掉本地自动保存，回到默认布局">重置为默认</button>
+      <button id="bannerClose">知道了</button>
+    </div>
+    <div id="pv" hidden>
+      <div class="pvbar">
+        <strong>预览</strong>
+        <span id="pvName">—</span>
+        <span id="pvHint" style="color:var(--dim)"></span>
+        <span style="flex:1"></span>
+        <button id="pvBp" title="切换断点">横屏</button>
+        <button id="pvReset">回到起点</button>
+        <button id="pvExit">退出预览</button>
+      </div>
+      <div class="pvwrap" id="pvwrap"><div id="pvbox"><div id="pvstage"></div></div></div>
+    </div>
+    <div class="stagewrap" id="stagewrap">
+      <div id="stagebox">
+        <div id="stage">
+          <div class="grid" id="stageGrid"></div>
+        </div>
+      </div>
+    </div>
+    <div class="bar">
+      <span id="stInfo">—</span>
+      <span id="stZoom">—</span>
+      <span id="stIssues">—</span>
+      <span class="grow" style="flex:1"></span>
+      <span>快捷键：<span class="kbd">方向键</span> 微调 · <span class="kbd">Shift</span>+方向 10px · <span class="kbd">Del</span> 删 · <span class="kbd">Ctrl/⌘+D</span> 复制 · <span class="kbd">Ctrl/⌘+Z</span> 撤销 · <span class="kbd">Shift</span> 旋转吸附 15°</span>
+    </div>
+  </section>
+
+  <aside class="col right">
+    <div class="sect">
+      <h3>属性（当前选中元素）</h3>
+      <div class="row"><label>id</label><input id="pId" placeholder="btn_warehouse"></div>
+      <div class="row"><label>显示名</label><input id="pLabel" placeholder="仓库"></div>
+      <div class="row"><label>类型</label>
+        <select id="pKind"><option value="button">按钮（需 action）</option><option value="deco">装饰件</option></select>
+      </div>
+      <div class="row"><label>action</label><input id="pAction" list="actionList" placeholder="goto-warehouse"></div>
+      <datalist id="actionList"></datalist>
+      <div class="row"><label>target 画面</label>
+        <select id="pTarget"><option value="">（无）</option></select>
+      </div>
+      <div class="hint" id="pTargetInfo">—</div>
+      <div class="row"><label>payload</label><input id="pPayload" placeholder='{"slot":"slot1"}'></div>
+      <div class="row"><label>素材路径</label><input id="pAsset" placeholder="assets/ui/btn_warehouse.svg"></div>
+      <div class="row"><label>选图预览</label><input id="pAssetFile" type="file" accept="image/*" style="padding:2px"></div>
+      <div class="row"><label>命中区</label>
+        <select id="pHit"><option value="rect">rect 矩形</option><option value="ellipse">ellipse 椭圆</option><option value="path">path 矢量多边形</option><option value="alpha">alpha 像素</option></select>
+      </div>
+      <div class="row"><label>多边形</label>
+        <span class="seg">
+          <select id="pPathPreset" style="flex:1">
+            <option value="">预设形状…</option>
+          </select>
+          <button id="btnPathAdd" title="在最后一个顶点之后插入一个顶点">＋顶点</button>
+          <button id="btnPathDel" title="删除最后一个顶点（最少 3 个）">－顶点</button>
+        </span>
+      </div>
+      <div class="row"><label>等边矫正</label>
+        <span class="seg">
+          <button id="btnPathRegular" title="按当前 rect 的宽高比，把当前形状矫正为等边正多边形（顶点数不变）">矫正为正 N 边形</button>
+        </span>
+      </div>
+      <div class="row"><label>path</label>
+        <textarea id="pPath" rows="3" spellcheck="false" placeholder="M50,0 L100,30 L100,100 L0,100 L0,30 Z"></textarea>
+      </div>
+      <div class="hint" id="pPathInfo">—</div>
+      <div class="row"><label>锚点</label>
+        <select id="pAnchor"></select>
+      </div>
+      <div class="row"><label>rect</label>
+        <input id="pX" type="number" step="1" title="x"><input id="pY" type="number" step="1" title="y">
+        <input id="pW" type="number" step="1" title="w"><input id="pH" type="number" step="1" title="h">
+      </div>
+      <div class="row"><label>顶点编辑</label><span class="seg"><button id="btnShapeMode" title="开启后才显示多边形顶点手柄（快捷键 P）；避免与四角缩放手柄重叠">编辑形状（P）</button></span></div>
+      <div class="row"><label>旋转 / 层级</label><input id="pRot" type="number" step="1" title="旋转"><input id="pZ" type="number" step="1" title="z"></div>
+      <div class="row"><label>隐藏</label><input id="pHidden" type="checkbox" style="width:auto"></div>
+      <div class="row"><label>when</label><input id="pWhen" placeholder='{"activeSlot":1} 或 {"activeSlot":[1,3]}' ></div>
+      <div class="row" id="ovRow">
+        <label>断点覆盖</label>
+        <span class="seg">
+          <button id="btnOvSet" title="把当前显示位置固化为该断点的独立布局">固化到本断点</button>
+          <button id="btnOvClear" title="删除该断点的独立布局，回到自动适配">清除</button>
+        </span>
+      </div>
+      <div class="hint" id="pOvInfo">—</div>
+    </div>
+
+    <div class="sect">
+      <h3>画面属性（当前画面）</h3>
+      <div class="row"><label>角色</label>
+        <select id="sRole"><option value="screen">screen（整屏 · 切场景）</option><option value="modal">modal（弹窗 · 覆盖在底屏上）</option></select>
+      </div>
+      <div class="row"><label>背景素材</label><input id="sBg" placeholder="assets/bg/hub_main.webp"></div>
+      <div class="row" id="maskRow"><label>遮罩</label>
+        <input id="sMaskColor" placeholder="#000000" style="width:80px">
+        <input id="sMaskOpacity" type="number" step="0.05" min="0" max="1" title="不透明度">
+        <label style="width:auto"><input id="sMaskClose" type="checkbox" style="width:auto"> 点遮罩关闭</label>
+      </div>
+      <div class="hint" id="sInfo">—</div>
+    </div>
+
+    <div class="sect">
+      <h3>径向生成插槽（正 n 边形方向）</h3>
+      <div class="row"><label>中心</label>
+        <span class="seg">
+          <button id="radFromSel" title="用当前选中元素的中心作为圆心">用选中元素中心</button>
+          <button id="radFromCanvas" title="用画布中心">用画布中心</button>
+        </span>
+      </div>
+      <div class="row"><label>数量/半径</label>
+        <input id="radN" type="number" value="6" min="1" max="12" title="数量（6 = 正六边形六个方向）">
+        <input id="radR" type="number" value="250" min="10" title="半径">
+      </div>
+      <div class="row"><label>尺寸/起始角</label>
+        <input id="radW" type="number" value="64" min="8" title="宽">
+        <input id="radH" type="number" value="64" min="8" title="高">
+        <input id="radStart" type="number" value="-90" title="起始角（-90 = 正上方）">
+      </div>
+      <div class="row"><label>id 前缀</label><input id="radPrefix" value="slot_"></div>
+      <div class="row"><label>action</label><input id="radAction" value="plugin-pick" list="actionList"></div>
+      <div class="row"><label>target</label><input id="radTarget" value="modal_role_plugin_pick"></div>
+      <div class="row"><span class="seg"><button id="btnRadial" style="flex:1">在【当前画面】按方向生成</button></span></div>
+      <div class="hint" id="radInfo">半径按基准画布 1280×720 的像素算；生成后可以逐个微调位置。</div>
+    </div>
+
+    <div class="sect">
+      <h3>设计期状态（元素 when 过滤）</h3>
+      <div class="row"><label>出战配置</label>
+        <span class="seg">
+          <button data-as="1">配置1</button><button data-as="2">配置2</button><button data-as="3">配置3</button>
+        </span>
+      </div>
+      <div class="hint">元素上写 <span class="kbd">when: {"{"}"activeSlot": 1{"}"}</span> 就只在配置1显示（例：三个「出战」角标）。真代码渲染层照同一条规则过滤。</div>
+    </div>
+
+    <div class="sect">
+      <h3>断点预览（自动适配结果显示）</h3>
+      <div class="row" id="prevMode">
+        <label>适配</label>
+        <span class="seg">
+          <button data-adapt="fit">整屏等比缩放</button>
+          <button data-adapt="anchor">锚点跟随</button>
+        </span>
+      </div>
+      <div class="prevs" id="prevs"></div>
+      <div class="hint" id="prevHint">—</div>
+    </div>
+
+    <div class="sect">
+      <h3>校验</h3>
+      <div class="issues" id="issues"></div>
+    </div>
+
+    <div class="sect">
+      <details id="jsonPanel" open>
+        <summary>布局 JSON（真源）—— 也可以直接把这里的内容发给我</summary>
+        <div class="row" style="margin-top:6px">
+          <button id="btnJsonRefresh" style="flex:1">刷新</button>
+          <button id="btnJsonApply" style="flex:1">应用粘贴的 JSON</button>
+          <button id="btnJsonCopy" style="flex:1">复制 JSON</button>
+        </div>
+        <textarea id="json" rows="14" spellcheck="false"></textarea>
+        <div class="hint" id="saveInfo">—</div>
+      </details>
+    </div>
+
+    <div class="sect">
+      <details id="toolPanel" open>
+        <summary>存盘 / 素材（需要本地服务：node tools/layout/lab-server.js）</summary>
+        <div class="hint" id="toolInfo" style="margin:6px 0">检测中…</div>
+        <div class="row">
+          <button id="btnStatus" style="flex:1">刷新状态</button>
+          <button id="btnMissing" style="flex:1">看缺哪些图</button>
+          <button id="btnMissingAll" style="flex:1">全部（含图鉴类）</button>
+        </div>
+        <div class="hint">素材出图规范：文件名 = 清单里的 <b>ID</b>（例 <code>role_bal.png</code>），丢进仓库根的
+          <code>assets-inbox/</code>，然后点「归位素材」——会自动改名 / 转 WebP / 缩放并落到 <code>public/assets/</code>。</div>
+      </details>
+    </div>
+
+    <div class="sect">
+      <details>
+        <summary>这份布局表怎么被真代码消费？</summary>
+        <div class="hint" style="margin-top:6px">
+          ① 渲染层从 <span class="kbd">layout.json</span> 读元素位置与素材，<b>文字与数值仍由 format.js 投影</b>（渲染零逻辑）；
+          ② 每个 <span class="kbd">kind:"button"</span> 元素渲染时把 <span class="kbd">action</span>/<span class="kbd">payload</span> 落到
+          <span class="kbd">data-action</span>/<span class="kbd">data-*</span>，UI-2/AU-1 的双向核对继续成立；
+          ③ 适配只在渲染时算（<span class="kbd">resolveElement</span>），不写进 CSS；
+          ④ 素材按 <span class="kbd">asset</span> 路径取，缺图回落占位。
+        </div>
+      </details>
+    </div>
+  </aside>
+</main>
+
+<!-- ===================== 纯逻辑（与 DOM 无关，可被 Node 抽取测试） ===================== -->
+<script id="core">
+var LAYOUT_CORE = (function () {
+  'use strict';
+  var ANCHOR_X = { l: 0, c: 0.5, r: 1 };
+  var ANCHOR_Y = { t: 0, c: 0.5, b: 1 };
+  var HIT_MODES = ['rect', 'ellipse', 'path', 'alpha'];
+  var FIT_MODES = ['contain', 'cover', 'stretch'];
+  var BP_KEYS = ['landscape', 'portrait', 'tablet'];
+  var BP_LABEL = { landscape: '横屏', portrait: '竖屏', tablet: '平板' };
+  var DEFAULT_BP = {
+    landscape: { w: 1280, h: 720, adapt: 'fit', fit: 'contain' },
+    portrait: { w: 390, h: 844, adapt: 'fit', fit: 'contain' },
+    tablet: { w: 1024, h: 768, adapt: 'fit', fit: 'contain' }
+  };
+
+
+  /* ---------------- 默认画面集合 ----------------
+   * hub（整屏）+ 三个弹窗：
+   *   modal_role_slots   点角色展开 → 插槽按**正六边形六个方向**径向展开（数量 = 模板 slotCount）
+   *   modal_role_pick    在弹窗里**再点角色** → 旁边显示可替换的角色模板
+   *   modal_role_plugin_pick / modal_skill_plugin_pick  点插槽 → 旁边显示该位置可装/可换的插件（角色插件 / 技能插件分开）
+   *   modal_skill_pick   技能弹窗里再点技能 → 旁边显示可替换的技能
+   * 交互闭环：点弹窗外任意处（遮罩）= 关闭。技能按钮同理（modal_skill_slots）。
+   */
+  var ROLE_SLOT_RECT = [556, 226, 168, 168];                 // 弹窗里角色卡的位置
+  var ROLE_SLOT_C = [ROLE_SLOT_RECT[0] + ROLE_SLOT_RECT[2] / 2, ROLE_SLOT_RECT[1] + ROLE_SLOT_RECT[3] / 2];
+  var SKILL_SLOT_RECT = [576, 316, 128, 128];                // 弹窗里技能卡的位置
+  var SKILL_SLOT_C = [SKILL_SLOT_RECT[0] + SKILL_SLOT_RECT[2] / 2, SKILL_SLOT_RECT[1] + SKILL_SLOT_RECT[3] / 2];
+  var SLOT_W = 64, SLOT_H = 64, SLOT_COUNT = 6;              // 默认 6 个方向（真代码按 slotCount 渲染）
+
+  function slotElements(prefix, center, radius, action, payloadBase, targetScreen) {
+    return radialRects(center[0], center[1], radius, SLOT_COUNT, SLOT_W, SLOT_H, -90)
+      .map(function (r, i) {
+        var payload = {};
+        Object.keys(payloadBase || {}).forEach(function (k) { payload[k] = payloadBase[k]; });
+        payload.idx = i;
+        return { id: prefix + (i + 1), kind: 'button', label: '插槽' + (i + 1), action: action,
+                 target: targetScreen || 'modal_slot_plugins', payload: payload, hit: 'rect', anchor: 'ct',
+                 rect: r, z: 3 };
+      });
+  }
+
+  var DEFAULT_BUNDLE = {
+    version: 1,
+    canvas: { w: 1280, h: 720 },
+    breakpoints: {
+      landscape: { w: 1280, h: 720, adapt: 'fit', fit: 'contain' },
+      portrait: { w: 390, h: 844, adapt: 'fit', fit: 'contain' },
+      tablet: { w: 1024, h: 768, adapt: 'fit', fit: 'contain' }
+    },
+    screens: {
+      hub: {
+        role: 'screen',
+        background: { asset: 'assets/bg/hub_main.webp', fit: 'cover' },
+        elements: [
+          { id: 'identity', kind: 'button', label: '{nickname}', action: 'goto-profile', hit: 'rect', anchor: 'lt', rect: [36, 30, 320, 92] },
+          { id: 'tier_chip', kind: 'deco', label: '{tierName} · {points} 分', asset: '{tierIcon}', hit: 'rect', anchor: 'lt', rect: [120, 76, 216, 26], z: 2 },
+          { id: 'btn_warehouse', kind: 'button', label: '仓库', action: 'goto-warehouse', hit: 'alpha', anchor: 'lt', rect: [36, 250, 180, 58] },
+          { id: 'btn_ai', kind: 'button', label: 'AI 编辑', action: 'goto-ai-editor', hit: 'alpha', anchor: 'lt', rect: [36, 322, 180, 58] },
+          { id: 'btn_settings', kind: 'button', label: '设置', action: 'goto-settings', hit: 'alpha', anchor: 'lb', rect: [36, 394, 180, 58] },
+          { id: 'btn_board', kind: 'button', label: '排行', action: 'goto-leaderboard', hit: 'alpha', anchor: 'rt', rect: [1064, 250, 180, 58] },
+          { id: 'btn_tournament', kind: 'button', label: '锦标赛', action: 'goto-tournament', hit: 'alpha', anchor: 'rt', rect: [1064, 322, 180, 58] },
+          { id: 'btn_quick', kind: 'button', label: '快速对战', action: 'goto-quick', hit: 'alpha', anchor: 'rb', rect: [1064, 394, 180, 58], z: 2 },
+          // 角色卡：素材与文字都**绑定当前配置** → 切配置时内容跟着换（不是一张固定素材图）
+          { id: 'crest_role', kind: 'button', label: '角色卡', asset: '{roleIcon}',
+            action: 'config-open', target: 'modal_role_slots',
+            payload: { slot: 'slot1' }, hit: 'path', path: 'M50,0 L100,30 L100,100 L0,100 L0,30 Z', anchor: 'ct', rect: [482, 62, 316, 306] },
+          { id: 'role_name', kind: 'deco', label: '{roleName}（{roleQuality}）', hit: 'rect', anchor: 'ct', rect: [542, 330, 196, 24], z: 2 },
+          // 三个技能：素材/文字同样绑定当前配置
+          { id: 'skill_1', kind: 'button', label: '{skill1Name}', asset: '{skill1Icon}', action: 'config-open', target: 'modal_skill_slots', payload: { slot: 'slot1', pos: 'skill1' }, hit: 'alpha', anchor: 'ct', rect: [452, 362, 124, 58], rot: -7 },
+          { id: 'skill_2', kind: 'button', label: '{skill2Name}', asset: '{skill2Icon}', action: 'config-open', target: 'modal_skill_slots', payload: { slot: 'slot1', pos: 'skill2' }, hit: 'alpha', anchor: 'ct', rect: [578, 352, 124, 58] },
+          { id: 'skill_3', kind: 'button', label: '{skill3Name}', asset: '{skill3Icon}', action: 'config-open', target: 'modal_skill_slots', payload: { slot: 'slot1', pos: 'skill3' }, hit: 'alpha', anchor: 'ct', rect: [704, 362, 124, 58], rot: 7 },
+          // 出战配置 1/2/3：**只切换主界面显示的配置**（setState = 本地状态，不导航、不进编辑界面）
+          { id: 'slot_1', kind: 'button', label: '1', setState: { activeSlot: 1 }, hit: 'rect', anchor: 'ct', rect: [530, 474, 52, 52] },
+          { id: 'slot_2', kind: 'button', label: '2', setState: { activeSlot: 2 }, hit: 'rect', anchor: 'ct', rect: [590, 474, 52, 52] },
+          { id: 'slot_3', kind: 'button', label: '3', setState: { activeSlot: 3 }, hit: 'rect', anchor: 'ct', rect: [650, 474, 52, 52] },
+          { id: 'badge_1', kind: 'deco', label: '出战', when: { activeSlot: 1 }, hit: 'rect', anchor: 'ct', rect: [530, 456, 52, 18], z: 4 },
+          { id: 'badge_2', kind: 'deco', label: '出战', when: { activeSlot: 2 }, hit: 'rect', anchor: 'ct', rect: [590, 456, 52, 18], z: 4 },
+          { id: 'badge_3', kind: 'deco', label: '出战', when: { activeSlot: 3 }, hit: 'rect', anchor: 'ct', rect: [650, 456, 52, 18], z: 4 },
+          { id: 'label_loadout', kind: 'deco', label: '出战配置 · {slotName}', hit: 'rect', anchor: 'ct', rect: [540, 552, 200, 30] },
+          { id: 'btn_unread', kind: 'deco', label: '{unread}', hit: 'rect', anchor: 'rt', rect: [1150, 34, 130, 40] },
+          { id: 'btn_refresh', kind: 'button', label: '刷新', action: 'refresh-hub', hit: 'rect', anchor: 'rt', rect: [1080, 34, 96, 40] }
+        ]
+      },
+      modal_role_slots: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.6, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'center_role', kind: 'button', label: '角色（再点一次看角色模板）', action: 'config-open', target: 'modal_role_pick',
+            hit: 'path', path: 'M50,0 L100,30 L100,100 L0,100 L0,30 Z', anchor: 'ct', rect: ROLE_SLOT_RECT, z: 2 }
+        ].concat(slotElements('rslot_', ROLE_SLOT_C, 250, 'plugin-pick', { slot: 'slot1', pos: 'role' }, 'modal_role_plugin_pick'))
+      },
+      modal_skill_slots: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.6, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          // 技能弹窗与角色弹窗**功能不同**：中心点是"换技能"，插槽是"换技能插件"
+          { id: 'center_skill', kind: 'button', label: '技能（再点一次看技能）', action: 'config-open', target: 'modal_skill_pick',
+            hit: 'rect', anchor: 'ct', rect: SKILL_SLOT_RECT, z: 2 }
+        ].concat(slotElements('sslot_', SKILL_SLOT_C, 210, 'plugin-pick', { slot: 'slot1', pos: 'skill2' }, 'modal_skill_plugin_pick'))
+      },
+      modal_role_pick: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.35, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'pick_panel', kind: 'deco', label: '候选角色模板', hit: 'rect', anchor: 'rc', rect: [860, 150, 380, 420], z: 5 },
+          { id: 'pick_title', kind: 'deco', label: '可替换的角色模板', hit: 'rect', anchor: 'rc', rect: [880, 168, 340, 28], z: 6 },
+          { id: 'pick_row1', kind: 'button', label: '{roleName}（当前）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 208, 340, 56], z: 6 },
+          { id: 'pick_row2', kind: 'button', label: '重装（蓝）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 272, 340, 56], z: 6 },
+          { id: 'pick_row3', kind: 'button', label: '突击（紫）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 336, 340, 56], z: 6 },
+          { id: 'pick_row4', kind: 'button', label: '探针（绿）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 400, 340, 56], z: 6 }
+        ]
+      },
+      modal_skill_pick: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.35, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'spick_panel', kind: 'deco', label: '候选技能', hit: 'rect', anchor: 'rc', rect: [860, 150, 380, 420], z: 5 },
+          { id: 'spick_title', kind: 'deco', label: '可替换的技能', hit: 'rect', anchor: 'rc', rect: [880, 168, 340, 28], z: 6 },
+          { id: 'spick_row1', kind: 'button', label: '近战', action: 'slot-set', payload: { slot: 'slot1', pos: 'skill2' }, hit: 'rect', anchor: 'rc', rect: [880, 208, 340, 56], z: 6 },
+          { id: 'spick_row2', kind: 'button', label: '平射', action: 'slot-set', payload: { slot: 'slot1', pos: 'skill2' }, hit: 'rect', anchor: 'rc', rect: [880, 272, 340, 56], z: 6 },
+          { id: 'spick_row3', kind: 'button', label: '定点', action: 'slot-set', payload: { slot: 'slot1', pos: 'skill2' }, hit: 'rect', anchor: 'rc', rect: [880, 336, 340, 56], z: 6 },
+          { id: 'spick_row4', kind: 'button', label: '位移', action: 'slot-set', payload: { slot: 'slot1', pos: 'skill2' }, hit: 'rect', anchor: 'rc', rect: [880, 400, 340, 56], z: 6 }
+        ]
+      },
+      modal_role_plugin_pick: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.35, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'plug_panel', kind: 'deco', label: '该插槽的**角色插件**候选', hit: 'rect', anchor: 'rc', rect: [860, 150, 380, 420], z: 5 },
+          { id: 'plug_title', kind: 'deco', label: '可装 / 可换的角色插件', hit: 'rect', anchor: 'rc', rect: [880, 168, 340, 28], z: 6 },
+          { id: 'plug_row1', kind: 'button', label: 'MP 优化·回复', action: 'plugin-set', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 208, 340, 56], z: 6 },
+          { id: 'plug_row2', kind: 'button', label: 'HP 强化', action: 'plugin-set', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 272, 340, 56], z: 6 },
+          { id: 'plug_row3', kind: 'button', label: '清空此槽', action: 'plugin-clear', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 336, 340, 56], z: 6 }
+        ]
+      },
+      modal_skill_plugin_pick: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.35, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'splug_panel', kind: 'deco', label: '该插槽的**技能插件**候选', hit: 'rect', anchor: 'rc', rect: [860, 150, 380, 420], z: 5 },
+          { id: 'splug_title', kind: 'deco', label: '可装 / 可换的技能插件', hit: 'rect', anchor: 'rc', rect: [880, 168, 340, 28], z: 6 },
+          { id: 'splug_row1', kind: 'button', label: '长剑（范围 0-3）', action: 'plugin-set', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 208, 340, 56], z: 6 },
+          { id: 'splug_row2', kind: 'button', label: '连击', action: 'plugin-set', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 272, 340, 56], z: 6 },
+          { id: 'splug_row3', kind: 'button', label: '清空此槽', action: 'plugin-clear', payload: { slotIndex: 0 }, hit: 'rect', anchor: 'rc', rect: [880, 336, 340, 56], z: 6 }
+        ]
+      }
+    }
+  };
+
+  /** 只为"单画面"用途派生：导出脚本/旧测试要 hub 这一屏的 {canvas,breakpoints,elements} */
+  var DEFAULT_LAYOUT = screenLayout(DEFAULT_BUNDLE, 'hub');
+
+  /* ---------- 多边形（命中区形状）----------
+   * 坐标空间固定为 **0..100 的归一化盒**，渲染时按元素 rect 拉伸：
+   *   这样做的好处 = 改 rect（换素材尺寸）不用重画形状；素材 @2x 也不用改。
+   * 只支持 M / L / H / V / Z（多边形）。遇到曲线等其它指令一律**判为不支持**（返回 null），
+   *   以免布局台把手写的曲线路径改坏。
+   *
+   * ⚠ 「正多边形」必须**按 rect 的宽高比现算**：path 坐标是百分比，同一个 0..100 的六边形
+   *   在非正方形 rect 上会被拉伸成不等边。所以正 N 边形预设是函数（make），不是固定字符串。
+   */
+
+  /** 像素空间里的正 N 边形顶点（保证等边），换算到 0..100 盒；恰好贴住盒的一轴 */
+  function regularPolygonPoints(n, w, h, flatTop) {
+    n = Math.max(3, Math.min(24, Math.round(num(n, 6))));
+    var ww = num(w, 0) > 0 ? num(w, 0) : 100, hh = num(h, 0) > 0 ? num(h, 0) : 100;
+    var start = flatTop ? 0 : -Math.PI / 2;
+    var maxCos = 0, maxSin = 0, i, a;
+    for (i = 0; i < n; i++) {
+      a = start + i * 2 * Math.PI / n;
+      maxCos = Math.max(maxCos, Math.abs(Math.cos(a)));
+      maxSin = Math.max(maxSin, Math.abs(Math.sin(a)));
+    }
+    var R = 0.5 * Math.min(ww / (maxCos || 1e-9), hh / (maxSin || 1e-9));
+    var pts = [];
+    for (i = 0; i < n; i++) {
+      a = start + i * 2 * Math.PI / n;
+      pts.push([round(50 + R * Math.cos(a) / ww * 100, 2), round(50 + R * Math.sin(a) / hh * 100, 2)]);
+    }
+    return pts;
+  }
+  function regularPolygonPath(n, w, h, flatTop) { return formatPath(regularPolygonPoints(n, w, h, flatTop), true); }
+
+  // 预设：`path` = 固定形状（随 rect 拉伸的风格化形状）；`make` = 按当前 rect 现算
+  var PATH_PRESETS = {
+    rect: { label: '矩形', path: 'M0,0 L100,0 L100,100 L0,100 Z' },
+    pentagon: { label: '五边形（盾/徽章，拉伸）', path: 'M50,0 L100,30 L100,100 L0,100 L0,30 Z' },
+    octagon: { label: '圆角八边形（拉伸）', path: 'M20,0 L80,0 L100,20 L100,80 L80,100 L20,100 L0,80 L0,20 Z' },
+    diamond: { label: '菱形（拉伸）', path: 'M50,0 L100,50 L50,100 L0,50 Z' },
+    poly3: { label: '正三角形（等边）', make: function (w, h) { return regularPolygonPath(3, w, h, true); } },
+    poly4: { label: '正方形（等边，居中）', make: function (w, h) { return regularPolygonPath(4, w, h, true); } },
+    poly5: { label: '正五边形（等边）', make: function (w, h) { return regularPolygonPath(5, w, h, false); } },
+    poly6: { label: '正六边形·平顶（等边）', make: function (w, h) { return regularPolygonPath(6, w, h, true); } },
+    poly6p: { label: '正六边形·尖顶（等边）', make: function (w, h) { return regularPolygonPath(6, w, h, false); } },
+    poly8: { label: '正八边形（等边）', make: function (w, h) { return regularPolygonPath(8, w, h, true); } }
+  };
+  var PATH_PRESET_LABEL = {};
+  Object.keys(PATH_PRESETS).forEach(function (k) { PATH_PRESET_LABEL[k] = PATH_PRESETS[k].label; });
+
+  /** 取预设形状：make 型按当前 rect 现算 */
+  function presetPath(key, rectW, rectH) {
+    var p = PATH_PRESETS[key];
+    if (!p) return '';
+    return p.make ? p.make(rectW, rectH) : p.path;
+  }
+
+  /**
+   * 解析 SVG 路径里的**多边形**部分。支持：
+   *   M/m L/l H/h V/v Z/z（大小写=绝对/相对）、一个命令后跟多组坐标（隐含重复 lineto）。
+   * 明确**不支持** C/Q/A 等曲线/圆弧 → 返回 null（不猜、不改坏）。
+   * 之所以要支持相对指令与 H/V：从 Figma / Illustrator 导出的轮廓几乎都是这个写法。
+   */
+  function parsePath(d) {
+    if (typeof d !== 'string' || !d.trim()) return null;
+    // 关键：先拒绝未知指令。否则 `C10,10 20,20 …` 里的字母会被分词器**静默丢弃**，
+    //   曲线坐标就被当成直线顶点，形状被悄悄改错（这是必须显式挡住的失败模式）。
+    if (/[A-Za-z]/.test(d.replace(/[MLHVZmlhvz]/g, ''))) return null;
+    var tokens = d.trim().match(/[MLHVZmlhvz]|-?\d*\.?\d+/g);
+    if (!tokens) return null;
+    var pts = [], closed = false, cur = [0, 0], last = null, i = 0, first = true;
+    var readNum = function () { var v = parseFloat(tokens[i]); if (!isFinite(v)) return null; i += 1; return v; };
+    while (i < tokens.length) {
+      var t = tokens[i];
+      if (/^[MLHVZmlhvz]$/.test(t)) { last = t; i += 1; }
+      else if (last === null) return null;              // 数字出现在任何命令之前 → 非法
+      var cmd = String(last).toUpperCase();
+      if (cmd === 'Z') { closed = true; last = null; continue; }
+      var rel = last !== cmd;                           // 小写 = 相对
+      if (first && cmd === 'M') rel = false;            // SVG 规范：首个 m 视作绝对
+      var nx = cur[0], ny = cur[1];
+      if (cmd === 'M' || cmd === 'L') {
+        var x = readNum(), y = readNum();
+        if (x === null || y === null) return null;
+        nx = rel ? cur[0] + x : x; ny = rel ? cur[1] + y : y;
+        pts.push([round(nx, 2), round(ny, 2)]);
+        if (cmd === 'M') last = rel ? 'l' : 'L';        // M 之后的重复坐标 = 隐含 lineto
+      } else if (cmd === 'H') {
+        var hx = readNum(); if (hx === null) return null;
+        nx = rel ? cur[0] + hx : hx;
+        pts.push([round(nx, 2), round(ny, 2)]);
+      } else if (cmd === 'V') {
+        var vy = readNum(); if (vy === null) return null;
+        ny = rel ? cur[1] + vy : vy;
+        pts.push([round(nx, 2), round(ny, 2)]);
+      } else return null;                               // C/Q/A/S/T → 不支持
+      cur = [nx, ny];
+      first = false;
+    }
+    if (pts.length < 3) return null;
+    return { points: pts, closed: closed };
+  }
+  function formatPath(points, closed) {
+    if (!Array.isArray(points) || points.length < 3) return '';
+    var out = points.map(function (p, i) {
+      return (i === 0 ? 'M' : 'L') + round(p[0], 1) + ',' + round(p[1], 1);
+    }).join(' ');
+    return closed === false ? out : out + ' Z';
+  }
+  function pathPointsOf(el) { return parsePath(el && el.path); }
+
+  /** 归一化 0..100 → 元素在舞台上的绝对坐标 */
+  function pathToStage(points, rect) {
+    return points.map(function (p) {
+      return [rect[0] + p[0] / 100 * rect[2], rect[1] + p[1] / 100 * rect[3]];
+    });
+  }
+  /** 舞台绝对坐标 → 归一化 0..100（夹在盒内：形状以 rect 为界，要更大就改 rect） */
+  function stageToPath(x, y, rect) {
+    var px = rect[2] ? (x - rect[0]) / rect[2] * 100 : 0;
+    var py = rect[3] ? (y - rect[1]) / rect[3] * 100 : 0;
+    return [round(clamp(px, 0, 100), 1), round(clamp(py, 0, 100), 1)];
+  }
+  /** 在第 i 条边（i → i+1）中点插入顶点 */
+  function insertVertex(points, i) {
+    var n = points.length;
+    if (n < 3) return points.slice();
+    var idx = ((i % n) + n) % n;
+    var a = points[idx], b = points[(idx + 1) % n];
+    var out = points.slice();
+    out.splice(idx + 1, 0, [round((a[0] + b[0]) / 2, 1), round((a[1] + b[1]) / 2, 1)]);
+    return out;
+  }
+  /** 删顶点；少于 3 个顶点时拒绝（多边形下限） */
+  function removeVertex(points, i) {
+    if (!Array.isArray(points) || points.length <= 3) return points.slice();
+    var idx = ((i % points.length) + points.length) % points.length;
+    var out = points.slice();
+    out.splice(idx, 1);
+    return out;
+  }
+  /** 射线法：点是否在多边形内（两边坐标系一致即可） */
+  function pointInPolygon(points, x, y) {
+    var inside = false, n = (points || []).length;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var xi = points[i][0], yi = points[i][1], xj = points[j][0], yj = points[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
+  /* ---------- 画面集合（弹窗设计）----------
+   * 核心观念：**"切屏"与"弹窗"不是布局的属性，而是动作（action）的语义。**
+   *   布局表只负责"按钮画在哪 + 派发哪个 action"；这个 action 是切屏还是开弹窗，
+   *   由真代码的 actions.js 决定（例：`item-open` → 设 state.modal；`goto-warehouse` → view.go）。
+   * 但要让**弹窗本身也能设计**，就必须把布局从"单画面"升级成"画面集合"：
+   *   screens: { hub: {role:'screen'}, modal_loadout: {role:'modal', mask:{...}} }
+   *   元素上的 `target` 是**设计期注解**（"点我会打开哪个画面"），供预览演弹窗流程；
+   *   真代码可以忽略它（真跳转仍由 action 决定），也可以用来自检"注解与 action 是否一致"。
+   */
+  var DEFAULT_MASK = { color: '#000000', opacity: 0.55, closeOnMaskClick: true, blocksBackground: true };
+  var SCREEN_ROLES = ['screen', 'modal'];
+
+  function normalizeScreen(s, name) {
+    var src = s || {};
+    var out = {
+      role: src.role === 'modal' ? 'modal' : 'screen',
+      name: String(name || ''),
+      background: { asset: String((src.background && src.background.asset) || ''),
+                    fit: (src.background && src.background.fit) === 'contain' ? 'contain' : 'cover' },
+      elements: (Array.isArray(src.elements) ? src.elements : []).map(normalizeElement)
+    };
+    // 结构元数据（由 tools/layout/import-layout.js 写入）：插槽屏 / 列表屏的展开规则，必须随归一化保留
+    if (src.slotsFrom && typeof src.slotsFrom === 'object') out.slotsFrom = src.slotsFrom;
+    if (src.listFrom && typeof src.listFrom === 'object') out.listFrom = src.listFrom;
+    if (out.role === 'modal') {
+      var m = src.mask || {};
+      out.mask = { color: /^#[0-9a-fA-F]{6}$/.test(String(m.color)) ? String(m.color) : DEFAULT_MASK.color,
+                   opacity: typeof m.opacity === 'number' && isFinite(m.opacity) ? round(clamp(m.opacity, 0, 1), 2) : DEFAULT_MASK.opacity,
+                   closeOnMaskClick: m.closeOnMaskClick !== false,
+                   // 只要有弹窗，**遮罩必须吞掉背景的一切交互**（背景按钮不可点）——默认开，不建议关
+                   blocksBackground: m.blocksBackground !== false };
+    }
+    return out;
+  }
+
+  function normalizeBundle(b) {
+    var src = b || {};
+    var canvas = { w: num(src.canvas && src.canvas.w, 1280), h: num(src.canvas && src.canvas.h, 720) };
+    var bps = {};
+    BP_KEYS.forEach(function (k) {
+      var d = DEFAULT_BP[k], s = (src.breakpoints && src.breakpoints[k]) || {};
+      bps[k] = { w: num(s.w, d.w), h: num(s.h, d.h),
+                 adapt: s.adapt === 'anchor' ? 'anchor' : 'fit',
+                 fit: FIT_MODES.indexOf(s.fit) >= 0 ? s.fit : 'contain' };
+    });
+    var screens = {};
+    if (src.screens && typeof src.screens === 'object') {
+      Object.keys(src.screens).forEach(function (k) { screens[k] = normalizeScreen(src.screens[k], k); });
+    } else {
+      // 向后兼容：根上有 elements ⇒ 当作单画面（旧的 layout-hub.json 也能导入）
+      screens[String(src.screen || 'hub')] = normalizeScreen(src, src.screen || 'hub');
+    }
+    if (!Object.keys(screens).length) screens.hub = normalizeScreen({}, 'hub');
+    return { version: 1, canvas: canvas, breakpoints: bps, screens: screens };
+  }
+
+  /** 把某个画面包成 layoutAt 能吃的形状（elements 与 breakpoints 保持**同一引用**，便于就地编辑） */
+  function screenLayout(bundle, name) {
+    var sc = bundle.screens[name];
+    if (!sc) return null;
+    return { name: name, role: sc.role, mask: sc.mask, canvas: bundle.canvas, breakpoints: bundle.breakpoints,
+             background: sc.background, elements: sc.elements };
+  }
+
+  function validateBundle(bundle, knownActions) {
+    var issues = [];
+    var names = Object.keys(bundle.screens);
+    if (!names.length) issues.push({ level: 'error', msg: '没有任何画面' });
+    if (!bundle.screens.hub) issues.push({ level: 'warn', msg: '没有名为 hub 的主画面（真代码默认落在 hub）' });
+    names.forEach(function (n) {
+      var sc = bundle.screens[n];
+      if (!/^[a-zA-Z][\w-]*$/.test(n)) issues.push({ level: 'error', msg: '画面名不合法：' + n + '（要字母开头，只含字母数字下划线连字符）' });
+      var lay = screenLayout(bundle, n);
+      validateLayout(lay, knownActions).forEach(function (i) {
+        issues.push({ level: i.level, msg: '[' + n + '] ' + i.msg });
+      });
+      if (sc.role === 'modal') {
+        if (!sc.elements.length) issues.push({ level: 'warn', msg: '[' + n + '] 弹窗画面还没有任何元素' });
+        if (!sc.mask || typeof sc.mask.opacity !== 'number') issues.push({ level: 'error', msg: '[' + n + '] 弹窗缺少遮罩配置' });
+      }
+      // target 注解必须指向存在的画面（否则预览点不动、真代码也会踩空）
+      sc.elements.forEach(function (el) {
+        if (el.target && !bundle.screens[el.target]) {
+          issues.push({ level: 'error', msg: '[' + n + '] ' + el.id + ' 的 target 指向不存在的画面：' + el.target });
+        }
+      });
+    });
+    return issues;
+  }
+
+  /** 预览用：算出某个画面在某断点下的元素（目标空间坐标；可带设计期状态） */
+  function screenAt(bundle, name, bp, sstate, data) {
+    var lay = screenLayout(bundle, name);
+    return lay ? layoutAt(lay, bp, sstate, data) : [];
+  }
+
+  /**
+   * 径向排布：以 (cx,cy) 为圆心，把 n 个 w×h 的框依次放在正 n 边形的 n 个方向上。
+   *   startDeg = -90 时第一个在正上方，n=6 就是**正六边形的六个方向**（上/右上/右下/下/左下/左上）。
+   * 返回 rect 数组（左上角坐标），与元素 rect 同坐标系。
+   */
+  function radialRects(cx, cy, r, n, w, h, startDeg) {
+    var cnt = Math.max(1, Math.round(num(n, 6)));
+    var start = num(startDeg, -90) * Math.PI / 180;
+    var out = [], i, a;
+    for (i = 0; i < cnt; i++) {
+      a = start + i * 2 * Math.PI / cnt;
+      out.push([round(cx + r * Math.cos(a) - w / 2, 2), round(cy + r * Math.sin(a) - h / 2, 2), w, h]);
+    }
+    return out;
+  }
+
+  /**
+   * 元素级"显示条件"（设计期状态）：`when: { activeSlot: 1 }` 或 `{ activeSlot: [1, 3] }`。
+   * 用途：同一份布局在不同状态下某些元素显示/隐藏（例：三个出战配置各自的「出战」角标）。
+   * 真代码的渲染层照同一条规则过滤即可（比在 CSS 里堆状态类更好测）。
+   */
+  var WHEN_KEYS = ['activeSlot', 'battleSlot'];
+  function whenMatches(el, sstate) {
+    var w = el && el.when;
+    if (!w || typeof w !== 'object') return true;
+    var st = sstate || {};
+    for (var i = 0; i < WHEN_KEYS.length; i++) {
+      var k = WHEN_KEYS[i];
+      if (w[k] === undefined || w[k] === null) continue;
+      var want = Array.isArray(w[k]) ? w[k] : [w[k]];
+      var got = st[k];
+      if (got === undefined || got === null) return false;    // 声明了条件但当前态没给值 → 视为不满足
+      var hit = want.some(function (v) { return String(v) === String(got); });
+      if (!hit) return false;
+    }
+    return true;
+  }
+
+  function num(v, dflt) { return typeof v === 'number' && isFinite(v) ? v : dflt; }
+
+  /* ---------- 数据绑定：占位符 ----------
+   * 装饰控件与按钮都能"读数据"：label / asset 里写 {key}，渲染时用数据替换。
+   *   label: "{nickname}" / asset: "{roleIcon}"
+   * 键表是**封闭白名单**：拼错的键会被校验器抓出来（不会静默显示成 {nicknmae}）。
+   * 真代码由 format.js 提供同一份扁平数据（单一投影真源），引擎只做字符串替换。
+   */
+  var TIER_CN = { common: '绿', rare: '蓝', epic: '紫', legendary: '橙', mythic: '青' };
+  var TPL_TEXT_KEYS = ['nickname', 'tierName', 'tier', 'points', 'wins', 'losses', 'unread',
+    'slotName', 'roleName', 'roleQuality', 'skill1Name', 'skill2Name', 'skill3Name', 'aiName', 'configLabel',
+    'activeSlot', 'configId', 'battleSlot', 'rowLabel', 'rowUid', 'pickPos', 'pickIdx', 'pickTargetUid'];
+  var TPL_ASSET_KEYS = ['roleIcon', 'skill1Icon', 'skill2Icon', 'skill3Icon', 'aiIcon', 'tierIcon', 'qualityFrame', 'rowIcon'];
+  var TPL_KEYS = {};
+  TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).forEach(function (k) { TPL_KEYS[k] = TPL_ASSET_KEYS.indexOf(k) >= 0 ? 'asset' : 'text'; });
+
+  /** 把"玩家数据 + 各配置"展开成扁平键值（真代码里这份数据来自 /me 与 /me/configs） */
+  function bindData(src, activeSlot) {
+    var d = src || {};
+    var slots = d.slots || {};
+    var cur = slots[String(activeSlot)] || slots[activeSlot] || {};
+    var role = cur.role || {}, skills = cur.skills || [];
+    var icon = function (kind, id) { return id ? ('assets/' + kind + '/' + id + '.webp') : ''; };
+    return {
+      nickname: d.nickname || '', tier: d.tier || '', tierName: TIER_CN[d.tier] || (d.tier || ''),
+      points: d.points == null ? '' : String(d.points),
+      wins: d.wins == null ? '' : String(d.wins), losses: d.losses == null ? '' : String(d.losses),
+      unread: '未读 进攻' + (d.unreadAttack || 0) + '/防守' + (d.unreadDefense || 0),
+      slotName: cur.name || '', configLabel: '配置' + (activeSlot || 1),
+      activeSlot: String(activeSlot || 1), configId: 'slot' + (activeSlot || 1),
+      battleSlot: String(d.battleSlot || activeSlot || 1),
+      roleName: role.name || '', roleQuality: TIER_CN[role.quality] || (role.quality || ''),
+      skill1Name: (skills[0] || {}).name || '', skill2Name: (skills[1] || {}).name || '',
+      skill3Name: (skills[2] || {}).name || '', aiName: typeof cur.ai === 'string' ? cur.ai : ((cur.ai || {}).name || ''),
+      roleIcon: icon('role', role.id), skill1Icon: icon('skill', (skills[0] || {}).id),
+      skill2Icon: icon('skill', (skills[1] || {}).id), skill3Icon: icon('skill', (skills[2] || {}).id),
+      aiIcon: '', tierIcon: d.tier ? ('assets/tier/' + d.tier + '.svg') : '',
+      qualityFrame: 'assets/frame/' + (role.quality || 'common') + '.svg'
+    };
+  }
+
+  /** 替换 {key}；返回替换结果 + 未识别的键（供校验器报警） */
+  function resolveTpl(str, data) {
+    if (typeof str !== 'string' || str.indexOf('{') < 0) return { text: str == null ? '' : str, unknown: [] };
+    var unknown = [];
+    var text = str.replace(/\{([A-Za-z][\w]*)\}/g, function (m, k) {
+      if (!TPL_KEYS[k]) { unknown.push(k); return m; }
+      var v = data ? data[k] : undefined;
+      if (v === undefined || v === null) return m;
+      return String(v);
+    });
+    return { text: text, unknown: unknown };
+  }
+  /** 找出元素里用到的所有占位符键（校验用） */
+  function tplKeysOf(el) {
+    var out = [];
+    [el && el.label, el && el.asset].forEach(function (s) {
+      if (typeof s !== 'string') return;
+      var m = s.match(/\{([A-Za-z][\w]*)\}/g) || [];
+      m.forEach(function (t) { out.push(t.slice(1, -1)); });
+    });
+    return out;
+  }
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  function round(v, p) { var f = Math.pow(10, p == null ? 2 : p); var r = Math.round(v * f) / f; return r === 0 ? 0 : r; }
+  function isValidAnchor(a) {
+    if (typeof a !== 'string' || a.length !== 2) return false;
+    return ANCHOR_X[a.charAt(0)] !== undefined && ANCHOR_Y[a.charAt(1)] !== undefined;
+  }
+  function anchorFractions(a) {
+    if (!isValidAnchor(a)) return { ax: 0, ay: 0 };
+    return { ax: ANCHOR_X[a.charAt(0)], ay: ANCHOR_Y[a.charAt(1)] };
+  }
+
+  /** 整屏等比缩放：把基准画布映射到目标视口 */
+  function sceneFit(baseW, baseH, targetW, targetH, fit) {
+    var sx = targetW / baseW, sy = targetH / baseH;
+    var s = fit === 'cover' ? Math.max(sx, sy) : (fit === 'stretch' ? sx : Math.min(sx, sy));
+    return { scale: s, scaleY: fit === 'stretch' ? sy : s,
+             offsetX: (targetW - baseW * s) / 2, offsetY: (targetH - baseH * s) / 2 };
+  }
+
+  function breakpointOf(layout, bp) {
+    var s = (layout && layout.breakpoints && layout.breakpoints[bp]) || {};
+    var d = DEFAULT_BP[bp] || { w: 1280, h: 720, adapt: 'fit', fit: 'contain' };
+    return { w: num(s.w, d.w), h: num(s.h, d.h),
+             adapt: s.adapt === 'anchor' ? 'anchor' : 'fit',
+             fit: FIT_MODES.indexOf(s.fit) >= 0 ? s.fit : 'contain' };
+  }
+
+  /**
+   * 把元素解算到某个断点的目标空间。
+   * - 若该断点有 overrides[bp].rect → 直接使用（该矩形就是**目标空间**坐标，"固化独立布局"）
+   * - 否则按断点适配方式算：fit = 整屏等比缩放；anchor = 按锚点跟随（保持像素尺寸）
+   */
+  function resolveElement(el, base, bp, bpDef) {
+    var ov = (el.overrides && el.overrides[bp]) || null;
+    var src = (ov && Array.isArray(ov.rect)) ? ov.rect : el.rect;
+    var x = num(src[0], 0), y = num(src[1], 0), w = num(src[2], 1), h = num(src[3], 1);
+    if (ov && Array.isArray(ov.rect)) return { x: x, y: y, w: w, h: h, scale: 1, fromOverride: true };
+    if (bpDef.adapt === 'fit') {
+      var f = sceneFit(base.w, base.h, bpDef.w, bpDef.h, bpDef.fit);
+      return { x: f.offsetX + x * f.scale, y: f.offsetY + y * f.scale,
+               w: w * f.scale, h: h * f.scale, scale: f.scale, fromOverride: false };
+    }
+    var fr = anchorFractions(el.anchor);
+    var k = num(el.scale, 1) || 1;
+    return { x: x + (bpDef.w - base.w) * fr.ax, y: y + (bpDef.h - base.h) * fr.ay,
+             w: w * k, h: h * k, scale: k, fromOverride: false };
+  }
+
+  function layoutAt(layout, bp, sstate, data) {
+    var base = layout.canvas, bpDef = breakpointOf(layout, bp), out = [];
+    (layout.elements || []).forEach(function (el) {
+      var ov = el.overrides && el.overrides[bp];
+      if (el.hidden || (ov && ov.hidden)) return;
+      if (!whenMatches(el, sstate)) return;             // 设计期状态过滤
+      var r = resolveElement(el, base, bp, bpDef);
+      var rawLabel = el.label || '', rawAsset = el.asset || '';
+      var rt = data ? resolveTpl(rawLabel, data) : { text: rawLabel };
+      var ra = data ? resolveTpl(rawAsset, data) : { text: rawAsset };
+      var payload = el.payload;
+      if (data && payload && typeof payload === 'object') {
+        var pl = {};
+        Object.keys(payload).forEach(function (k) {
+          var v = payload[k];
+          pl[k] = (typeof v === 'string') ? resolveTpl(v, data).text : v;
+        });
+        payload = pl;
+      }
+      out.push({ id: el.id, label: rawLabel, text: rt.text, asset: ra.text, assetRaw: rawAsset, payload: payload,
+                 kind: el.kind || 'button', action: el.action || '', target: el.target || '',
+                 setState: el.setState, when: el.when,
+                 hit: el.hit || 'rect', path: el.path || '',
+                 rot: num(el.rot, 0), z: num(el.z, 1),
+                 rect: [round(r.x, 2), round(r.y, 2), round(r.w, 2), round(r.h, 2)],
+                 fromOverride: !!r.fromOverride });
+    });
+    return out;
+  }
+
+  /* ---------- 吸附与辅助线 ---------- */
+  function bestSnap(value, cands, tol) {
+    var best = null;
+    for (var i = 0; i < (cands || []).length; i++) {
+      var d = cands[i] - value;
+      if (Math.abs(d) <= tol && (best === null || Math.abs(d) < Math.abs(best.delta))) best = { value: cands[i], delta: d };
+    }
+    return best;
+  }
+
+  function guideCandidates(elements, skipId, canvas) {
+    var xs = [0, canvas.w / 2, canvas.w], ys = [0, canvas.h / 2, canvas.h];
+    (elements || []).forEach(function (el) {
+      if (!el || el.id === skipId || el.hidden) return;
+      var r = el.rect || [];
+      if (r.length !== 4) return;
+      xs.push(r[0], r[0] + r[2] / 2, r[0] + r[2]);
+      ys.push(r[1], r[1] + r[3] / 2, r[1] + r[3]);
+    });
+    return { xs: xs, ys: ys };
+  }
+
+  /**
+   * 移动吸附：左/中/右（上/中/下）三条参考线里取最近的一条。
+   * 注意：三个参考点都随矩形整体平移，所以对 x（或 y）的修正量就是**参考点自身的 delta**，
+   *   与其是左边/中心/右边无关（早期写成 offset+delta 会把右边对齐算错）。
+   */
+  function snapMove(rect, cands, grid, tol) {
+    var out = rect.slice(), guides = [];
+    var axis = function (i, cross) {
+      var v = out[i];
+      var picks = [v, v + out[cross] / 2, v + out[cross]];
+      var best = null;
+      picks.forEach(function (at) {
+        var s = bestSnap(at, i === 0 ? cands.xs : cands.ys, tol);
+        if (s && (best === null || Math.abs(s.delta) < Math.abs(best.delta))) best = s;
+      });
+      if (best) { out[i] = v + best.delta; guides.push({ axis: i === 0 ? 'v' : 'h', pos: best.value }); }
+      else if (grid > 0) out[i] = Math.round(v / grid) * grid;
+    };
+    axis(0, 2); axis(1, 3);
+    return { rect: out, guides: guides };
+  }
+
+  /** 缩放吸附：只吸附被拖的那条边 */
+  function snapEdge(value, cands, grid, tol) {
+    var s = bestSnap(value, cands, tol);
+    if (s) return { value: s.value, guide: true };
+    return { value: grid > 0 ? Math.round(value / grid) * grid : value, guide: false };
+  }
+
+  /* ---------- 归一化 / 校验 ---------- */
+  function normalizeElement(el) {
+    var out = {
+      id: String(el.id == null ? '' : el.id),
+      kind: el.kind === 'deco' ? 'deco' : 'button',
+      action: String(el.action == null ? '' : el.action),
+      hit: HIT_MODES.indexOf(el.hit) >= 0 ? el.hit : 'rect',
+      anchor: isValidAnchor(el.anchor) ? el.anchor : 'lt',
+      rect: [0, 0, 1, 1].map(function (_, i) { return round(num((el.rect || [])[i], [0, 0, 1, 1][i]), 2); })
+    };
+    if (el.target) out.target = String(el.target);      // 设计期注解：点我会打开哪个画面（弹窗流程预览用）
+    // setState：点击后只改**本地显示状态**（例：切换主界面显示哪个出战配置），不导航、不写服务端
+    if (el.setState && typeof el.setState === 'object' && Object.keys(el.setState).length) out.setState = el.setState;
+    if (el.label) out.label = String(el.label);
+    if (el.payload && typeof el.payload === 'object' && Object.keys(el.payload).length) out.payload = el.payload;
+    if (el.asset) out.asset = String(el.asset);
+    if (out.hit === 'path' && el.path) {
+      var parsed = parsePath(el.path);
+      // 能解析 → 规范化写法（保证 diff 稳定）；不能解析（曲线等）→ 原样保留，由校验提示
+      out.path = parsed ? formatPath(parsed.points, parsed.closed) : String(el.path);
+    }
+    if (num(el.rot, 0)) out.rot = round(el.rot, 1);
+    if (num(el.z, 1) !== 1) out.z = num(el.z, 1);
+    if (el.hidden) out.hidden = true;
+    if (el.when && typeof el.when === 'object') {
+      var w = {};
+      WHEN_KEYS.forEach(function (k) { if (el.when[k] !== undefined && el.when[k] !== null) w[k] = el.when[k]; });
+      if (Object.keys(w).length) out.when = w;
+    }
+    var ov = {};
+    BP_KEYS.forEach(function (bp) {
+      var o = el.overrides && el.overrides[bp];
+      if (!o) return;
+      var keep = {};
+      if (Array.isArray(o.rect)) keep.rect = o.rect.map(function (v) { return round(num(v, 0), 2); });
+      if (o.hidden) keep.hidden = true;
+      if (Object.keys(keep).length) ov[bp] = keep;
+    });
+    if (Object.keys(ov).length) out.overrides = ov;
+    return out;
+  }
+
+  function normalizeLayout(layout) {
+    var l = layout || {};
+    var canvas = { w: num(l.canvas && l.canvas.w, 1280), h: num(l.canvas && l.canvas.h, 720) };
+    var bps = {};
+    BP_KEYS.forEach(function (k) {
+      var d = DEFAULT_BP[k], s = (l.breakpoints && l.breakpoints[k]) || {};
+      bps[k] = { w: num(s.w, d.w), h: num(s.h, d.h),
+                 adapt: s.adapt === 'anchor' ? 'anchor' : 'fit',
+                 fit: FIT_MODES.indexOf(s.fit) >= 0 ? s.fit : 'contain' };
+    });
+    return {
+      screen: String(l.screen || 'hub'),
+      canvas: canvas,
+      background: { asset: String((l.background && l.background.asset) || ''),
+                    fit: (l.background && l.background.fit) === 'contain' ? 'contain' : 'cover' },
+      breakpoints: bps,
+      elements: (Array.isArray(l.elements) ? l.elements : []).map(normalizeElement)
+    };
+  }
+
+  function validateLayout(layout, knownActions) {
+    var issues = [], seen = {};
+    var canvas = layout.canvas || { w: 0, h: 0 };
+    var known = (Array.isArray(knownActions) && knownActions.length) ? knownActions : null;
+    (layout.elements || []).forEach(function (el, i) {
+      var tag = el.id || ('第 ' + (i + 1) + ' 个元素');
+      if (!el.id) issues.push({ level: 'error', msg: tag + '：缺少 id' });
+      else if (seen[el.id]) issues.push({ level: 'error', msg: tag + '：id 重复' });
+      seen[el.id] = 1;
+      // 按钮必须"有反应"：要么有 action（走注册表），要么有 setState（只改本地显示状态，
+      //   例：切换主界面显示哪个出战配置 —— 不导航、不进编辑界面）
+      if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+        issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
+      else if (el.kind !== 'deco' && el.action && known && known.indexOf(el.action) < 0)
+        issues.push({ level: 'warn', msg: tag + '：动作「' + el.action + '」不在当前注册表里（可能是尚未实现的计划动作 → 会变死按钮）' });
+      if (HIT_MODES.indexOf(el.hit) < 0) issues.push({ level: 'error', msg: tag + '：hit 非法（' + el.hit + '）' });
+      var r = el.rect || [];
+      if (r.length !== 4 || r.some(function (v) { return typeof v !== 'number' || !isFinite(v); }))
+        issues.push({ level: 'error', msg: tag + '：rect 必须是 4 个数字' });
+      else {
+        if (r[2] <= 0 || r[3] <= 0) issues.push({ level: 'error', msg: tag + '：宽高必须为正' });
+        if (r[0] < 0 || r[1] < 0 || r[0] + r[2] > canvas.w || r[1] + r[3] > canvas.h)
+          issues.push({ level: 'warn', msg: tag + '：超出基准画布 ' + canvas.w + '×' + canvas.h });
+      }
+      if (el.hit === 'path') {
+        if (!el.path) issues.push({ level: 'warn', msg: tag + '：声明 path 命中但没有 path（会按 rect 兜底）' });
+        else {
+          var pp = parsePath(el.path);
+          if (!pp) issues.push({ level: 'error', msg: tag + '：path 解析失败（只支持 M/L/Z 多边形，曲线请改用 rect/alpha 命中）' });
+          else {
+            var bad = pp.points.filter(function (p) { return p[0] < 0 || p[0] > 100 || p[1] < 0 || p[1] > 100; });
+            if (bad.length) issues.push({ level: 'warn', msg: tag + '：path 有 ' + bad.length + ' 个顶点超出 0..100 盒（会被裁切）' });
+          }
+        }
+      }
+      if (el.kind !== 'deco' && !el.asset) issues.push({ level: 'warn', msg: tag + '：还没指定素材路径（暂时显示占位）' });
+      tplKeysOf(el).forEach(function (k) {
+        if (!TPL_KEYS[k]) issues.push({ level: 'error', msg: tag + '：占位符 {' + k + '} 不在键表里（可用：' + TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).join('/') + '）' });
+      });
+      if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+        issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
+    });
+    if (!(layout.elements || []).length) issues.push({ level: 'warn', msg: '一个元素都没有' });
+    return issues;
+  }
+
+  return {
+    DEFAULT_LAYOUT: DEFAULT_LAYOUT, DEFAULT_BUNDLE: DEFAULT_BUNDLE,
+    ANCHOR_X: ANCHOR_X, ANCHOR_Y: ANCHOR_Y, HIT_MODES: HIT_MODES, FIT_MODES: FIT_MODES,
+    BP_KEYS: BP_KEYS, BP_LABEL: BP_LABEL, DEFAULT_BP: DEFAULT_BP,
+    num: num, round: round, isValidAnchor: isValidAnchor, anchorFractions: anchorFractions,
+    sceneFit: sceneFit, breakpointOf: breakpointOf, resolveElement: resolveElement, layoutAt: layoutAt,
+    bestSnap: bestSnap, guideCandidates: guideCandidates, snapMove: snapMove, snapEdge: snapEdge,
+    PATH_PRESETS: PATH_PRESETS, PATH_PRESET_LABEL: PATH_PRESET_LABEL, presetPath: presetPath,
+    regularPolygonPoints: regularPolygonPoints, regularPolygonPath: regularPolygonPath,
+    SCREEN_ROLES: SCREEN_ROLES, DEFAULT_MASK: DEFAULT_MASK, WHEN_KEYS: WHEN_KEYS,
+    radialRects: radialRects, whenMatches: whenMatches,
+    TPL_KEYS: TPL_KEYS, TPL_TEXT_KEYS: TPL_TEXT_KEYS, TPL_ASSET_KEYS: TPL_ASSET_KEYS, TIER_CN: TIER_CN,
+    bindData: bindData, resolveTpl: resolveTpl, tplKeysOf: tplKeysOf,
+    normalizeScreen: normalizeScreen, normalizeBundle: normalizeBundle,
+    screenLayout: screenLayout, validateBundle: validateBundle, screenAt: screenAt,
+    parsePath: parsePath, formatPath: formatPath, pathPointsOf: pathPointsOf,
+    pathToStage: pathToStage, stageToPath: stageToPath,
+    insertVertex: insertVertex, removeVertex: removeVertex, pointInPolygon: pointInPolygon,
+    clamp: clamp,
+    normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout
+  };
+})();
+</script>
+
+<!-- ===================== DOM 应用层 ===================== -->
+<script id="app">
+(function () {
+  'use strict';
+  var C = LAYOUT_CORE;
+  var $ = function (id) { return document.getElementById(id); };
+  // 已注册动作（用于 datalist 建议 + 校验时判断"是否是死按钮"）。
+  //   `goto-records` 是**计划中**的战绩屏动作：现在还没实现 → 只作建议，不当默认值。
+  var KNOWN_ACTIONS = ['goto-hub','goto-profile','goto-warehouse','goto-ai-editor','goto-settings','goto-quick',
+    'goto-tournament','goto-leaderboard','config-open','item-open','package-open','modal-close',
+    'refresh-hub','refresh-warehouse','warehouse-bucket','logout','tournament-open-battle','board-points','quick-run'];
+  var PLANNED_ACTIONS = ['goto-records'];
+
+  var DEFAULT_LAYOUT = C.DEFAULT_BUNDLE.screens.hub;
+  DEFAULT_LAYOUT.canvas = C.DEFAULT_BUNDLE.canvas;
+  DEFAULT_LAYOUT.breakpoints = C.DEFAULT_BUNDLE.breakpoints;
+
+  /** 预览用假数据（真代码由 format.js 从 /me 与 /me/configs 提供同一形状） */
+  var DEMO_DATA = {
+    nickname: '用户01', tier: 'common', points: 320, wins: 12, losses: 8,
+    unreadAttack: 3, unreadDefense: 1, inPool: true,
+    slots: {
+      1: { name: '默认配置', role: { id: 'role_bal', name: '均衡', quality: 'common' },
+           skills: [{ id: 'skill_melee', name: '近战', quality: 'common' }, { id: 'skill_straight', name: '平射', quality: 'rare' }, { id: 'skill_vertical', name: '定点', quality: 'common' }],
+           ai: { id: 'ai_new', name: '新手AI' } },
+      2: { name: '突击配置', role: { id: 'role_spc_atk', name: '突击', quality: 'rare' },
+           skills: [{ id: 'skill_displace', name: '位移', quality: 'rare' }, { id: 'skill_melee', name: '近战', quality: 'common' }, { id: 'skill_straight', name: '平射', quality: 'common' }],
+           ai: { id: 'ai_agg', name: '激进AI' } },
+      3: { name: '重装配置', role: { id: 'role_exp_def', name: '重装', quality: 'epic' },
+           skills: [{ id: 'skill_vertical', name: '定点', quality: 'common' }, { id: 'skill_straight', name: '平射', quality: 'rare' }, { id: 'skill_displace', name: '位移', quality: 'rare' }],
+           ai: { id: 'ai_def', name: '保守AI' } }
+    }
+  };
+
+  var state = {
+    bundle: C.normalizeBundle(C.DEFAULT_BUNDLE),
+    screen: 'hub',
+    layout: null,                 // = screenLayout(bundle, screen)，与 bundle 共享 elements/breakpoints 引用
+    pv: { on: false, stack: [] }, // 预览：画面栈（[0]=底屏，之后是弹窗）
+    sstate: { activeSlot: 1 },    // 设计期状态（供元素 when 过滤 + 模板占位符替换）
+    pdata: DEMO_DATA,             // 预览假数据（{nickname} / {roleIcon} 等的取值来源）
+    shapeMode: false,             // 顶点编辑模式（默认关，避免与四角缩放手柄抢命中）
+    sel: null,
+    editBp: 'base',
+    grid: 8,
+    guides: true,
+    zoom: 1,
+    fitZoom: true,
+    history: [], future: [],
+    assetUrls: {},          // basename → objectURL
+    localPreview: {},       // elementId → objectURL
+    guidesNow: []
+  };
+  state.layout = C.screenLayout(state.bundle, state.screen);
+
+  function useScreen(name) {
+    if (!state.bundle.screens[name]) return;
+    state.screen = name;
+    state.layout = C.screenLayout(state.bundle, name);
+    state.sel = null;
+    state.pv.stack = [];
+  }
+
+  var stage = $('stage'), wrap = $('stagewrap'), stagebox = $('stagebox');
+
+  /* ---------------- 工具 ---------------- */
+  function snapshot() { return JSON.stringify(state.bundle); }
+
+  /* ---------------- 自动保存（localStorage）----------------
+   * 教训（用户实测）：关掉标签页 = 改动全丢；而"导出"在沙箱 iframe 里会被**静默拦截**却照样报成功。
+   *   两道保险：① 每次改动自动存 localStorage，重开页面自动恢复；② 导出改为"可验证"（见 doExport）。
+   */
+  var LS_KEY = 'dl_layout_lab_v2';
+  var saveTimer = null;
+  function storageGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function storageSet(k, v) { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function storageDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  function saveSoon() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      var ok = storageSet(LS_KEY, JSON.stringify({
+        bundle: state.bundle, screen: state.screen, sstate: state.sstate, pdata: state.pdata, savedAt: Date.now()
+      }));
+      var info = $('saveInfo');
+      if (info) info.textContent = ok ? ('已自动保存到本机 ' + new Date().toLocaleTimeString())
+        : '⚠ 自动保存失败（浏览器禁用了本地存储）—— 请用「复制 JSON」备份';
+    }, 400);
+  }
+  function loadSaved() {
+    var raw = storageGet(LS_KEY);
+    if (!raw) return null;
+    try { var o = JSON.parse(raw); return (o && o.bundle && o.bundle.screens) ? o : null; } catch (e) { return null; }
+  }
+  function showBanner(text) { $('bannerText').innerHTML = text; $('banner').hidden = false; }
+
+  /** 导出：先真的触发下载，再**如实**报告；同时摊开 JSON 面板给出复制通道 */
+  function doExport() {
+    var json = JSON.stringify(C.normalizeBundle(state.bundle), null, 2);
+    renderJson(true);
+    $('jsonPanel').open = true;
+    var inFrame = false;
+    try { inFrame = window.self !== window.top; } catch (e) { inFrame = true; }
+    var clicked = false;
+    try {
+      var blob = new Blob([json], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'layout-bundle.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      clicked = true;
+    } catch (e) { clicked = false; }
+    // 这里**不能**说"已导出成功"：沙箱 iframe 会静默拦截下载，click 不会抛错。
+    showBanner('已触发下载 <span class="kbd">layout-bundle.json</span>' + (clicked ? '' : '（触发失败）') +
+      '。⚠ 这个环境**无法确认文件是否真的落盘**：' +
+      (inFrame ? '<b>当前页面在 iframe / 内嵌预览里，浏览器很可能拦截下载</b>。' : '') +
+      '请先看下载目录；<b>如果没看到文件，就用右下角的「复制 JSON」把内容发给我</b>。' +
+      '<br>本布局台已开启<b>自动保存</b>：关掉页面再打开会自动恢复上次编辑。');
+  }
+
+  function push(msg) {
+    state.history.push(snapshot());
+    if (state.history.length > 120) state.history.shift();
+    state.future.length = 0;
+    saveSoon();
+    if (msg) flash(msg);
+  }
+  function undo() {
+    if (!state.history.length) return flash('没有可撤销的操作');
+    state.future.push(snapshot());
+    state.bundle = C.normalizeBundle(JSON.parse(state.history.pop()));
+    if (!state.bundle.screens[state.screen]) state.screen = Object.keys(state.bundle.screens)[0];
+    state.layout = C.screenLayout(state.bundle, state.screen);
+    syncAll(); flash('已撤销');
+  }
+  function redo() {
+    if (!state.future.length) return flash('没有可重做的操作');
+    state.history.push(snapshot());
+    state.bundle = C.normalizeBundle(JSON.parse(state.future.pop()));
+    if (!state.bundle.screens[state.screen]) state.screen = Object.keys(state.bundle.screens)[0];
+    state.layout = C.screenLayout(state.bundle, state.screen);
+    syncAll(); flash('已重做');
+  }
+  var flashTimer = null;
+  function flash(msg) {
+    $('stInfo').textContent = msg;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { syncStatus(); }, 1600);
+  }
+  /** 当前画面的元素数组**真身**（screenLayout 共享引用；但整体赋值会断链，所以一律原地改） */
+  function els() { return state.bundle.screens[state.screen].elements; }
+  /** 当前预览数据（扁平键值）：供 {占位符} 替换 */
+  function pdata() { return C.bindData(state.pdata, state.sstate.activeSlot); }
+  function el(id) {
+    var list = els();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function editDef() {
+    return state.editBp === 'base' ? null : C.breakpointOf(state.layout, state.editBp);
+  }
+  function editSize() {
+    var d = editDef();
+    return d ? { w: d.w, h: d.h } : { w: state.layout.canvas.w, h: state.layout.canvas.h };
+  }
+  /** 当前编辑空间里某个元素的显示矩形（断点下可能是"自动适配算出来的"） */
+  function shownRect(e) {
+    if (state.editBp === 'base') return e.rect.slice();
+    var d = editDef(), r = C.resolveElement(e, state.layout.canvas, state.editBp, d);
+    return [r.x, r.y, r.w, r.h];
+  }
+  function hasOverride(e) { return !!(e.overrides && e.overrides[state.editBp] && e.overrides[state.editBp].rect); }
+  /** 在断点空间里写入：没有 override 就先固化一份（从当前显示位置开始） */
+  function writeRect(e, rect) {
+    if (state.editBp === 'base') { e.rect = rect.map(function (v) { return C.round(v, 2); }); return; }
+    e.overrides = e.overrides || {};
+    e.overrides[state.editBp] = e.overrides[state.editBp] || {};
+    e.overrides[state.editBp].rect = rect.map(function (v) { return C.round(v, 2); });
+  }
+  function assetUrl(e, resolve) {
+    if (state.localPreview[e.id]) return state.localPreview[e.id];
+    // resolve=true 时先用预览数据替换 {roleIcon} 这类占位符（切配置时素材会跟着换）
+    var p = (resolve && e.asset) ? C.resolveTpl(e.asset, pdata()).text : (e.asset || '');
+    var base = p.split('/').pop();
+    return base && state.assetUrls[base] ? state.assetUrls[base] : '';
+  }
+
+  /* ---------------- 舞台渲染 ---------------- */
+  function computeZoom() {
+    var sz = editSize();
+    var availW = wrap.clientWidth - 28, availH = wrap.clientHeight - 28;
+    var z = Math.min(availW / sz.w, availH / sz.h);
+    return clampZoom(z);
+  }
+  var ZOOM_MIN = 0.1, ZOOM_MAX = 6;
+  function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
+
+  /** 应用缩放（只改状态与尺寸盒；缩放锚点由 setZoomAt 处理） */
+  function applyZoom(z) {
+    state.zoom = clampZoom(z);
+    var sz = editSize();
+    stage.style.width = sz.w + 'px';
+    stage.style.height = sz.h + 'px';
+    stage.style.transform = 'scale(' + state.zoom + ')';
+    stage.style.transformOrigin = 'top left';
+    stage.style.setProperty('--inv', String(1 / state.zoom));
+    stagebox.style.width = Math.round(sz.w * state.zoom) + 'px';
+    stagebox.style.height = Math.round(sz.h * state.zoom) + 'px';
+  }
+  /** 以某个客户端坐标为锚点缩放（滚轮缩放"对着鼠标放大"） */
+  function setZoomAt(z, clientX, clientY) {
+    var wr = wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : { left: 0, top: 0 };
+    var before = state.zoom;
+    var sx = clientX - wr.left + wrap.scrollLeft, sy = clientY - wr.top + wrap.scrollTop;
+    var rx = sx / before, ry = sy / before;                 // 基准画布坐标（缩放不变量）
+    state.fitZoom = false;
+    applyZoom(z);
+    wrap.scrollLeft = rx * state.zoom - (clientX - wr.left);
+    wrap.scrollTop = ry * state.zoom - (clientY - wr.top);
+    renderStage();
+  }
+  function renderStage() {
+    var sz = editSize();
+    var zoom = state.fitZoom ? computeZoom() : state.zoom;
+    state.zoom = zoom;
+    stage.style.width = sz.w + 'px';
+    stage.style.height = sz.h + 'px';
+    stage.style.transform = 'scale(' + zoom + ')';
+    stage.style.transformOrigin = 'top left';
+    stage.style.setProperty('--inv', String(1 / zoom));   // 顶点手柄反向缩放：任何缩放级别都好抓
+    stagebox.style.width = Math.round(sz.w * zoom) + 'px';
+    stagebox.style.height = Math.round(sz.h * zoom) + 'px';
+    stage.style.backgroundImage = state.layout.background.asset && state.assetUrls[state.layout.background.asset.split('/').pop()]
+      ? 'url(' + state.assetUrls[state.layout.background.asset.split('/').pop()] + ')' : 'none';
+    stage.style.backgroundSize = state.layout.background.fit === 'contain' ? 'contain' : 'cover';
+    $('stageGrid').style.display = state.editBp === 'base' ? 'block' : 'none';
+
+    Array.prototype.slice.call(stage.querySelectorAll('.el,.guide')).forEach(function (n) { n.remove(); });
+    var list = state.editBp === 'base' ? state.layout.elements.filter(function (e) { return C.whenMatches(e, state.sstate); }).slice() : null;
+    var items = list
+      ? list.map(function (e) { return { e: e, r: e.rect.slice() }; })
+      : state.layout.elements.filter(function (e) { return C.whenMatches(e, state.sstate); })
+          .map(function (e) { var r = shownRect(e); return { e: e, r: r }; });
+    items.sort(function (a, b) { return (C.num(a.e.z, 1) - C.num(b.e.z, 1)); });
+    items.forEach(function (it) {
+      stage.appendChild(buildEl(it.e, it.r));
+    });
+    state.guidesNow.forEach(function (g) {
+      var gd = document.createElement('div');
+      gd.className = 'guide ' + g.axis;
+      if (g.axis === 'v') gd.style.left = g.pos + 'px'; else gd.style.top = g.pos + 'px';
+      stage.appendChild(gd);
+    });
+    syncStatus();
+  }
+  function buildEl(e, r) {
+    var d = document.createElement('div');
+    d.className = 'el' + (state.sel === e.id ? ' sel' : '');
+    d.dataset.id = e.id;
+    d.style.left = r[0] + 'px'; d.style.top = r[1] + 'px';
+    d.style.width = r[2] + 'px'; d.style.height = r[3] + 'px';
+    if (C.num(e.rot, 0)) d.style.transform = 'rotate(' + C.num(e.rot, 0) + 'deg)';
+    d.style.zIndex = String(10 + C.num(e.z, 1));
+    var url = assetUrl(e);
+    if (url) { var im = document.createElement('img'); im.src = url; d.appendChild(im); }
+    else { var ph = document.createElement('div'); ph.className = 'ph'; d.appendChild(ph); }
+    if (e.hit === 'path' && e.path && state.sel === e.id) {
+      var ov = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      ov.setAttribute('class', 'hitov'); ov.setAttribute('viewBox', '0 0 100 100'); ov.setAttribute('preserveAspectRatio', 'none');
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', e.path); ov.appendChild(p); d.appendChild(ov);
+    }
+    // 多边形顶点编辑：**只在「编辑形状」模式下显示** —— 否则顶点手柄会和四角缩放手柄重叠
+    //   （角色卡的三处角点正好重合），表现为"拖角点却不缩放、反而改了形状"。
+    var pp = (state.sel === e.id && e.hit === 'path' && state.shapeMode) ? C.parsePath(e.path) : null;
+    if (pp) {
+      var stagePts = C.pathToStage(pp.points, r);
+      for (var vi = 0; vi < stagePts.length; vi++) {
+        var vh = document.createElement('div');
+        vh.className = 'vp'; vh.dataset.handle = 'vp:' + vi;
+        vh.style.left = (stagePts[vi][0] - r[0]) + 'px';
+        vh.style.top = (stagePts[vi][1] - r[1]) + 'px';
+        vh.title = '顶点 ' + vi + '（' + Math.round(pp.points[vi][0]) + ', ' + Math.round(pp.points[vi][1]) + '）· Alt+点击删除';
+        d.appendChild(vh);
+      }
+      for (var mi = 0; mi < stagePts.length; mi++) {
+        var a = stagePts[mi], b2 = stagePts[(mi + 1) % stagePts.length];
+        var mh = document.createElement('div');
+        mh.className = 'vm'; mh.dataset.handle = 'vm:' + mi;
+        mh.style.left = ((a[0] + b2[0]) / 2 - r[0]) + 'px';
+        mh.style.top = ((a[1] + b2[1]) / 2 - r[1]) + 'px';
+        mh.title = '在此边插入顶点';
+        d.appendChild(mh);
+      }
+    }
+    var lb = document.createElement('span'); lb.className = 'lb';
+    // 显示**替换后**的文字（{nickname} → 用户01）：这样"装饰件读数据"在编辑器里就能直接看见
+    lb.textContent = C.resolveTpl(e.label || e.id, pdata()).text;
+    d.appendChild(lb);
+    if (e.setState) { var sb = document.createElement('span'); sb.className = 'ac'; sb.textContent = 'setState ' + JSON.stringify(e.setState); d.appendChild(sb); }
+    if (e.action) { var ac = document.createElement('span'); ac.className = 'ac'; ac.textContent = e.action; d.appendChild(ac); }
+    if (state.sel === e.id) {
+      ['nw','n','ne','w','e','sw','s','se'].forEach(function (k) {
+        var h = document.createElement('div'); h.className = 'h ' + k; h.dataset.handle = k; d.appendChild(h);
+      });
+      var rh = document.createElement('div'); rh.className = 'h rot'; rh.dataset.handle = 'rot'; d.appendChild(rh);
+    }
+    return d;
+  }
+  function syncStatus() {
+    var sz = editSize();
+    $('stZoom').textContent = '缩放 ' + Math.round(state.zoom * 100) + '%' + (state.fitZoom ? '（适应窗口）' : '') +
+      ' · 画布 ' + sz.w + '×' + sz.h + (state.editBp === 'base' ? '（基准）' : '（' + C.BP_LABEL[state.editBp] + ' 断点）') +
+      ' · 中键/空格/空白处拖动可平移';
+    var sel = state.sel ? el(state.sel) : null;
+    $('stInfo').textContent = sel
+      ? sel.id + '  ' + (sel.label || '') + '  rect=[' + shownRect(sel).map(function (v) { return Math.round(v); }).join(', ') + ']'
+      : '未选中元素';
+    var iss = C.validateBundle(state.bundle, KNOWN_ACTIONS);
+    var bad = iss.filter(function (i) { return i.level === 'error'; }).length;
+    $('stIssues').innerHTML = bad ? '<span class="err">校验 ' + bad + ' 个错误</span>'
+      : (iss.length ? '<span class="warn">校验 ' + iss.length + ' 个提醒</span>' : '<span class="ok">校验通过</span>');
+  }
+
+  /* ---------------- 列表 ---------------- */
+  function renderList() {
+    var box = $('list');
+    box.innerHTML = '';
+    state.layout.elements.forEach(function (e) {
+      var d = document.createElement('div');
+      d.className = 'item' + (state.sel === e.id ? ' sel' : '');
+      d.dataset.id = e.id;
+      d.innerHTML = '<span class="dot' + (e.kind === 'deco' ? ' deco' : '') + '"></span>' +
+        '<span class="nm"></span><span class="ac"></span>';
+      d.querySelector('.nm').textContent = (e.label || '(未命名)');
+      d.querySelector('.ac').textContent = e.action || (e.kind === 'deco' ? '装饰' : '缺 action');
+      if (state.editBp !== 'base' && hasOverride(e)) {
+        var b = document.createElement('span'); b.className = 'bp-badge'; b.textContent = C.BP_LABEL[state.editBp]; d.appendChild(b);
+      }
+      if (e.when) {                                    // 带 when 的元素：标注当前设计期状态下是否命中
+        var wb = document.createElement('span'); wb.className = 'bp-badge';
+        var wm = C.whenMatches(e, state.sstate);
+        wb.textContent = wm ? 'when ✓' : 'when ✗';
+        if (!wm) { wb.style.color = '#6b7488'; wb.style.borderColor = '#3a4458'; }
+        d.appendChild(wb);
+      }
+      d.addEventListener('click', function () { select(e.id); });
+      box.appendChild(d);    });
+  }
+
+  /* ---------------- 属性面板 ---------------- */
+  function fillSelects() {
+    var ss = $('screenSel');
+    ss.innerHTML = '';
+    Object.keys(state.bundle.screens).forEach(function (k) {
+      var sc = state.bundle.screens[k];
+      var o = document.createElement('option');
+      o.value = k; o.textContent = (sc.role === 'modal' ? '▣ 弹窗 ' : '▢ ') + k; ss.appendChild(o);
+    });
+    ss.value = state.screen;
+    var tg = $('pTarget');
+    tg.innerHTML = '<option value="">（无）</option>';
+    Object.keys(state.bundle.screens).forEach(function (k) {
+      var sc = state.bundle.screens[k];
+      var o = document.createElement('option');
+      o.value = k; o.textContent = (sc.role === 'modal' ? '▣ ' : '▢ ') + k; tg.appendChild(o);
+    });
+    var bp = $('editBp');
+    bp.innerHTML = '';
+    [['base', '基准 ' + state.layout.canvas.w + '×' + state.layout.canvas.h]]
+      .concat(C.BP_KEYS.map(function (k) {
+        var d = C.breakpointOf(state.layout, k);
+        return [k, C.BP_LABEL[k] + ' ' + d.w + '×' + d.h];
+      })).forEach(function (p) {
+        var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; bp.appendChild(o);
+      });
+    bp.value = state.editBp;
+    var an = $('pAnchor'); an.innerHTML = '';
+    ['lt','ct','rt','lc','cc','rc','lb','cb','rb'].forEach(function (a) {
+      var o = document.createElement('option'); o.value = a; o.textContent = a; an.appendChild(o);
+    });
+    var dl = $('actionList'); dl.innerHTML = '';
+    KNOWN_ACTIONS.concat(PLANNED_ACTIONS).forEach(function (a) { var o = document.createElement('option'); o.value = a; dl.appendChild(o); });
+    var ps = $('pPathPreset'); ps.innerHTML = '<option value="">预设形状…</option>';
+    Object.keys(C.PATH_PRESETS).forEach(function (k) {
+      var o = document.createElement('option'); o.value = k; o.textContent = C.PATH_PRESET_LABEL[k] || k; ps.appendChild(o);
+    });
+  }
+  function syncProps() {
+    syncScreenProps();                     // 画面级属性与选中无关，必须每次都刷（否则切画面后面板是旧的）
+    var e = state.sel ? el(state.sel) : null;
+    var on = !!e;
+    ['pId','pLabel','pKind','pAction','pPayload','pAsset','pAssetFile','pHit','pAnchor','pX','pY','pW','pH','pRot','pZ','pHidden','pWhen',
+     'btnOvSet','btnOvClear','btnShapeMode','pPath','pPathPreset','btnPathAdd','btnPathDel']
+      .forEach(function (k) { $(k).disabled = !on; });
+    if (!e) {
+      ['pId','pLabel','pAction','pPayload','pAsset','pX','pY','pW','pH','pRot','pZ','pPath'].forEach(function (k) { $(k).value = ''; });
+      $('pOvInfo').textContent = '—';
+      $('pPathInfo').textContent = '—';
+      return;
+    }
+    var r = shownRect(e);
+    $('pId').value = e.id; $('pLabel').value = e.label || ''; $('pKind').value = e.kind || 'button';
+    $('pAction').value = e.action || '';
+    $('pPayload').value = e.payload ? JSON.stringify(e.payload) : '';
+    $('pAsset').value = e.asset || '';
+    $('pHit').value = e.hit || 'rect';
+    $('pAnchor').value = e.anchor || 'lt';
+    $('pX').value = Math.round(r[0]); $('pY').value = Math.round(r[1]);
+    $('pW').value = Math.round(r[2]); $('pH').value = Math.round(r[3]);
+    $('pRot').value = C.num(e.rot, 0); $('pZ').value = C.num(e.z, 1);
+    $('pHidden').checked = !!e.hidden;
+    var ovTxt = state.editBp === 'base'
+      ? '基准画布不需要断点覆盖'
+      : (hasOverride(e) ? '本断点已有**独立布局**（拖动只影响本断点）' : '本断点用**自动适配**；拖动会自动固化一份独立布局');
+    $('pOvInfo').textContent = ovTxt;
+    $('btnOvSet').disabled = state.editBp === 'base' || hasOverride(e);
+    $('btnOvClear').disabled = state.editBp === 'base' || !hasOverride(e);
+    // 多边形形状
+    var ppv = C.parsePath(e.path);
+    $('pPath').value = e.path || '';
+    $('pPathInfo').textContent = e.hit !== 'path'
+      ? '命中区当前是「' + e.hit + '」。要用多边形：把上面「命中区」改成 path 即可（会自动给一个初始形状）。'
+      : (ppv
+        ? ppv.points.length + ' 个顶点 · 坐标空间 0..100（随 rect 自动缩放）· 画布上黄点=顶点（拖/Alt+点删）、蓝点=边中点（点一下加点）'
+        : '⚠ path 无法解析（只支持 M/L/H/V/Z 多边形）—— 可在下面直接改文本，或点预设形状重置');
+    // target（设计期注解）：点我会打开哪个画面
+    $('pTarget').value = e.target || '';
+    $('pTargetInfo').textContent = e.target
+      ? '点这个元素会打开画面「' + e.target + '」（' + ((state.bundle.screens[e.target] || {}).role === 'modal' ? '弹窗' : '整屏') +
+        '）。⚠ 这只是**设计期注解**：真代码里跳转/弹窗仍由 action 决定，别让两者不一致。'
+      : '未指定。指定后可在「▶ 预览弹窗流程」里点它看弹窗效果。';
+    $('pWhen').value = e.when ? JSON.stringify(e.when) : '';
+    $('pWhen').style.borderColor = '';
+  }
+
+  /** 画面级属性（角色/背景/遮罩） */
+  function syncScreenProps() {
+    var sc = state.bundle.screens[state.screen];
+    if (!sc) return;
+    $('sRole').value = sc.role;
+    $('sBg').value = sc.background.asset || '';
+    var isModal = sc.role === 'modal';
+    $('maskRow').style.opacity = isModal ? '1' : '0.45';
+    ['sMaskColor', 'sMaskOpacity', 'sMaskClose'].forEach(function (k) { $(k).disabled = !isModal; });
+    if (isModal) {
+      $('sMaskColor').value = sc.mask.color;
+      $('sMaskOpacity').value = sc.mask.opacity;
+      $('sMaskClose').checked = sc.mask.closeOnMaskClick;
+    }
+    var n = sc.elements.length;
+    var targeted = Object.keys(state.bundle.screens).filter(function (k) {
+      return state.bundle.screens[k].elements.some(function (el) { return el.target === state.screen; });
+    });
+    $('sInfo').textContent = (isModal ? '弹窗画面' : '整屏画面') + ' · ' + n + ' 个元素' +
+      (targeted.length ? ' · 被这些画面的元素指向：' + targeted.join(', ') : ' · 还没有任何元素指向它');
+  }
+
+  /* ---------------- 预览（弹窗流程） ----------------
+   * 点带 target 的元素 → 把目标画面压栈（弹窗）；点遮罩 / 点 modal-close 动作的元素 → 出栈。
+   * 这就是"点击按钮出现弹窗而不是切换场景"在预览里的样子。
+   */
+  var pvBp = 'landscape';
+  function pvScale(bp) {
+    var d = C.breakpointOf(state.bundle, bp);
+    var wr = $('pvwrap');
+    var availW = (wr.clientWidth || 900) - 20, availH = (wr.clientHeight || 600) - 20;
+    return { z: Math.max(0.1, Math.min(2, Math.min(availW / d.w, availH / d.h))), def: d };
+  }
+  function renderPreview() {
+    if (!state.pv.on) { $('pv').hidden = true; return; }
+    $('pv').hidden = false;
+    if (!state.pv.stack.length) state.pv.stack = [state.screen];
+    var d = C.breakpointOf(state.bundle, pvBp);
+    var sc = pvScale(pvBp), z = sc.z;
+    var box = $('pvbox'), st = $('pvstage');
+    box.style.width = Math.round(d.w * z) + 'px';
+    box.style.height = Math.round(d.h * z) + 'px';
+    st.style.width = d.w + 'px';
+    st.style.height = d.h + 'px';
+    st.style.transform = 'scale(' + z + ')';
+    Array.prototype.slice.call(st.querySelectorAll('.pvel,.pvmask')).forEach(function (n) { n.remove(); });
+    $('pvName').textContent = state.pv.stack.join('  ▸  ');
+    $('pvHint').textContent = '（点带 target 的元素弹窗；点遮罩或「关闭」类元素返回）';
+    $('pvBp').textContent = C.BP_LABEL[pvBp] + ' ' + d.w + '×' + d.h;
+    state.pv.stack.forEach(function (name, idx) {
+      var screen = state.bundle.screens[name];
+      if (!screen) return;
+      if (idx > 0) {                                    // 弹窗层：先铺遮罩
+        var m = screen.mask || C.DEFAULT_MASK;
+        var mask = document.createElement('div');
+        mask.className = 'pvmask';
+        mask.style.background = m.color;
+        mask.style.opacity = String(m.opacity);
+        // 关键（用户实测反馈）：只要有弹窗，遮罩必须**盖住并吞掉背景的一切交互**。
+        //   遮罩 z-index 取"该层之上、本层元素之下"，比底屏所有元素都高 → 背景按钮不可点。
+        mask.style.zIndex = String(idx * 1000);
+        mask.style.pointerEvents = m.blocksBackground === false ? 'none' : 'auto';
+        if (m.closeOnMaskClick !== false) {
+          mask.addEventListener('click', function (ev) { ev.stopPropagation(); popScreen(); });
+        } else {
+          mask.addEventListener('click', function (ev) { ev.stopPropagation(); flash('遮罩配置为「点击不关闭」'); });
+        }
+        st.appendChild(mask);
+      }
+      C.screenAt(state.bundle, name, pvBp, state.sstate).forEach(function (it) {
+        var el2 = document.createElement('div');
+        el2.className = 'pvel ' + (it.kind === 'deco' ? 'deco' : 'btn');
+        if (idx === 0) el2.style.border = '1px dashed #4c84fa55';
+        el2.style.left = it.rect[0] + 'px'; el2.style.top = it.rect[1] + 'px';
+        el2.style.width = it.rect[2] + 'px'; el2.style.height = it.rect[3] + 'px';
+        if (it.rot) el2.style.transform = 'rotate(' + it.rot + 'deg)';
+        // 层级：底屏 10+，弹窗层元素 1000 + 该层序号 × 1000（永远高于本层及以下所有遮罩）
+        el2.style.zIndex = String(idx === 0 ? 10 + (it.z || 1) : idx * 1000 + 100 + (it.z || 1));
+        el2.dataset.pvid = it.id;
+        var u = assetUrl(it, true);       // 预览里按占位符解析素材（{roleIcon} → assets/role/xxx.webp）
+        if (u) { var im = document.createElement('img'); im.src = u; el2.appendChild(im); }
+        else { var sp = document.createElement('span'); sp.textContent = it.text || it.label || it.id; el2.appendChild(sp); }
+        if (it.hit === 'path' && it.path) {
+          var sv = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          sv.setAttribute('class', 'pvhit'); sv.setAttribute('viewBox', '0 0 100 100');
+          sv.setAttribute('preserveAspectRatio', 'none');
+          var pa = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          pa.setAttribute('d', it.path); sv.appendChild(pa); el2.appendChild(sv);
+        }
+        el2.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var raw = state.bundle.screens[name].elements.filter(function (x) { return x.id === it.id; })[0] || {};
+          // setState：只改本地显示状态（例：切换主界面显示哪个出战配置）——不导航、不进编辑界面
+          if (raw.setState) {
+            var patch = {};
+            Object.keys(raw.setState).forEach(function (k) { patch[k] = raw.setState[k]; });
+            state.sstate = Object.assign({}, state.sstate, patch);
+            Array.prototype.slice.call(document.querySelectorAll('[data-as]')).forEach(function (x) {
+              x.classList.toggle('on', String(x.dataset.as) === String(state.sstate.activeSlot));
+            });
+            renderPreview(); renderStage(); saveSoon();
+            return flash('已切换：' + JSON.stringify(patch) + '（只影响显示，不进入编辑界面）');
+          }
+          if (raw.target) return pushScreen(raw.target);
+          if (raw.action === 'modal-close' || raw.action === 'logout') return popScreen();
+          flash('「' + (raw.label || raw.id) + '」的 action = ' + (raw.action || '（无）') +
+            (raw.target ? '' : '（没有 target，预览里不会弹窗）'));
+        });
+        st.appendChild(el2);
+      });
+    });
+  }
+  function pushScreen(name) {
+    var sc = state.bundle.screens[name];
+    if (!sc) return flash('画面不存在：' + name);
+    if (sc.role === 'modal') { state.pv.stack.push(name); renderPreview(); flash('弹出：' + name); }
+    else { state.pv.stack = [name]; renderPreview(); flash('切到整屏：' + name); }
+  }
+  function popScreen() {
+    if (state.pv.stack.length > 1) { flash('关闭：' + state.pv.stack.pop()); renderPreview(); }
+    else flash('已经在起点画面');
+  }
+  function togglePreview() {
+    state.pv.on = !state.pv.on;
+    state.pv.stack = [state.screen];
+    $('btnPreview').classList.toggle('on', state.pv.on);
+    renderPreview();
+  }
+
+  /* ---------------- 预览 ---------------- */
+  function renderPrevs() {
+    var box = $('prevs');
+    box.innerHTML = '';
+    C.BP_KEYS.forEach(function (k) {
+      var d = C.breakpointOf(state.layout, k);
+      var maxW = 92;
+      var z = Math.min(maxW / d.w, 150 / d.h);
+      var p = document.createElement('div');
+      p.className = 'prev';
+      p.style.width = Math.round(d.w * z) + 'px';
+      p.style.height = Math.round(d.h * z) + 'px';
+      p.style.backgroundImage = state.layout.background.asset && state.assetUrls[state.layout.background.asset.split('/').pop()]
+        ? 'url(' + state.assetUrls[state.layout.background.asset.split('/').pop()] + ')' : 'none';
+      p.style.backgroundSize = state.layout.background.fit === 'contain' ? 'contain' : 'cover';
+      var cap = document.createElement('span'); cap.className = 'cap';
+      cap.textContent = C.BP_LABEL[k] + ' ' + d.w + '×' + d.h + ' · ' + (d.adapt === 'fit' ? '等比' : '锚点');
+      p.appendChild(cap);
+      C.layoutAt(state.layout, k).forEach(function (it) {
+        var dot = document.createElement('div');
+        dot.className = 'dot' + (assetUrl(it) ? ' img' : '');
+        dot.style.left = (it.rect[0] * z) + 'px'; dot.style.top = (it.rect[1] * z) + 'px';
+        dot.style.width = Math.max(2, it.rect[2] * z) + 'px'; dot.style.height = Math.max(2, it.rect[3] * z) + 'px';
+        dot.title = it.id + (it.fromOverride ? '（本断点独立）' : '');
+        if (it.fromOverride) dot.style.outline = '1px solid #e6a23c';
+        var u = assetUrl(it);
+        if (u) { var im = document.createElement('img'); im.src = u; dot.appendChild(im); }
+        p.appendChild(dot);
+      });
+      p.addEventListener('click', function () {
+        state.editBp = k; $('editBp').value = k; syncAll();
+      });
+      box.appendChild(p);
+    });
+    var cur = ['landscape','portrait','tablet'].map(function (k) { return C.breakpointOf(state.layout, k); });
+    $('prevHint').textContent = '当前：' +
+      C.BP_KEYS.map(function (k) { var d = C.breakpointOf(state.layout, k); return C.BP_LABEL[k] + '=' + (d.adapt === 'fit' ? '等比缩放' : '锚点跟随'); }).join(' · ') +
+      '。点缩略图可切到该断点直接编辑。';
+    Array.prototype.slice.call($('prevMode').querySelectorAll('button')).forEach(function (b) {
+      var k = state.editBp === 'base' ? 'landscape' : state.editBp;
+      b.classList.toggle('on', C.breakpointOf(state.layout, k).adapt === b.dataset.adapt);
+      b.disabled = state.editBp === 'base';
+    });
+  }
+
+  /* ---------------- 校验 / JSON ---------------- */
+  function renderIssues() {
+    var box = $('issues'), iss = C.validateBundle(state.bundle, KNOWN_ACTIONS);
+    box.innerHTML = '';
+    if (!iss.length) { box.innerHTML = '<div class="ok">✓ 没有发现问题</div>'; return; }
+    iss.forEach(function (i) {
+      var d = document.createElement('div');
+      d.className = i.level === 'error' ? 'err' : 'warn';
+      d.textContent = (i.level === 'error' ? '✕ ' : '! ') + i.msg;
+      box.appendChild(d);
+    });
+  }
+  function renderJson(force) {
+    var ta = $('json');
+    if (!force && document.activeElement === ta) return;
+    ta.value = JSON.stringify(C.normalizeBundle(state.bundle), null, 2);
+  }
+
+  function syncAll() { fillSelects(); renderList(); renderStage(); syncProps(); renderPrevs(); renderIssues(); renderJson(); renderPreview(); }
+
+  /* ---------------- 选择 / 交互 ---------------- */
+  function select(id) { state.sel = id; renderList(); renderStage(); syncProps(); }
+
+  /** 舞台坐标 → 元素自身坐标（考虑元素旋转，因为顶点手柄会跟着元素一起转） */
+  function toLocalPoint(x, y, rect, rot) {
+    if (!rot) return [x, y];
+    var cx = rect[0] + rect[2] / 2, cy = rect[1] + rect[3] / 2;
+    var a = -rot * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+    var dx = x - cx, dy = y - cy;
+    return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+  }
+
+  var drag = null, spaceDown = false;
+  stage.addEventListener('pointerdown', function (ev) {
+    var t = ev.target;
+    var host = t.closest ? t.closest('.el') : null;
+    // 平移：中键 / 空格+左键 / 空白处拖动
+    if (ev.button === 1 || (ev.button === 0 && spaceDown) || !host) {
+      drag = { id: null, handle: 'pan', cx: ev.clientX, cy: ev.clientY,
+               sl: wrap.scrollLeft, st: wrap.scrollTop, moved: false };
+      ev.preventDefault();
+      return;
+    }
+    var id = host.dataset.id;
+    if (state.sel !== id) { state.sel = id; renderList(); syncProps(); }
+    var e = el(id); if (!e) return;
+    var sz = editSize();
+    var sr = stage.getBoundingClientRect();
+    var px = (ev.clientX - sr.left) / state.zoom, py = (ev.clientY - sr.top) / state.zoom;
+    var r0 = shownRect(e);
+    var handle = t.dataset ? t.dataset.handle : null;
+    // 抓取容差：即使没点中手柄，落在元素边缘 7px 内也按"缩放对应边"处理
+    //   （原来只有 9px 的小方块可抓，用户很容易点进元素内部 → 变成整块移动）
+    if (!handle && !spaceDown && ev.button === 0) {
+      var near = 7 / (state.zoom || 1);
+      var dL = px - r0[0], dT = py - r0[1], dR = r0[0] + r0[2] - px, dB = r0[1] + r0[3] - py;
+      var hw = (dL >= -near && dL <= near) ? 'w' : ((dR >= -near && dR <= near) ? 'e' : '');
+      var hv = (dT >= -near && dT <= near) ? 'n' : ((dB >= -near && dB <= near) ? 's' : '');
+      if ((hw || hv) && dL > -near && dT > -near && dR > -near && dB > -near) handle = hv + hw;
+    }
+    var vIndex = null, prePushed = false;
+    if (handle && handle.indexOf('vp:') === 0) {
+      vIndex = parseInt(handle.slice(3), 10);
+      if (ev.altKey) {                                    // Alt+点顶点 = 删顶点
+        var pp0 = C.parsePath(e.path);
+        if (pp0 && pp0.points.length > 3) {
+          push();
+          e.path = C.formatPath(C.removeVertex(pp0.points, vIndex), pp0.closed);
+          renderStage(); syncProps(); renderJson(); renderIssues();
+        } else flash('多边形最少保留 3 个顶点');
+        ev.preventDefault();
+        return;
+      }
+    } else if (handle && handle.indexOf('vm:') === 0) {    // 点边中点 = 插入顶点并接着拖
+      var pp1 = C.parsePath(e.path);
+      if (!pp1) { ev.preventDefault(); return; }
+      push(); prePushed = true;
+      e.path = C.formatPath(C.insertVertex(pp1.points, parseInt(handle.slice(3), 10)), pp1.closed);
+      vIndex = parseInt(handle.slice(3), 10) + 1;
+      renderStage(); syncProps(); renderJson();
+      flash('已插入顶点 ' + vIndex + '（拖动它调整形状；Alt+点击可删除）');
+    }
+    drag = { id: id, handle: vIndex === null ? (handle || 'move') : 'vertex', vIndex: vIndex,
+             px: px, py: py, r0: r0, ox: px - r0[0], oy: py - r0[1],
+             cx: r0[0] + r0[2] / 2, cy: r0[1] + r0[3] / 2,
+             a0: Math.atan2(py - (r0[1] + r0[3] / 2), px - (r0[0] + r0[2] / 2)) * 180 / Math.PI,
+             rot0: C.num(e.rot, 0), pushed: prePushed, sz: sz };
+    ev.preventDefault();
+  });
+  window.addEventListener('pointermove', function (ev) {
+    if (!drag) return;
+    if (drag.handle === 'pan') {
+      var dx = ev.clientX - drag.cx, dy = ev.clientY - drag.cy;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+      wrap.scrollLeft = drag.sl - dx;
+      wrap.scrollTop = drag.st - dy;
+      return;
+    }
+    var e = el(drag.id); if (!e) return;
+    if (!drag.pushed) { push(); drag.pushed = true; }
+    var sr = stage.getBoundingClientRect();
+    var px = (ev.clientX - sr.left) / state.zoom, py = (ev.clientY - sr.top) / state.zoom;
+    var cands = C.guideCandidates(state.editBp === 'base'
+      ? state.layout.elements
+      : state.layout.elements.filter(function (x) { return !hasOverride(x) || x.id === drag.id; }), drag.id, drag.sz);
+    var tol = state.guides ? 6 : 0;
+    var r = drag.r0.slice(), guides = [];
+
+    if (drag.handle === 'vertex') {                        // 拖顶点改多边形
+      var e2 = el(drag.id); if (!e2) return;
+      var rec = shownRect(e2);
+      var loc = toLocalPoint(px, py, rec, C.num(e2.rot, 0));   // 反向旋转 → 元素自身坐标
+      var cur = C.parsePath(e2.path);
+      if (!cur) return;
+      var pts = cur.points.slice();
+      pts[drag.vIndex] = C.stageToPath(loc[0], loc[1], rec);
+      e2.path = C.formatPath(pts, cur.closed);
+      renderStage(); syncProps(); renderJson();
+      return;
+    }
+
+    if (drag.handle === 'rot') {
+      var a = Math.atan2(py - drag.cy, px - drag.cx) * 180 / Math.PI;
+      var rot = drag.rot0 + (a - drag.a0);
+      if (ev.shiftKey) rot = Math.round(rot / 15) * 15;
+      e.rot = C.round(rot, 1);
+      renderStage(); syncProps(); renderJson(); return;
+    }
+    if (drag.handle === 'move') {
+      r[0] = drag.r0[0] + (px - drag.px); r[1] = drag.r0[1] + (py - drag.py);
+      var m = C.snapMove(r, cands, state.grid, tol); r = m.rect; guides = m.guides;
+    } else {
+      var k = drag.handle;
+      // 旋转过的元素：把指针位移换算到**元素自身坐标轴**再缩放，否则拖右边会歪着改
+      var rot = C.num(e.rot, 0);
+      var dxs, dys;
+      if (rot) {
+        var l0 = toLocalPoint(drag.px, drag.py, drag.r0, rot);
+        var l1 = toLocalPoint(px, py, drag.r0, rot);
+        dxs = l1[0] - l0[0]; dys = l1[1] - l0[1];
+      } else { dxs = px - drag.px; dys = py - drag.py; }
+      if (k.indexOf('w') >= 0) { var nx = C.snapEdge(drag.r0[0] + dxs, cands.xs, state.grid, tol); r[2] = drag.r0[2] + (drag.r0[0] + dxs - nx.value); r[0] = nx.value; if (nx.guide) guides.push({ axis:'v', pos: nx.value }); }
+      if (k.indexOf('e') >= 0) { var ex = C.snapEdge(drag.r0[0] + drag.r0[2] + dxs, cands.xs, state.grid, tol); r[2] = ex.value - r[0]; if (ex.guide) guides.push({ axis:'v', pos: ex.value }); }
+      if (k.indexOf('n') >= 0) { var ny = C.snapEdge(drag.r0[1] + dys, cands.ys, state.grid, tol); r[3] = drag.r0[3] + (drag.r0[1] + dys - ny.value); r[1] = ny.value; if (ny.guide) guides.push({ axis:'h', pos: ny.value }); }
+      if (k.indexOf('s') >= 0) { var sy = C.snapEdge(drag.r0[1] + drag.r0[3] + dys, cands.ys, state.grid, tol); r[3] = sy.value - r[1]; if (sy.guide) guides.push({ axis:'h', pos: sy.value }); }
+      if (r[2] < 4) r[2] = 4; if (r[3] < 4) r[3] = 4;
+      if (ev.shiftKey) { var side = Math.max(r[2], r[3]); if (k === 'se' || k === 'nw' || k === 'ne' || k === 'sw') { r[2] = side; r[3] = side; } }
+    }
+    state.guidesNow = guides;
+    writeRect(e, r);
+    renderStage(); syncProps(); renderJson();
+  });
+  window.addEventListener('pointerup', function () {
+    if (drag && drag.handle === 'pan') {
+      if (!drag.moved) { state.sel = null; renderList(); renderStage(); syncProps(); }  // 空白单击 = 取消选择
+      drag = null;
+      return;
+    }
+    if (drag) { drag = null; state.guidesNow = []; renderStage(); syncProps(); renderIssues(); renderJson(); }
+  });
+
+  /* 滚轮：Ctrl/⌘+滚轮 = 以指针为中心缩放；Shift+滚轮 = 横向滚动；否则交给浏览器纵向滚动 */
+  wrap.addEventListener('wheel', function (ev) {
+    if (ev.ctrlKey || ev.metaKey) {
+      ev.preventDefault();
+      var f = Math.pow(1.0015, -ev.deltaY);
+      setZoomAt(state.zoom * f, ev.clientX, ev.clientY);
+      return;
+    }
+    if (ev.shiftKey && !ev.ctrlKey) {
+      wrap.scrollLeft += ev.deltaY;
+      ev.preventDefault();
+    }
+  }, { passive: false });
+
+  /* ---------------- 属性联动 ---------------- */
+  function bindProp(id, fn, evt) { $(id).addEventListener(evt || 'change', function () { if (!state.sel) return; fn(el(state.sel), $(id)); renderStage(); renderList(); renderJson(); renderIssues(); renderPrevs(); syncProps(); }); }
+  bindProp('pId', function (e, n) { if (n.value.trim()) { push(); e.id = n.value.trim(); state.sel = e.id; } });
+  bindProp('pLabel', function (e, n) { push(); e.label = n.value; });
+  bindProp('pKind', function (e, n) { push(); e.kind = n.value; });
+  bindProp('pAction', function (e, n) { push(); e.action = n.value.trim(); });
+  bindProp('pPayload', function (e, n) {
+    var t = n.value.trim();
+    if (!t) { push(); delete e.payload; return; }
+    try { var o = JSON.parse(t); push(); e.payload = o; n.style.borderColor = ''; }
+    catch (err) { n.style.borderColor = '#e05c5c'; flash('payload 不是合法 JSON'); }
+  });
+  bindProp('pAsset', function (e, n) { push(); e.asset = n.value.trim(); });
+  bindProp('pHit', function (e, n) {
+    push(); e.hit = n.value;
+    // 切到 path 却没形状 → 给一个基于当前 rect 的初始多边形（矩形），随后可拖成不规则形状
+    if (e.hit === 'path' && !C.parsePath(e.path)) e.path = C.presetPath('rect');
+  });
+  // 多边形：文本框直接改 / 预设 / ±顶点 / 等边矫正
+  bindProp('pPath', function (e, n) {
+    var v = n.value.trim();
+    if (v && !C.parsePath(v)) { n.style.borderColor = '#e05c5c'; flash('path 只支持 M/L/H/V/Z 多边形'); return; }
+    n.style.borderColor = ''; push(); e.path = v; e.hit = 'path';
+  });
+  $('pPathPreset').addEventListener('change', function () {
+    if (!state.sel || !this.value) return;
+    var e = el(state.sel), r = shownRect(e);
+    push(); e.hit = 'path';
+    e.path = C.presetPath(this.value, r[2], r[3]);     // 正多边形按当前 rect 现算
+    var key = this.value; this.value = '';
+    syncAll(); flash('已套用预设：' + C.PATH_PRESET_LABEL[key]);
+  });
+  $('btnPathRegular').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel), pp = C.parsePath(e.path);
+    if (!pp) return flash('当前没有可矫正的多边形');
+    var r = shownRect(e);
+    push(); e.hit = 'path';
+    e.path = C.formatPath(C.regularPolygonPoints(pp.points.length, r[2], r[3], true), true);
+    syncAll(); flash('已按 ' + Math.round(r[2]) + '×' + Math.round(r[3]) + ' 矫正为等边 ' + pp.points.length + ' 边形');
+  });
+  $('btnPathAdd').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel), pp = C.parsePath(e.path) || C.parsePath(C.presetPath('rect'));
+    push(); e.hit = 'path';
+    e.path = C.formatPath(C.insertVertex(pp.points, pp.points.length - 1), pp.closed);
+    syncAll();
+  });
+  $('btnPathDel').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel), pp = C.parsePath(e.path);
+    if (!pp) return;
+    if (pp.points.length <= 3) return flash('多边形最少保留 3 个顶点');
+    push(); e.path = C.formatPath(C.removeVertex(pp.points, pp.points.length - 1), pp.closed);
+    syncAll();
+  });
+  bindProp('pAnchor', function (e, n) { push(); e.anchor = n.value; });
+  ['pX','pY','pW','pH'].forEach(function (k, i) {
+    bindProp(k, function (e) { var r = shownRect(e); r[i] = C.num(parseFloat($(k).value), r[i]); writeRect(e, r); });
+  });
+  bindProp('pRot', function (e, n) { push(); e.rot = C.num(parseFloat(n.value), 0); });
+  bindProp('pZ', function (e, n) { push(); e.z = C.num(parseFloat(n.value), 1); });
+  bindProp('pHidden', function (e, n) { push(); if (state.editBp === 'base') e.hidden = n.checked; else { e.overrides = e.overrides || {}; e.overrides[state.editBp] = e.overrides[state.editBp] || {}; e.overrides[state.editBp].hidden = n.checked || undefined; } }, 'change');
+
+  $('pAssetFile').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0]; if (!f || !state.sel) return;
+    state.localPreview[state.sel] = URL.createObjectURL(f);
+    renderStage(); renderPrevs();
+  });
+
+  /* ---------------- 顶栏动作 ---------------- */
+  $('editBp').addEventListener('change', function () { state.editBp = this.value; state.fitZoom = true; syncAll(); });
+  $('grid').addEventListener('change', function () { state.grid = parseInt(this.value, 10) || 0; syncStatus(); });
+  $('btnGuides').addEventListener('click', function () { state.guides = !state.guides; this.classList.toggle('on', state.guides); });
+  $('btnUndo').addEventListener('click', undo);
+  $('btnRedo').addEventListener('click', redo);
+  $('btnFit').addEventListener('click', function () { state.fitZoom = true; renderStage(); });
+  $('btnZoomIn').addEventListener('click', function () {
+    var r = wrap.getBoundingClientRect();
+    setZoomAt(state.zoom * 1.25, r.left + wrap.clientWidth / 2, r.top + wrap.clientHeight / 2);
+  });
+  $('btnZoomOut').addEventListener('click', function () {
+    var r = wrap.getBoundingClientRect();
+    setZoomAt(state.zoom / 1.25, r.left + wrap.clientWidth / 2, r.top + wrap.clientHeight / 2);
+  });
+  $('btnZoom100').addEventListener('click', function () {
+    var r = wrap.getBoundingClientRect();
+    setZoomAt(1, r.left + wrap.clientWidth / 2, r.top + wrap.clientHeight / 2);
+  });
+  $('btnAdd').addEventListener('click', function () {
+    push();
+    var n = 1; while (el('new_' + n)) n++;
+    var d = editDef() || state.layout.canvas;
+    state.layout.elements.push(C.normalizeElement({
+      id: 'new_' + n, label: '新元素', kind: 'button', action: 'goto-hub', hit: 'rect', anchor: 'lt',
+      rect: [Math.round(d.w / 2 - 80), Math.round(d.h / 2 - 25), 160, 50]
+    }));
+    state.sel = 'new_' + n; syncAll();
+  });
+  $('btnDup').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel); if (!e) return;
+    push();
+    var c = JSON.parse(JSON.stringify(e));
+    var n = 1; while (el(c.id + '_copy' + (n > 1 ? n : ''))) n++;
+    c.id = c.id + '_copy' + (n > 1 ? n : '');
+    c.rect = [c.rect[0] + 16, c.rect[1] + 16, c.rect[2], c.rect[3]];
+    c.overrides = undefined;
+    state.layout.elements.push(C.normalizeElement(c));
+    state.sel = c.id; syncAll();
+  });
+  $('btnDel').addEventListener('click', function () {
+    if (!state.sel) return;
+    push();
+    var list = els();                                  // 必须原地删：整体赋值只会改到派生对象，
+    var idx = -1;                                      //   画面集合里那份还在 → 表现为"只是不显示了"
+    for (var i = 0; i < list.length; i++) if (list[i].id === state.sel) { idx = i; break; }
+    if (idx >= 0) list.splice(idx, 1);
+    var gone = state.sel;
+    state.sel = null; syncAll();
+    flash('已删除元素：' + gone);
+  });
+  $('btnExport').addEventListener('click', doExport);
+
+  /* ---------- 本地服务（一键存盘 / 素材清单 / 归位）----------
+   * 只有通过 node tools/layout/lab-server.js 打开时这些才可用：浏览器页面本身不能往工作区写文件。
+   */
+  var LAB_API = (location.protocol === 'http:' || location.protocol === 'https:') ? '' : null;
+  function toolInfo(msg, kind) { $('toolInfo').textContent = msg; $('toolInfo').style.color = kind === 'err' ? '#ff9a9a' : (kind === 'ok' ? '#8ef0b0' : ''); }
+  function labApi(p, body) {
+    if (LAB_API === null) return Promise.reject(new Error('未通过本地服务打开：先跑 node tools/layout/lab-server.js，再访问 http://127.0.0.1:4319/'));
+    return fetch(LAB_API + p, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
+    }).then(function (r) { return r.json(); });
+  }
+  function showLines(title, lines) {                      // 复用 JSON 面板：可复制、可整段发给我
+    $('jsonPanel').open = true;
+    $('json').value = title + '\n' + (lines || []).join('\n');
+    flash(title);
+  }
+  function refreshToolStatus() {
+    labApi('/api/status').then(function (s) {
+      var m = s.manifest;
+      toolInfo('工作区：' + s.root + '\n导出：' + (s.rawExists ? '已存在' : '还没有') +
+        (s.stale ? '（比生成物新 → 需重新生成）' : '') +
+        '\n素材：' + (m ? ('共 ' + m.total + ' ｜已有 ' + m.present + ' ｜缺 ' + m.missing + '（主界面优先 ' + m.coreMissing + '）') : '还没生成清单') +
+        '\n收件夹文件：' + s.inboxFiles, 'ok');
+    }).catch(function (e) { toolInfo(e.message, 'err'); });
+  }
+  function doSaveWs() {
+    toolInfo('正在写入工作区…');
+    labApi('/api/save-layout', JSON.stringify(state.bundle)).then(function (r) {
+      if (!r.ok) return toolInfo('存盘失败：' + (r.error || (r.importLog || []).join(' ')), 'err');
+      toolInfo('已写入：' + r.raw + '\n生成：' + r.data, 'ok');
+      showLines('✅ 已存到工作区', [r.raw, r.data, ''].concat(r.importLog || []));
+      refreshToolStatus();
+    }).catch(function (e) { toolInfo(e.message, 'err'); });
+  }
+  function doManifest(full) {
+    toolInfo('正在算素材清单…');
+    labApi('/api/manifest' + (full ? '?full=1' : '')).then(function (r) {
+      if (!r.ok) return toolInfo('生成失败：' + r.error, 'err');
+      var m = r.summary;
+      toolInfo('素材：共 ' + m.total + ' ｜已有 ' + m.present + ' ｜待归位 ' + m.inInbox + ' ｜缺 ' + m.missing +
+        '（主界面优先 ' + m.coreMissing + '）\n清单文档：' + r.doc, 'ok');
+      showLines('📋 缺失素材' + (full ? '（全部）' : '（主界面优先）') + '：' + r.missing.length + ' / 共 ' + r.missingTotal + ' 项缺失',
+        r.missing.map(function (e) { return (e.priority === 'core' ? '★ ' : '· ') + e.file + '   ← ' + e.label; }));
+    }).catch(function (e) { toolInfo(e.message, 'err'); });
+  }
+  function doAssets() {
+    toolInfo('正在归位素材…');
+    labApi('/api/apply-assets', {}).then(function (r) {
+      if (!r.ok) return toolInfo('归位失败：' + (r.log || []).join(' '), 'err');
+      toolInfo('归位完成；素材还剩 ' + r.summary.missing + ' 项缺失（主界面优先 ' + r.summary.coreMissing + '）', 'ok');
+      showLines('🎨 素材归位结果', r.log);
+      refreshToolStatus();
+    }).catch(function (e) { toolInfo(e.message, 'err'); });
+  }
+  function doApplyAll() {
+    toolInfo('一键应用：存盘 → 生成 → 清单 → 归位…');
+    labApi('/api/apply-all', JSON.stringify(state.bundle)).then(function (r) {
+      if (!r.ok) return toolInfo('失败：' + (r.error || ''), 'err');
+      var m = r.manifest.summary || {};
+      toolInfo('完成：' + r.saved.raw + '\n生成物已更新；素材缺 ' + (m.missing || '?') + '（主界面优先 ' + (m.coreMissing || '?') + '）', 'ok');
+      showLines('⚡ 一键应用完成', [].concat(r.saved.importLog || [], [''], r.manifest.log || [], [''], r.assets.log || []));
+      refreshToolStatus();
+    }).catch(function (e) { toolInfo(e.message, 'err'); });
+  }
+  $('btnSaveWs').addEventListener('click', doSaveWs);
+  $('btnApplyAll').addEventListener('click', doApplyAll);
+  $('btnManifest').addEventListener('click', doManifest);
+  $('btnAssets').addEventListener('click', doAssets);
+  $('btnStatus').addEventListener('click', refreshToolStatus);
+  $('btnMissing').addEventListener('click', function () { doManifest(false); });
+  $('btnMissingAll').addEventListener('click', function () { doManifest(true); });
+  if (LAB_API !== null) refreshToolStatus();
+  else toolInfo('当前是直接打开文件（file://）→「存到工作区 / 素材清单 / 归位素材」不可用。\n请改为：node tools/layout/lab-server.js 然后访问 http://127.0.0.1:4319/', 'err');
+  $('btnImport').addEventListener('click', function () {
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json,application/json';
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0]; if (!f) return;
+      var fr = new FileReader();
+      fr.onload = function () {
+    try {
+      push();
+      state.bundle = C.normalizeBundle(JSON.parse(String(fr.result)));
+      useScreen(state.bundle.screens.hub ? 'hub' : Object.keys(state.bundle.screens)[0]);
+      syncAll(); flash('已导入（' + Object.keys(state.bundle.screens).length + ' 个画面）');
+    } catch (e) { flash('导入失败：不是合法 JSON'); }
+      };
+      fr.readAsText(f);
+    });
+    inp.click();
+  });
+  $('btnCheck').addEventListener('click', function () { renderIssues(); flash('已重新校验'); });
+  $('btnJsonRefresh').addEventListener('click', function () { renderJson(true); });
+  $('btnJsonApply').addEventListener('click', function () {
+    try {
+      push();
+      state.bundle = C.normalizeBundle(JSON.parse($('json').value));
+      useScreen(state.bundle.screens.hub ? 'hub' : Object.keys(state.bundle.screens)[0]);
+      syncAll(); flash('已应用 JSON');
+    } catch (e) { flash('JSON 解析失败'); }
+  });
+  $('btnJsonCopy').addEventListener('click', function () {
+    var ta = $('json');
+    renderJson(true);
+    ta.focus(); ta.select();
+    // 复制**紧凑版**：内容一模一样但体积约减半，方便粘贴到对话里
+    var compact = JSON.stringify(C.normalizeBundle(state.bundle));
+    var done = function () {
+      showBanner('已复制布局 JSON（紧凑 ' + compact.length + ' 字符）。<b>直接粘贴到对话里发给我即可</b> —— 不依赖下载，沙箱预览里也能用。');
+    };
+    // 先试异步剪贴板 API（沙箱里可能被拒），失败再退回 execCommand
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(compact).then(done, function () {
+          try { document.execCommand('copy') ? done() : showBanner('复制被浏览器拒绝：请手动在下面的文本框里 Ctrl+A / Ctrl+C。'); }
+          catch (e) { showBanner('复制被浏览器拒绝：请手动在下面的文本框里 Ctrl+A / Ctrl+C。'); }
+        });
+        return;
+      }
+    } catch (e) { /* 落到 execCommand */ }
+    try { document.execCommand('copy') ? done() : showBanner('复制失败：请手动在文本框里 Ctrl+A / Ctrl+C。'); }
+    catch (e) { showBanner('复制失败：请手动在文本框里 Ctrl+A / Ctrl+C。'); }
+  });
+  $('btnShapeMode').addEventListener('click', function () {
+    state.shapeMode = !state.shapeMode;
+    this.classList.toggle('on', state.shapeMode);
+    renderStage(); syncProps();
+    flash(state.shapeMode ? '形状编辑：拖动黄点改多边形；Alt+点删除顶点；蓝点插入顶点' : '形状编辑已关闭（四角手柄恢复为缩放）');
+  });
+  $('btnOvSet').addEventListener('click', function () {
+    if (!state.sel || state.editBp === 'base') return;
+    push();
+    var e = el(state.sel);
+    writeRect(e, shownRect(e));
+    syncAll(); flash('已把当前位置固化为 ' + C.BP_LABEL[state.editBp] + ' 的独立布局');
+  });
+  $('btnOvClear').addEventListener('click', function () {
+    if (!state.sel || state.editBp === 'base') return;
+    push();
+    var e = el(state.sel);
+    if (e.overrides) delete e.overrides[state.editBp];
+    if (e.overrides && !Object.keys(e.overrides).length) delete e.overrides;
+    syncAll(); flash('已回到自动适配');
+  });
+  Array.prototype.slice.call($('prevMode').querySelectorAll('button')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (state.editBp === 'base') return;
+      push();
+      state.layout.breakpoints[state.editBp].adapt = b.dataset.adapt;
+      syncAll();
+    });
+  });
+  $('btnAssetDir').addEventListener('click', function () {    var inp = document.createElement('input');
+    inp.type = 'file'; inp.webkitdirectory = true; inp.multiple = true;
+    inp.addEventListener('change', function () {
+      var n = 0;
+      Array.prototype.slice.call(inp.files || []).forEach(function (f) {
+        if (!/\.(png|jpe?g|webp|gif|svg)$/i.test(f.name)) return;
+        state.assetUrls[f.name] = URL.createObjectURL(f); n++;
+      });
+      $('assetInfo').innerHTML = '已载入 <b>' + n + '</b> 张，按文件名自动匹配。例：' +
+        '<span class="kbd">' + (Object.keys(state.assetUrls)[0] || 'btn_warehouse.webp') + '</span>';
+      syncAll();
+    });
+    inp.click();
+  });
+
+  /* ---------------- 画面 / 弹窗 / 预览 事件 ----------------
+   * 注意：**不用原生 prompt/confirm** —— 在内嵌浏览器 / webview / iframe 里它们常被禁用
+   *   （调用后直接返回 null，表现就是"点了没反应"）。所以新增用输入框，删除用两步确认。
+   */
+  $('screenSel').addEventListener('change', function () { useScreen(this.value); syncAll(); });
+  function addScreen(role) {
+    var name = ($('screenNewName').value || '').trim();
+    if (!name) return flash('请先在左边的输入框里填画面名');
+    if (!/^[a-zA-Z][\w-]*$/.test(name)) return flash('画面名要字母开头，只含字母/数字/下划线/连字符');
+    if (state.bundle.screens[name]) return flash('画面已存在：' + name);
+    push();
+    if (role === 'modal') {
+      state.bundle.screens[name] = C.normalizeScreen({
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.55, closeOnMaskClick: true },
+        elements: [
+          { id: 'panel', kind: 'deco', label: '弹窗面板', hit: 'rect', anchor: 'cc', rect: [440, 240, 400, 240], z: 1 },
+          { id: 'btn_close', kind: 'button', label: '关闭', action: 'modal-close', hit: 'rect', anchor: 'cc', rect: [760, 430, 70, 34], z: 2 }
+        ]
+      }, name);
+    } else {
+      state.bundle.screens[name] = C.normalizeScreen({ role: 'screen', elements: [] }, name);
+    }
+    $('screenNewName').value = '';
+    useScreen(name); syncAll();
+    flash('已新增' + (role === 'modal' ? '弹窗' : '整屏') + '画面：' + name);
+  }
+  $('btnScreenAdd').addEventListener('click', function () { addScreen('screen'); });
+  $('btnScreenModal').addEventListener('click', function () { addScreen('modal'); });
+  var delArmed = 0;
+  $('btnScreenDel').addEventListener('click', function () {
+    var n = Object.keys(state.bundle.screens).length;
+    if (n <= 1) return flash('至少保留一个画面');
+    var now = Date.now();
+    if (now - delArmed > 2500) {                    // 第一步：进入"待确认"，2.5s 内再点一次才真删
+      delArmed = now;
+      this.textContent = '确认删除？';
+      this.classList.add('on');
+      return flash('再点一次「确认删除」删除画面「' + state.screen + '」');
+    }
+    delArmed = 0;
+    this.textContent = '删画面';
+    this.classList.remove('on');
+    push();
+    var gone = state.screen;
+    delete state.bundle.screens[gone];
+    useScreen(state.bundle.screens.hub ? 'hub' : Object.keys(state.bundle.screens)[0]);
+    syncAll();
+    flash('已删除画面：' + gone);
+  });
+  $('sRole').addEventListener('change', function () {
+    push();
+    var sc = state.bundle.screens[state.screen];
+    sc.role = this.value;
+    if (sc.role === 'modal' && !sc.mask) sc.mask = { color: C.DEFAULT_MASK.color, opacity: C.DEFAULT_MASK.opacity, closeOnMaskClick: true };
+    if (sc.role !== 'modal') delete sc.mask;
+    syncAll();
+  });
+  $('sBg').addEventListener('change', function () { push(); state.layout.background.asset = this.value.trim(); renderStage(); renderPrevs(); renderJson(); });
+  $('sMaskColor').addEventListener('change', function () { push(); state.layout.mask.color = this.value.trim(); renderPreview(); renderJson(); });
+  $('sMaskOpacity').addEventListener('change', function () { push(); state.layout.mask.opacity = C.clamp(parseFloat(this.value) || 0, 0, 1); renderPreview(); renderJson(); });
+  $('sMaskClose').addEventListener('change', function () { push(); state.layout.mask.closeOnMaskClick = this.checked; renderPreview(); renderJson(); });
+  $('pTarget').addEventListener('change', function () {
+    if (!state.sel) return;
+    push();
+    var e = el(state.sel);
+    if (this.value) e.target = this.value; else delete e.target;
+    renderStage(); renderJson(); renderIssues(); syncProps();
+  });
+  $('pWhen').addEventListener('change', function () {
+    if (!state.sel) return;
+    var t = this.value.trim();
+    if (!t) { push(); delete el(state.sel).when; }
+    else {
+      try { var o = JSON.parse(t); push(); el(state.sel).when = o; this.style.borderColor = ''; }
+      catch (err) { this.style.borderColor = '#e05c5c'; return flash('when 不是合法 JSON'); }
+    }
+    renderStage(); renderJson(); renderIssues(); syncProps();
+  });
+
+  /* ---------------- 径向生成插槽 / 设计期状态 ---------------- */
+  var radCenter = null;
+  $('radFromSel').addEventListener('click', function () {
+    if (!state.sel) return flash('先选中一个元素（例如角色卡）');
+    var r = shownRect(el(state.sel));
+    radCenter = [r[0] + r[2] / 2, r[1] + r[3] / 2];
+    $('radInfo').textContent = '圆心 = 选中元素「' + state.sel + '」中心 (' + Math.round(radCenter[0]) + ', ' + Math.round(radCenter[1]) + ')';
+    this.classList.add('on');
+    renderStage();
+  });
+  $('radFromCanvas').addEventListener('click', function () {
+    var sz = editSize();
+    radCenter = [sz.w / 2, sz.h / 2];
+    $('radInfo').textContent = '圆心 = 画布中心 (' + Math.round(radCenter[0]) + ', ' + Math.round(radCenter[1]) + ')';
+    $('radFromSel').classList.remove('on');
+    renderStage();
+  });
+  $('btnRadial').addEventListener('click', function () {
+    var sz = editSize();
+    var c = radCenter || [sz.w / 2, sz.h / 2];
+    var n = parseInt($('radN').value, 10) || 6;
+    var r = parseFloat($('radR').value) || 250;
+    var w = parseFloat($('radW').value) || 64, h = parseFloat($('radH').value) || 64;
+    var start = parseFloat($('radStart').value);
+    if (!isFinite(start)) start = -90;
+    var prefix = ($('radPrefix').value || 'slot_').trim();
+    var action = ($('radAction').value || '').trim();
+    var target = ($('radTarget').value || '').trim();
+    if (!prefix) return flash('请填 id 前缀');
+    push();
+    var rects = C.radialRects(c[0], c[1], r, n, w, h, start);
+    rects.forEach(function (rect, i) {
+      var id = prefix + (i + 1);
+      while (el(id)) id = id + '_x';
+      state.layout.elements.push(C.normalizeElement({ id: id, kind: 'button', label: '插槽' + (i + 1),
+        action: action, target: target, payload: { idx: i }, hit: 'rect', anchor: 'ct', rect: rect, z: 3 }));
+    });
+    syncAll();
+    flash('已在「' + state.screen + '」按正 ' + n + ' 边形方向生成 ' + rects.length + ' 个插槽（半径 ' + r + '，起始角 ' + start + '°）');
+  });
+  Array.prototype.slice.call(document.querySelectorAll('[data-as]')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.sstate = { activeSlot: parseInt(b.dataset.as, 10) };
+      Array.prototype.slice.call(document.querySelectorAll('[data-as]')).forEach(function (x) { x.classList.toggle('on', x === b); });
+      renderStage(); renderPreview(); syncStatus();
+      flash('设计期状态：出战配置 ' + state.sstate.activeSlot);
+    });
+  });
+  $('btnPreview').addEventListener('click', togglePreview);
+  $('pvExit').addEventListener('click', togglePreview);
+  $('pvReset').addEventListener('click', function () { state.pv.stack = [state.screen]; renderPreview(); });
+  $('pvBp').addEventListener('click', function () {
+    var i = C.BP_KEYS.indexOf(pvBp);
+    pvBp = C.BP_KEYS[(i + 1) % C.BP_KEYS.length];
+    renderPreview();
+  });
+
+  /* ---------------- 键盘 ---------------- */
+  window.addEventListener('keydown', function (ev) {
+    var tag = (ev.target.tagName || '').toLowerCase();
+    if (ev.key === ' ') spaceDown = true;
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    var mod = ev.ctrlKey || ev.metaKey;
+    if (mod && ev.key.toLowerCase() === 'z') { ev.preventDefault(); return ev.shiftKey ? redo() : undo(); }
+    if (mod && ev.key.toLowerCase() === 'y') { ev.preventDefault(); return redo(); }
+    if (mod && ev.key.toLowerCase() === 'd') { ev.preventDefault(); return $('btnDup').click(); }
+    // 缩放快捷键：Ctrl/⌘ + 0 适应 / 1 实际大小 / + - 缩放
+    if (mod && (ev.key === '0' || ev.key === '1' || ev.key === '+' || ev.key === '=' || ev.key === '-' || ev.key === '_')) {
+      ev.preventDefault();
+      var rr = wrap.getBoundingClientRect();
+      var cxp = rr.left + wrap.clientWidth / 2, cyp = rr.top + wrap.clientHeight / 2;
+      if (ev.key === '0') { state.fitZoom = true; return renderStage(); }
+      if (ev.key === '1') return setZoomAt(1, cxp, cyp);
+      return setZoomAt(state.zoom * (ev.key === '+' || ev.key === '=' ? 1.25 : 1 / 1.25), cxp, cyp);
+    }
+    if (ev.key === 'p' || ev.key === 'P') { ev.preventDefault(); return $('btnShapeMode').click(); }
+    if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); return $('btnDel').click(); }
+    if (!state.sel) return;
+    var step = ev.shiftKey ? 10 : 1, dx = 0, dy = 0;
+    if (ev.key === 'ArrowLeft') dx = -step; else if (ev.key === 'ArrowRight') dx = step;
+    else if (ev.key === 'ArrowUp') dy = -step; else if (ev.key === 'ArrowDown') dy = step;
+    else return;
+    ev.preventDefault();
+    push();
+    var e = el(state.sel), r = shownRect(e);
+    r[0] += dx; r[1] += dy; writeRect(e, r);
+    renderStage(); syncProps(); renderJson();
+  });
+
+  window.addEventListener('keyup', function (ev) { if (ev.key === ' ') spaceDown = false; });
+
+  window.addEventListener('resize', function () { if (state.fitZoom) renderStage(); });
+
+  /* ---------------- 启动 ----------------
+   * 先尝试恢复本地自动保存：这样"关掉标签页"不再等于"改动全丢"。
+   */
+  var saved = loadSaved();
+  if (saved) {
+    state.bundle = C.normalizeBundle(saved.bundle);
+    state.screen = state.bundle.screens[saved.screen] ? saved.screen : Object.keys(state.bundle.screens)[0];
+    if (saved.sstate) state.sstate = saved.sstate;
+    if (saved.pdata) state.pdata = saved.pdata;
+    state.layout = C.screenLayout(state.bundle, state.screen);
+  }
+  syncAll();
+  if (saved) {
+    showBanner('已恢复上次编辑（' + new Date(saved.savedAt).toLocaleString() + '）。' +
+      '若要丢掉这些改动从默认布局重来，点右边「重置为默认」。');
+  }
+  $('bannerClose').addEventListener('click', function () { $('banner').hidden = true; });
+  $('bannerReset').addEventListener('click', function () {
+    storageDel(LS_KEY);
+    state.bundle = C.normalizeBundle(C.DEFAULT_BUNDLE);
+    useScreen('hub');
+    syncAll();
+    showBanner('已重置为默认布局（本地自动保存已清除）。');
+  });
+  var assetInfo = $('assetInfo');
+  if (assetInfo) assetInfo.innerHTML = '未载入素材：按文件名自动匹配 <span class="kbd">asset</span> 路径的最后一段（例：<span class="kbd">assets/ui/btn_warehouse.svg</span> ↔ 目录里的 <span class="kbd">btn_warehouse.svg</span>）。';
+  saveSoon();
+})();
+</script>
+</body>
+</html>
