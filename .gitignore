@@ -16,3 +16,7 @@ runtime/
 assets-inbox/*
 !assets-inbox/README.md
 !assets-inbox/.gitkeep
+
+# 布局工具的导出历史（每次「存到工作区」新增一份；真源是 layout-bundle.raw.json）
+tools/layout/exports/
+
