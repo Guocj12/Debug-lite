@@ -55,9 +55,9 @@
   }
  },
  "summary": {
-  "total": 147,
-  "present": 143,
-  "placeholder": 143,
+  "total": 158,
+  "present": 154,
+  "placeholder": 154,
   "real": 0,
   "inInbox": 0,
   "missing": 0,
@@ -146,12 +146,12 @@
     "real": 0
    },
    "ui": {
-    "total": 17,
-    "present": 17,
+    "total": 28,
+    "present": 28,
     "missing": 0,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 17,
+    "placeholder": 28,
     "real": 0
    }
   },
@@ -2658,6 +2658,66 @@
    "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
    "optional": false,
    "priority": "core",
+   "path": "assets/ui/battle_badge_1.webp",
+   "kind": "ui",
+   "id": "battle_badge_1",
+   "label": "出战 素材",
+   "source": "布局表 hub",
+   "usedBy": [
+    "hub"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 484,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/battle_badge_2.webp",
+   "kind": "ui",
+   "id": "battle_badge_2",
+   "label": "出战 素材",
+   "source": "布局表 hub",
+   "usedBy": [
+    "hub"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 484,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/battle_badge_3.webp",
+   "kind": "ui",
+   "id": "battle_badge_3",
+   "label": "出战 素材",
+   "source": "布局表 hub",
+   "usedBy": [
+    "hub"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 484,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
    "path": "assets/ui/center_role.webp",
    "kind": "ui",
    "id": "center_role",
@@ -2730,6 +2790,166 @@
    "inbox": null,
    "status": "占位",
    "bytes": 1158,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/pick_panel.webp",
+   "kind": "ui",
+   "id": "pick_panel",
+   "label": "候选角色模板 素材",
+   "source": "布局表 modal_role_pick",
+   "usedBy": [
+    "modal_role_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 5198,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/pick_title.webp",
+   "kind": "ui",
+   "id": "pick_title",
+   "label": "可替换的角色模板 素材",
+   "source": "布局表 modal_role_pick",
+   "usedBy": [
+    "modal_role_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 634,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/spick_panel.webp",
+   "kind": "ui",
+   "id": "spick_panel",
+   "label": "候选技能 素材",
+   "source": "布局表 modal_skill_pick",
+   "usedBy": [
+    "modal_skill_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 5198,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/spick_title.webp",
+   "kind": "ui",
+   "id": "spick_title",
+   "label": "可替换的技能 素材",
+   "source": "布局表 modal_skill_pick",
+   "usedBy": [
+    "modal_skill_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 634,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/plug_panel.webp",
+   "kind": "ui",
+   "id": "plug_panel",
+   "label": "该插槽的**角色插件**候选 素材",
+   "source": "布局表 modal_role_plugin_pick",
+   "usedBy": [
+    "modal_role_plugin_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 5198,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/plug_title.webp",
+   "kind": "ui",
+   "id": "plug_title",
+   "label": "可装 / 可换的角色插件 素材",
+   "source": "布局表 modal_role_plugin_pick",
+   "usedBy": [
+    "modal_role_plugin_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 634,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/splug_panel.webp",
+   "kind": "ui",
+   "id": "splug_panel",
+   "label": "该插槽的**技能插件**候选 素材",
+   "source": "布局表 modal_skill_plugin_pick",
+   "usedBy": [
+    "modal_skill_plugin_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 5198,
+   "placeholder": true
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/splug_title.webp",
+   "kind": "ui",
+   "id": "splug_title",
+   "label": "可装 / 可换的技能插件 素材",
+   "source": "布局表 modal_skill_plugin_pick",
+   "usedBy": [
+    "modal_skill_plugin_pick"
+   ],
+   "present": true,
+   "inbox": null,
+   "status": "占位",
+   "bytes": 634,
    "placeholder": true
   },
   {

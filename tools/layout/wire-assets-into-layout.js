@@ -27,7 +27,10 @@ Object.keys(view.screens).forEach((sname) => {
   (view.screens[sname].elements || []).forEach((el) => {
     if (el.asset) return;                                   // 已设素材（含 {占位符}）→ 不动
     const isBadge = String(el.id).indexOf('battle_badge') === 0;
-    if (el.kind !== 'button' && !isBadge) return;            // 纯装饰件（文字）不加底板
+    // 要底板的三类：按钮、出战角标、以及带文字标签的装饰件（面板/标题/列表行）。
+    //   标签是 `{绑定}` 的纯文字装饰（用户名/段位名）跳过 —— 它们不需要图。
+    const isPanel = el.kind === 'deco' && el.label && String(el.label).indexOf('{') < 0;
+    if (el.kind !== 'button' && !isBadge && !isPanel) return;
     if (!fs.existsSync(path.join(ROOT, 'public', 'assets', 'ui', safeName(el.id) + '.webp'))) return;
     wantUi.add(sname + '\u0000' + el.id);
   });

@@ -420,7 +420,10 @@ def main():
         for el in bundle['screens'][sname].get('elements', []):
             if el.get('asset'):
                 continue
-            if el.get('kind') != 'button' and not str(el['id']).startswith('battle_badge'):
+            # 要底板的：按钮、出战角标、带文字标签的装饰件（面板/标题/列表行）；
+            #   `{绑定}` 的纯文字装饰（用户名/段位名）跳过 —— 与接线脚本保持同一判定
+            is_panel = el.get('kind') == 'deco' and el.get('label') and '{' not in str(el.get('label'))
+            if el.get('kind') != 'button' and not str(el['id']).startswith('battle_badge') and not is_panel:
                 continue
             prev = by_id.get(el['id'])
             if prev is None or (el['rect'][2] * el['rect'][3] > prev['rect'][2] * prev['rect'][3]):

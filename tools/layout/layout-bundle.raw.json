@@ -525,7 +525,8 @@
             420
           ],
           "label": "候选角色模板",
-          "z": 5
+          "z": 5,
+          "asset": "assets/ui/pick_panel.webp"
         },
         {
           "id": "pick_title",
@@ -540,7 +541,8 @@
             28
           ],
           "label": "可替换的角色模板",
-          "z": 6
+          "z": 6,
+          "asset": "assets/ui/pick_title.webp"
         },
         {
           "id": "pick_row1",
@@ -651,7 +653,8 @@
             420
           ],
           "label": "候选技能",
-          "z": 5
+          "z": 5,
+          "asset": "assets/ui/spick_panel.webp"
         },
         {
           "id": "spick_title",
@@ -666,7 +669,8 @@
             28
           ],
           "label": "可替换的技能",
-          "z": 6
+          "z": 6,
+          "asset": "assets/ui/spick_title.webp"
         },
         {
           "id": "spick_row1",
@@ -777,7 +781,8 @@
             420
           ],
           "label": "该插槽的**角色插件**候选",
-          "z": 5
+          "z": 5,
+          "asset": "assets/ui/plug_panel.webp"
         },
         {
           "id": "plug_title",
@@ -792,7 +797,8 @@
             28
           ],
           "label": "可装 / 可换的角色插件",
-          "z": 6
+          "z": 6,
+          "asset": "assets/ui/plug_title.webp"
         },
         {
           "id": "plug_row1",
@@ -880,7 +886,8 @@
             420
           ],
           "label": "该插槽的**技能插件**候选",
-          "z": 5
+          "z": 5,
+          "asset": "assets/ui/splug_panel.webp"
         },
         {
           "id": "splug_title",
@@ -895,7 +902,8 @@
             28
           ],
           "label": "可装 / 可换的技能插件",
-          "z": 6
+          "z": 6,
+          "asset": "assets/ui/splug_title.webp"
         },
         {
           "id": "splug_row1",

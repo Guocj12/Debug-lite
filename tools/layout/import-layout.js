@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* tools/layout/import-layout.js —— 把布局台导出的 JSON 变成前端可零依赖加载的模块
  *
  * 用法：node tools/layout/import-layout.js [raw.json]
@@ -120,6 +120,8 @@ function applyStructuralFixes(bundle, log) {
         id, kind: 'deco', action: '', label: '出战', hit: 'rect', anchor: 'ct',
         rect: [s.rect[0], s.rect[1] - 22, s.rect[2], 18], z: 4,
         when: { battleSlot: i + 1 },
+        // 角标底图由占位生成器或美术提供（assets/ui/battle_badge_N.webp）；文件缺失时界面显示占位框
+        asset: 'assets/ui/' + id + '.webp',
       });
     });
     log.push({ id: 'battle_badge_1..N', why: '按需求补充：出战配置按钮上方的「出战」标识（when.battleSlot 决定显示哪个）' });

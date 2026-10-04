@@ -366,6 +366,7 @@
             18
           ],
           "label": "出战",
+          "asset": "assets/ui/battle_badge_1.webp",
           "z": 4,
           "when": {
             "battleSlot": 1
@@ -384,6 +385,7 @@
             18
           ],
           "label": "出战",
+          "asset": "assets/ui/battle_badge_2.webp",
           "z": 4,
           "when": {
             "battleSlot": 2
@@ -402,6 +404,7 @@
             18
           ],
           "label": "出战",
+          "asset": "assets/ui/battle_badge_3.webp",
           "z": 4,
           "when": {
             "battleSlot": 3
@@ -602,6 +605,7 @@
             420
           ],
           "label": "候选角色模板",
+          "asset": "assets/ui/pick_panel.webp",
           "z": 5
         },
         {
@@ -617,6 +621,7 @@
             28
           ],
           "label": "可替换的角色模板",
+          "asset": "assets/ui/pick_title.webp",
           "z": 6
         },
         {
@@ -673,6 +678,7 @@
             420
           ],
           "label": "候选技能",
+          "asset": "assets/ui/spick_panel.webp",
           "z": 5
         },
         {
@@ -688,6 +694,7 @@
             28
           ],
           "label": "可替换的技能",
+          "asset": "assets/ui/spick_title.webp",
           "z": 6
         },
         {
@@ -744,6 +751,7 @@
             420
           ],
           "label": "该插槽的**角色插件**候选",
+          "asset": "assets/ui/plug_panel.webp",
           "z": 5
         },
         {
@@ -759,6 +767,7 @@
             28
           ],
           "label": "可装 / 可换的角色插件",
+          "asset": "assets/ui/plug_title.webp",
           "z": 6
         },
         {
@@ -814,6 +823,7 @@
             420
           ],
           "label": "该插槽的**技能插件**候选",
+          "asset": "assets/ui/splug_panel.webp",
           "z": 5
         },
         {
@@ -829,6 +839,7 @@
             28
           ],
           "label": "可装 / 可换的技能插件",
+          "asset": "assets/ui/splug_title.webp",
           "z": 6
         },
         {

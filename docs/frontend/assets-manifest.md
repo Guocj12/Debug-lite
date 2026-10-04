@@ -5,7 +5,7 @@
 > 然后跑 `node tools/layout/apply-assets.js` —— 它会改名/转格式/缩放并放进 `public/assets/` 对应目录。
 > 🧩 = 程序生成的**占位图**（界面已经不再显示虚线框，但还不是美术成品）；替换方式见下方说明。
 
-**总览**：共 147 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 143 ｜ 📥 收件夹待归位 0 ｜ **缺 0**（可选 4）
+**总览**：共 158 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 154 ｜ 📥 收件夹待归位 0 ｜ **缺 0**（可选 4）
 
 > 换成真图：把同名文件放进 `assets-inbox/` 跑 `npm run assets:apply`，或直接覆盖 `public/assets/` 下的同名文件。
 > 重新跑生成脚本**不会**覆盖你的真图 —— 脚本只覆盖登记在 `tools/layout/placeholders.json` 里的文件。
@@ -18,7 +18,7 @@
 | 插件 | 41 | 41 | 0 | 0 | 128×128 · webp | 插件图标，透明底，正方形 |
 | AI 积木节点 | 54 | 54 | 0 | 0 | 128×128 · webp | AI 积木节点图标，透明底 |
 | 包/宝箱 | 5 | 5 | 0 | 0 | 256×256 · webp | 包/宝箱图标，透明底 |
-| 界面按钮/控件 | 17 | 17 | 0 | 0 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
+| 界面按钮/控件 | 28 | 28 | 0 | 0 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
 | 品质边框 | 5 | 5 | 0 | 0 | 256×256 · svg | 品质边框（矢量，颜色按 qualities.json 的 color） |
 | 段位图标 | 5 | 5 | 0 | 0 | 64×64 · svg | 段位图标（矢量，颜色按 qualities.json 的 color） |
 | 音效（可选） | 4 | 0 | 0 | 4 | — · mp3 | 技能音效（可选；布局表暂时不用） |
@@ -169,7 +169,7 @@
 | 🧩 占位 | · 后补 | `skillPlugin.webp` | `assets/package/skillPlugin.webp` | 技能插件包 | server/data/package-config.json |
 | 🧩 占位 | · 后补 | `aiNode.webp` | `assets/package/aiNode.webp` | AI节点包 | server/data/package-config.json |
 
-## 界面按钮/控件（17）
+## 界面按钮/控件（28）
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
@@ -185,10 +185,21 @@
 | 🧩 占位 | ★ 先做 | `slot_3.webp` | `assets/ui/slot_3.webp` | 3 素材 | hub |
 | 🧩 占位 | ★ 先做 | `设为出战（将当前配置设为出战）.webp` | `assets/ui/设为出战（将当前配置设为出战）.webp` | 设为出战 素材 | hub |
 | 🧩 占位 | ★ 先做 | `对战历史.webp` | `assets/ui/对战历史.webp` | 对战历史 素材 | hub |
+| 🧩 占位 | ★ 先做 | `battle_badge_1.webp` | `assets/ui/battle_badge_1.webp` | 出战 素材 | hub |
+| 🧩 占位 | ★ 先做 | `battle_badge_2.webp` | `assets/ui/battle_badge_2.webp` | 出战 素材 | hub |
+| 🧩 占位 | ★ 先做 | `battle_badge_3.webp` | `assets/ui/battle_badge_3.webp` | 出战 素材 | hub |
 | 🧩 占位 | ★ 先做 | `center_role.webp` | `assets/ui/center_role.webp` | 角色（再点一次看角色模板） 素材 | modal_role_slots |
 | 🧩 占位 | ★ 先做 | `slot_4.webp` | `assets/ui/slot_4.webp` | 插槽4 素材 | modal_role_slots |
 | 🧩 占位 | ★ 先做 | `slot_5.webp` | `assets/ui/slot_5.webp` | 插槽5 素材 | modal_role_slots |
 | 🧩 占位 | ★ 先做 | `slot_6.webp` | `assets/ui/slot_6.webp` | 插槽6 素材 | modal_role_slots |
+| 🧩 占位 | ★ 先做 | `pick_panel.webp` | `assets/ui/pick_panel.webp` | 候选角色模板 素材 | modal_role_pick |
+| 🧩 占位 | ★ 先做 | `pick_title.webp` | `assets/ui/pick_title.webp` | 可替换的角色模板 素材 | modal_role_pick |
+| 🧩 占位 | ★ 先做 | `spick_panel.webp` | `assets/ui/spick_panel.webp` | 候选技能 素材 | modal_skill_pick |
+| 🧩 占位 | ★ 先做 | `spick_title.webp` | `assets/ui/spick_title.webp` | 可替换的技能 素材 | modal_skill_pick |
+| 🧩 占位 | ★ 先做 | `plug_panel.webp` | `assets/ui/plug_panel.webp` | 该插槽的**角色插件**候选 素材 | modal_role_plugin_pick |
+| 🧩 占位 | ★ 先做 | `plug_title.webp` | `assets/ui/plug_title.webp` | 可装 / 可换的角色插件 素材 | modal_role_plugin_pick |
+| 🧩 占位 | ★ 先做 | `splug_panel.webp` | `assets/ui/splug_panel.webp` | 该插槽的**技能插件**候选 素材 | modal_skill_plugin_pick |
+| 🧩 占位 | ★ 先做 | `splug_title.webp` | `assets/ui/splug_title.webp` | 可装 / 可换的技能插件 素材 | modal_skill_plugin_pick |
 | 🧩 占位 | ★ 先做 | `new_1.webp` | `assets/ui/new_1.webp` | 技能2（再点一次看技能） 素材 | modal_skill2_slots |
 
 ## 品质边框（5）
