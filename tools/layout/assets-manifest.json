@@ -56,30 +56,30 @@
  },
  "summary": {
   "total": 158,
-  "present": 154,
-  "placeholder": 154,
+  "present": 0,
+  "placeholder": 0,
   "real": 0,
   "inInbox": 0,
-  "missing": 0,
+  "missing": 154,
   "optional": 4,
-  "requiredMissing": 0,
+  "requiredMissing": 154,
   "byKind": {
    "role": {
     "total": 11,
-    "present": 11,
-    "missing": 0,
+    "present": 0,
+    "missing": 11,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 11,
+    "placeholder": 0,
     "real": 0
    },
    "skill": {
     "total": 4,
-    "present": 4,
-    "missing": 0,
+    "present": 0,
+    "missing": 4,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 4,
+    "placeholder": 0,
     "real": 0
    },
    "sfx": {
@@ -93,69 +93,69 @@
    },
    "plugin": {
     "total": 41,
-    "present": 41,
-    "missing": 0,
+    "present": 0,
+    "missing": 41,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 41,
+    "placeholder": 0,
     "real": 0
    },
    "frame": {
     "total": 5,
-    "present": 5,
-    "missing": 0,
+    "present": 0,
+    "missing": 5,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 5,
+    "placeholder": 0,
     "real": 0
    },
    "tier": {
     "total": 5,
-    "present": 5,
-    "missing": 0,
+    "present": 0,
+    "missing": 5,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 5,
+    "placeholder": 0,
     "real": 0
    },
    "ai": {
     "total": 54,
-    "present": 54,
-    "missing": 0,
+    "present": 0,
+    "missing": 54,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 54,
+    "placeholder": 0,
     "real": 0
    },
    "package": {
     "total": 5,
-    "present": 5,
-    "missing": 0,
+    "present": 0,
+    "missing": 5,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 5,
+    "placeholder": 0,
     "real": 0
    },
    "bg": {
     "total": 1,
-    "present": 1,
-    "missing": 0,
+    "present": 0,
+    "missing": 1,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 1,
+    "placeholder": 0,
     "real": 0
    },
    "ui": {
     "total": 28,
-    "present": 28,
-    "missing": 0,
+    "present": 0,
+    "missing": 28,
     "inbox": 0,
     "optional": 0,
-    "placeholder": 28,
+    "placeholder": 0,
     "real": 0
    }
   },
-  "coreMissing": 0
+  "coreMissing": 54
  },
  "entries": [
   {
@@ -169,11 +169,11 @@
    "id": "role_bal",
    "label": "均衡",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 8408,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -186,11 +186,11 @@
    "id": "role_spc_hp",
    "label": "特化·HP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9178,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -203,11 +203,11 @@
    "id": "role_spc_atk",
    "label": "特化·攻击",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 8490,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -220,11 +220,11 @@
    "id": "role_spc_def",
    "label": "特化·防御",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9044,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -237,11 +237,11 @@
    "id": "role_spc_sp",
    "label": "特化·SP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9046,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -254,11 +254,11 @@
    "id": "role_spc_mp",
    "label": "特化·MP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 8638,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -271,11 +271,11 @@
    "id": "role_exp_hp",
    "label": "专家·HP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9394,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -288,11 +288,11 @@
    "id": "role_exp_atk",
    "label": "专家·攻击",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9614,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -305,11 +305,11 @@
    "id": "role_exp_def",
    "label": "专家·防御",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 10466,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -322,11 +322,11 @@
    "id": "role_exp_sp",
    "label": "专家·SP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9262,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -339,11 +339,11 @@
    "id": "role_exp_mp",
    "label": "专家·MP",
    "source": "server/data/role-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 9642,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -356,11 +356,11 @@
    "id": "skill_melee",
    "label": "近战",
    "source": "server/data/skill-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 4368,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -373,11 +373,11 @@
    "id": "skill_straight",
    "label": "平射",
    "source": "server/data/skill-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 3720,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -390,11 +390,11 @@
    "id": "skill_vertical",
    "label": "定点",
    "source": "server/data/skill-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 3450,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -407,11 +407,11 @@
    "id": "skill_displace",
    "label": "位移",
    "source": "server/data/skill-templates.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 3634,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "mp3",
@@ -493,11 +493,11 @@
    "label": "攻击提升·百分比（1 点）（攻击提升）",
    "source": "server/data/plugins.json",
    "family": "rp_atk_pct_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2290,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -511,11 +511,11 @@
    "label": "攻击提升·数值（1 点）（攻击提升）",
    "source": "server/data/plugins.json",
    "family": "rp_atk_flat_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2290,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -529,11 +529,11 @@
    "label": "生命强化·百分比（1 点）（生命强化）",
    "source": "server/data/plugins.json",
    "family": "rp_hp_pct_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2212,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -547,11 +547,11 @@
    "label": "生命强化·数值（1 点）（生命强化）",
    "source": "server/data/plugins.json",
    "family": "rp_hp_flat_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2212,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -565,11 +565,11 @@
    "label": "防御强化·数值（1 点）（防御强化）",
    "source": "server/data/plugins.json",
    "family": "rp_def_flat_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2238,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -583,11 +583,11 @@
    "label": "SP 优化·上限（1 点）（SP 优化）",
    "source": "server/data/plugins.json",
    "family": "rp_sp_opt_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2236,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -601,11 +601,11 @@
    "label": "SP 强化·数值（1 点）（SP 强化）",
    "source": "server/data/plugins.json",
    "family": "rp_sp_flat_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2274,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -619,11 +619,11 @@
    "label": "MP 优化·上限（1 点）（MP 优化）",
    "source": "server/data/plugins.json",
    "family": "rp_mp_opt_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2258,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -637,11 +637,11 @@
    "label": "MP 强化·数值（1 点）（MP 强化）",
    "source": "server/data/plugins.json",
    "family": "rp_mp_flat_c1",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2280,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -655,11 +655,11 @@
    "label": "再生（回复）",
    "source": "server/data/plugins.json",
    "family": "rp_regen",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2606,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -673,11 +673,11 @@
    "label": "体力循环（SP 优化）",
    "source": "server/data/plugins.json",
    "family": "rp_sp_regen",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2530,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -691,11 +691,11 @@
    "label": "法力循环（MP 优化）",
    "source": "server/data/plugins.json",
    "family": "rp_mp_regen",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2522,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -709,11 +709,11 @@
    "label": "闪避（闪避）",
    "source": "server/data/plugins.json",
    "family": "rp_dodge",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2432,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -727,11 +727,11 @@
    "label": "暴击（暴击）",
    "source": "server/data/plugins.json",
    "family": "rp_crit",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2444,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -745,11 +745,11 @@
    "label": "吸血（吸血）",
    "source": "server/data/plugins.json",
    "family": "rp_lifesteal",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2430,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -763,11 +763,11 @@
    "label": "荆棘（荆棘）",
    "source": "server/data/plugins.json",
    "family": "rp_thorns",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2458,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -781,11 +781,11 @@
    "label": "致命（致命）",
    "source": "server/data/plugins.json",
    "family": "rp_critdmg",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -799,11 +799,11 @@
    "label": "背水（背水）",
    "source": "server/data/plugins.json",
    "family": "rp_lowhp",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2448,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -817,11 +817,11 @@
    "label": "增伤（增伤）",
    "source": "server/data/plugins.json",
    "family": "sk_mult",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2062,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -835,11 +835,11 @@
    "label": "暴击率（暴击）",
    "source": "server/data/plugins.json",
    "family": "sk_crit",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2050,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -853,11 +853,11 @@
    "label": "暴击伤害（致命）",
    "source": "server/data/plugins.json",
    "family": "sk_critdmg",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2094,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -871,11 +871,11 @@
    "label": "冷却缩减（冷却）",
    "source": "server/data/plugins.json",
    "family": "sk_cd_down",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2046,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -889,11 +889,11 @@
    "label": "体力消耗（减耗）",
    "source": "server/data/plugins.json",
    "family": "sk_sp_down",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1960,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -907,11 +907,11 @@
    "label": "法力消耗（减耗）",
    "source": "server/data/plugins.json",
    "family": "sk_mp_down",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1960,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -925,11 +925,11 @@
    "label": "真实伤害（真伤）",
    "source": "server/data/plugins.json",
    "family": "sk_true",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2072,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -943,11 +943,11 @@
    "label": "长剑（近战·长剑）",
    "source": "server/data/plugins.json",
    "family": "ex_longsword",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2098,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -961,11 +961,11 @@
    "label": "匕首（近战·匕首）",
    "source": "server/data/plugins.json",
    "family": "ex_dagger",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1990,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -979,11 +979,11 @@
    "label": "旋风斩（近战·旋风斩）",
    "source": "server/data/plugins.json",
    "family": "ex_whirl",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2026,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -997,11 +997,11 @@
    "label": "重锤（近战·重锤）",
    "source": "server/data/plugins.json",
    "family": "ex_hammer",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2038,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1015,11 +1015,11 @@
    "label": "穿甲（平射·穿甲）",
    "source": "server/data/plugins.json",
    "family": "ex_pierce",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2052,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1033,11 +1033,11 @@
    "label": "连射（平射·连射）",
    "source": "server/data/plugins.json",
    "family": "ex_rapid",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2066,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1051,11 +1051,11 @@
    "label": "霰弹（平射·霰弹）",
    "source": "server/data/plugins.json",
    "family": "ex_scatter",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2070,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1069,11 +1069,11 @@
    "label": "狙击（平射·狙击）",
    "source": "server/data/plugins.json",
    "family": "ex_snipe",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2076,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1087,11 +1087,11 @@
    "label": "火球（定点·火球）",
    "source": "server/data/plugins.json",
    "family": "ex_fireball",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2008,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1105,11 +1105,11 @@
    "label": "箭雨（定点·箭雨）",
    "source": "server/data/plugins.json",
    "family": "ex_rain",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1984,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1123,11 +1123,11 @@
    "label": "藤蔓（定点·藤蔓）",
    "source": "server/data/plugins.json",
    "family": "ex_vine",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2140,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1141,11 +1141,11 @@
    "label": "诅咒（定点·诅咒）",
    "source": "server/data/plugins.json",
    "family": "ex_curse",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2118,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1159,11 +1159,11 @@
    "label": "盾突（位移·盾突）",
    "source": "server/data/plugins.json",
    "family": "ex_bash",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2060,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1177,11 +1177,11 @@
    "label": "瞬移（位移·瞬移）",
    "source": "server/data/plugins.json",
    "family": "ex_blink",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2052,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1195,11 +1195,11 @@
    "label": "突刺（位移·突刺）",
    "source": "server/data/plugins.json",
    "family": "ex_thrust",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2090,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1213,11 +1213,11 @@
    "label": "后撤（位移·后撤）",
    "source": "server/data/plugins.json",
    "family": "ex_retreat",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 2086,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1230,11 +1230,11 @@
    "id": "common",
    "label": "绿 品质框",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 763,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1247,11 +1247,11 @@
    "id": "common",
    "label": "绿 段位图标",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 653,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1264,11 +1264,11 @@
    "id": "rare",
    "label": "蓝 品质框",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 763,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1281,11 +1281,11 @@
    "id": "rare",
    "label": "蓝 段位图标",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 720,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1298,11 +1298,11 @@
    "id": "epic",
    "label": "紫 品质框",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 763,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1315,11 +1315,11 @@
    "id": "epic",
    "label": "紫 段位图标",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 787,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1332,11 +1332,11 @@
    "id": "legendary",
    "label": "橙 品质框",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 763,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1349,11 +1349,11 @@
    "id": "legendary",
    "label": "橙 段位图标",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 854,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1366,11 +1366,11 @@
    "id": "mythic",
    "label": "青 品质框",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 763,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "svg",
@@ -1383,11 +1383,11 @@
    "id": "mythic",
    "label": "青 段位图标",
    "source": "server/data/qualities.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 921,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1400,11 +1400,11 @@
    "id": "f_seq",
    "label": "按顺序（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1417,11 +1417,11 @@
    "id": "f_if",
    "label": "如果…否则（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1434,11 +1434,11 @@
    "id": "a_advance",
    "label": "推进（朝对手）（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1451,11 +1451,11 @@
    "id": "a_retreat",
    "label": "后撤（远离对手）（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1468,11 +1468,11 @@
    "id": "a_dodge_back",
    "label": "闪避（远离对手）（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1485,11 +1485,11 @@
    "id": "a_defend",
    "label": "防御（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1502,11 +1502,11 @@
    "id": "a_wait",
    "label": "等待（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1519,11 +1519,11 @@
    "id": "a_skill",
    "label": "释放技能（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1536,11 +1536,11 @@
    "id": "v_number",
    "label": "数字（取值）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1462,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1553,11 +1553,11 @@
    "id": "s_my_hp",
    "label": "我的血量（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1570,11 +1570,11 @@
    "id": "s_my_hp_pct",
    "label": "我的血量%（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1587,11 +1587,11 @@
    "id": "s_my_mp_pct",
    "label": "我的法力%（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1604,11 +1604,11 @@
    "id": "s_my_sp",
    "label": "我的体力（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1621,11 +1621,11 @@
    "id": "s_my_cd",
    "label": "我的技能冷却（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1638,11 +1638,11 @@
    "id": "s_tick",
    "label": "当前帧数（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1655,11 +1655,11 @@
    "id": "s_gap",
    "label": "与对手的距离（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1672,11 +1672,11 @@
    "id": "s_foe_hp_pct",
    "label": "对手血量%（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1689,11 +1689,11 @@
    "id": "c_hp_below",
    "label": "我的血量低于X%（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1706,11 +1706,11 @@
    "id": "c_gap_less",
    "label": "距离小于X格（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1723,11 +1723,11 @@
    "id": "c_gap_greater",
    "label": "距离大于X格（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1740,11 +1740,11 @@
    "id": "c_skill_ready",
    "label": "技能N已就绪（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1757,11 +1757,11 @@
    "id": "c_random",
    "label": "随机X%（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1774,11 +1774,11 @@
    "id": "c_and",
    "label": "且（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1791,11 +1791,11 @@
    "id": "c_or",
    "label": "或（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1808,11 +1808,11 @@
    "id": "c_not",
    "label": "非（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1825,11 +1825,11 @@
    "id": "c_gap_between",
    "label": "距离在X~Y格（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1842,11 +1842,11 @@
    "id": "c_tick_after",
    "label": "第X帧之后（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1859,11 +1859,11 @@
    "id": "c_compare",
    "label": "比较（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1876,11 +1876,11 @@
    "id": "v_arith",
    "label": "计算（取值）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1462,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1893,11 +1893,11 @@
    "id": "s_foe_sp",
    "label": "对手体力（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1910,11 +1910,11 @@
    "id": "s_foe_cd",
    "label": "对手技能冷却（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1927,11 +1927,11 @@
    "id": "s_my_atk",
    "label": "我的攻击力（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1944,11 +1944,11 @@
    "id": "s_my_def",
    "label": "我的防御力（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1961,11 +1961,11 @@
    "id": "s_base_hp_pct",
    "label": "基地血量%（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1978,11 +1978,11 @@
    "id": "f_loop_n",
    "label": "重复N次（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -1995,11 +1995,11 @@
    "id": "f_loop_until",
    "label": "重复直到…（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2012,11 +2012,11 @@
    "id": "f_forever",
    "label": "一直重复（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2029,11 +2029,11 @@
    "id": "f_break",
    "label": "打断（流程）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2046,11 +2046,11 @@
    "id": "a_move_left",
    "label": "向左移动（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2063,11 +2063,11 @@
    "id": "a_move_right",
    "label": "向右移动（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2080,11 +2080,11 @@
    "id": "a_dodge_front",
    "label": "闪避（朝对手）（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2097,11 +2097,11 @@
    "id": "a_turn",
    "label": "转身（动作）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1508,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2114,11 +2114,11 @@
    "id": "m_remember",
    "label": "记住（记忆）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1402,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2131,11 +2131,11 @@
    "id": "m_counter",
    "label": "计数+1（记忆）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1402,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2148,11 +2148,11 @@
    "id": "m_timer",
    "label": "计时器N帧（记忆）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1402,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2165,11 +2165,11 @@
    "id": "m_read",
    "label": "读取记忆（记忆）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1402,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2182,11 +2182,11 @@
    "id": "s_my_skill_range",
    "label": "我的技能射程（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2199,11 +2199,11 @@
    "id": "s_my_skill_type",
    "label": "我的技能类型（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2216,11 +2216,11 @@
    "id": "r_sub",
    "label": "子程序（结构）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1422,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2233,11 +2233,11 @@
    "id": "r_call",
    "label": "调用子程序（结构）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1422,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2250,11 +2250,11 @@
    "id": "c_foe_stunned",
    "label": "对手被控制（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2267,11 +2267,11 @@
    "id": "c_has_effect",
    "label": "我身上有效果（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2284,11 +2284,11 @@
    "id": "s_effect_left",
    "label": "我的效果剩余帧（感知）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1538,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2301,11 +2301,11 @@
    "id": "c_any_skill_ready",
    "label": "有技能就绪（条件）",
    "source": "server/data/ai-node-catalog.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1442,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2318,11 +2318,11 @@
    "id": "role",
    "label": "角色模块包",
    "source": "server/data/package-config.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1416,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2335,11 +2335,11 @@
    "id": "skill",
    "label": "技能模块包",
    "source": "server/data/package-config.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1488,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2352,11 +2352,11 @@
    "id": "rolePlugin",
    "label": "角色插件包",
    "source": "server/data/package-config.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1482,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2369,11 +2369,11 @@
    "id": "skillPlugin",
    "label": "技能插件包",
    "source": "server/data/package-config.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1432,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2386,11 +2386,11 @@
    "id": "aiNode",
    "label": "AI节点包",
    "source": "server/data/package-config.json",
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1470,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2406,11 +2406,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 11306,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2426,11 +2426,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 772,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2446,11 +2446,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 772,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2466,11 +2466,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1348,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2486,11 +2486,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1348,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2506,11 +2506,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 772,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2526,11 +2526,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1436,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2546,11 +2546,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1436,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2566,11 +2566,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1246,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2586,11 +2586,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1246,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2606,11 +2606,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1246,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2626,11 +2626,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 560,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2646,11 +2646,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 908,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2666,11 +2666,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 484,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2686,11 +2686,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 484,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2706,11 +2706,11 @@
    "usedBy": [
     "hub"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 484,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2726,11 +2726,11 @@
    "usedBy": [
     "modal_role_slots"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 6896,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2746,11 +2746,11 @@
    "usedBy": [
     "modal_role_slots"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1158,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2766,11 +2766,11 @@
    "usedBy": [
     "modal_role_slots"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1158,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2786,11 +2786,11 @@
    "usedBy": [
     "modal_role_slots"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 1158,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2806,11 +2806,11 @@
    "usedBy": [
     "modal_role_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 5198,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2826,11 +2826,11 @@
    "usedBy": [
     "modal_role_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 634,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2846,11 +2846,11 @@
    "usedBy": [
     "modal_skill_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 5198,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2866,11 +2866,11 @@
    "usedBy": [
     "modal_skill_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 634,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2886,11 +2886,11 @@
    "usedBy": [
     "modal_role_plugin_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 5198,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2906,11 +2906,11 @@
    "usedBy": [
     "modal_role_plugin_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 634,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2926,11 +2926,11 @@
    "usedBy": [
     "modal_skill_plugin_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 5198,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2946,11 +2946,11 @@
    "usedBy": [
     "modal_skill_plugin_pick"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 634,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   },
   {
    "format": "webp",
@@ -2966,11 +2966,11 @@
    "usedBy": [
     "modal_skill2_slots"
    ],
-   "present": true,
+   "present": false,
    "inbox": null,
-   "status": "占位",
-   "bytes": 3470,
-   "placeholder": true
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
   }
  ]
 }

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* public/store.js —— 自研状态容器（D-124：无框架 + 自研 store；设计依据 docs/frontend/01-auth.md §7
  *   + F2 增量 docs/frontend/02-accounts.md §7 + F3 增量 docs/frontend/03-hub-warehouse-loadout.md §7）
  *
@@ -20,9 +20,11 @@
   var FORM_FIELDS = Object.freeze(['username', 'password', 'confirm', 'nickname', 'oldPassword', 'newPassword', 'newConfirm']);
   // F1 四屏 + F2 两屏 + F3 八屏（03 §3：hub/profile/warehouse/settings + 4 个空页）
   //   **F8/D-176**：删 `box`（开箱屏退役 —— 开箱改为在仓库屏里开「包」）
+  //   **F10（D-180）**：新增 `records`（战绩 / 防守战绩）—— `goto-records` 此前是**死按钮**
+  //   （只发提示不切屏，违反总纲 §4.1），本轮把它接成真屏（端点 `/me/records`、`/me/defense` 自 B30 就绪）
   var VIEWS = Object.freeze([
     'login', 'register', 'hub', 'profile', 'password', 'admin', 'accounts',
-    'warehouse', 'settings', 'quick', 'tournament', 'leaderboard', 'ai-editor',
+    'warehouse', 'settings', 'quick', 'tournament', 'leaderboard', 'records', 'ai-editor',
   ]);
   var ADMIN_VIEWS = Object.freeze(['admin', 'accounts']);
   // 账号列表每页条数三档（02-accounts.md §3.2）
@@ -122,6 +124,13 @@
     return { envelope: null, board: 'points', scope: 'global', offset: 0, limit: BOARD_PAGE_SIZE };
   }
 
+  // F10（D-180）：战绩 / 防守战绩（`records` 屏；B30 端点就绪、此前前端从未接）
+  //   `role` = 当前筛选（'' = 全部 / 'attacker' / 'defender'）；`envelope` = GET /me/records 的完整信封；
+  //   `defense` = GET /me/defense 的信封；`notice` = 最近一次操作（推进未读游标）的可见文案。
+  function emptyRecords() {
+    return { envelope: null, defense: null, role: '', notice: null };
+  }
+
   // F5/D-172：AI 编辑器（06-ai-editor.md §4.1）—— 列表信封 + 编辑态（草稿/游标/未提交文本/校验结果）
   //   `draft` 只在内存（不落 localStorage）；`validate` 是**服务端唯一判据**的回执（前端不做合法性判决）
   function emptyAiEditor() {
@@ -169,6 +178,7 @@
       viewer: emptyViewer(),    // F6（F7 共用）
       tournament: emptyTournament(),  // F7
       board: emptyBoard(),            // F7
+      records: emptyRecords(),        // F10/D-180
       aiEditor: emptyAiEditor(),     // F5/D-172
     };
   }
@@ -419,6 +429,33 @@
             scope: BOARD_SCOPES.indexOf(action.scope) === -1 ? state.board.scope : action.scope,
             offset: 0,
           }),
+        });
+      /* ---------- F10/D-180：战绩 / 防守战绩（`records` 屏；B30 端点） ---------- */
+      // 战绩列表整包。**只在 `role` 与请求一致时落地** —— 连续切筛选时会有两个请求在飞，
+      //   无条件落地会让旧响应盖掉新结论（与 AI 编辑器 aiValidateSeq 同一类守卫，放在 reducer 里判）。
+      case 'records.set': {
+        var recRole = action.role === 'attacker' || action.role === 'defender' ? action.role : '';
+        if (state.records.role !== recRole) return state;   // 用户已经切到别的筛选 → 丢弃这次响应
+        return Object.assign({}, state, {
+          records: Object.assign({}, state.records, { envelope: action.envelope || null }),
+        });
+      }
+      // 防守战绩整包（GET /me/defense）
+      case 'records.defense.set':
+        return Object.assign({}, state, {
+          records: Object.assign({}, state.records, { defense: action.envelope || null }),
+        });
+      // 切换筛选（'' = 全部 / 'attacker' / 'defender'）；切筛选即丢弃旧列表（避免"新筛选配旧行"）
+      case 'records.role.set': {
+        var nextRole = action.role === 'attacker' || action.role === 'defender' ? action.role : '';
+        return Object.assign({}, state, {
+          records: Object.assign({}, state.records, { role: nextRole, envelope: null, notice: null }),
+        });
+      }
+      // 最近一次操作的可见文案（推进未读游标）
+      case 'records.notice.set':
+        return Object.assign({}, state, {
+          records: Object.assign({}, state.records, { notice: action.notice || null }),
         });
       // ---------- F5/D-172：AI 编辑器 ----------
       // 列表（GET /me/ai 信封；投影在 format.js）

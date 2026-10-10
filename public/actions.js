@@ -1500,12 +1500,54 @@
       },
     },
 
-    // 对战历史：战绩屏尚未实现（登记为计划动作，点了给明确提示而不是无声）
+    // F10/D-180：对战历史 —— **真屏**（B30 的 `/me/records` + `/me/defense` 此前前端从未接）。
+    //   修前它是一颗死按钮（只弹「尚未实现」、不切屏），违反总纲 §4.1「按钮永不无声」。
+    //   进屏即并行取两份数据（战绩列表 + 防守战绩汇总）。
     'goto-records': {
       label: '对战历史',
+      run: function (ctx) { return goView(ctx, 'records').then(function () { return loadRecords(ctx); }); },
+    },
+
+    // 战绩 / 防守战绩的取数（进屏与「刷新」共用）。
+    //   role 从 state 读（'' = 全部 / attacker / defender）；reducer 端有"只落地与请求一致的角色"守卫。
+    'refresh-records': {
+      label: '刷新',
+      run: function (ctx) { return loadRecords(ctx); },
+    },
+
+    // 切换筛选（先落 role 再请求；reducer 会丢弃 role 不匹配的迟到响应）
+    'records-filter': {
+      label: '筛选',
+      run: function (ctx, payload) {
+        var role = payload !== null && payload && typeof payload.role === 'string' ? payload.role : '';
+        if (role !== '' && role !== 'attacker' && role !== 'defender') {
+          noticeNotice(ctx, 'error', '未知的筛选值（records-filter 只接受 空 / attacker / defender）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'records.role.set', role: role });
+        return loadRecords(ctx, role);
+      },
+    },
+
+    // 推进未读游标（**游标推进的唯一入口**）→ 成功后刷新列表让 unread 归零
+    'records-seen': {
+      label: '标记已读',
       run: function (ctx) {
-        noticeNotice(ctx, 'info', '对战历史屏尚未实现（计划批次：战绩与回放列表）');
-        return Promise.resolve();
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.recordsSeen(token, {}).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          ctx.dispatch({ type: 'records.notice.set', notice: ctx.format.recordsOkText(result.envelope) });
+          return loadRecords(ctx);
+        });
       },
     },
 
@@ -2310,9 +2352,46 @@
     return Promise.resolve();
   }
 
+  /* ---------- F10/D-180：战绩 / 防守战绩（`records` 屏） ---------- */
+
+  // 并行取「战绩列表 + 防守战绩汇总」—— 进屏与「刷新」共用；两份都成功才算 ok。
+  //   `roleOverride` 由 records-filter 传入（刚 dispatch 过 role.set，ctx.state 还是旧快照，不能靠它）。
+  //   失败一律可见（网络文案 / 401 统一登出）。
+  function loadRecords(ctx, roleOverride) {
+    if (ctx.state.busy) return Promise.resolve();
+    var token = ctx.state.session.token;
+    if (!token) return sessionLost(ctx, null);
+    var role = roleOverride === undefined || roleOverride === null
+      ? ((ctx.state.records || {}).role || '')
+      : roleOverride;
+    if (role !== 'attacker' && role !== 'defender') role = '';
+    busy(ctx, true);
+    ctx.dispatch({ type: 'notice.set', notice: null });
+    var qs = 'limit=20' + (role === '' ? '' : '&role=' + role);
+    return Promise.all([
+      ctx.api.records(token, qs),
+      ctx.api.defense(token),
+    ]).then(function (results) {
+      busy(ctx, false);
+      var rec = results[0];
+      var def = results[1];
+      for (var i = 0; i < results.length; i += 1) {
+        if (results[i].transport === 'error') return failFrom(ctx, results[i]);
+      }
+      for (var j = 0; j < results.length; j += 1) {
+        if (!ctx.format.isOk(results[j].envelope)) {
+          if (ctx.format.isSessionError(results[j].envelope)) return sessionLost(ctx, results[j]);
+          return failFrom(ctx, results[j]);
+        }
+      }
+      ctx.dispatch({ type: 'records.set', role: role, envelope: rec.envelope });
+      ctx.dispatch({ type: 'records.defense.set', envelope: def.envelope });
+      return undefined;
+    });
+  }
+
   // 拉榜单（唯一取数实现）：board/scope/offset 缺省沿用当前状态
   function loadBoard(ctx, quiet, override) {
-    if (ctx.state.busy) return Promise.resolve();
     var token = ctx.state.session.token;
     if (!token) return sessionLost(ctx, null);
     var b = (ctx.state.board || {}).board;

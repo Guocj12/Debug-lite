@@ -124,6 +124,8 @@
     if (typeof button.aiId === 'string' && button.aiId !== '') out += ' data-ai-id="' + esc(button.aiId) + '"';
     // F7：排行榜的"范围"按钮（board-scope）用 data-tier 携带段位（'' = 全部）
     if (typeof button.tier === 'string' && button.tier !== '') out += ' data-tier="' + esc(button.tier) + '"';
+    // F10/D-180：战绩屏的筛选按钮（records-filter）用 data-role 携带 attacker/defender（'' = 全部）
+    if (typeof button.role === 'string' && button.role !== '') out += ' data-role="' + esc(button.role) + '"';
     // F5/D-172：AI 编辑器——节点地址 / 字段键 / 枚举取值（按钮即"设值"）
     if (typeof button.addr === 'string' && button.addr !== '') out += ' data-addr="' + esc(button.addr) + '"';
     if (typeof button.field === 'string' && button.field !== '') out += ' data-field="' + esc(button.field) + '"';

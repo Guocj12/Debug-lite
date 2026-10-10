@@ -26,8 +26,11 @@ function loadEngine() {
   return sb.C;
 }
 
+// ⚠️ 这里的 screen 名必须与「真源改名后」的一致（真源里写的是 model_skill1_slots，
+//   main() 开头会把它改名为 modal_skill1_slots）。写错一个字母就会让第 ②/③ 条修正
+//   对"技能 1"整段静默失效 —— 历史上正是如此（技能 1 的弹窗按"换角色"投影）。
 const SKILLS = [
-  { n: 1, screen: 'model_skill1_slots', pos: 'skill1' },
+  { n: 1, screen: 'modal_skill1_slots', pos: 'skill1' },
   { n: 2, screen: 'modal_skill2_slots', pos: 'skill2' },
   { n: 3, screen: 'modal_skill3_slots', pos: 'skill3' },
 ];
@@ -40,11 +43,6 @@ const INTENT_FIXES = [
     apply(e) { e.kind = 'button'; e.action = 'config-activate'; e.payload = { slot: '{configId}' }; e.label = '设为出战'; return e; },
   },
   {
-    screen: 'hub', id: '对战历史',
-    why: '名字说明它是入口 → 按钮 + goto-records（战绩屏尚未实现，登记为计划动作）',
-    apply(e) { e.kind = 'button'; e.action = 'goto-records'; e.label = '对战历史'; return e; },
-  },
-  {
     screen: 'hub', id: '用户名',
     why: '装饰件读数据：显示昵称文字（原来误挂了 {tierIcon} 素材）',
     apply(e) { delete e.asset; e.label = '{nickname}'; return e; },
@@ -55,6 +53,11 @@ const INTENT_FIXES = [
     apply(e) { delete e.asset; e.label = '{tierName}'; return e; },
   },
 ];
+// 注：原「对战历史」intent fix（deco → goto-records 按钮）**已刻意删除** ——
+//   它造出的是一颗**死按钮**（`goto-records` 只发一句提示、不切屏），违反总纲 §4.1「按钮永不无声」。
+//   现在 `goto-records` 是**真实可达**的动作（新增 `records` 屏 = 战绩/防守战绩列表 + 打开回放），
+//   入口在 `format.js` 的 `hubViewModel` 文字主界面上（主界面切到布局渲染时也在 footer 里保留）。
+//   详见 docs/decisions.md D-180 / docs/reviews/F10.md §4①。
 
 /** 列表屏：行内容必须来自后端 → 首行当"行原型"，渲染时按数据生成 N 行 */
 const LIST_SCREENS = [
@@ -65,16 +68,7 @@ const LIST_SCREENS = [
 ];
 
 function applyStructuralFixes(bundle, log) {
-  // ① 屏幕名笔误：model_skill1_slots → modal_skill1_slots（并同步 hub 的 target）
-  if (bundle.screens.model_skill1_slots && !bundle.screens.modal_skill1_slots) {
-    bundle.screens.modal_skill1_slots = bundle.screens.model_skill1_slots;
-    bundle.screens.modal_skill1_slots.name = 'modal_skill1_slots';
-    delete bundle.screens.model_skill1_slots;
-    const sk = bundle.screens.hub.elements.find((e) => e.id === 'skill_1');
-    if (sk && sk.target === 'model_skill1_slots') sk.target = 'modal_skill1_slots';
-    log.push({ id: 'model_skill1_slots', why: '屏幕名笔误（model→modal）→ 改名并同步 hub 的 target' });
-  }
-  // ①b 角色卡的文字：设计期占位名（"角色卡"）→ 绑定 {roleName}，这样它会跟着当前显示配置变
+  // ① 角色卡的文字：设计期占位名（"角色卡"）→ 绑定 {roleName}，这样它会跟着当前显示配置变
   {
     const crest = bundle.screens.hub.elements.find((e) => e.id === 'crest_role');
     if (crest && (crest.label === '角色卡' || !crest.label)) {
@@ -153,6 +147,17 @@ function applyStructuralFixes(bundle, log) {
 function main() {
   const C = loadEngine();
   const raw = JSON.parse(fs.readFileSync(rawFile, 'utf8'));
+  // ⓪ 屏幕名笔误：model_skill1_slots → modal_skill1_slots。
+  //   **必须在最前面做**（在 SKILLS 校验之前）——否则 SKILLS[0] 的 screen 名匹配不上，
+  //   第 ②/③ 条修正对"技能 1"整段失效（历史缺陷：技能 1 的弹窗按"换角色"投影）。
+  //   同步 hu 的 target 由 raw 侧完成（raw 里 skill_1.target 已是 modal_skill1_slots）。
+  if (raw.screens.model_skill1_slots && !raw.screens.modal_skill1_slots) {
+    raw.screens.modal_skill1_slots = raw.screens.model_skill1_slots;
+    raw.screens.modal_skill1_slots.name = 'modal_skill1_slots';
+    delete raw.screens.model_skill1_slots;
+    const sk = raw.screens.hub.elements.find((e) => e.id === 'skill_1');
+    if (sk && sk.target === 'model_skill1_slots') sk.target = 'modal_skill1_slots';
+  }
   const bundle = C.normalizeBundle(raw);
   const applied = [];
   INTENT_FIXES.forEach(function (fx) {

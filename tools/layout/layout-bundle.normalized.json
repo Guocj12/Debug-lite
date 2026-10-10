@@ -310,8 +310,8 @@
         },
         {
           "id": "对战历史",
-          "kind": "button",
-          "action": "goto-records",
+          "kind": "deco",
+          "action": "",
           "hit": "rect",
           "anchor": "rt",
           "rect": [
@@ -320,7 +320,6 @@
             192,
             64
           ],
-          "label": "对战历史",
           "asset": "assets/ui/对战历史.webp"
         },
         {
@@ -1147,7 +1146,7 @@
         {
           "id": "new_1",
           "kind": "button",
-          "action": "goto-hub",
+          "action": "config-open",
           "hit": "path",
           "anchor": "lt",
           "rect": [
@@ -1157,7 +1156,11 @@
             144
           ],
           "target": "modal_skill_pick",
-          "label": "新元素",
+          "label": "技能1（再点一次看技能）",
+          "payload": {
+            "slot": "{configId}",
+            "pos": "skill1"
+          },
           "asset": "assets/ui/new_1.webp",
           "path": "M43.5,3.8 L13.2,21.3 L93.3,67.5 L93.3,32.5 Z"
         },
@@ -1177,7 +1180,8 @@
           "label": "插槽1",
           "payload": {
             "idx": 0,
-            "slot": "{configId}"
+            "slot": "{configId}",
+            "pos": "skill1"
           },
           "asset": "assets/ui/slot_1.webp",
           "z": 3
@@ -1198,7 +1202,8 @@
           "label": "插槽2",
           "payload": {
             "idx": 1,
-            "slot": "{configId}"
+            "slot": "{configId}",
+            "pos": "skill1"
           },
           "asset": "assets/ui/slot_2.webp",
           "z": 3
@@ -1219,7 +1224,8 @@
           "label": "插槽3",
           "payload": {
             "idx": 2,
-            "slot": "{configId}"
+            "slot": "{configId}",
+            "pos": "skill1"
           },
           "asset": "assets/ui/slot_3.webp",
           "z": 3
@@ -1240,7 +1246,8 @@
           "label": "插槽4",
           "payload": {
             "idx": 3,
-            "slot": "{configId}"
+            "slot": "{configId}",
+            "pos": "skill1"
           },
           "asset": "assets/ui/slot_4.webp",
           "z": 3
@@ -1249,7 +1256,8 @@
       "slotsFrom": {
         "center": "new_1",
         "prototype": "slot_1",
-        "kind": "skill"
+        "kind": "skill",
+        "pos": "skill1"
       },
       "mask": {
         "color": "#000000",

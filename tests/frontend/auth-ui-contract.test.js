@@ -23,8 +23,10 @@ const contract = require('../../public/contract.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 const EXPECTED_FILES = ['index.html', 'boot.js', 'app.js', 'api.js', 'store.js', 'ai-editor.js', 'ai-blueprint.js', 'format.js', 'render.js', 'actions.js', 'contract.js',
-  // 布局表驱动界面（运行时增量）：引擎（纯逻辑）+ 布局数据（由 runtime/import-layout.js 生成）+ 样式
-  'layout-engine.js', 'layout-data.js', 'app.css'];
+  // 布局表驱动界面（运行时增量）：引擎（纯逻辑）+ 布局数据（由 tools/layout/import-layout.js 生成）+ 样式
+  'layout-engine.js', 'layout-data.js', 'app.css',
+  // F10/D-180：屏幕注册表（前端唯一屏清单；`store.VIEWS` 由它派生）
+  'screens.js'];
 const ACTION_NAMES = Object.keys(actions.ACTIONS).sort();
 // F9/D-180：主界面改由布局表渲染 —— 本文件必须注入引擎与布局数据（否则 hub 走旧的文字界面，
 //   布局路径的动作会判成"注册了没入口"）

@@ -16,6 +16,10 @@
   background:var(--dl-bg) center/cover no-repeat;overflow:hidden;color:var(--dl-text);
   font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;user-select:none}
 .dl-screen-bg{position:absolute;inset:0;background:center/cover no-repeat;pointer-events:none}
+.dl-screen-bg-contain{background-size:contain}
+/* render.js 刻意用**行内** background-image（布局表里的路径是数据、不是常量），
+   这里只兜底默认的 cover；`.dl-screen-bg-cover` 保持 cover */
+.dl-screen-bg-cover{background-size:cover}
 .dl-el{position:absolute;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
 .dl-el>img{width:100%;height:100%;object-fit:contain;pointer-events:none}
 .dl-btn{cursor:pointer;border:0;background:transparent;color:inherit;font:inherit;padding:0;
@@ -27,6 +31,11 @@
 .dl-deco.dl-deco-text{color:var(--dl-text)}
 /* 候选不匹配：标灰（原因写在文字里） */
 .dl-muted{opacity:.45}
+/* 缺素材的占位形状（render.js 在非装饰件没有 asset 时加 .dl-ph）——
+   FD-7 机器核对要求：render.js 输出的每个类名都必须在这里有规则，
+   否则缺图时屏幕上"什么都没有"，而不是"一个看得出缺图的框"。 */
+.dl-ph{border:1px dashed var(--dl-line);border-radius:6px;
+  background:repeating-linear-gradient(45deg,#ffffff08,#ffffff08 6px,transparent 6px,transparent 12px)}
 /* 不规则按钮：多边形命中区。渲染层把 path 转成 polygon() 写进 --dl-clip */
 .dl-hit-path{clip-path:var(--dl-clip)}
 .dl-hit-ellipse{border-radius:50%}

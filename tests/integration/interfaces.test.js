@@ -53,8 +53,12 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-09-28：D-177——战斗掉落（仅进攻方、胜 1~2 负平 0~1、journal package.granted、幂等不重复发放）+ 开包端点（package.opened）；
   //   2026-10-02：D-179——交付期缺陷修复（入口装配漏载 ai-blueprint.js / 界面绝不锁死 / 按钮载荷三层契约 /
   //     积木编辑屏导入区与丢弃确认 / 自身占用扣除 / 插入位置与光标跟随 / 解析层错误信封）+ 测试设施换代；
-  //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号））
-  assert.equal(decided.size, 131, `D 编号数量应为 131（decisions.md 无跳段之外的编号）`);
+  //     前端批次 F6/F7 见 docs/frontend/04-quickmatch.md、05-tournament.md（F 系列不计入批次号）；
+  //   2026-10-04：D-180——前端地基批（屏幕注册表 `public/screens.js`；本轮把"完整文字+按钮前端"
+  //     恢复回来并保住布局工具与主界面布局，`goto-records` 从死按钮接成真屏 = 新增 `records` 屏）；
+  //     D-181 恢复完整文字前端、D-182 关闭布局渲染、D-183 清理占位素材、
+  //     D-184 布局工具加层级树与元素注释字段））
+  assert.equal(decided.size, 136, `D 编号数量应为 136（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

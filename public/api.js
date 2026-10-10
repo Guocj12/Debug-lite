@@ -131,6 +131,15 @@
         return call('DELETE', '/api/v1/me/ai/' + encodeURIComponent(String(aiId)), undefined, token);
       },
       aiValidate: function (token, input) { return call('POST', '/api/v1/me/ai/validate', input, token); },
+      // B30：战绩与防守战绩（`records` 屏的数据源；两屏端点自 B30 就绪、此前前端从未接）
+      //   `query` = 已拼好的查询串（如 `limit=20&role=attacker`）；缺省不追加
+      records: function (token, query) {
+        var qs = typeof query === 'string' && query !== '' ? '?' + query : '';
+        return call('GET', '/api/v1/me/records' + qs, undefined, token);
+      },
+      defense: function (token) { return call('GET', '/api/v1/me/defense', undefined, token); },
+      // 推进未读游标（游标推进的**唯一入口**；调它才会把 unread 清零）
+      recordsSeen: function (token, input) { return call('POST', '/api/v1/me/records/seen', input === undefined ? {} : input, token); },
       admin: admin,
     };
   }

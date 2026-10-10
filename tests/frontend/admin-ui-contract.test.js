@@ -47,6 +47,11 @@ const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-quick', 
 //   `layout-set-slot`/`layout-assemble`/`layout-disassemble` 由径向弹窗里的候选行渲染（互斥子态，见 adminRenderings）。
 const F9_ACTIONS = ['layout-open', 'layout-switch-config', 'layout-activate', 'layout-set-slot',
   'layout-assemble', 'layout-disassemble', 'goto-records'];
+// F10/D-180：对战历史屏（`GET /me/records` + `GET /me/defense`）—— `goto-records` 从"死按钮"接成真屏，
+//   并新增 3 个动作（筛选 / 标记已读 / 刷新）。见 docs/frontend/03-hub-warehouse-loadout.md §3.9。
+const F10_ACTIONS = ['records-filter', 'records-seen', 'refresh-records'];
+// 注：本文件末尾的"动作白名单 == 分册 §4 表格"断言读的是下面的 EXPECTED 并集；
+//   F10_ACTIONS 必须同时登记进分册 §4 与 §5（FC-3 会核对字段路径）。
 // F9/D-180：主界面改由布局表渲染 —— 必须注入引擎与布局数据（否则 hub 走旧文字界面）
 format.setLayout(require('../../public/layout-engine.js'), require('../../public/layout-data.js'));
 // F6（04 §4）：快速对战 + 战斗查看器 + AI 逻辑查看器 的 9 个非管理动作
@@ -355,7 +360,7 @@ function adminRenderings() {
 
 test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F5 后按实际值核对）', () => {
   // F1 + F2 + F3（提交②/③）+ F6 + F7 + F5 的六段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS, ...F9_ACTIONS])].sort();
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS, ...F9_ACTIONS, ...F10_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();

@@ -40,6 +40,30 @@
   .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
   .dot.deco{background:#5a6478}
   .bp-badge{font-size:10px;color:var(--warn);border:1px solid var(--warn);border-radius:4px;padding:0 3px}
+
+/* ---------- 层级树（界面 / 弹窗的包含关系）----------
+ * 每一层用左侧导轨（│ ├ └）表示包含关系，节点本身可点：
+ *   点画面名 = 切到那个画面；点元素名 = 选中该元素。
+ * 角色色：整屏=蓝、弹窗=紫、引用（已画过的地方）=灰。 */
+.tree{overflow:auto;flex:1;padding:6px 4px;font-size:12.5px}
+.tnode{display:flex;gap:5px;align-items:flex-start;padding:3px 6px;border:1px solid transparent;
+  border-radius:6px;cursor:pointer;white-space:nowrap}
+.tnode:hover{background:#1b2231}
+.tnode.sel{background:#22304d;border-color:var(--accent)}
+.tnode.cur{background:#1d2740}
+.trail{color:#46536b;font-family:Consolas,monospace;flex:none;user-select:none;letter-spacing:-1px}
+.tnode .ic{flex:none;width:14px;text-align:center}
+.tnode .tname{overflow:hidden;text-overflow:ellipsis}
+.tnode .tac{color:var(--dim);font-size:11px;font-family:Consolas,monospace;flex:none}
+.tnode .twhy{color:#7b879b;font-size:11px;flex:none}
+.tnode.scr{font-weight:600}
+.tnode.scr.role-screen .ic{color:var(--accent)}
+.tnode.scr.role-modal .ic{color:#b07cf0}
+.tnode.ref{color:#7b879b;font-weight:400}
+.tnode.ref .tname{text-decoration:underline dotted}
+.tnode.hasdesc .tname::after{content:' 💬';font-size:9px;opacity:.65}
+.tnode.pending .tname::after{content:' ⚠';color:var(--warn);font-size:10px}
+.tree .tinfo{color:#6b7488;font-size:11px;padding:2px 6px 6px 26px;white-space:normal}
   .stagewrap{flex:1;overflow:auto;display:flex;padding:14px}
   /* 关键：CSS transform 不改变布局尺寸 → 放大后滚动条到不了边缘。
      所以外面套一层 stagebox，用真实宽高撑出正确滚动区域（margin:auto 负责居中，
@@ -160,10 +184,18 @@
 <main>
   <aside class="col left">
     <div class="sect">
-      <h3>元素（点选 → 拖动）</h3>
-      <div class="hint">虚线 = 命中区。<span class="dot deco" style="display:inline-block"></span> 装饰件不需要 action。</div>
+      <h3>层级（界面 / 弹窗的包含关系）</h3>
+      <div class="hint">
+        <span class="seg" style="flex:none">
+          <button id="btnSideTree" class="on" title="树状：看得清谁包含谁、点谁能进哪个画面">层级</button>
+          <button id="btnSideList" title="平铺：当前画面的元素清单">平铺</button>
+        </span>
+        点画面名=切过去 · 点元素名=选中它 · <span class="kbd">↩</span>=已在上方画过（避免死循环）
+      </div>
+      <div class="hint" id="treeInfo">—</div>
     </div>
-    <div class="list" id="list"></div>
+    <div class="tree" id="tree"></div>
+    <div class="list" id="list" hidden></div>
     <div class="sect">
       <h3>素材（可选，仅本地预览）</h3>
       <div class="row"><button id="btnAssetDir" style="flex:1">选整个素材目录…</button></div>
@@ -210,6 +242,11 @@
       <h3>属性（当前选中元素）</h3>
       <div class="row"><label>id</label><input id="pId" placeholder="btn_warehouse"></div>
       <div class="row"><label>显示名</label><input id="pLabel" placeholder="仓库"></div>
+      <div class="row"><label>注释</label>
+        <textarea id="pDesc" rows="4" spellcheck="false"
+          placeholder="用自然语言写清这一块是干什么的、点了会发生什么、有哪些失败路径。例：点它打开「仓库」整屏；仓库为空时列表区显示提示文案。"></textarea>
+      </div>
+      <div class="hint" id="pDescInfo">—</div>
       <div class="row"><label>类型</label>
         <select id="pKind"><option value="button">按钮（需 action）</option><option value="deco">装饰件</option></select>
       </div>
@@ -761,13 +798,9 @@ var LAYOUT_CORE = (function () {
         if (!sc.elements.length) issues.push({ level: 'warn', msg: '[' + n + '] 弹窗画面还没有任何元素' });
         if (!sc.mask || typeof sc.mask.opacity !== 'number') issues.push({ level: 'error', msg: '[' + n + '] 弹窗缺少遮罩配置' });
       }
-      // target 注解必须指向存在的画面（否则预览点不动、真代码也会踩空）
-      sc.elements.forEach(function (el) {
-        if (el.target && !bundle.screens[el.target]) {
-          issues.push({ level: 'error', msg: '[' + n + '] ' + el.id + ' 的 target 指向不存在的画面：' + el.target });
-        }
-      });
     });
+    // 层级（界面/弹窗的包含关系）与注释：target 存在性、target↔action 一致性、孤立画面
+    validateHierarchy(bundle).forEach(function (i) { issues.push({ level: i.level, msg: i.msg }); });
     return issues;
   }
 
@@ -1018,6 +1051,9 @@ var LAYOUT_CORE = (function () {
       rect: [0, 0, 1, 1].map(function (_, i) { return round(num((el.rect || [])[i], [0, 0, 1, 1][i]), 2); })
     };
     if (el.target) out.target = String(el.target);      // 设计期注解：点我会打开哪个画面（弹窗流程预览用）
+    // desc：**自然语言注释**（这一块是干什么的）。设计期字段，产品渲染不读它，
+    //   只用于：① 工具里看清每个元素的职责；② 以后照它把"不完整/未实现"的功能补齐。
+    if (el.desc) out.desc = String(el.desc);
     // setState：点击后只改**本地显示状态**（例：切换主界面显示哪个出战配置），不导航、不写服务端
     if (el.setState && typeof el.setState === 'object' && Object.keys(el.setState).length) out.setState = el.setState;
     if (el.label) out.label = String(el.label);
@@ -1115,6 +1151,62 @@ var LAYOUT_CORE = (function () {
     return issues;
   }
 
+  /* ---------------- 整包校验：层级 + 注释 ---------------- */
+
+  /**
+   * **层级（界面/弹窗的包含关系）**校验 —— 只在本包层面能判的事：
+   *   ① 每个元素的 target 必须指向一个真实存在的画面（否则"点它打开哪里"是断的）；
+   *   ② 带 target 的元素**必须有一个能进画面的动作**，否则"声明了要进那个画面、点下去却进不去"；
+   *   ③ role==='screen' 且**没有任何元素指向它** → 提醒（要么是死页面，要么该给它加个入口）；
+   *   ④ role==='modal' 且没有元素指向它 → 提醒（弹窗永远不会出现）。
+   *
+   * ⚠️ ② 的判据刻意**不写成固定动作白名单**：本项目的布局表在导入期会被 `import-layout.js` 重写动作
+   *   （`config-open` / `plugin-pick` / `slot-set` … → `layout-open`），所以合法取值是**一整个家族**。
+   *   这里只判"**明显进不去画面的**"：动作空、或动作是纯本地动作（`wait`/`none`/`noop`）。
+   *   目标画面存在性顺带覆盖循环引用 —— 循环**合法**（返回主界面、来回弹窗都算），不报错。
+   */
+  function validateHierarchy(bundle) {
+    var issues = [];
+    var names = Object.keys(bundle.screens || {});
+    var incoming = {};                                  // 画面 → 指向它的元素（用于 ③/④ 与树状图）
+    names.forEach(function (n) { incoming[n] = []; });
+    // "明显进不去画面"的动作（纯本地等待/空操作）—— 其余一律放行（含导入期会被重写的那些）
+    var NO_NAV = ['', 'wait', 'none', 'noop'];
+    names.forEach(function (sn) {
+      var sc = bundle.screens[sn];
+      (sc.elements || []).forEach(function (el) {
+        // 消息一律带 [画面名] 前缀 —— 多画面下必须能定位（与 validateBundle 的既有约定一致）
+        var tag = '[' + sn + '] ' + (el.id || '(无 id)');
+        if (!el.target) return;
+        if (names.indexOf(el.target) < 0) {
+          issues.push({ level: 'error', msg: tag + '：target 指向不存在的画面「' + el.target + '」（点它会跳进空处）' });
+          return;
+        }
+        incoming[el.target].push(sn + '/' + el.id);
+        var act = String(el.action || '');
+        if (NO_NAV.indexOf(act) >= 0) {
+          issues.push({
+            level: 'error',
+            msg: tag + '：声明了 target「' + el.target + '」，但 action 是「' + (act || '（空）')
+              + '」—— 点了**不会**进那个画面（要给它一个能进画面的 action，或删掉 target）',
+          });
+        }
+      });
+    });
+    names.forEach(function (n) {
+      var sc = bundle.screens[n];
+      var src = incoming[n];
+      if (!src.length) {
+        issues.push({
+          level: 'warn',
+          msg: '[' + n + '] ' + (sc.role === 'modal' ? '弹窗' : '整屏')
+            + '没有任何元素指向它' + (sc.role === 'modal' ? '（永远不会弹出来）' : '（从别的画面进不去）'),
+        });
+      }
+    });
+    return issues;
+  }
+
   return {
     DEFAULT_LAYOUT: DEFAULT_LAYOUT, DEFAULT_BUNDLE: DEFAULT_BUNDLE,
     ANCHOR_X: ANCHOR_X, ANCHOR_Y: ANCHOR_Y, HIT_MODES: HIT_MODES, FIT_MODES: FIT_MODES,
@@ -1134,7 +1226,8 @@ var LAYOUT_CORE = (function () {
     pathToStage: pathToStage, stageToPath: stageToPath,
     insertVertex: insertVertex, removeVertex: removeVertex, pointInPolygon: pointInPolygon,
     clamp: clamp,
-    normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout
+    normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout,
+    validateHierarchy: validateHierarchy
   };
 })();
 </script>
@@ -1192,7 +1285,8 @@ var LAYOUT_CORE = (function () {
     history: [], future: [],
     assetUrls: {},          // basename → objectURL
     localPreview: {},       // elementId → objectURL
-    guidesNow: []
+    guidesNow: [],
+    sideMode: 'tree'        // 左栏：'tree'（层级树，默认）/ 'list'（当前画面的平铺清单）
   };
   state.layout = C.screenLayout(state.bundle, state.screen);
 
@@ -1466,7 +1560,165 @@ var LAYOUT_CORE = (function () {
       : (iss.length ? '<span class="warn">校验 ' + iss.length + ' 个提醒</span>' : '<span class="ok">校验通过</span>');
   }
 
-  /* ---------------- 列表 ---------------- */
+  /* ---------------- 层级树（界面 / 弹窗的包含关系） ----------------
+   * 这一栏回答的是"**谁包含谁、点谁能进哪个画面**"，而平铺清单只回答"当前画面有哪些元素"。
+   *
+   * 结构：
+   *   画面（整屏 ▢ / 弹窗 ▣）
+   *     ├─ 元素（💬 = 写了注释；⚠ = 按注释看还有未落地的部分）
+   *     │    └─ target 指向的画面（▼ 展开 = 包含关系）
+   *     │         · 已经在上方画过 → 只显示「↩ 已在上方」的引用行（**避免死循环**）
+   *   未接入流程的画面（没有任何元素指向、也不是 hub）→ 单列一节
+   *
+   * 点击：画面行 = useScreen 切过去；元素行 = select(id) 选中。
+   */
+  function elPendingReason(e) {
+    // "按注释看还有未落地的部分"：注释写了，但动作/目标/素材对不上 —— 这才是需要补齐的信号
+    if (!e.desc) return null;
+    var why = [];
+    if (e.kind !== 'deco' && !e.action && !(e.setState && Object.keys(e.setState).length)) why.push('缺 action');
+    // target 声明了要进某个画面，却没有能进画面的动作（与 validateHierarchy 的判据同一口径）
+    if (e.target && ['', 'wait', 'none', 'noop'].indexOf(String(e.action || '')) >= 0) why.push('target 无对应动作');
+    if (e.kind !== 'deco' && !e.asset) why.push('缺素材');
+    return why.length ? why.join(' · ') : null;
+  }
+
+  function elNode(e, depth, trail, visited, out) {
+    var d = document.createElement('div');
+    var pend = elPendingReason(e);
+    d.className = 'tnode' + (state.sel === e.id ? ' sel' : '')
+      + (e.desc ? ' hasdesc' : '') + (pend ? ' pending' : '');    d.dataset.id = e.id;
+    var icon = e.kind === 'deco' ? '◇' : '●';
+    d.innerHTML = '<span class="trail"></span><span class="ic"></span>'
+      + '<span class="tname"></span><span class="tac"></span><span class="twhy"></span>';
+    d.querySelector('.trail').textContent = trail;
+    d.querySelector('.ic').textContent = icon;
+    d.querySelector('.ic').style.color = e.kind === 'deco' ? '#5a6478' : '#7fb0ff';
+    d.querySelector('.tname').textContent = e.label || e.id || '(未命名)';
+    d.querySelector('.tac').textContent = e.action || (e.kind === 'deco' ? '装饰' : '缺 action');
+    var why = d.querySelector('.twhy');
+    if (e.desc) { why.textContent = '💬'; why.title = e.desc; }
+    if (pend) { why.textContent = '⚠ ' + pend; why.title = (e.desc || '') + '\n—— 待补齐：' + pend; why.style.color = 'var(--warn)'; }
+    d.addEventListener('click', function (ev) { ev.stopPropagation(); select(e.id); });
+    out.appendChild(d);
+
+    if (!e.target) return;
+    var tgt = state.bundle.screens[e.target];
+    if (!tgt) {
+      var bad = document.createElement('div');
+      bad.className = 'tinfo';
+      bad.innerHTML = '<span class="err">target 指向不存在的画面「' + e.target + '」</span>';
+      out.appendChild(bad);
+      return;
+    }
+    var childTrail = trail.replace(/[├└]─/g, '│ ').replace(/ {2}$/, '') + '└─';
+    if (visited[e.target]) {
+      var ref = document.createElement('div');
+      ref.className = 'tnode ref';
+      ref.innerHTML = '<span class="trail"></span><span class="ic">↩</span><span class="tname"></span><span class="twhy"></span>';
+      ref.querySelector('.trail').textContent = childTrail;
+      ref.querySelector('.tname').textContent = e.target;
+      ref.querySelector('.tname').title = '这个画面已经在树的上方画过（点它切过去）—— 不重复展开，避免死循环';
+      ref.querySelector('.twhy').textContent = '已在上方';
+      ref.addEventListener('click', function (ev) { ev.stopPropagation(); useScreen(e.target); syncAll(); });
+      out.appendChild(ref);
+      return;
+    }
+    screenBranch(e.target, depth + 1, childTrail, visited, out, '从 ' + e.id + ' 进入');
+  }
+
+  function screenBranch(name, depth, trail, visited, out, whyEnter) {
+    var sc = state.bundle.screens[name];
+    if (!sc) return;
+    if (visited[name]) return;                    // 双保险：调用方已判过
+    visited[name] = true;
+    var d = document.createElement('div');
+    d.className = 'tnode scr role-' + sc.role + (state.screen === name ? ' cur' : '')
+      + (state.sel === null ? '' : '');
+    d.dataset.screen = name;
+    d.innerHTML = '<span class="trail"></span><span class="ic"></span>'
+      + '<span class="tname"></span><span class="tac"></span><span class="twhy"></span>';
+    d.querySelector('.trail').textContent = trail;
+    d.querySelector('.ic').textContent = sc.role === 'modal' ? '▣' : '▢';
+    d.querySelector('.tname').textContent = name;
+    d.querySelector('.tac').textContent = sc.role === 'modal' ? '弹窗' : '整屏';
+    d.querySelector('.tac').title = (sc.role === 'modal' ? '弹窗：覆盖在当前画面之上' : '整屏：切场景');
+    var w = d.querySelector('.twhy');
+    var hits = [];
+    Object.keys(state.bundle.screens).forEach(function (sn) {
+      (state.bundle.screens[sn].elements || []).forEach(function (x) { if (x.target === name) hits.push(sn + '/' + x.id); });
+    });
+    w.textContent = (whyEnter ? '← ' + whyEnter + ' · ' : '') + sc.elements.length + ' 元素'
+      + (hits.length ? ' · 被 ' + hits.length + ' 处指向' : ' · 无人指向');
+    if (!hits.length && name !== 'hub') w.style.color = 'var(--warn)';
+    d.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (state.screen !== name) { useScreen(name); syncAll(); }
+    });
+    out.appendChild(d);
+
+    var kids = sc.elements || [];
+    kids.forEach(function (e, i) {
+      var isLast = i === kids.length - 1;
+      var childTrail = trail.replace(/[├└]─/g, '│ ').replace(/ {2}$/, '') + (isLast ? '└─' : '├─');
+      elNode(e, depth + 1, childTrail, visited, out);
+    });
+    if (!kids.length) {
+      var empty = document.createElement('div');
+      empty.className = 'tinfo';
+      empty.textContent = '（这个画面还没有元素）';
+      out.appendChild(empty);
+    }
+    // 展开完再"释放"标记？**不释放** —— 同一画面在树里只画一次，
+    //   否则 A→B→A 这类合法循环会无限展开。重复出现的地方显示「↩ 已在上方」。
+  }
+
+  function renderTree() {
+    var box = $('tree');
+    box.innerHTML = '';
+    var names = Object.keys(state.bundle.screens);
+    if (!names.length) { $('treeInfo').textContent = '还没有任何画面'; return; }
+
+    // 根：hub 优先（真代码默认落在 hub），其余"没人指向且不是 hub"的画面单列一节
+    var pointed = {};
+    names.forEach(function (sn) {
+      (state.bundle.screens[sn].elements || []).forEach(function (e) { if (e.target) pointed[e.target] = true; });
+    });
+    var rootName = state.bundle.screens.hub ? 'hub' : names[0];
+    var visited = {};
+    screenBranch(rootName, 0, '', visited, box, '');
+
+    var orphans = names.filter(function (n) { return !visited[n] && !pointed[n] && n !== rootName; });
+    var looseRefs = names.filter(function (n) { return !visited[n] && pointed[n]; });
+    function extra(title, list, note) {
+      if (!list.length) return;
+      var h = document.createElement('div');
+      h.className = 'tinfo';
+      h.innerHTML = '<b>' + title + '</b>（' + list.length + '）' + (note ? ' ' + note : '');
+      box.appendChild(h);
+      list.forEach(function (n) {
+        screenBranch(n, 0, '', visited, box, '');
+      });
+    }
+    // 被指向但根树没走到的（根不是它们的祖先，且它们互相指向）→ 也画出来，保证"每个画面都看得见"
+    extra('还有这些画面', orphans.concat(looseRefs), '（没有任何元素指向它们，所以不在上面的包含关系里）');
+
+    // 顶部统计
+    var modals = names.filter(function (n) { return state.bundle.screens[n].role === 'modal'; }).length;
+    var withDesc = 0, pending = 0, totalEls = 0;
+    names.forEach(function (n) {
+      (state.bundle.screens[n].elements || []).forEach(function (e) {
+        totalEls += 1;
+        if (e.desc) withDesc += 1;
+        if (elPendingReason(e)) pending += 1;
+      });
+    });
+    $('treeInfo').innerHTML = names.length + ' 个画面（' + modals + ' 弹窗 / ' + (names.length - modals) + ' 整屏）'
+      + ' · ' + totalEls + ' 个元素 · 注释 ' + withDesc + '/' + totalEls
+      + (pending ? ' · <span class="warn">待补齐 ' + pending + '</span>' : '');
+  }
+
+  /* ---------------- 列表（当前画面的平铺清单） ---------------- */
   function renderList() {
     var box = $('list');
     box.innerHTML = '';
@@ -1478,6 +1730,11 @@ var LAYOUT_CORE = (function () {
         '<span class="nm"></span><span class="ac"></span>';
       d.querySelector('.nm').textContent = (e.label || '(未命名)');
       d.querySelector('.ac').textContent = e.action || (e.kind === 'deco' ? '装饰' : '缺 action');
+      var pend = elPendingReason(e);
+      if (pend) {
+        var pb = document.createElement('span'); pb.className = 'bp-badge';
+        pb.textContent = '待补齐'; pb.title = pend; d.appendChild(pb);
+      }
       if (state.editBp !== 'base' && hasOverride(e)) {
         var b = document.createElement('span'); b.className = 'bp-badge'; b.textContent = C.BP_LABEL[state.editBp]; d.appendChild(b);
       }
@@ -1489,7 +1746,17 @@ var LAYOUT_CORE = (function () {
         d.appendChild(wb);
       }
       d.addEventListener('click', function () { select(e.id); });
-      box.appendChild(d);    });
+      box.appendChild(d);
+    });
+  }
+
+  /** 左栏两种模式互斥：树（默认，看层级）/ 平铺（看当前画面） */
+  function syncSideMode() {
+    var tree = state.sideMode !== 'list';
+    $('tree').hidden = !tree;
+    $('list').hidden = tree;
+    $('btnSideTree').classList.toggle('on', tree);
+    $('btnSideList').classList.toggle('on', !tree);
   }
 
   /* ---------------- 属性面板 ---------------- */
@@ -1535,12 +1802,13 @@ var LAYOUT_CORE = (function () {
     var e = state.sel ? el(state.sel) : null;
     var on = !!e;
     ['pId','pLabel','pKind','pAction','pPayload','pAsset','pAssetFile','pHit','pAnchor','pX','pY','pW','pH','pRot','pZ','pHidden','pWhen',
-     'btnOvSet','btnOvClear','btnShapeMode','pPath','pPathPreset','btnPathAdd','btnPathDel']
+     'btnOvSet','btnOvClear','btnShapeMode','pPath','pPathPreset','btnPathAdd','btnPathDel','pDesc']
       .forEach(function (k) { $(k).disabled = !on; });
     if (!e) {
-      ['pId','pLabel','pAction','pPayload','pAsset','pX','pY','pW','pH','pRot','pZ','pPath'].forEach(function (k) { $(k).value = ''; });
+      ['pId','pLabel','pAction','pPayload','pAsset','pX','pY','pW','pH','pRot','pZ','pPath','pDesc'].forEach(function (k) { $(k).value = ''; });
       $('pOvInfo').textContent = '—';
       $('pPathInfo').textContent = '—';
+      $('pDescInfo').textContent = '—';
       return;
     }
     var r = shownRect(e);
@@ -1576,6 +1844,25 @@ var LAYOUT_CORE = (function () {
       : '未指定。指定后可在「▶ 预览弹窗流程」里点它看弹窗效果。';
     $('pWhen').value = e.when ? JSON.stringify(e.when) : '';
     $('pWhen').style.borderColor = '';
+    // desc（自然语言注释）：显示 + 提示它是不是"待补齐"（写了注释但动作/行为还没落地的元素）
+    $('pDesc').value = e.desc || '';
+    renderDescHint(e);
+  }
+
+  /** 「注释」输入框下面的状态行：有没有写、按注释看还有哪些没落地 */
+  function renderDescHint(e) {
+    if (!e) { $('pDescInfo').textContent = '—'; return; }
+    var pending = [];
+    if (e.desc) {
+      if (e.kind !== 'deco' && !e.action && !(e.setState && Object.keys(e.setState).length)) pending.push('还没接 action');
+      if (e.target && ['', 'wait', 'none', 'noop'].indexOf(String(e.action || '')) >= 0) pending.push('target 没有对应动作');
+      if (e.kind !== 'deco' && !e.asset) pending.push('还没素材');
+    }
+    $('pDescInfo').innerHTML = !e.desc
+      ? '还没写注释。建议写清：这一块干什么 / 点了会怎样 / 有哪些失败路径 —— 注释会成为"功能补齐"的依据。'
+      : (pending.length
+        ? '<span class="warn">按注释看还有未落地的部分：' + pending.join(' · ') + '</span>'
+        : '<span class="ok">注释已写；当前没有检测到明显的空缺</span>');
   }
 
   /** 画面级属性（角色/背景/遮罩） */
@@ -1770,10 +2057,14 @@ var LAYOUT_CORE = (function () {
     ta.value = JSON.stringify(C.normalizeBundle(state.bundle), null, 2);
   }
 
-  function syncAll() { fillSelects(); renderList(); renderStage(); syncProps(); renderPrevs(); renderIssues(); renderJson(); renderPreview(); }
+  function syncAll() { fillSelects(); syncSideMode(); renderTree(); renderList(); renderStage(); syncProps(); renderPrevs(); renderIssues(); renderJson(); renderPreview(); }
 
   /* ---------------- 选择 / 交互 ---------------- */
-  function select(id) { state.sel = id; renderList(); renderStage(); syncProps(); }
+  function select(id) { state.sel = id; renderTree(); renderList(); renderStage(); syncProps(); }
+
+  // 左栏模式切换（层级树 / 平铺清单）
+  $('btnSideTree').addEventListener('click', function () { state.sideMode = 'tree'; syncSideMode(); renderTree(); });
+  $('btnSideList').addEventListener('click', function () { state.sideMode = 'list'; syncSideMode(); renderList(); });
 
   /** 舞台坐标 → 元素自身坐标（考虑元素旋转，因为顶点手柄会跟着元素一起转） */
   function toLocalPoint(x, y, rect, rot) {
@@ -1928,9 +2219,24 @@ var LAYOUT_CORE = (function () {
   }, { passive: false });
 
   /* ---------------- 属性联动 ---------------- */
-  function bindProp(id, fn, evt) { $(id).addEventListener(evt || 'change', function () { if (!state.sel) return; fn(el(state.sel), $(id)); renderStage(); renderList(); renderJson(); renderIssues(); renderPrevs(); syncProps(); }); }
+  function bindProp(id, fn, evt) { $(id).addEventListener(evt || 'change', function () { if (!state.sel) return; fn(el(state.sel), $(id)); renderStage(); renderTree(); renderList(); renderJson(); renderIssues(); renderPrevs(); syncProps(); }); }
   bindProp('pId', function (e, n) { if (n.value.trim()) { push(); e.id = n.value.trim(); state.sel = e.id; } });
   bindProp('pLabel', function (e, n) { push(); e.label = n.value; });
+  // desc：自然语言注释。**每次输入都推一个撤销快照** —— 与拖拽/改尺寸同一级别的撤销粒度：
+  //   代价是长文本会多占撤销栈，但 `push()` 已有 120 条上限、自动保存也有节流，可以接受；
+  //   反过来（一次编辑只推一个快照）会让"写→改→撤销"一下退回两次编辑前，反直觉。
+  $('pDesc').addEventListener('input', function () {
+    if (!state.sel) return;
+    var e = el(state.sel);
+    if (!e) return;
+    var v = this.value;
+    if ((e.desc || '') === v) return;
+    push();
+    if (v.trim() === '') delete e.desc; else e.desc = v;
+    renderDescHint(e);
+    renderTree(); renderList(); renderJson(); renderIssues();
+  });
+  $('pDesc').addEventListener('blur', function () { syncProps(); });
   bindProp('pKind', function (e, n) { push(); e.kind = n.value; });
   bindProp('pAction', function (e, n) { push(); e.action = n.value.trim(); });
   bindProp('pPayload', function (e, n) {

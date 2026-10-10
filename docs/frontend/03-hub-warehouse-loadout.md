@@ -257,6 +257,25 @@
 | `me/warehouse/assemble` | `data.warehouse` / `data.usage` | 装配后回带 |
 | `me/configs/:id/activate` | `data.activeSlotId` | 出战标记更新 |
 
+### 5.4 对战历史屏的字段（**F10/D-180 增补**；`GET /me/records` + `GET /me/defense`）
+
+> `goto-records` 此前是**死按钮**（只发一句提示、不切屏，违反总纲 §4.1）。F10 起它是真屏：
+> 进屏并行取两份数据、逐条列出战绩，并提供筛选与「标记已读」（推进未读游标的**唯一入口**）。
+
+| 路径 | 用途 |
+|---|---|
+| `data.records` | 战绩列表（records 屏逐行：时间 / 对手 / 攻防 / 模式 / 胜负 / tick / 积分变化 / 未读） |
+| `data.unread.attack` | 未读进攻战绩数（屏头行） |
+| `data.unread.defense` | 未读防守战绩数（屏头行） |
+| `data.maxSeq` | 全局 journal 水位（屏头行） |
+| `data.drawnCount` | 被抽为防守方的场次（防守战绩行） |
+| `data.stats.wins` | 防守胜场（防守战绩行） |
+| `data.stats.draws` | 防守平局（防守战绩行） |
+| `data.stats.losses` | 防守负场（防守战绩行） |
+| `data.unread` | 防守未读数（防守战绩行） |
+
+按钮 ↔ 动作：`goto-records`（入口）、`records-filter`（`data-role` = 空 / attacker / defender）、
+`records-seen`（推进未读游标）、`refresh-records`（重取两份数据）、`goto-hub`（返回）。
 ### 5.3 物品详情弹窗显示的字段（**逐条来自实测响应**）
 
 - 共通：`name` / `kind` / `quality` / `uid`

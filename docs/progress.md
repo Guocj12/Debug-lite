@@ -167,6 +167,187 @@
 
 ---
 
+## §0.10 F10 前端回退批（2026-10-04）—— 回退到「文字+按钮」并建立屏幕注册表地基
+
+> **用户口径**（2026-10-04）：① 回退到「只有文字和按钮」的干净状态；② 先给完整前端打基础，之后**用户依次手工实现每个屏幕的完整布局**；
+> ③ **保留布局工具与已完成的主界面 UI 布局**；④ 管理面板/账号列表一起清掉；⑤ 主界面底部三颗补充入口全清；⑥ 后端一律不动。
+> 设计权威 = `docs/frontend/08-foundation.md`（新增）；**本次未新增批次号**（同 F3/F5/F6/F7/F9 处置，`check-docs` 的「共 41 批」不变）。
+
+**✅ 已交付（本批主体）**
+
+| 件 | 落点 | 实测 |
+|---|---|---|
+| 屏幕注册表（唯一真源） | **新增** `public/screens.js`（14 屏 = 5 ready + 9 todo） | FD-1..FD-3 全绿 |
+| store 派生 | `public/store.js` 33 KB → **8.6 KB**：`VIEWS` 由注册表派生；只留登录链 + 布局所需切片（warehouse/configs/layout） | FD-1 / FD-5 |
+| format 回退 | `public/format.js` 183 KB → **41 KB**（3572 → 826 行）；只留 F1 三屏 + profile + hub 布局/兜底 + 占位页投影 | 逐屏探针：ready 屏渲染出内容、todo 屏输出占位页 |
+| actions 收缩 | `public/actions.js` 118 KB → **24 KB**：**111 → 19** 个动作 | FD-4 双向闭合 |
+| AI 编辑器前端删除 | `public/ai-editor.js`（35 KB）+ `public/ai-blueprint.js`（22 KB）**删文件**，归档进 `docs/archive/frontend-f2-f8/` | 静态托管实测 404 |
+| 主界面按钮清理（口径 ⑤） | 布局表删 6 个 `goto-*` 入口 + 去掉 `goto-records` 的 intent fix；`hubViewModel` 的 footer 整段删除 | `layout:apply` 校验 0 error / 0 warn |
+| **产品端既有缺陷修复** | ① `import-layout.js` 的 `model_skill1_slots` 拼写（**技能 1 的弹窗一直按"换角色"投影**）② `render.js` 现在真的渲染 `layout.background`（此前 `hub_main.webp` 从未生效）③ `app.css` 补 `.dl-ph` 占位样式 ④ 布局投影泛化 `hubLayoutVm` → `layoutScreenVm`（不再写死 `'hub'`）⑤ `state.hub` → `state.layout` | FD-6（引擎 digest 一致性）/ FD-7（类名覆盖）新增为**机器门禁** |
+| 新门禁 | **新增** `tests/frontend/foundation-contract.test.js` **FD-1..FD-7** | 7/7 通过 |
+| 布局工具保留 | `tools/layout/**` + 4 条 npm 脚本 + `public/layout-engine.js` + `layout-data.js` + `app.css` **全部保留** | LT-*/LS-* 仍绿 |
+| 后端 | **零改动** | 全量 `npm test` 中 backend/api/cli/integration **零失败** |
+
+**收口实跑（本批主体落地后）**：`npm test` = **1159 用例 / 1159 通过 / 0 失败**（**backend / api / cli / integration / unit / regression 全部零失败** ⇒ 后端未被触动，满足口径 ⑥）；
+前端 8 个文件 **76/76**（`foundation-contract`(7) + `boot-wiring`(7) + `auth-ui-contract`(13) + `auth-field-contract`(6) + `auth-flow`(14) + `button-payload-contract`(3) + `render-escaping`(5) + `static-hosting`(7) + `layout-tool-assets`(6) + `layout-tool-server`(7)）。
+
+**🔄 待续（本批的收尾，下一轮完成）**
+
+| # | 待办 | 状态 |
+|---|---|---|
+| T-1 | `public/contract.js` 收缩到保留部分（150 → 51 条） | ✅ |
+| T-2 | `tests/frontend/auth-field-contract.test.js`（FC-1..6）按新契约表重写 | ✅ 6/6 |
+| T-3 | `tests/frontend/auth-ui-contract.test.js`（UI-1..13）按新屏集合与动作集合重写 | ✅ 13/13 |
+| T-4 | `tests/frontend/auth-flow.test.js`（FL-1..14）按新动作接口重写 | ✅ 14/14 |
+| T-5 | `tests/frontend/button-payload-contract.test.js`（BP-1/2/3）按新载荷键表重写 | ✅ 3/3 |
+| T-6 | `docs/decisions.md` 登记 **D-180** + `interfaces.md` §1/§5 落点（T-DC-8）+ `IF-1` 的 D 计数 131→132 | ✅ |
+| T-7 | 文档同步：`00-rules.md` FR-14/FR-15、`07-layout-tool.md`（素材 143→154 + 真图保护口径修正）、`assets-inbox/README.md`（路径 + 计数 + 真图保护） | ✅ |
+| T-8 | **真实浏览器人工走查** —— 剧本见 `docs/reviews/F10.md` §7（12 步） | ⏳ **待用户本人执行** |
+
+**收口实跑（本批全部落地后）**：`npm test` = **1159 用例 / 1159 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`npm run check:docs` = **PASS**（批次仍 **41**）；`node scripts/check-arch.js` = **PASS**（41 文件）；`npm run e2e` = **22/22**；
+`node --test "tests/frontend/*.test.js"` = **76/76**（8 文件）。**交付前另跑 `runtime/final-check.js`**（真 HTTP + 真服务端，用完即删）：
+注册落点/文案/落盘 ✔、主界面布局+背景图+昵称 ✔、界面按钮全部命中注册表 ✔、**9 个未实现屏逐个「占位页 + 零请求」** ✔、
+「返回主界面」可达 ✔、设为出战真打服务端并回带文案 ✔。
+
+**本轮另修掉的 8 条既有真缺陷**（逐条证据见 `docs/reviews/F10.md` §4）：技能 1 插槽弹窗错接线（一直按"换角色"投影）／
+主界面背景图从未渲染／`.dl-ph` 占位样式缺失（**FD-7 门禁抓出来的**）／`make-engine.js` 声称的 digest 测试并不存在（新增 FD-6）／
+注册留空昵称必 400／**刚登录就被登出**（`loadHub` 读 `ctx.state` 旧快照的 token）／`D-180` 编号悬空／占位登记表的"真图保护"是假的（本轮改文档如实描述）。
+
+**已知偏差（需用户确认）**：口径 ⑤ 要求主界面底部入口全清，但 hub 的**非布局兜底屏**若一颗按钮都没有则用户无路可走（总纲 §4.1）→ 保留**恰好一颗** `refresh-layout`（08-foundation.md §3.4 / §7 K-1；`docs/reviews/F10.md` §5 偏差 1）。
+
+**本批之后的起点（用户逐屏重做）**：把 `public/screens.js` 里某屏的 `status` 改 `'ready'` → 填 `project`（在 `format.js` 的 `PROJECTIONS` 登记）与 `actions` → 若走布局表则填 `layout` 并在布局台（`npm run lab`）里画那一屏。**漏了什么 FD-1..FD-7 会立刻告诉你。**
+
+---
+
+## §0.11 D-181：撤销 D-180 的回退范围，恢复完整「文字+按钮」前端（2026-10-04）
+
+> 触发：用户 2026-10-04 澄清 —— **「我是说回退到完整的只有按钮和文字的那一版前端页面，所有功能都完整可用只是没有图形渲染的那一版」**。
+> §0.10 记的 D-180 回退范围（只留登录链 + 9 个占位页）**收得过狠**，已由 **D-181** 撤销。决策记录见 `docs/decisions.md` §14.16。
+
+**✅ 已交付并实测**
+
+| 件 | 结果 |
+|---|---|
+| **恢复完整文字前端** | `git checkout HEAD` 恢复 `public/{format,store,actions,render,app,contract,index.html,ai-editor,ai-blueprint}.*` + 21 个 `tests/frontend/*` —— 那版**功能齐备、仅缺图形渲染**（`format.js` 190 导出 / `store.js` 13 屏 11 切片 / `actions.js` 112 动作） |
+| **继续保留（D-180 口径③）** | `tools/layout/**` 布局工具 + `public/layout-engine.js` + `public/layout-data.js`（hub 整屏 + 8 径向弹窗）+ `public/app.css` + 7 个 `layout-*` 动作 ⇒ **主界面仍由布局表渲染**（`boot.js` 注入 `format.setLayout`；未注入或 `/me` 未到时回落完整文字主界面） |
+| **屏幕注册表** | `public/screens.js` 更新为**完整 14 屏**（13 屏 + 新增 `records`），与 `store.VIEWS` 逐条相等；`index.html` 已加载它。它是"加屏只改一处"的登记点 |
+| **`goto-records` 从死按钮接成真屏（新增 `records` 屏）** | 接上自 B30 就绪、前端从未接的 `GET /me/records`（`?limit=` / `?role=attacker\|defender`）与 `GET /me/defense`：`store` 的 `records` 切片（**含"只落地与请求一致的角色"的防旧响应覆盖守卫**）+ `format.recordsViewModel`（逐行：时间/对手/攻防/模式/胜负/tick/积分变化/未读）+ 4 个动作（`goto-records` 改为切屏取数、`refresh-records`、`records-filter`、`records-seen`）+ `api.records/defense/recordsSeen` + 按钮载荷 `data-role`；字段登记进 `contract.js`（9 条）与 03 分册 **§5.4** |
+| **D-180 的连带修复继续有效** | `import-layout.js` 的 `model_skill1_slots` 拼写（技能 1 弹窗一直按"换角色"投影）／`render.js` 消费 `vm.layout.background`（主界面背景图此前从未生效）／`app.css` 的 `.dl-ph` 占位样式／布局投影泛化／`07-layout-tool.md` 素材计数与"真图保护"口径修正／`assets-inbox/README.md` 的 `tools/layout/` 路径 |
+| **不再适用** | §0.10 记的"登录链两处修复"（注册空昵称 400 / `loadHub` 读旧快照 token）—— 那是骨架版新写 `actions.js` 引入的，`HEAD` 版实现无此问题 |
+
+**收口实跑（2026-10-04 终态）**：`npm test` = **1263 用例 / 1263 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`npm run check:docs` = **PASS**（批次仍 **41**）；`node scripts/check-arch.js` = **PASS**（41 文件）；`npm run e2e` = **22/22**；
+`node --test "tests/frontend/*.test.js"` = **180/180**（21 文件）。
+**交付前另跑实跑核验**（真 HTTP + 真服务端，用完即删）：注册落点/文案 ✔、**主界面走布局表渲染** ✔、
+布局 footer 有 `refresh-hub`/`goto-records`/`goto-profile` ✔、**8 个入口逐个进屏**（profile/warehouse/settings/quick/tournament/leaderboard/ai-editor/records，均未落兜底屏且各自渲染出按钮 3~13 个）✔、
+**新 records 屏真取到 `/me/defense` 数据 + 筛选真落地 + 无 undefined 泄漏** ✔、管理面板可渲染 ✔。
+
+**待用户**：真实浏览器人工走查（总纲 §4.4；**不得以测试绿代替**）。
+
+---
+
+## §0.12 D-182：前端整体回到「纯文字 + 按钮」（主界面也不再图形渲染）（2026-10-04）
+
+> 触发：用户 2026-10-04 再次澄清 —— **「现在前端主界面屏仍然有图形渲染 完全回退到只有文字和按钮的界面」**。
+> §0.11（D-181）恢复了完整文字前端但**保留了布局表驱动的主界面**；本轮把它也关掉。决策记录见 `docs/decisions.md` §14.17。
+
+**改动（一处）**：[public/boot.js](public/boot.js) **不再调用** `DL.format.setLayout(...)`
+（原三行保留为注释、就在原位，作为"重新打开图形主界面"的开关）。
+⇒ `format.layoutReady()` 恒为 `false` ⇒ `hubViewModel` 走**文字版**：
+摘要行 `昵称 · 段位 · 积分 · 未读 进攻a/防守d · 在池` + **12 颗按钮**（用户/仓库/快速对战/锦标赛/排行榜/出战配置1-3/AI编辑/设置/对战历史/刷新）。
+
+**效果**：全部 **14 屏渲染路径完全一致** —— 没有百分比定位、没有多边形 `clip-path`、没有背景图层、没有径向弹窗流。
+
+**保留（重开只需解注释，不需重新实现）**：`format.js` 全部 `lay*` 投影、`store.js` 的 `hub` 切片、
+`actions.js` 的 7 个 `layout-*` 动作、`render.js` 的 `layoutHtml`、`public/layout-engine.js`、
+`public/layout-data.js`（hub 整屏 + 8 径向弹窗）、`public/app.css` 的 `.dl-*` 规则、
+`tools/layout/**` 布局工具 + 四条 npm 脚本、154 张素材。`index.html` 仍加载两个布局模块（保留一键重开），但它们不产生任何 DOM。
+
+**⚠️ 机器核对现状（需知悉）**：`tests/frontend/` 里的布局专项用例（`layout-tool-assets` LT-*、`layout-tool-server` LS-*、
+`hub-warehouse-flow` WH-1、`admin-ui-contract` AU-1 的 `F9_ACTIONS` 并集）为了核对**布局能力**仍在测试内**显式注入**
+布局表（`format.setLayout(...)`），因此仍然全绿 —— 它们现在核对的是"**布局能力还在且没坏**"，而**不再是"浏览器里主界面走布局渲染"**。
+浏览器里实际走哪条路由 `boot.js` 的开关决定。
+
+**收口实跑（2026-10-04 终态）**：`npm test` = **1263 用例 / 1263 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`npm run check:docs` = **PASS**（批次仍 **41**）；`node scripts/check-arch.js` = **PASS**（41 文件）；`npm run e2e` = **22/22**；
+`node --test "tests/frontend/*.test.js"` = **180/180**。
+**浏览器路径核验**（按**真实 `index.html` 清单**装配 + `node:vm` 假 DOM + 真实 UMD）：`layoutReady() === false` ✔；
+主界面 HTML **不含** `dl-screen` / `dl-el` / `dl-screen-bg` ✔；有文字摘要区 `#lines` ✔；
+主界面 10 类按钮齐全（`goto-warehouse`/`goto-quick`/`goto-tournament`/`goto-leaderboard`/`goto-ai-editor`/
+`goto-settings`/`goto-records`/`goto-profile`/`config-open`/`refresh-hub`）✔；**其余 13 屏逐个核验均无图形渲染** ✔。
+
+**待用户**：真实浏览器人工走查（总纲 §4.4；**不得以测试绿代替**）。
+
+---
+
+## §0.13 D-184：布局工具加「层级树」与「元素注释字段」（2026-10-04）
+
+> 触发：用户 2026-10-04 —— **「给那个前端编辑界面添加功能：界面和弹窗的层级…显示为树状的层级包含关系（如主界面中有弹窗，
+> 通过弹窗的某个按钮可以进入另一个界面这样）」** + **「同时为每个元素添加一个注释字段。这个字段以自然语言描述其功能，
+> 具体实现时若该元素有不完整或未实现的功能则根据此字段补齐其功能」**。决策记录见 `docs/decisions.md` §14.19。
+
+**① 层级树**（[tools/layout/lab.html](tools/layout/lab.html)，取代平铺清单成为左栏默认视图）
+
+根是 `hub`，其下先列元素，再把每个元素 `target` 指向的画面**嵌在该元素底下**（表达"点这个能进那个"）：
+
+```
+▢ hub                       整屏  16 元素 · 无人指向
+ ├─ ● 用户头像               goto-profile
+ ├─ ● 角色卡                 config-open
+ │   └─ ▣ modal_role_slots  弹窗  ← 从 crest_role 进入 · 7 元素 · 被 1 处指向
+ │       ├─ ● slot_1         plugin-pick
+ │       │   └─ ▣ modal_role_plugin_pick  弹窗  ← 从 slot_1 进入
+ │       └─ ● slot_2         plugin-pick
+ │           └─ ↩ modal_role_plugin_pick  已在上方      ← 不重复展开
+还有这些画面（2）（没有任何元素指向它们，所以不在上面的包含关系里）
+```
+
+- `▢`/`▣` = 整屏/弹窗；`├─└─│` = 包含层级；`●`/`◇` = 按钮/装饰件
+- **`↩ 已在上方`** = 该画面已在树的上面画过 → 只显示一行引用（**避免 `A→B→A` 这类合法循环无限展开**，树有界）
+- **点画面行** = 切到那个画面；**点元素行** = 选中它（属性面板跟着变）
+- 左下角可在「层级 / 平铺」间切换（平铺 = 原来的当前画面元素清单）
+- 顶部统计：`N 个画面（M 弹窗 / K 整屏） · E 个元素 · 注释 x/E · 待补齐 y`
+
+**② 元素注释字段 `desc`**（右侧属性面板）
+
+自然语言写清"这一块干什么、点了会怎样、有哪些失败路径"。**设计期字段，产品渲染不消费**
+（`render.js`/`layout-data.js` 都不读）；用途就是 ① 每个元素有可读职责说明 ② **作为"补齐功能"的依据**。
+
+- 边打边存（`input` 即时落进布局表，JSON 面板可见）；**每次输入一个撤销快照**；清空即删字段（不留空串）
+- 状态行实时提示：没写 → 「还没写注释」；写了但有空缺 → 「按注释看还有未落地的部分：缺 action · target 没有对应动作 · 缺素材」；没空缺 → 「注释已写」
+- 树里用 **`💬`** 标有注释、**`⚠`** 标待补齐
+
+**③ 新增 `validateHierarchy` 并接进 `validateBundle`**
+
+| 级别 | 判据 |
+|---|---|
+| error | 元素的 `target` 指向**不存在的画面** |
+| error | 声明了 `target` 但 `action` 是**纯本地动作**（空 / `wait` / `none` / `noop`）→ 点了进不去那个画面 |
+| warn | `role='modal'` 且没有任何元素指向它 → 永远不会弹出来 |
+| warn | `role='screen'` 且没有任何元素指向它（也不是 `hub`）→ 从别的画面进不去 |
+
+> 第二条**刻意不写成固定动作白名单**：布局表在导入期会被 `import-layout.js` 把
+> `config-open`/`plugin-pick`/`slot-set` 等重写成 `layout-open`，合法动作是一整个家族；
+> **循环引用合法**，只按"被指向"处理。同时**去掉**旧的那条重复 `target` 存在性检查。
+
+**④ 产物同步**：`normalizeElement` 保留 `desc`（随布局表落盘、穿过快照往返）；
+`make-engine.js` 已重跑 → [public/layout-engine.js](public/layout-engine.js) 同步拿到 `validateHierarchy`（digest `0e3f7269ab637f16`）。
+
+**机器核对（三套全绿）**
+
+| 命令 | 结果 |
+|---|---|
+| `node runtime/check-lab.js` | ✓ core 脚本语法 OK（764 行）· ✓ app 脚本语法 OK（1280 行）· ✓ 新工具按钮与面板齐备 |
+| `node runtime/test-layout-lab.js` | **13 组**核心断言全过（含"消息带 `[画面名]` 前缀"与"默认画面集合 0 error"） |
+| `node runtime/test-layout-lab-browser.js` | **15 组** jsdom 真 DOM 断言全过 —— 新增两组：**⑬ 层级树**（树默认可见 / 弹窗行缩进更深 / 引用行收敛且树有界 / **每个画面都出现在树里** / 点画面行切屏 / 点元素行选中）**⑭ 注释字段**（即时落盘 / `💬` 标记 / 一次撤销回到本次编辑前的文本 / 清空即删字段 / 状态行三段文案） |
+| 全仓回归 | `npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件）、`npm run e2e` **22/22** |
+
+**已知现状（待你决定）**：`desc` 目前**全部为空** —— 功能是"有地方写、写了能落盘、能标出待补齐"，
+但**还没有任何元素真的写了注释**。要不要我把主界面已画好的 22 个元素的注释**按 03 分册的屏幕清单填一遍**（作为样板），说一声即可。
+
+---
+
 ## 1. 文档体系（权威链）
 
 ```

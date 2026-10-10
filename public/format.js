@@ -2059,7 +2059,102 @@
     });
   }
 
+  /* ---------- F10/D-180：战绩 / 防守战绩（`records` 屏；设计依据 05 分册同族的列表口径） ---------- */
+
+  var RECORDS_EMPTY_TEXT = '（没有战绩：打一场快速对战或排位就会出现在这里）';
+  var RECORD_RESULT_LABEL = { win: '胜', loss: '负', draw: '平' };
+  var RECORD_ROLE_LABEL = { attacker: '进攻', defender: '防守' };
+  var RECORD_MODE_LABEL = { quick: '快速', ranked: '排位' };
+
+  function recordsOf(env) {
+    var list = pick(env, 'data.records');
+    return Array.isArray(list) ? list : [];
+  }
+
+  /** 毫秒时间戳 → `MM-DD HH:mm`（本地时区；缺值回落 `—`） */
+  function clockText(ms) {
+    if (typeof ms !== 'number' || !isFinite(ms) || ms <= 0) return '—';
+    var d = new Date(ms);
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  /** 单条战绩 → 一行文字（`时间 · 对手 · 攻/防 · 胜/负/平 · N tick · 积分 ±d`） */
+  function recordLineText(rec) {
+    var parts = [clockText(pick(rec, 'at'))];
+    parts.push('对手 ' + or(pick(rec, 'opponentPublicId'), '（未知）'));
+    var role = str(pick(rec, 'role'));
+    parts.push(RECORD_ROLE_LABEL[role] === undefined ? '—' : RECORD_ROLE_LABEL[role]);
+    var mode = str(pick(rec, 'mode'));
+    parts.push(RECORD_MODE_LABEL[mode] === undefined ? '—' : RECORD_MODE_LABEL[mode]);
+    var result = str(pick(rec, 'result'));
+    parts.push(RECORD_RESULT_LABEL[result] === undefined ? '无效' : RECORD_RESULT_LABEL[result]);
+    parts.push(num(pick(rec, 'ticks')) + ' tick');
+    var delta = pick(rec, 'pointsDelta');
+    if (typeof delta === 'number' && isFinite(delta)) parts.push('积分 ' + (delta >= 0 ? '+' : '') + String(delta));
+    if (pick(rec, 'seen') === false) parts.push('未读');
+    var reason = str(pick(rec, 'reason'));
+    if (reason !== null) parts.push('（' + reason + '）');
+    return parts.join(' · ');
+  }
+
+  function recordsHeadText(env) {
+    var list = recordsOf(env);
+    return '共 ' + num(list.length) + ' 条（本页）'
+      + ' · 未读 进攻' + num(pick(env, 'data.unread.attack')) + '/防守' + num(pick(env, 'data.unread.defense'))
+      + ' · 全局水位 ' + num(pick(env, 'data.maxSeq'));
+  }
+
+  function defenseLineText(env) {
+    return '被抽 ' + num(pick(env, 'data.drawnCount')) + ' 场'
+      + ' · 胜 ' + num(pick(env, 'data.stats.wins'))
+      + ' / 平 ' + num(pick(env, 'data.stats.draws'))
+      + ' / 负 ' + num(pick(env, 'data.stats.losses'))
+      + ' · 未读 ' + num(pick(env, 'data.unread'));
+  }
+
+  function recordsViewModel(state, notice, busy) {
+    var rec = state.records ? state.records : { envelope: null, defense: null, role: '', notice: null };
+    var env = rec.envelope;
+    var loaded = env !== null && isOk(env);
+    var lines = [];
+    var rows = [];
+    // 最近一次操作（推进未读游标）的结果：与屏级 notice 分开显示，避免被切屏清掉时连带丢失
+    if (rec.notice !== null) lines.push(rec.notice);
+    var defEnv = rec.defense;
+    if (defEnv !== null && isOk(defEnv)) lines.push('防守战绩：' + defenseLineText(defEnv));
+    else lines.push('防守战绩：（点「刷新」读取）');
+    if (!loaded) {
+      lines.push('（尚未读取战绩：点「刷新」）');
+    } else {
+      lines.push(recordsHeadText(env));
+      var list = recordsOf(env);
+      if (list.length === 0) lines.push(RECORDS_EMPTY_TEXT);
+      rows = list.map(function (item) { return { text: recordLineText(item), buttons: [] }; });
+    }
+    var role = rec.role;
+    return vm('对战历史', {
+      notice: notice,
+      hint: '只读 GET /me/records 与 /me/defense；「标记已读」推进未读游标（游标推进的唯一入口）',
+      lines: lines,
+      rows: rows,
+      buttons: [
+        { action: 'records-filter', label: '全部', kind: 'button', disabled: busy || role === '', role: '' },
+        { action: 'records-filter', label: '只看进攻', kind: 'button', disabled: busy || role === 'attacker', role: 'attacker' },
+        { action: 'records-filter', label: '只看防守', kind: 'button', disabled: busy || role === 'defender', role: 'defender' },
+        { action: 'records-seen', label: '标记已读', kind: 'button', disabled: busy },
+        { action: 'refresh-records', label: '刷新', kind: 'button', disabled: busy },
+        { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
+      ],
+    });
+  }
+
   // 动作层用的"取载荷 + 文案"投影（动作层不读响应字段：UI-9）
+  function recordsOkText(env) {
+    return '已推进未读游标：进攻未读 ' + num(pick(env, 'data.unread.attack'))
+      + ' / 防守未读 ' + num(pick(env, 'data.unread.defense'));
+  }
+
   function rankedResultAt(env, index) {
     var list = resultsOf(env);
     return index >= 0 && index < list.length ? list[index] : null;
@@ -3090,6 +3185,10 @@
       { action: 'config-open', label: '出战配置3', kind: 'button', disabled: busy, slot: 'slot3' },
       { action: 'goto-ai-editor', label: 'AI编辑', kind: 'button', disabled: busy },
       { action: 'goto-settings', label: '设置', kind: 'button', disabled: busy },
+      // F10/D-180：对战历史（真屏，B30 的 /me/records + /me/defense）。
+      //   布局表里那颗同名按钮原本是 import-layout 的 intent fix 造成的**死按钮**（只发提示不切屏），
+      //   那颗 fix 已删；入口改由这里提供（布局渲染时它落在 footer，文字渲染时它就在这一排里）。
+      { action: 'goto-records', label: '对战历史', kind: 'button', disabled: busy },
     ];
     // 02-accounts.md §3.3：仅 state.session.isAdmin === true 才渲染管理入口；普通账号**完全**不出现
     if (state.session && state.session.isAdmin === true) {
@@ -3100,7 +3199,11 @@
     //   下方保留"布局里没有的动作入口"：阵容编辑（config-open —— 旧编辑器仍在，作详细编辑用）、刷新、管理员面板。
     //   其余动作（仓库/排行/对战/切显示配置/装配/清空插槽…）全部由布局表里的按钮承担。
     if (layoutReady() && state.profile) {
-      var keep = { 'refresh-hub': 1, 'config-open': 1, 'goto-admin': 1 };
+      // F10/D-180：footer 里保留「布局表没画、但必须有入口」的四类动作：
+      //   刷新（取齐三份数据）/ 阵容编辑（旧编辑器的详细编辑）/ 管理面板（仅管理员）/ **对战历史**。
+      //   最后这条是把 `goto-records` 从死按钮救回来的入口 —— 布局表里的「对战历史」原本被
+      //   import-layout 的 intent fix 造成按钮，那颗 fix 已删（它只发提示不切屏），故入口收在这里。
+      var keep = { 'refresh-hub': 1, 'config-open': 1, 'goto-admin': 1, 'goto-records': 1 };
       var seen = {};
       var footer = [];
       buttons.forEach(function (b) {
@@ -3310,6 +3413,7 @@
     if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
     if (state.view === 'tournament') return tournamentViewModel(state, notice, busy);   // F7（05 分册）
     if (state.view === 'leaderboard') return leaderboardViewModel(state, notice, busy); // F7（05 分册）
+    if (state.view === 'records') return recordsViewModel(state, notice, busy);         // F10（D-180）
     if (state.view === 'ai-editor') return aiEditorViewModel(state, notice, busy);      // F5（06 分册）
     if (EMPTY_PAGES[state.view] !== undefined) return emptyPageViewModel(state, notice, busy);
 
@@ -3383,6 +3487,8 @@
     NICKNAME_MAX_TEXT: NICKNAME_MAX_TEXT,
     EMPTY_WAREHOUSE_TEXT: EMPTY_WAREHOUSE_TEXT,
     PACKAGE_OK_TEXT: PACKAGE_OK_TEXT,
+    RECORDS_EMPTY_TEXT: RECORDS_EMPTY_TEXT,
+    recordsOkText: recordsOkText,
     pick: pick,
     isOk: isOk,
     errorCodeOf: errorCodeOf,

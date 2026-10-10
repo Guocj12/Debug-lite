@@ -367,9 +367,68 @@
 
 ---
 
-## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
+### 14.15 前端回退到「文字+按钮」并建立屏幕注册表地基（2026-10-04 追加，D-180）
 
-- 已随 B21 校准定稿：`movePx=64`、`dodgePx=128`、`collisionDmgMul=0.8`、`baseHitMul=0.8`、`defendDefMul=1.6`、`dodgeChanceBonus=0.20`（**D-127**）、`defK=40`（入表，**D-128**）、`overtimeRatio=0.0625`、`overtimeStart=48`、`hardCapTick=64`、`baseDef=64`、`backstab=1.5`——全部冻结于 `battle-config.json`。
+> ⚠️ **本节的"回退范围"已由 §14.16 的 D-181 撤销**（用户澄清要的是**完整功能齐备、仅缺图形渲染**的那一版）；
+> 本节的两条**保留项**（布局工具、主界面布局）与**屏幕注册表**继续有效。
+
+> 触发：用户 2026-10-04 裁定——**「先回退到只有文字和按钮版本前端的干净状态，先给完整前端打基础，
+> 都完成后我再依次手动实现每个屏幕的完整布局；但现有的布局工具和已经完成的主界面 UI 布局要保留」**。
+> 设计权威 = `docs/frontend/08-foundation.md`（新增）；实现对账见 `docs/progress.md` §0.10。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-180** | ⚠️ **前端回退批 + 屏幕注册表（用户 2026-10-04 拍板；六条口径）**：<br>① **回退范围**：除 F1 登录链（`login`/`register`/`password`）与用户详情（`profile`）外，**其余 9 屏全部退化为占位页**（`warehouse`/`settings`/`quick`/`tournament`/`leaderboard`/`records`/`ai-editor`/`admin`/`accounts`）；占位页规格 = 标题 + 「尚未实现」 + 「计划：…」 + 一颗「返回主界面」，**零请求**。被删的前端实现（管理面 / 旧出战配置编辑器 / 仓库与开包 / 设置 / 快速对战与查看器 / 锦标赛 / 排行榜 / AI 编辑器）归档进 `docs/archive/frontend-f2-f8/`，**后端端点一律不动**。<br>② **保留**：`tools/layout/**` 布局工具全套 + 四条 npm 脚本 + `public/layout-engine.js` + `public/layout-data.js`（hub 整屏与 8 个径向弹窗）+ `public/app.css` + 主界面的布局表/引擎/投影/7 个 `layout-*` 动作 + 154 张素材。**主界面仍由布局表渲染**。<br>③ **屏幕注册表（唯一真源）**：新增 `public/screens.js`，每屏声明 `{title,status,plan,layout,project,actions,data}`；`store.VIEWS` **由它派生**，`format.viewModel` 改为**查表分发**，屏清单与屏分发**不得再手写**。<br>④ **主界面底部入口清理**：`hubViewModel` 的 footer 整段删除（`refresh-hub`/`config-open`/`goto-admin` 三颗补充入口全清）；布局表里指向待重做屏的 6 个 `goto-*` 入口按钮与死按钮 `goto-records` 一并移除；**唯一例外** = 非布局兜底屏保留恰好一颗 `refresh-layout`（否则数据取不齐时用户无路可走，与总纲 §4.1「按钮永不无声」冲突；登记为偏差 K-1）。<br>⑤ **新增机器门禁 7 条**（`tests/frontend/foundation-contract.test.js` 的 FD-1..FD-7）：注册表 ≡ `store.VIEWS`；ready⇒project 真有实现 / todo⇒零请求；**布局整屏 ↔ 注册表双向一一对应**；**注册表动作并集 ≡ `ACTIONS` 键集**（双向）；源码级禁手写屏名与 `state.view === '…'` 链式分发；**布局台 core 与 `layout-engine.js` 的 digest 一致**（`make-engine.js` 一直声称有这条测试、实际不存在）；**`app.css` 覆盖 `render.js` 输出的每个 `dl-*` 类名**。<br>⑥ **连带修掉的既有真缺陷**（4 条，全部有实测证据）：**(a)** `tools/layout/import-layout.js` 的 `SKILLS[0].screen` 写成 `model_skill1_slots`（少一个 `a`），而结构性修正①先把它改名为 `modal_skill1_slots` ⇒ 第②/③条修正对**技能 1**整段静默失效：`slotsFrom` 丢 `pos`、`new_1` 仍是 `goto-hub`/`新元素` ⇒ 生产环境**点技能 1 的"再看一次"会按"换角色"投影**（无任何测试覆盖）；**(b)** `render.js` **从不消费** `vm.layout.background` ⇒ `assets/bg/hub_main.webp` 与 `.dl-screen-bg` 一直是死的，主界面背景图从未生效；**(c)** `app.css` 缺 `.dl-ph` 规则 ⇒ 缺素材时屏幕上"什么都没有"而不是占位框（与 `07-layout-tool.md` §3.2 的描述不符）；**(d)** 布局投影把 `'hub'` 与 `hub.background` 写死 ⇒ 泛化为 `layoutScreenVm(state, view)`；同时 `state.hub` 更名 `state.layout`（它承载的是所有布局屏的通用状态）。<br>⑦ **两处登录链真缺陷（实现期实测发现）**：**(a)** `submit-register` 把 `nickname` 直接透传，留空时下发 `""` → 服务端 schema 判「昵称需 1~16 字符」→ 400（**注册永远失败**）⇒ 留空时**不下发该字段**；**(b)** 登录/注册成功后调 `loadHub(ctx)` 依赖 `ctx.state.session.token`，而动作内的 `ctx.state` 是**执行开始时的快照**（`dispatch` 不回写它）⇒ 读到 null → `sessionLost` ⇒ **刚登录就被登出**；且 `loadHub` 的「档案已刷新」提示会盖掉"注册成功" ⇒ 两个取数函数改为**显式收 token**，成功文案移到取数**之后**。<br>⑧ **D-179 引用的编号本批才真正登记**（`public/format.js` 自 F9 起就写着「F9/D-180」，但 `decisions.md` 里从未有 D-180 —— 编号悬空，本批一并关闭）。 | 设计：`docs/frontend/08-foundation.md`（§2 注册表契约 I-1..I-8 / §3 保留删除清单 / §4 门禁 / §7 已知偏差 K-1..K-6）<br>代码：`public/screens.js`（新）、`store.js`、`format.js`、`actions.js`、`render.js`、`app.js`、`app.css`、`index.html`（删 `ai-editor.js`/`ai-blueprint.js`）<br>工具：`tools/layout/import-layout.js`（拼写修正 + 删死按钮 intent fix）<br>核对：`tests/frontend/foundation-contract.test.js`(7) + `boot-wiring.test.js`(7) + `auth-ui-contract.test.js`(13) + `auth-field-contract.test.js`(6) + `auth-flow.test.js`(14) + `button-payload-contract.test.js`(3) + `render-escaping` / `static-hosting` / `layout-tool-assets` / `layout-tool-server`<br>存档：`docs/archive/frontend-f2-f8/`（被删实现与测试） |
+
+---
+
+
+---
+
+### 14.16 撤销 D-180 的回退范围，恢复完整「文字+按钮」前端（2026-10-04 追加，D-181）
+
+> 触发：用户 2026-10-04 澄清 —— **「我是说回退到完整的只有按钮和文字的那一版前端页面，所有功能都完整可用只是没有图形渲染的那一版」**。
+> 即 D-180 的回退范围**收得过狠**（只留登录链 + 9 个占位页）；用户要的是**功能齐备、仅缺图形渲染**的那一版。
+> D-180 的两条保留要求（布局工具、主界面布局）继续有效。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-181** | ⚠️ **恢复完整文字前端（撤销 D-180 的删除范围；保留 D-180 的两条保留项 + 屏幕注册表）**：<br>① **恢复**：前端全部屏与其完整功能回到 `HEAD` 状态 —— `format.js`（190 个导出）/ `store.js`（13 屏 + 11 个状态切片）/ `actions.js`（112 个动作）/ `render.js` / `app.js` / `contract.js` / `index.html` / `ai-editor.js` / `ai-blueprint.js`，以及配套的 21 个 `tests/frontend/*` 文件。**做法 = `git checkout HEAD -- <这些文件>`**（那版本身就是"完整文字+按钮"版），不是重写。<br>② **继续保留**（D-180 口径③不变）：`tools/layout/**` 布局工具、`public/layout-engine.js`、`public/layout-data.js`（hub 整屏 + 8 径向弹窗）、`public/app.css`、7 个 `layout-*` 动作 —— **主界面仍由布局表渲染**（`boot.js` 注入 `format.setLayout`；未注入或 `/me` 未到时回落**完整文字主界面**）。<br>③ **屏幕注册表继续存在**：`public/screens.js` 已更新为**完整 14 屏**（13 屏 + 新增 `records`），`store.VIEWS` 与它逐条相等；它是"加屏只改一处"的登记点。`index.html` 已加载它。<br>④ **`goto-records` 从死按钮接成真屏（新增 `records` 屏）**：修前它只发一句「尚未实现」、不切屏（违反总纲 §4.1）。本轮接上自 B30 就绪、前端从未接的两个端点：`GET /me/records`（`?limit=` / `?role=attacker\|defender`）与 `GET /me/defense` —— 新增 `store` 的 `records` 切片（含"只落地与请求一致的角色"的防旧响应覆盖守卫）+ `format.recordsViewModel`（逐行：时间/对手/攻防/模式/胜负/tick/积分变化/未读）+ 4 个动作（`goto-records` 改为切屏取数、`refresh-records`、`records-filter`、`records-seen`）+ `api.records/defense/recordsSeen` + 按钮载荷 `data-role`；字段登记进 `contract.js`（9 条）与 03 分册 **§5.4**（放在 §5.3 之前，避免 WH-11 的物品字段扫描把它当物品字段）。<br>⑤ **D-180 的连带修复继续有效**（与回退范围无关，属独立缺陷）：`import-layout.js` 的 `model_skill1_slots` 拼写（技能 1 弹窗一直按"换角色"投影）、`render.js` 消费 `vm.layout.background`（主界面背景图此前从未生效）、`app.css` 的 `.dl-ph` 占位样式、布局投影泛化、`07-layout-tool.md` 的素材计数与"真图保护"口径修正、`assets-inbox/README.md` 的 `tools/layout/` 路径。**D-180 记录的"登录链两处修复"（注册空昵称 400 / `loadHub` 读旧快照 token）不再适用** —— 那两处是本会话为"骨架版"新写的 `actions.js` 引入的，`HEAD` 版实现无此问题。<br>⑥ `docs/frontend/08-foundation.md` **保留为"屏幕注册表"的设计依据**，但其 §3.2 的删除清单与 §7 的偏差 K-1 **已作废** —— 以本条为准。 | 恢复：`git checkout HEAD -- public/{format,store,actions,render,app,contract,index.html,ai-editor,ai-blueprint}.* tests/frontend/*`<br>保留：`tools/layout/**`、`public/{layout-engine,layout-data,app.css}`、`boot.js` 的 `format.setLayout` 注入<br>新增：`records` 屏（`store`/`format`/`actions`/`api`/`render`/`contract` + 03 分册 §5.4）<br>注册表：`public/screens.js`（14 屏，与 `store.VIEWS` 逐条相等）<br>核对：`npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件）、`npm run e2e` **22/22** |
+
+---
+
+### 14.17 前端整体回到「纯文字 + 按钮」：主界面也不再走布局表渲染（2026-10-04 追加，D-182）
+
+> 触发：用户 2026-10-04 再次澄清 —— **「现在前端主界面屏仍然有图形渲染 完全回退到只有文字和按钮的界面」**。
+> D-181 恢复了完整文字前端，但**保留了 F9 的布局表驱动主界面**（那是用户上一轮明确要求"保留"的）。
+> 本轮用户进一步要求：**主界面也要回到文字+按钮** —— 即**整体关掉图形渲染**。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-182** | ⚠️ **关闭布局表驱动渲染（前端 14 屏全部为文字 + 按钮）**：<br>① **做法 = 不再把布局表交给投影层**：`public/boot.js` **删掉** `DL.format.setLayout(DL.layoutEngine, DL.layoutData)` 的调用（原三行保留为注释，就在原位，作为"重新打开"的开关）。`format.js` 的 `layoutReady()` 因此恒为 `false` ⇒ `hubViewModel` 走**文字版**（摘要行 `昵称 · 段位 · 积分 · 未读 进攻a/防守d · 在池` + 12 颗按钮：用户/仓库/快速对战/锦标赛/排行榜/出战配置1-3/AI编辑/设置/对战历史/刷新）。<br>② **`format.js` / `store.js` / `actions.js` / `render.js` / `layout-engine.js` / `layout-data.js` / `app.css` 的布局代码全部原样保留**（只是没有调用方）—— 这样"重新打开图形主界面"只需把那三行注释解掉，**不需要重新实现**。<br>③ **布局工具 `tools/layout/**` 与四条 npm 脚本、154 张素材、`layout-data.js` 的 hub 整屏 + 8 径向弹窗 全部保留**（D-180 口径③的核心要求不变）。<br>④ **效果**：全部 14 屏的渲染路径现在**完全一致**（都是 `vm.lines` + `vm.buttons` + 屏内弹窗块），没有任何百分比定位 / 多边形 `clip-path` / 背景图层 / 径向弹窗流。`index.html` 仍加载 `layout-engine.js` 与 `layout-data.js`（保留以便一键重开），但它们不产生任何 DOM。<br>⑤ **机器核对现状（需知悉）**：`tests/frontend/` 里有一批**布局专项**用例（`layout-tool-assets` LT-*、`layout-tool-server` LS-*、`hub-warehouse-flow` WH-1、`admin-ui-contract` AU-1 的 `F9_ACTIONS` 并集）—— 它们为了核对布局**能力**仍在测试内**显式注入**布局表（`format.setLayout(...)`），因此**仍然全绿**；也就是说这些用例现在核对的是"**布局能力还在且没坏**"，而**不再是"浏览器里主界面走布局渲染"**。浏览器里实际走哪条路，由 `boot.js` 的开关决定（本轮已核验：真实 `index.html` 装配下 `layoutReady()===false`，主界面 HTML 内**不含** `dl-screen`/`dl-el`/`dl-screen-bg`）。 | 改动：`public/boot.js`（注释掉 `setLayout` 注入 + 写明重开开关）<br>保留：`tools/layout/**`、`public/{layout-engine,layout-data,app.css}`、`format.js` 的全部 `lay*` 投影与 `layout-*` 动作<br>核对：`npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件）、`npm run e2e` **22/22**<br>浏览器路径核验（真 `index.html` 清单装配 + `node:vm` 假 DOM）：`layoutReady()===false`；14 屏 HTML 全不含 `dl-*` 布局类；主界面 = 文字摘要区 `#lines` + 10 类按钮（`goto-warehouse`/`goto-quick`/`goto-tournament`/`goto-leaderboard`/`goto-ai-editor`/`goto-settings`/`goto-records`/`goto-profile`/`config-open`/`refresh-hub`） |
+
+---
+
+### 14.18 清理占位素材（2026-10-04 追加，D-183）
+
+> 触发：用户 2026-10-04 —— **「占位用的图片素材也清理掉」**。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-183** | ⚠️ **删除 154 张程序生成的占位图**：<br>① **删除范围 = `tools/layout/placeholders.json` 的 `generated` 登记表所列的全部路径**（154 个：角色 11 / 技能 4 / 插件 41 / AI 节点 54 / 包 5 / 品质框 5 / 段位 5 / 背景 1 / 界面按钮 28），删完 **`public/assets/**` 为空**（空子目录一并移除，`public/assets/` 本身保留）。<br>② **`placeholders.json` 的 `generated` 清空**（结构保留），此后重跑生成器不会再看见"已登记"的路径；`make-placeholder-assets.py` 的 `can_write` 对未登记路径仍然放行 ⇒ **随时可重新生成**（`python tools/layout/make-placeholder-assets.py`）。<br>③ **清单重算**：`npm run assets:manifest` 后 `tools/layout/assets-manifest.json` 的 summary 变为 `total 158 / present 0 / placeholder 0 / real 0 / missing 154 / coreMissing 54`；`docs/frontend/assets-manifest.md` 同步（**清单仍完整列出该有的条目** —— 它是"要画哪些图"的依据，不因文件缺失而缩水）。<br>④ **布局表的 asset 引用原样保留**（`layout-data.js` 仍写着 `assets/role/role_bal.webp` 等）—— 因为 **D-182 已关闭布局渲染**，这些路径在浏览器里不产生任何 DOM；重开图形主界面前先补素材即可（`wire-assets-into-layout.js` + 生成器/真图）。<br>⑤ **LT-4 的口径随之修正**（原来断言"core 条目必须全部到位"，那是占位图还在时的正确状态；素材清空后它会误报）：改为断言**清单完整性 + present 标记与磁盘一致**（`present` 的条目文件必须真在；`summary.missing` 必须等于磁盘实际缺失数；数据表里每个可见对象必须仍在清单里**有条目**）。<br>⑥ `docs/frontend/07-layout-tool.md` §3.2 的"143/154 张占位图"改为**如实描述当前为 0**，并说明重新生成与归位真图的流程。 | 删除：`public/assets/**` 的 154 个文件（清单见 `tools/layout/placeholders.json`）<br>登记表：`tools/layout/placeholders.json`（`generated` 清空）<br>清单：`tools/layout/assets-manifest.json` + `docs/frontend/assets-manifest.md`<br>口径：`tests/frontend/layout-tool-assets.test.js` 的 **LT-4**<br>核对：`npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件） |
+
+---
+
+### 14.19 布局工具：层级树 + 元素注释字段（2026-10-04 追加，D-184）
+
+> 触发：用户 2026-10-04 —— **「给那个前端编辑界面添加功能：界面和弹窗的层级…显示为树状的层级包含关系」** +
+> **「同时为每个元素添加一个注释字段。这个字段以自然语言描述其功能，具体实现时若该元素有不完整或未实现的功能则根据此字段补齐其功能」**。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-184** | ⚠️ **布局台（`tools/layout/lab.html`）新增两项能力**：<br>① **层级树取代平铺清单成为左栏默认视图**：把"界面／弹窗的**包含关系**"画成树 —— 根是 `hub`，其下先列元素，再把每个元素 `target` 指向的画面**嵌在该元素底下**（表达"点这个能进那个"）。重复出现的画面（含 `A→B→A` 这类**合法循环**）只画一行 `↩ 已在上方` 的**引用行**，**绝不无限展开**；没有任何元素指向的画面单列一节"还有这些画面"。点画面行 = 切过去，点元素行 = 选中。左下角可在「层级 / 平铺」间切换（平铺保留原行为）。<br>② **每个元素新增 `desc` 字段（自然语言注释）**：右侧属性面板的输入框，边打边存（`input` 即时落进布局表，**每次输入一个撤销快照**）、清空即删字段（不留空串）。它是**设计期字段**：产品渲染（`render.js` / `layout-data.js`）**不消费**；用途是 ① 让每个元素有可读的职责说明，② **作为"功能补齐"的依据** —— 元素功能不完整/未实现时照这条注释补。状态行实时提示「还没写注释」/「按注释看还有未落地的部分：缺 action · target 没有对应动作 · 缺素材」/「注释已写」。树里用 💬 标记有注释、⚠ 标记待补齐。<br>③ **新增 `validateHierarchy(bundle)` 并接进 `validateBundle`**：`target` 指向不存在的画面 → **error**；声明了 `target` 但 `action` 是纯本地动作（空/`wait`/`none`/`noop`）→ **error**（点了进不去那个画面）；弹窗/整屏**没有任何元素指向它** → **warn**。**刻意不写成固定动作白名单** —— 布局表在导入期会被 `import-layout.js` 把 `config-open`/`plugin-pick`/`slot-set` 等重写成 `layout-open`，合法动作是一整个家族；**循环引用合法**，不报错。同时**去掉**旧的那条重复 `target` 存在性检查（原来散在 `validateBundle` 里）。<br>④ **`normalizeElement` 保留 `desc`**，故注释随布局表落盘（`layout-bundle.raw.json`）并穿过 normalize/快照往返；`make-engine.js` 已重跑，产品侧 `public/layout-engine.js` 同步拿到 `validateHierarchy`（digest `0e3f7269ab637f16`）。 | 改动：`tools/layout/lab.html`（core：`normalizeElement` + `validateHierarchy` + `validateBundle`；app：`renderTree`/`elNode`/`screenBranch`/`syncSideMode`/`renderDescHint`/`pDesc` 事件与 CSS）；`public/layout-engine.js`（再生成）<br>文档：`docs/frontend/07-layout-tool.md`（界面速览 + 新增「层级树」与「注释字段」两节 + 校验表）<br>核对：`node runtime/check-lab.js`（两个脚本语法 + 控件齐备）、`node runtime/test-layout-lab.js`（**13 组**核心断言，含"消息带 `[画面名]` 前缀"与"默认画面集合 0 error"）、`node runtime/test-layout-lab-browser.js`（**15 组** jsdom 真 DOM 断言：树可见/弹窗行缩进更深/引用行收敛/树有界/<每个画面都出现在树里>/点画面行切屏/点元素行选中/注释即时落盘/💬 标记/一次撤销回到本次编辑前/清空即删字段/两模式互斥）<br>回归：`npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件） |
+
+## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 - **2026-09-28（D-173）变更**：`crit: 1.5` → **`critBonus: 1.0`**（暴击倍率 = `1 + critBonus + ΣcritMul` = 2.0）；新增 `lowHpThreshold: 0.5`（`rp_lowhp` 低血加攻阈值）。`defK` **保持 40 不变**。
 
 ## 16. 被 D-173 取代的旧决策（字段/机制退役登记，2026-09-28）

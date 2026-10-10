@@ -150,6 +150,11 @@ const aiNodesRes = await request(port, 'GET', '/api/v1/me/ai/nodes', undefined,
     assert.ok(Array.isArray(boardResp.body.data.rows) && boardResp.body.data.rows.length > 0, '榜单应有行');
     assert.ok(boardResp.body.data.self !== null, '带 Bearer 时应有本人名次（F7 §5.1 的宿主）');
 
+    // F10/D-180：战绩与防守战绩（records 屏；B30 端点，此前前端从未接）
+    const recordsRes = await get('/api/v1/me/records?limit=5', token);
+    assert.equal(recordsRes.status, 200, `战绩应有 200：${recordsRes.raw.slice(0, 200)}`);
+    const defenseRes = await get('/api/v1/me/defense', token);
+    assert.equal(defenseRes.status, 200, `防守战绩应有 200：${defenseRes.raw.slice(0, 200)}`);
     const pwd = await post('/api/v1/auth/password', { oldPassword: PASSWORD, newPassword: 'pw87654321' }, token);
     assert.equal(pwd.status, 200);
 
@@ -206,6 +211,7 @@ const aiNodesRes = await request(port, 'GET', '/api/v1/me/ai/nodes', undefined,
       aiValidate: aiVal.body, aiCreate: aiNew.body, aiUpdate: aiPut.body, aiDelete: aiDel.body,
       aiNodes: aiNodesRes.body,
       configs: configs.body, assemble: asm.body, openPackage: openPkg.body,
+      records: recordsRes.body, defense: defenseRes.body,
       quick: quick.body, replay: replayResp.body, ranked: ranked.body, board: boardResp.body,
       error: { dup: dup.body, weak: weak.body, noAuth: noAuth.body },
       adminAccounts: accounts.body, adminDelete: del.body, adminStats: stats.body,
@@ -252,6 +258,9 @@ test('FC-1 每条契约路径都能在真实 HTTP 响应中解析到', async () 
     'me/nickname': { envelopes: [real.nickname], anyOf: false },
     // 提交③：配置列表（编辑器）与装配回带（两步顺序第①步）
     'me/configs': { envelopes: [real.configs], anyOf: false },
+    // F10/D-180：战绩与防守战绩
+    'me/records': { envelopes: [real.records], anyOf: false },
+    'me/defense': { envelopes: [real.defense], anyOf: false },
     'me/warehouse/assemble': { envelopes: [real.assemble], anyOf: false },
     // F2：管理面各组（02-accounts.md §5）
     'admin/accounts': { envelopes: [real.adminAccounts], anyOf: false },

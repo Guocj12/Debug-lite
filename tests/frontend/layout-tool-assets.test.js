@@ -76,12 +76,27 @@ test('LT-4 清单里的 id 都真实存在于数据表（防拼错 / 防过期�
     if (e.kind === 'frame' || e.kind === 'tier') assert.ok(qualityIds.has(e.id), '品质/段位图 id 不在数据表：' + e.id);
   });
   assert.ok(manifest.summary.total > 100, '清单规模可疑地小：' + manifest.summary.total);
-  // 主界面优先的条目必须能被识别出来，且**全部到位**（占位图也算到位；这里不能要求"必须有缺失"，
-  //   否则"把所有素材补齐"这个正确状态反而会把测试判红 —— 与 PLANNED_ACTIONS 哨兵同一类问题）
+  // **D-182：占位素材已清理**（`public/assets/**` 为空、`placeholders.json` 的 generated 已清空）。
+  //   因此清单里"缺口"是**正确状态**，不能再断言"core 无缺口"（那会把清理后的正确状态判红 ——
+  //   与 PLANNED_ACTIONS 哨兵同一类问题：断言实现代理而非不变量）。
+  //   真正该守的不变量是：**清单必须把该有的条目都列出来**（艺术交付时的依据），
+  //   且 `present` 标记必须与磁盘实际一致（不允许"标着已有、文件却不存在"）。
   const core = manifest.entries.filter((e) => e.priority === 'core');
   assert.ok(core.length >= 40, '主界面优先的条目太少（实际 ' + core.length + '）');
-  const coreGap = core.filter((e) => !e.present && !e.optional);
-  assert.deepEqual(coreGap.map((e) => e.path), [], '主界面优先的素材不该有缺口');
+  // ① 标记为 present 的条目，文件必须真的在磁盘上
+  for (const e of manifest.entries) {
+    if (!e.present) continue;
+    assert.ok(fs.existsSync(path.join(REPO, 'public', e.path)), '清单标了 present 但文件不存在：' + e.path);
+  }
+  // ② 缺口数 = 实际不在磁盘上的非可选条目数（逐条复算，防清单与磁盘漂移）
+  const absent = manifest.entries.filter((e) => !e.optional
+    && !fs.existsSync(path.join(REPO, 'public', e.path)));
+  assert.equal(manifest.summary.missing, absent.length,
+    `清单声称缺 ${manifest.summary.missing} 个，实际磁盘上缺 ${absent.length} 个`);
+  // ③ 数据表里每个可见对象都必须仍在清单里**有条目**（哪怕文件还没画）
+  for (const r of dataOf('role-templates.json').roleTemplates) {
+    assert.ok(byPath.has('assets/role/' + r.id + '.webp'), '角色条目不该从清单里消失：' + r.id);
+  }
 });
 
 test('LT-5 归位脚本认这几种文件名写法', () => {

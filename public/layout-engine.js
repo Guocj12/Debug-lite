@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: feb4900cd5a65392）
+ * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: 0e3f7269ab637f16）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -397,13 +397,9 @@
         if (!sc.elements.length) issues.push({ level: 'warn', msg: '[' + n + '] 弹窗画面还没有任何元素' });
         if (!sc.mask || typeof sc.mask.opacity !== 'number') issues.push({ level: 'error', msg: '[' + n + '] 弹窗缺少遮罩配置' });
       }
-      // target 注解必须指向存在的画面（否则预览点不动、真代码也会踩空）
-      sc.elements.forEach(function (el) {
-        if (el.target && !bundle.screens[el.target]) {
-          issues.push({ level: 'error', msg: '[' + n + '] ' + el.id + ' 的 target 指向不存在的画面：' + el.target });
-        }
-      });
     });
+    // 层级（界面/弹窗的包含关系）与注释：target 存在性、target↔action 一致性、孤立画面
+    validateHierarchy(bundle).forEach(function (i) { issues.push({ level: i.level, msg: i.msg }); });
     return issues;
   }
 
@@ -654,6 +650,9 @@
       rect: [0, 0, 1, 1].map(function (_, i) { return round(num((el.rect || [])[i], [0, 0, 1, 1][i]), 2); })
     };
     if (el.target) out.target = String(el.target);      // 设计期注解：点我会打开哪个画面（弹窗流程预览用）
+    // desc：**自然语言注释**（这一块是干什么的）。设计期字段，产品渲染不读它，
+    //   只用于：① 工具里看清每个元素的职责；② 以后照它把"不完整/未实现"的功能补齐。
+    if (el.desc) out.desc = String(el.desc);
     // setState：点击后只改**本地显示状态**（例：切换主界面显示哪个出战配置），不导航、不写服务端
     if (el.setState && typeof el.setState === 'object' && Object.keys(el.setState).length) out.setState = el.setState;
     if (el.label) out.label = String(el.label);
@@ -751,6 +750,61 @@
     return issues;
   }
 
+  /* ---------------- 整包校验：层级 + 注释 ---------------- */
+
+  /**
+   * **层级（界面/弹窗的包含关系）**校验 —— 只在本包层面能判的事：
+   *   ① 每个元素的 target 必须指向一个真实存在的画面（否则"点它打开哪里"是断的）；
+   *   ② 带 target 的元素**必须有一个能进画面的动作**，否则"声明了要进那个画面、点下去却进不去"；
+   *   ③ role==='screen' 且**没有任何元素指向它** → 提醒（要么是死页面，要么该给它加个入口）；
+   *   ④ role==='modal' 且没有元素指向它 → 提醒（弹窗永远不会出现）。
+   *
+   * ⚠️ ② 的判据刻意**不写成固定动作白名单**：本项目的布局表在导入期会被 `import-layout.js` 重写动作
+   *   （`config-open` / `plugin-pick` / `slot-set` … → `layout-open`），所以合法取值是**一整个家族**。
+   *   这里只判"**明显进不去画面的**"：动作空、或动作是纯本地动作（`wait`/`none`/`noop`）。
+   *   目标画面存在性顺带覆盖循环引用 —— 循环**合法**（返回主界面、来回弹窗都算），不报错。
+   */
+  function validateHierarchy(bundle) {
+    var issues = [];
+    var names = Object.keys(bundle.screens || {});
+    var incoming = {};                                  // 画面 → 指向它的元素（用于 ③/④ 与树状图）
+    names.forEach(function (n) { incoming[n] = []; });
+    // "明显进不去画面"的动作（纯本地等待/空操作）—— 其余一律放行（含导入期会被重写的那些）
+    var NO_NAV = ['', 'wait', 'none', 'noop'];
+    names.forEach(function (sn) {
+      var sc = bundle.screens[sn];
+      (sc.elements || []).forEach(function (el) {
+        var tag = sn + ' / ' + (el.id || '(无 id)');
+        if (!el.target) return;
+        if (names.indexOf(el.target) < 0) {
+          issues.push({ level: 'error', msg: tag + '：target 指向不存在的画面「' + el.target + '」（点它会跳进空处）' });
+          return;
+        }
+        incoming[el.target].push(sn + '/' + el.id);
+        var act = String(el.action || '');
+        if (NO_NAV.indexOf(act) >= 0) {
+          issues.push({
+            level: 'error',
+            msg: tag + '：声明了 target「' + el.target + '」，但 action 是「' + (act || '（空）')
+              + '」—— 点了**不会**进那个画面（要给它一个能进画面的 action，或删掉 target）',
+          });
+        }
+      });
+    });
+    names.forEach(function (n) {
+      var sc = bundle.screens[n];
+      var src = incoming[n];
+      if (!src.length) {
+        issues.push({
+          level: 'warn',
+          msg: (sc.role === 'modal' ? '弹窗「' : '整屏「') + n + '」没有任何元素指向它'
+            + (sc.role === 'modal' ? '（永远不会弹出来）' : '（从别的画面进不去）'),
+        });
+      }
+    });
+    return issues;
+  }
+
   return {
     DEFAULT_LAYOUT: DEFAULT_LAYOUT, DEFAULT_BUNDLE: DEFAULT_BUNDLE,
     ANCHOR_X: ANCHOR_X, ANCHOR_Y: ANCHOR_Y, HIT_MODES: HIT_MODES, FIT_MODES: FIT_MODES,
@@ -770,9 +824,10 @@
     pathToStage: pathToStage, stageToPath: stageToPath,
     insertVertex: insertVertex, removeVertex: removeVertex, pointInPolygon: pointInPolygon,
     clamp: clamp,
-    normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout
+    normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout,
+    validateHierarchy: validateHierarchy
   };
 })();
-  CORE.CORE_DIGEST = "feb4900cd5a65392";
+  CORE.CORE_DIGEST = "0e3f7269ab637f16";
   return CORE;
 });

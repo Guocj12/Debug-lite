@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* public/app.js —— 外壳引导：store 装配 + **单一 DOM 写入点** + 事件委托（总纲 §1.5；设计依据 01-auth.md §7）
  *
  * 硬约束（机器核对见 tests/frontend/auth-ui-contract.test.js）：
@@ -192,6 +192,8 @@
       keys.push('node', 'preset');
       // F9/D-180：布局表驱动的按钮载荷（子画面 / 候选行 / 插槽序号 / 装配目标）
       keys.push('screen', 'slotIndex', 'targetUid');
+      // F10/D-180：战绩屏筛选（data-role = attacker/defender）
+      keys.push('role');
       for (var i = 0; i < keys.length; i++) {
         var v = ds[keys[i]];
         if (typeof v === 'string' && v !== '') out[keys[i]] = v;
