@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：tools/layout/lab.html 的 <script id="core">（core digest: bc92e8264e47c818）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: a35bb7e9e6a88bba）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -70,7 +70,7 @@
         elements: [
           { id: 'identity', kind: 'button', label: '{nickname}', action: 'goto-profile', hit: 'rect', anchor: 'lt', rect: [36, 30, 320, 92] },
           { id: 'tier_chip', kind: 'deco', label: '{tierName} · {points} 分', asset: '{tierIcon}', hit: 'rect', anchor: 'lt', rect: [120, 76, 216, 26], z: 2 },
-          { id: 'btn_warehouse', kind: 'button', label: '仓库', action: 'goto-warehouse', hit: 'alpha', anchor: 'lt', rect: [36, 250, 180, 58] },
+          { id: 'btn_warehouse', kind: 'button', label: '仓库', action: 'warehouse-open', target: 'modal_warehouse', hit: 'alpha', anchor: 'lt', rect: [36, 250, 180, 58], press: 'tap' },
           { id: 'btn_ai', kind: 'button', label: 'AI 编辑', action: 'goto-ai-editor', hit: 'alpha', anchor: 'lt', rect: [36, 322, 180, 58] },
           { id: 'btn_settings', kind: 'button', label: '设置', action: 'goto-settings', hit: 'alpha', anchor: 'lb', rect: [36, 394, 180, 58] },
           { id: 'btn_board', kind: 'button', label: '排行', action: 'goto-leaderboard', hit: 'alpha', anchor: 'rt', rect: [1064, 250, 180, 58] },
@@ -127,6 +127,65 @@
           { id: 'pick_row2', kind: 'button', label: '重装（蓝）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 272, 340, 56], z: 6 },
           { id: 'pick_row3', kind: 'button', label: '突击（紫）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 336, 340, 56], z: 6 },
           { id: 'pick_row4', kind: 'button', label: '探针（绿）', action: 'slot-set', payload: { slot: 'slot1', pos: 'role' }, hit: 'rect', anchor: 'rc', rect: [880, 400, 340, 56], z: 6 }
+        ]
+      },
+      // D-188/D-189：**仓库弹窗**的示例画面 —— 与工作区真实布局表（tools/layout/layout-bundle.raw.json）
+      //   同构：6 个选项卡 + 一个 `grid.flow` 可滚动网格 + 底部「关闭」（**没有右上角 X**，用户口径）。
+      //   它的作用是让"内置示例"也能演示仓库弹窗；真实项目以工作区布局表为准（存盘时会被覆盖）。
+      modal_warehouse: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.55, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'wh_panel', kind: 'deco', hit: 'rect', anchor: 'ct', rect: [200, 132, 880, 500], z: 5, nine: { slice: 24 } },
+          { id: 'wh_capacity', kind: 'deco', label: '{whCapacity}', hit: 'rect', anchor: 'ct',
+            rect: [216, 108, 848, 26], z: 7, font: { size: 14, align: 'left' } },
+          { id: 'tab_role', kind: 'button', label: '角色', action: 'warehouse-tab', payload: { bucket: 'role' },
+            hit: 'rect', anchor: 'ct', rect: [205, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'role' },
+          { id: 'tab_skill', kind: 'button', label: '技能', action: 'warehouse-tab', payload: { bucket: 'skill' },
+            hit: 'rect', anchor: 'ct', rect: [361, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'skill' },
+          { id: 'tab_rolePlugin', kind: 'button', label: '角色插件', action: 'warehouse-tab', payload: { bucket: 'rolePlugin' },
+            hit: 'rect', anchor: 'ct', rect: [517, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'rolePlugin' },
+          { id: 'tab_skillPlugin', kind: 'button', label: '技能插件', action: 'warehouse-tab', payload: { bucket: 'skillPlugin' },
+            hit: 'rect', anchor: 'ct', rect: [673, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'skillPlugin' },
+          { id: 'tab_package', kind: 'button', label: '包', action: 'warehouse-tab', payload: { bucket: 'package' },
+            hit: 'rect', anchor: 'ct', rect: [829, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'package' },
+          { id: 'tab_aiNode', kind: 'button', label: 'AI节点', action: 'warehouse-tab', payload: { bucket: 'aiNode' },
+            hit: 'rect', anchor: 'ct', rect: [985, 74, 150, 44], z: 6, press: 'state', pressKey: 'warehouseTab', pressWhen: 'aiNode' },
+          // 容器：固定大小的框，里面按格子尺寸**自动流式排布**；竖放不下 → 本框滚动
+          { id: 'wh_grid', kind: 'deco', hit: 'rect', anchor: 'ct', rect: [216, 148, 848, 452], z: 6,
+            scroll: { dir: 'v' },
+            grid: { flow: true, autoHeight: true, cellW: 96, cellH: 96, gapX: 10, gapY: 10, padX: 10, padY: 10 } },
+          // 网格原型：被 gridFrom 复制成每个格子（本身不显示）
+          { id: 'wh_cell', kind: 'button', label: '{itemName}', action: 'warehouse-item-open', payload: { uid: '{itemUid}' },
+            hit: 'rect', anchor: 'lt', rect: [0, 0, 96, 96], z: 6, asset: '{itemIcon}', press: 'tap' },
+          { id: 'wh_close', kind: 'button', label: '关闭', action: 'modal-close', hit: 'rect', anchor: 'cb',
+            rect: [590, 640, 100, 40], z: 8, press: 'tap' }
+        ],
+        gridFrom: { source: 'tab', container: 'wh_grid', prototype: 'wh_cell' }
+      },
+      // D-189：**物品详情弹窗**的示例画面（与工作区真实布局表同构）。
+      //   点仓库网格里的格子 → `warehouse-item-open` → 弹出这一屏。
+      //   属性区 `det_lines` 可滚动（属性多时不会顶出面板）。
+      modal_item_detail: {
+        role: 'modal',
+        mask: { color: '#000000', opacity: 0.45, closeOnMaskClick: true },
+        background: { asset: '', fit: 'cover' },
+        elements: [
+          { id: 'det_panel', kind: 'deco', hit: 'rect', anchor: 'ct', rect: [390, 130, 500, 470], z: 5, nine: { slice: 24 } },
+          { id: 'det_icon', kind: 'deco', hit: 'rect', anchor: 'lt', rect: [414, 154, 96, 96], z: 6, asset: '{detIcon}' },
+          { id: 'det_title', kind: 'deco', label: '{detTitle}', hit: 'rect', anchor: 'lt',
+            rect: [526, 154, 340, 30], z: 6, font: { size: 18, align: 'left', bold: true } },
+          { id: 'det_sub', kind: 'deco', label: '{detSub}', hit: 'rect', anchor: 'lt',
+            rect: [526, 186, 340, 22], z: 6, font: { size: 13, align: 'left', color: '#8b98ac' } },
+          { id: 'det_lines', kind: 'deco', label: '{detLines}', hit: 'rect', anchor: 'lt',
+            rect: [414, 262, 452, 240], z: 6, scroll: { dir: 'v' }, font: { size: 14, align: 'left', lineHeight: 1.5 } },
+          { id: 'det_open', kind: 'button', label: '开包', action: 'warehouse-package-open', payload: { uid: '{detUid}' },
+            hit: 'rect', anchor: 'cb', rect: [512, 524, 120, 44], z: 7, press: 'tap' },
+          { id: 'det_dismantle', kind: 'button', label: '分解', action: 'warehouse-dismantle', payload: { uid: '{detUid}' },
+            hit: 'rect', anchor: 'cb', rect: [648, 524, 120, 44], z: 7, press: 'tap' },
+          { id: 'det_close', kind: 'button', label: '关闭', action: 'modal-close',
+            hit: 'rect', anchor: 'cb', rect: [590, 578, 100, 36], z: 7, press: 'tap' }
         ]
       },
       modal_skill_pick: {
@@ -1096,6 +1155,6 @@
     PRESS_MODES: PRESS_MODES
   };
 })();
-  CORE.CORE_DIGEST = "bc92e8264e47c818";
+  CORE.CORE_DIGEST = "a35bb7e9e6a88bba";
   return CORE;
 });

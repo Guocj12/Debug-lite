@@ -552,6 +552,38 @@ D-184/D-185 我报过的"✓ 控件齐备"这一条**当时检的是错的文件
 
 ---
 
+### ✅ 已交付：布局台预览改为「真实产品渲染」（D-189，2026-10-05）
+
+> 用户口径：**「完善预览弹窗流程部分，改为预览。可以在里面点击所有可交互的控件，预览完整前端效果。
+> 必要的话可以加点 mock 数据（比如预览仓库和插件列表时需要看滚动视图是否正确）」**。
+
+| 件 | 落点 | 实测 |
+|---|---|---|
+| **预览 = 产品渲染管线** | `format.viewModel(mock 状态)` → `render.render(vm)` → 真实 HTML 进 `#pvstage`；样式与产品同源 | 真 HTTP 验证：渲染出 `.dl-screen` / `.dl-el`（20 个） |
+| **点所有控件 = 真实动作** | 事件委托 `data-action` + `data-*` → `actions.js` 注册表；弹窗栈由 `state.hub.modals` 维护 | 点角色卡 → 弹窗（标题变 `hub ▸ modal_role_slots`）；点遮罩 → 关闭 |
+| **产品模块同源加载** | `ensureProduct` 注入 `/public/*.js`（8 个，含 `api.js`）；**已有 `window.DL` 时直接用** | `file://` 时给出明确原因；真 HTTP 下 8 个模块全加载 |
+| **不发真实请求** | api 换桩；**读接口回带 mock**、写接口回 `{}` | 修前读接口回 `{}` 会把仓库清空（网格 0 格），修后 24 格 |
+| **mock 数据** | `mockMe`/`mockConfigs`/`mockWarehouse`/`mockAiLibrary`，**照真响应逐字段写** | 六桶各 24 件 / 三配置（含空槽）/ AI 库 6 条 |
+| **「仓库件数」开关** | 4 / 24 / 60 / 200 —— 用户点名"要验滚动视图" | 24 件 → 多行多列 + `.dl-scroll`；60 件 → ≥55 格、≥8 行 |
+| **详情弹窗在预览里跑通** | 点格子 → `warehouse-item-open` → 叠第二层弹窗，显示**按类别分组**的属性 | `【基本信息】` 出现；分解/开包按钮按桶给出 |
+| **内置示例补齐两个弹窗** | `DEFAULT_BUNDLE` 加 `modal_warehouse` + `modal_item_detail`（与工作区布局表同构） | 校验 0 error |
+
+**连带修掉三个真缺陷（都留了回归断言）**：
+① **`layScreen` 动作重写无条件执行** —— 把布局表里显式接好的 `warehouse-open` 改成了 `layout-open`
+   （界面没坏、点了走错路）；
+② **上一条修完后走向另一极端** —— 布局表里 `crest_role` 的**遗留 `config-open`** 盖住了它自己的
+   `target`，导致"指定了 target 却打不开弹窗" ⇒ 判据定稿为
+   **「能打开画面的动作族（`OPENS_SCREEN`）优先保留，其余情况 `target` 优先」**；
+③ **`render.js` 的 `layAttrs` 是显式白名单，漏了 `bucket`** —— 仓库格子的 `data-bucket` 根本到不了 DOM
+   （详情弹窗拿不到桶，也就不知道展示哪组属性）—— 已补，纳入 BP-1 双向核对。
+
+**收口实跑**：`npm test` = **1286 通过 / 0 失败**；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`runtime/check-lab.js` 3/3；`runtime/test-layout-lab.js` **13 组**；`runtime/test-layout-lab-browser.js` **16 组**
+（新增 ⑯ 预览）；**真 HTTP 端到端 28/28**（起真 `lab-server` + jsdom `resources:'usable'`，
+走真的 `/public/*.js` 加载路径 —— 这是"预览在真实浏览器里真的能用"的证据）。
+
+---
+
 ## 1. 文档体系（权威链）
 
 ```

@@ -3199,28 +3199,40 @@
     if (!sc) return [];
     var out = C.screenAt(bundle, name, 'landscape', sstate, flat);
     // 布局表 → 产品动作（F9）：布局表只描述"这块是什么、点了该去哪"，具体端点由 actions.js 负责。
-    //   · 带 target 的元素 = 打开该子画面     → layout-open（把目标画面与上下文带给动作）
-    //   · 带 setState 的元素 = 只切显示配置   → layout-switch-config（不改服务端"出战"）
-    //   · config-activate 依赖旧编辑器的草稿  → layout-activate（布局路径直接打服务端）
     //
-    //   ⚠️ **D-188：显式声明的动作优先**（下面每个分支都先看 `e.action` 是否已被布局表指定）。
-    //     重写规则是给"历史布局表里没写动作的老元素"兜底的；一旦布局表自己写了动作
-    //     （如 `warehouse-open` / `config-select`），就**必须原样保留** —— 否则
-    //     "我在布局表里明明接了动作，界面却仍走旧路径"是极难查的一类问题
-    //     （本轮真实踩到：`wh` 的 btn_warehouse 被无条件改成 `layout-open`）。
+    // **判据顺序（D-188 定稿，顺序是承重的）**：
+    //   ① `target` 指向一个**存在的画面**，**且**当前 `action` 不是"能打开画面"的那一族
+    //      → `layout-open`（把目标画面与上下文带给动作）。
+    //      为什么要"且"：布局表里 `action` 常常是**设计期遗留值**（如 `config-open`）——
+    //      它盖住 `target` 就会造成"指定了 target 却打不开弹窗"；
+    //      但 `warehouse-open` 这类**显式接好的**动作本身就会开 `modal_warehouse`，不能改。
+    //   ② 否则，`action` 是布局表显式写的非派生动作 → **原样保留**。
+    //   ③ 否则 `config-activate` → `layout-activate`（旧编辑器的草稿语义 → 布局路径直打服务端）。
+    //
+    // ⚠️ 三个方向都踩过真坑（都留了回归断言）：
+    //   · 无条件重写 → `btn_warehouse` 的 `warehouse-open` 被改成 `layout-open`（界面没坏、点了走错路）；
+    //   · 无条件保留 → 布局表里 `crest_role` 的遗留 `config-open` 盖住了它自己的 `target`，
+    //     导致"指定了 target 却打不开弹窗"；
+    //   · 只看 target 不看 action → 又回到第一条。
     var DERIVED_ACTIONS = { 'layout-open': 1, 'layout-activate': 1 };
+    // 「能打开某个画面」的动作族：这些动作**自带**要开的目标，布局表不应再改写它们。
+    var OPENS_SCREEN = {
+      'layout-open': 1,      // 布局表的通用开画面动作
+      'warehouse-open': 1,   // D-188：打开仓库弹窗（目标就是 modal_warehouse）
+    };
     out.forEach(function (e) {
-      // 布局表**显式写了**一个非派生动作 → 尊重它（例如 warehouse-open / config-select / warehouse-tab）
-      if (e.action && e.action !== 'config-activate' && !DERIVED_ACTIONS[e.action]) return;
-      // D-188：`setState` 的老兜底（→ `layout-switch-config`）**已删除** —— 那个动作随 D-188 下线，
-      //   主界面 1/2/3 现在由布局表**显式**写 `config-select`（见上方早返回）。这里再兜底会指向死动作。
-      if (e.target && bundle.screens[e.target]) {
+      var opens = OPENS_SCREEN[e.action] === 1;
+      // ① target 优先，但"已经接好的开画面动作"除外
+      if (!opens && e.target && bundle.screens[e.target]) {
         var pos = (e.payload && e.payload.pos) || 'role';
         var item = pos === 'role' ? flat._role : layItem(flat._skills[LAY_POS[pos] || 0]);
         e.action = 'layout-open';
         e.payload = { screen: e.target, idx: 0, pos: pos, targetUid: or(pick(item, 'uid'), '') };
         return;
       }
+      // ② 显式声明的非派生动作 → 原样保留
+      if (e.action && e.action !== 'config-activate' && !DERIVED_ACTIONS[e.action]) return;
+      // ③ 旧语义兜底
       if (e.action === 'config-activate') e.action = 'layout-activate';
     });
     if (sc.slotsFrom) {
@@ -3331,8 +3343,8 @@
             rect: [box.rect[0] + rel[0], box.rect[1] + rel[1], rel[2], rel[3]],
             label: it.label, text: it.label, asset: it.icon,
             action: 'warehouse-item-open',
-            payload: { uid: it.uid, bucket: bucket },
-          });
+            // `bucket` 必须带上：详情弹窗按它决定展示哪一组属性、以及给不给「开包 / 分解」按钮
+            payload: { uid: it.uid, bucket: bucket },          });
         });
       }
       // 容量行（`{whCapacity}`）：读投影层自己产出的文本（render 层零逻辑）

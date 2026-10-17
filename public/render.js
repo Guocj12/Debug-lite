@@ -181,6 +181,10 @@
     if (button.screen) out += ' data-screen="' + esc(String(button.screen)) + '"';
     if (button.slotIndex !== undefined && button.slotIndex !== null) out += ' data-slot-index="' + esc(String(button.slotIndex)) + '"';
     if (button.targetUid) out += ' data-target-uid="' + esc(String(button.targetUid)) + '"';
+    // D-188：仓库网格的格子要带上它属于哪个桶（`warehouse-item-open` 靠它决定详情展示哪组属性、
+    //   以及给不给「开包 / 分解」）。**必须登记在这里**，否则 `payload.bucket` 到不了 DOM
+    //   —— 表现是"点格子能开详情、但详情拿不到桶"（本轮真踩到）。
+    if (button.bucket) out += ' data-bucket="' + esc(String(button.bucket)) + '"';
     return out;
   }
 
