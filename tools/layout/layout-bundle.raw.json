@@ -1573,25 +1573,6 @@
             "align": "left"
           },
           "desc": "当前分类的容量与件数（由投影层按 /me/warehouse 的 counts/caps 填）。"
-        },
-        {
-          "id": "wh_close",
-          "kind": "button",
-          "action": "modal-close",
-          "hit": "rect",
-          "anchor": "cb",
-          "rect": [
-            590,
-            640,
-            100,
-            40
-          ],
-          "label": "关闭",
-          "z": 8,
-          "press": "tap",
-          "asset": "assets/ui/wh_close.webp",
-          "assetPressed": "assets/ui/wh_close_pressed.webp",
-          "desc": "关闭仓库弹窗。用户口径取消了右上角 X，所以关在底部居中；点遮罩也可关。"
         }
       ],
       "gridFrom": {
@@ -1758,25 +1739,6 @@
           "asset": "assets/ui/det_dismantle.webp",
           "assetPressed": "assets/ui/det_dismantle_pressed.webp",
           "desc": "分解（删除）这个物品。**直接分解、无二次确认**（用户口径）。AI 节点与包不可分解；被出战配置引用的物品会被服务端拒绝（409 item_in_use）。"
-        },
-        {
-          "id": "det_close",
-          "kind": "button",
-          "action": "modal-close",
-          "hit": "rect",
-          "anchor": "cb",
-          "rect": [
-            590,
-            578,
-            100,
-            36
-          ],
-          "z": 7,
-          "label": "关闭",
-          "press": "tap",
-          "asset": "assets/ui/det_close.webp",
-          "assetPressed": "assets/ui/det_close_pressed.webp",
-          "desc": "关闭详情弹窗，回到仓库。"
         }
       ],
       "mask": {

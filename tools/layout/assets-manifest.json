@@ -55,14 +55,14 @@
   }
  },
  "summary": {
-  "total": 170,
+  "total": 168,
   "present": 0,
   "placeholder": 0,
   "real": 0,
   "inInbox": 0,
-  "missing": 166,
+  "missing": 164,
   "optional": 4,
-  "requiredMissing": 166,
+  "requiredMissing": 164,
   "byKind": {
    "role": {
     "total": 11,
@@ -146,16 +146,16 @@
     "real": 0
    },
    "ui": {
-    "total": 40,
+    "total": 38,
     "present": 0,
-    "missing": 40,
+    "missing": 38,
     "inbox": 0,
     "optional": 0,
     "placeholder": 0,
     "real": 0
    }
   },
-  "coreMissing": 66
+  "coreMissing": 64
  },
  "entries": [
   {
@@ -3118,26 +3118,6 @@
    "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
    "optional": false,
    "priority": "core",
-   "path": "assets/ui/wh_close.webp",
-   "kind": "ui",
-   "id": "wh_close",
-   "label": "关闭 素材",
-   "source": "布局表 modal_warehouse",
-   "usedBy": [
-    "modal_warehouse"
-   ],
-   "present": false,
-   "inbox": null,
-   "status": "缺",
-   "bytes": 0,
-   "placeholder": false
-  },
-  {
-   "format": "webp",
-   "size": "按元素框（见布局表 rect）",
-   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
-   "optional": false,
-   "priority": "core",
    "path": "assets/ui/det_panel.webp",
    "kind": "ui",
    "id": "det_panel",
@@ -3182,26 +3162,6 @@
    "kind": "ui",
    "id": "det_dismantle",
    "label": "分解 素材",
-   "source": "布局表 modal_item_detail",
-   "usedBy": [
-    "modal_item_detail"
-   ],
-   "present": false,
-   "inbox": null,
-   "status": "缺",
-   "bytes": 0,
-   "placeholder": false
-  },
-  {
-   "format": "webp",
-   "size": "按元素框（见布局表 rect）",
-   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
-   "optional": false,
-   "priority": "core",
-   "path": "assets/ui/det_close.webp",
-   "kind": "ui",
-   "id": "det_close",
-   "label": "关闭 素材",
    "source": "布局表 modal_item_detail",
    "usedBy": [
     "modal_item_detail"

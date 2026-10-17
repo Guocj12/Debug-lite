@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：tools/layout/lab.html 的 <script id="core">（core digest: a35bb7e9e6a88bba）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 60997413dfbcbddc）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -158,9 +158,8 @@
             grid: { flow: true, autoHeight: true, cellW: 96, cellH: 96, gapX: 10, gapY: 10, padX: 10, padY: 10 } },
           // 网格原型：被 gridFrom 复制成每个格子（本身不显示）
           { id: 'wh_cell', kind: 'button', label: '{itemName}', action: 'warehouse-item-open', payload: { uid: '{itemUid}' },
-            hit: 'rect', anchor: 'lt', rect: [0, 0, 96, 96], z: 6, asset: '{itemIcon}', press: 'tap' },
-          { id: 'wh_close', kind: 'button', label: '关闭', action: 'modal-close', hit: 'rect', anchor: 'cb',
-            rect: [590, 640, 100, 40], z: 8, press: 'tap' }
+            hit: 'rect', anchor: 'lt', rect: [0, 0, 96, 96], z: 6, asset: '{itemIcon}', press: 'tap' }
+          // D-190：**没有关闭键** —— 点弹窗外的遮罩即关闭（用户口径）。
         ],
         gridFrom: { source: 'tab', container: 'wh_grid', prototype: 'wh_cell' }
       },
@@ -183,9 +182,8 @@
           { id: 'det_open', kind: 'button', label: '开包', action: 'warehouse-package-open', payload: { uid: '{detUid}' },
             hit: 'rect', anchor: 'cb', rect: [512, 524, 120, 44], z: 7, press: 'tap' },
           { id: 'det_dismantle', kind: 'button', label: '分解', action: 'warehouse-dismantle', payload: { uid: '{detUid}' },
-            hit: 'rect', anchor: 'cb', rect: [648, 524, 120, 44], z: 7, press: 'tap' },
-          { id: 'det_close', kind: 'button', label: '关闭', action: 'modal-close',
-            hit: 'rect', anchor: 'cb', rect: [590, 578, 100, 36], z: 7, press: 'tap' }
+            hit: 'rect', anchor: 'cb', rect: [648, 524, 120, 44], z: 7, press: 'tap' }
+          // D-190：**没有关闭键** —— 点弹窗外的遮罩即关闭（用户口径）。
         ]
       },
       modal_skill_pick: {
@@ -1069,6 +1067,25 @@
       }
     });
     if (!(layout.elements || []).length) issues.push({ level: 'warn', msg: '一个元素都没有' });
+    // D-190：**弹窗的唯一出口 = 点遮罩**（用户口径：不必再给弹窗加关闭键）。
+    //   因此 `role:'modal'` 的画面**必须**允许点遮罩关闭 —— 否则它是**死胡同**（玩家点哪儿都关不掉）。
+    //   这条从"约定"升级为**机器门禁**：既然取消了关闭键，就必须由校验器保证遮罩可用。
+    if (layout.role === 'modal') {
+      var mk = layout.mask || DEFAULT_MASK;
+      if (mk.closeOnMaskClick === false) {
+        issues.push({
+          level: 'error',
+          msg: '弹窗禁用了「点遮罩关闭」，而弹窗已取消关闭键 → 玩家将无法关闭它'
+            + '（把 mask.closeOnMaskClick 改回 true）',
+        });
+      }
+      if (mk.blocksBackground === false) {
+        issues.push({
+          level: 'warn',
+          msg: '弹窗遮罩不拦背景点击 —— 底下的按钮仍能被点到',
+        });
+      }
+    }
     return issues;
   }
 
@@ -1155,6 +1172,6 @@
     PRESS_MODES: PRESS_MODES
   };
 })();
-  CORE.CORE_DIGEST = "a35bb7e9e6a88bba";
+  CORE.CORE_DIGEST = "60997413dfbcbddc";
   return CORE;
 });

@@ -1399,25 +1399,6 @@
           },
           "label": "{whCapacity}",
           "z": 7
-        },
-        {
-          "id": "wh_close",
-          "kind": "button",
-          "action": "modal-close",
-          "hit": "rect",
-          "anchor": "cb",
-          "rect": [
-            590,
-            640,
-            100,
-            40
-          ],
-          "desc": "关闭仓库弹窗。用户口径取消了右上角 X，所以关在底部居中；点遮罩也可关。",
-          "label": "关闭",
-          "asset": "assets/ui/wh_close.webp",
-          "assetPressed": "assets/ui/wh_close_pressed.webp",
-          "press": "tap",
-          "z": 8
         }
       ],
       "gridFrom": {
@@ -1582,25 +1563,6 @@
           },
           "asset": "assets/ui/det_dismantle.webp",
           "assetPressed": "assets/ui/det_dismantle_pressed.webp",
-          "press": "tap",
-          "z": 7
-        },
-        {
-          "id": "det_close",
-          "kind": "button",
-          "action": "modal-close",
-          "hit": "rect",
-          "anchor": "cb",
-          "rect": [
-            590,
-            578,
-            100,
-            36
-          ],
-          "desc": "关闭详情弹窗，回到仓库。",
-          "label": "关闭",
-          "asset": "assets/ui/det_close.webp",
-          "assetPressed": "assets/ui/det_close_pressed.webp",
           "press": "tap",
           "z": 7
         }
