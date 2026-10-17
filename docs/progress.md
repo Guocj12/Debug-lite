@@ -348,6 +348,99 @@
 
 ---
 
+## §0.14 D-185：布局表支持容器/滚动/图标尺寸/网格/文字/九宫格（2026-10-04）
+
+> 触发：用户 2026-10-04 —— **「现在这个前端设计页面能设计滚动视图吗（比如固定大小的框，里面物品表格或列表排列，
+> 可以设置图标大小，可丝滑自然上下滚动等）若不能，添加该功能」** + **「那就加这个后再看看这个布局台还缺什么
+> 常用的游戏ui设计功能，全部加上」**。决策记录见 `docs/decisions.md` §14.20。
+
+### ① 能不能设计滚动视图？—— 原来**不能**，现在**能**
+
+原来布局表**没有**任何 `overflow`/`scroll`/父容器的概念（实测：`overflow` / `scroll` / `parent` 在产品引擎里各 **0** 次），
+元素全是**平铺**在画布上的绝对定位块 —— "固定大小的框里放可滚动的物品列表"**做不到**。
+
+新增 6 组字段后可以了：
+
+```jsonc
+{ "id": "bag_list", "kind": "deco", "rect": [40, 100, 400, 300],
+  "desc": "背包列表：固定 400×300 的框，里面按 72px 图标排网格，纵向滚动",
+  "scroll": { "dir": "v", "fade": true },                 // v 纵向 / h 横向 / both 双向 / none 只裁剪
+  "grid":   { "cellW": 72, "cellH": 72, "gapX": 8, "gapY": 8, "padX": 8, "padY": 8 } },
+{ "id": "bag_item_1", "kind": "button", "parent": "bag_list", "rect": [8, 8, 72, 72] }
+```
+
+- **`parent`** = 装进谁（平铺 → **层级**）：子元素 `rect` 变"相对父块内容原点"，父块**裁剪**子元素
+- **`scroll.dir`** 决定要不要真滚；渲染层用**原生 `overflow` 滚动**（`-webkit-overflow-scrolling:touch` +
+  `overscroll-behavior:contain`）⇒ **手感就是浏览器原生的"丝滑"**；滚动条外观在 `app.css` 里收敛成游戏 UI 的细样式
+- **`scroll.fade`** 两端渐隐遮罩（提示"还有内容"）；**`scroll.top`/`left`** = 设计期初始偏移
+- 引擎 `layoutAt` 用 `applyScrollOffsets` 把**祖先的滚动偏移从子元素位置上扣掉** ⇒
+  **设计器与产品共用同一份坐标算法**，不各写一遍语义
+
+### ② 布局台补齐的常用游戏 UI 设计功能
+
+| 能力 | 字段 / 控件 |
+|---|---|
+| 滚动容器 | `scroll.dir` / `fade` / `top` / `left`（`none` = 只裁剪不滚） |
+| 父容器（层级） | `parent` + 面板「装进谁」下拉（自动排除会成环的候选） |
+| **图标/卡片大小** | `grid.cellW` / `cellH` + 按钮「**排成网格**」 |
+| 网格间距与内边距 | `grid.gapX/gapY/padX/padY` |
+| 文字大小 | `font.size` + 按钮「按高度自算」 |
+| 文字对齐 / 颜色 / 粗体 | `font.align` / `color` / `bold` |
+| 九宫格拉伸（圆角不糊） | `nine.slice` |
+| 不透明度 / 不可点 | `opacity` / `clickThrough` |
+| 一键转换 | 「**变成容器＋收进去**」：把选中块盖住的元素收成子元素并开滚动 |
+
+**舞台里滚动容器真的能滚**（与产品同语义）；滚动容器带虚线轮廓、不可点带点线轮廓、文字块按变量定字号。
+
+### ③ 踩到并修掉的两个坑（如实记录）
+
+1. **字段撞名**：文字样式我一开始叫 `text`，但解析后的元素里 `text` 已经是**渲染后的文字** ——
+   `layoutAt` 于是输出了样式对象而不是替换后的文字，被 `test-layout-lab.js`（"layoutAt 应替换 text"）当场抓住。
+   改名为 **`font`**（文档里专门标了这条注意）。
+2. **静默修正**：`normalizeElement` 原本把非法 `scroll.dir:'zzz'` 改成 `'v'`、`font.size:999` 夹到 200、
+   非法 `align` 直接丢掉 —— 校验器**永远看不到**，用户改了配置却"什么提示都没有"。
+   改成**原样保留非法值、交给校验报 error**。
+
+### ④ 机器核对
+
+| 项 | 结果 |
+|---|---|
+| `node runtime/check-lab.js` | ✓ core 语法 · ✓ app 语法 · ✓ 控件齐备 |
+| `node runtime/test-layout-lab.js` | **13 组**核心断言全过（含抓到撞名的"layoutAt 应替换 text"） |
+| `node runtime/test-layout-lab-browser.js` | **15 组** jsdom 断言全过 |
+| **D-185 专项端到端探针** | **产品引擎**：新字段往返 ✔ / `parent` ✔ / `font` ✔ / `nine` ✔ / 子元素扣 `scroll.top` ✔（含两级嵌套）/ `layoutAt` 带出 `font` ✔；**真 jsdom 渲染**：`.dl-scroll` ✔ `overflow-y:auto` ✔ `overflow-x:hidden` ✔ 渐变类 ✔ `data-scroll-top` ✔ `--dl-fs:26px` ✔ `--dl-color` ✔ `--dl-align` ✔ `opacity` ✔ `.dl-clickthrough` ✔ `border-image` 九宫格 ✔ 无报错 ✔；**CSS 覆盖**（FD-7 口径）✔ |
+| 全仓回归 | `npm test` **1263/1263**、`gate` **9 PASS**、`check:docs` PASS、`check-arch` PASS（41 文件） |
+
+**产品侧改动**：`public/render.js`（滚动 / 渐隐 / 不可点 / 文字变量 / 九宫格 / 不透明度）、`public/app.css`（滚动条细样式等）、
+`public/layout-engine.js` 再生成（digest `761b6693c57b95af`）。
+**布局台改动**：`tools/layout/lab.html`（core 6 组字段 + `applyScrollOffsets` + 新校验；app 容器面板 + `syncContainerProps` /
+`makeScrollContainer` / `applyGrid` + `buildEl` 容器渲染）。
+
+### ⑤ 仍未做（如实登记，非遗漏）
+
+多选与对齐/分布工具、图层拖拽排序面板、标尺与安全区参考线、复制粘贴（现只有「复制」= 原地再放一份）、组件/实例复用。
+
+### ⑥ 顺手修掉的一个**自检假绿**（重要，影响此前几轮的核对结论）
+
+`runtime/check-lab.js`（布局台自检）读的是 **`runtime/layout-lab.html`** —— 工具从 `runtime/` 搬到 `tools/layout/`
+之后留下的**旧副本**（10-03 的版本，2424 行 / 127KB，而真源是 3244 行 / 167KB）。
+也就是说它一直在检**老页面**：`renderTree` / `validateHierarchy` / `pDesc` / `pScrollDir` / `btnMakeScroll` /
+`btnGridApply` / `applyScrollOffsets` 在旧副本里**一个都没有**，它却照样报"✓ 齐备"。
+D-184/D-185 我报过的"✓ 控件齐备"这一条**当时检的是错的文件**（`test-layout-lab.js` 与
+`test-layout-lab-browser.js` 读的是真源，它们的两组断言是可信的）。
+
+修正：
+
+1. `runtime/check-lab.js`、`runtime/import-layout.js`、`runtime/diff-export.js`、`runtime/export-sample.js`
+   全部改读 **`tools/layout/lab.html`**（真源），并在 `check-lab.js` 里补上 D-184/D-185 的控件清单；
+2. **删掉旧副本** `runtime/layout-lab.html`；
+3. `tools/layout/make-engine.js` 产物头注释里"真源：runtime/layout-lab.html"改成正确的 `tools/layout/lab.html`。
+
+修正后自检输出从"core 764 行 / app 1280 行"变成**真实的 core 939 行 / app 1822 行**，且 D-184/D-185 控件全部通过；
+引擎 digest 与真源一致（`761b6693c57b95af`，未漂移）。
+
+---
+
 ## 1. 文档体系（权威链）
 
 ```

@@ -40,7 +40,22 @@
 .dl-hit-path{clip-path:var(--dl-clip)}
 .dl-hit-ellipse{border-radius:50%}
 .dl-txt{position:relative;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
-  padding:0 4px;text-shadow:0 1px 2px #000a}
+  padding:0 4px;text-shadow:0 1px 2px #000a;
+  /* D-185：文字样式（字号/颜色/对齐/行高）由渲染层写成 CSS 变量 */
+  font-size:var(--dl-fs,inherit);color:var(--dl-color,inherit);
+  line-height:var(--dl-lh,1.4);text-align:var(--dl-align,center)}
+.dl-el{text-align:var(--dl-align,center)}
+/* D-185：滚动容器 —— 用**原生滚动**（丝滑自然），滚动条外观收敛成游戏 UI 的细样式 */
+.dl-scroll{overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ffffff40 transparent}
+.dl-scroll::-webkit-scrollbar{width:6px;height:6px}
+.dl-scroll::-webkit-scrollbar-thumb{background:#ffffff33;border-radius:3px}
+.dl-scroll::-webkit-scrollbar-track{background:transparent}
+/* 两端渐隐：提示"还有内容" */
+.dl-scroll-fade{
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);
+  mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%)}
+/* D-185：不可点（把点击透给下层） */
+.dl-clickthrough{pointer-events:none}
 /* 尺寸类（渲染层按元素高度加）：大控件用大字号，小角标用小字号 */
 .dl-el.dl-lg .dl-txt{font-size:22px;font-weight:600}
 .dl-el.dl-sm .dl-txt{font-size:11px}

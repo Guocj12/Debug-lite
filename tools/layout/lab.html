@@ -64,6 +64,14 @@
 .tnode.hasdesc .tname::after{content:' 💬';font-size:9px;opacity:.65}
 .tnode.pending .tname::after{content:' ⚠';color:var(--warn);font-size:10px}
 .tree .tinfo{color:#6b7488;font-size:11px;padding:2px 6px 6px 26px;white-space:normal}
+/* D-185：设计器里的容器/滚动/文字块 —— 与产品语义一致（原生滚动、按变量定字号） */
+.el.scrollbox{outline:1px dashed #4c84fa66}
+.el.scrollbox.scfade{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);
+  mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%)}
+.el.ct{outline:1px dotted #e0a35c66}
+.el.txtblock .lb{font-size:var(--fs,inherit);color:var(--txc,inherit);text-align:var(--tal,inherit);
+  line-height:var(--lh,1.4);display:block}
+.el.txtblock.bold .lb{font-weight:700}
   .stagewrap{flex:1;overflow:auto;display:flex;padding:14px}
   /* 关键：CSS transform 不改变布局尺寸 → 放大后滚动条到不了边缘。
      所以外面套一层 stagebox，用真实宽高撑出正确滚动区域（margin:auto 负责居中，
@@ -290,6 +298,63 @@
       <div class="row"><label>顶点编辑</label><span class="seg"><button id="btnShapeMode" title="开启后才显示多边形顶点手柄（快捷键 P）；避免与四角缩放手柄重叠">编辑形状（P）</button></span></div>
       <div class="row"><label>旋转 / 层级</label><input id="pRot" type="number" step="1" title="旋转"><input id="pZ" type="number" step="1" title="z"></div>
       <div class="row"><label>隐藏</label><input id="pHidden" type="checkbox" style="width:auto"></div>
+      <!-- ---------- D-185：容器 / 滚动 / 网格 / 文字 / 九宫格 ---------- -->
+      <div class="row"><label>装进谁</label>
+        <select id="pParent"><option value="">（不装，直接放画布上）</option></select>
+      </div>
+      <div class="hint" id="pParentInfo">—</div>
+      <div class="row"><label>滚动容器</label>
+        <span class="seg">
+          <select id="pScrollDir" style="flex:1">
+            <option value="">（不是容器）</option>
+            <option value="v">纵向滚动 v</option>
+            <option value="h">横向滚动 h</option>
+            <option value="both">双向 both</option>
+            <option value="none">只裁剪不滚</option>
+          </select>
+          <button id="btnMakeScroll" title="把选中元素变成滚动容器，并把它盖住的东西装进去">变成容器＋收进去</button>
+        </span>
+      </div>
+      <div class="row"><label>初始滚动</label>
+        <input id="pScrollTop" type="number" step="1" title="初始 scrollTop（设计期定格）">
+        <input id="pScrollLeft" type="number" step="1" title="初始 scrollLeft">
+        <label style="width:auto">渐隐</label><input id="pScrollFade" type="checkbox" style="width:auto">
+      </div>
+      <div class="hint" id="pScrollInfo">—</div>
+      <div class="row"><label>图标大小</label>
+        <span class="seg">
+          <input id="pCellW" type="number" step="1" title="卡片/图标宽">
+          <input id="pCellH" type="number" step="1" title="卡片/图标高">
+          <button id="btnGridApply" title="把子元素按这个尺寸等距排开（图标大小 = 卡片尺寸）">排成网格</button>
+        </span>
+      </div>
+      <div class="row"><label>网格间距</label>
+        <input id="pGapX" type="number" step="1" title="水平间距">
+        <input id="pGapY" type="number" step="1" title="垂直间距">
+        <input id="pPadX" type="number" step="1" title="内边距 x">
+        <input id="pPadY" type="number" step="1" title="内边距 y">
+      </div>
+      <div class="hint" id="pGridInfo">—</div>
+      <div class="row"><label>文字大小</label>
+        <input id="pFontSize" type="number" step="1" title="字号 px">
+        <button id="btnFontAuto" title="按住当前块高度自动定字号">按高度自算</button>
+      </div>
+      <div class="row"><label>文字样式</label>
+        <span class="seg">
+          <select id="pTextAlign" style="flex:1">
+            <option value="">（默认）</option><option value="left">左</option>
+            <option value="center">居中</option><option value="right">右</option>
+          </select>
+          <input id="pTextColor" type="color" style="width:44px;padding:1px" title="文字颜色">
+          <label style="width:auto">粗体</label><input id="pTextBold" type="checkbox" style="width:auto">
+        </span>
+      </div>
+      <div class="row"><label>九宫格</label>
+        <input id="pNine" type="number" step="1" title="四边切片厚度 px（0 = 关）">
+        <label style="width:auto">不透明</label><input id="pOpacity" type="number" step="0.05" min="0" max="1" title="0..1">
+        <label style="width:auto">不可点</label><input id="pClickThrough" type="checkbox" style="width:auto">
+      </div>
+      <div class="hint" id="pNineInfo">—</div>
       <div class="row"><label>when</label><input id="pWhen" placeholder='{"activeSlot":1} 或 {"activeSlot":[1,3]}' ></div>
       <div class="row" id="ovRow">
         <label>断点覆盖</label>
@@ -417,6 +482,9 @@ var LAYOUT_CORE = (function () {
   var ANCHOR_X = { l: 0, c: 0.5, r: 1 };
   var ANCHOR_Y = { t: 0, c: 0.5, b: 1 };
   var HIT_MODES = ['rect', 'ellipse', 'path', 'alpha'];
+  // 滚动容器方向（D-185）：none = 只裁剪不滚
+  var SCROLL_DIRS = ['v', 'h', 'both', 'none'];
+  var TEXT_ALIGNS = ['left', 'center', 'right'];
   var FIT_MODES = ['contain', 'cover', 'stretch'];
   var BP_KEYS = ['landscape', 'portrait', 'tablet'];
   var BP_LABEL = { landscape: '横屏', portrait: '竖屏', tablet: '平板' };
@@ -981,12 +1049,33 @@ var LAYOUT_CORE = (function () {
       out.push({ id: el.id, label: rawLabel, text: rt.text, asset: ra.text, assetRaw: rawAsset, payload: payload,
                  kind: el.kind || 'button', action: el.action || '', target: el.target || '',
                  setState: el.setState, when: el.when,
+                 parent: el.parent || '', scroll: el.scroll, font: el.font, grid: el.grid, nine: el.nine,
+                 opacity: num(el.opacity, 1), clickThrough: el.clickThrough === true,
                  hit: el.hit || 'rect', path: el.path || '',
                  rot: num(el.rot, 0), z: num(el.z, 1),
                  rect: [round(r.x, 2), round(r.y, 2), round(r.w, 2), round(r.h, 2)],
                  fromOverride: !!r.fromOverride });
     });
+    // D-185：把**祖先滚动容器的偏移**从子元素位置上扣掉 —— 这样产品渲染层与设计器的算法完全一致
+    //   （两边都只是"画在算好的坐标上"，不各写一遍语义）。若用原生 overflow 滚动，这些偏移量为 0。
+    applyScrollOffsets(out);
     return out;
+  }
+
+  /** 把每个元素沿 parent 链向上累积的 scroll(left/top) 从 rect 上扣掉（就地改 out） */
+  function applyScrollOffsets(out) {
+    var byId = {};
+    out.forEach(function (e) { byId[e.id] = e; });
+    out.forEach(function (e) {
+      var dx = 0, dy = 0, walk = e.parent, guard = 0;
+      while (walk && guard++ < 64) {
+        var p = byId[walk];
+        if (!p) break;
+        if (p.scroll) { dx += num(p.scroll.left, 0); dy += num(p.scroll.top, 0); }
+        walk = p.parent;
+      }
+      if (dx || dy) e.rect = [round(e.rect[0] - dx, 2), round(e.rect[1] - dy, 2), e.rect[2], e.rect[3]];
+    });
   }
 
   /* ---------- 吸附与辅助线 ---------- */
@@ -1054,6 +1143,61 @@ var LAYOUT_CORE = (function () {
     // desc：**自然语言注释**（这一块是干什么的）。设计期字段，产品渲染不读它，
     //   只用于：① 工具里看清每个元素的职责；② 以后照它把"不完整/未实现"的功能补齐。
     if (el.desc) out.desc = String(el.desc);
+    // parent：这一块**装在哪一块里面**（把平铺列表变成层级）。父块必须会裁剪（见 validateLayout）。
+    //   rect 语义随之变成"相对父块内容原点" —— 与 CSS absolute 定位的直觉一致。
+    if (el.parent) out.parent = String(el.parent);
+    // scroll：这一块是**滚动容器**（固定大小的框，内容超出后可以丝滑上下/左右滚动）。
+    //   dir: v 纵向（默认）/ h 横向 / both 双向 / none 只裁剪不滚
+    //   left/top: **设计期初始偏移**（渲染层写成 scrollLeft/scrollTop，同时用作设计器里的定格）
+    //   fade: 两端渐隐遮罩（提示"还有内容"）
+    if (el.scroll && typeof el.scroll === 'object') {
+      var scr = {};
+      var dir = String(el.scroll.dir == null ? '' : el.scroll.dir);
+      // ⚠️ 非法值**原样保留**交给 validateLayout 报错 —— 静默改成 'v' 会让"看着像滚动容器但没生效"
+      //    变成最难查的一类问题（改了配置、界面上什么提示都没有）
+      if (dir !== '') scr.dir = dir;
+      var sleft = Math.max(0, num(el.scroll.left, 0));
+      var stop = Math.max(0, num(el.scroll.top, 0));
+      if (sleft) scr.left = round(sleft, 1);
+      if (stop) scr.top = round(stop, 1);
+      if (el.scroll.fade === true) scr.fade = true;
+      // 声明了 scroll 就一定留个 dir —— 否则"看着像滚动容器但没生效"
+      out.scroll = Object.keys(scr).length ? scr : { dir: 'v' };
+    }
+    // font：文字块的排版（标题/说明/数值这类纯文字块用）。**不叫 text** —— 解析后的元素里 	ext 是渲染后的文字，改叫 text 会撞车
+    if (el.font && typeof el.font === 'object') {
+      var tx = {};
+      var fsize = num(el.font.size, 0);
+      if (fsize > 0) tx.size = Math.round(fsize);           // 越界值由校验器报（不在这里夹）
+      if (el.font.align !== undefined && el.font.align !== null && el.font.align !== '') tx.align = String(el.font.align);
+      if (typeof el.font.color === 'string' && el.font.color !== '') tx.color = el.font.color;
+      if (el.font.bold === true) tx.bold = true;
+      if (num(el.font.lineHeight, 0) > 0) tx.lineHeight = round(num(el.font.lineHeight, 0), 2);
+      if (el.font.wrap === false) tx.wrap = false;
+      if (Object.keys(tx).length) out.font = tx;
+    }
+    // grid：把**子元素**按等距网格自动排（图标大小 = cell 尺寸）。只在"容器 + 子元素"里有意义。
+    if (el.grid && typeof el.grid === 'object') {
+      var gr = {};
+      var gw = num(el.grid.cellW, 0), gh = num(el.grid.cellH, 0);
+      if (gw > 0) gr.cellW = round(gw, 1);
+      if (gh > 0) gr.cellH = round(gh, 1);
+      if (num(el.grid.gapX, 0) > 0) gr.gapX = round(num(el.grid.gapX, 0), 1);
+      if (num(el.grid.gapY, 0) > 0) gr.gapY = round(num(el.grid.gapY, 0), 1);
+      if (num(el.grid.padX, 0) > 0) gr.padX = round(num(el.grid.padX, 0), 1);
+      if (num(el.grid.padY, 0) > 0) gr.padY = round(num(el.grid.padY, 0), 1);
+      if (num(el.grid.cols, 0) > 0) gr.cols = Math.round(num(el.grid.cols, 0));
+      if (num(el.grid.maxRows, 0) > 0) gr.maxRows = Math.round(num(el.grid.maxRows, 0));
+      if (Object.keys(gr).length) out.grid = gr;
+    }
+    // nine：九宫格拉伸（面板/按钮底图按 9 片拉伸，圆角不糊）；slice = 四边切片厚度（px）
+    if (el.nine && typeof el.nine === 'object' && num(el.nine.slice, 0) > 0) {
+      out.nine = { slice: Math.round(num(el.nine.slice, 0)) };
+    }
+    // 通用视觉：不透明度（0..1）；clickThrough = 不可点（把点击透给下层）
+    var op = num(el.opacity, 1);
+    if (op >= 0 && op < 1) out.opacity = round(op, 2);
+    if (el.clickThrough === true) out.clickThrough = true;
     // setState：点击后只改**本地显示状态**（例：切换主界面显示哪个出战配置），不导航、不写服务端
     if (el.setState && typeof el.setState === 'object' && Object.keys(el.setState).length) out.setState = el.setState;
     if (el.label) out.label = String(el.label);
@@ -1141,11 +1285,50 @@ var LAYOUT_CORE = (function () {
         }
       }
       if (el.kind !== 'deco' && !el.asset) issues.push({ level: 'warn', msg: tag + '：还没指定素材路径（暂时显示占位）' });
+      // ---- D-185：容器 / 滚动 / 网格 / 文字 / 九宫格 ----
+      if (el.scroll) {
+        if (SCROLL_DIRS.indexOf(String(el.scroll.dir || '')) < 0)
+          issues.push({ level: 'error', msg: tag + '：scroll.dir 非法（' + el.scroll.dir + '，只能是 v / h / both / none）' });
+        if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+          issues.push({ level: 'warn', msg: tag + '：滚动容器自己有 action 的话会与"滑动"抢手势，确认是有意的' });
+      }
+      if (el.font) {
+        if (el.font.size !== undefined && !(el.font.size > 0 && el.font.size <= 200))
+          issues.push({ level: 'error', msg: tag + '：text.size 必须在 1..200 之间' });
+        if (el.font.align !== undefined && TEXT_ALIGNS.indexOf(el.font.align) < 0)
+          issues.push({ level: 'error', msg: tag + '：text.align 非法（' + el.font.align + '）' });
+      }
+      if (el.grid) {
+        if (!(el.grid.cellW > 0) && !(el.grid.cellH > 0) && !(el.grid.cols > 0))
+          issues.push({ level: 'warn', msg: tag + '：grid 既没写 cellW/cellH 也没写 cols，排不出网格' });
+        if (el.kind !== 'deco' && !el.scroll && el.parent === undefined)
+          issues.push({ level: 'warn', msg: tag + '：grid 是给**子元素**排位置用的，但这一块没有子元素也没有滚动区（自己不会动）' });
+      }
+      if (el.nine && !el.asset) issues.push({ level: 'warn', msg: tag + '：九宫格要配一张底图（asset），否则看不出拉伸效果' });
       tplKeysOf(el).forEach(function (k) {
         if (!TPL_KEYS[k]) issues.push({ level: 'error', msg: tag + '：占位符 {' + k + '} 不在键表里（可用：' + TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).join('/') + '）' });
       });
       if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
         issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
+    });
+    // parent 关系（D-185）：父块必须存在、不能自指、不能成环；装进 path 命中的父块要提醒（不裁剪）
+    var byId = {};
+    (layout.elements || []).forEach(function (x) { byId[x.id] = x; });
+    (layout.elements || []).forEach(function (el) {
+      var tag = el.id || '(无 id)';
+      if (el.parent === undefined) return;
+      if (el.parent === el.id) { issues.push({ level: 'error', msg: tag + '：parent 指向自己' }); return; }
+      if (!byId[el.parent]) { issues.push({ level: 'error', msg: tag + '：parent 指向不存在的元素「' + el.parent + '」' }); return; }
+      var walk = el.parent, guard = 0;
+      while (walk !== undefined && guard++ < 64) {
+        if (walk === el.id) { issues.push({ level: 'error', msg: tag + '：parent 关系成环（' + el.id + ' → … → ' + el.id + '）' }); break; }
+        var up = byId[walk];
+        walk = up ? up.parent : undefined;
+      }
+      var par = byId[el.parent];
+      if (par && par.hit === 'path') {
+        issues.push({ level: 'warn', msg: tag + '：装进了一个 path 命中的父块（多边形不裁剪子元素，只有滚动容器/rect 才会裁）' });
+      }
     });
     if (!(layout.elements || []).length) issues.push({ level: 'warn', msg: '一个元素都没有' });
     return issues;
@@ -1210,6 +1393,7 @@ var LAYOUT_CORE = (function () {
   return {
     DEFAULT_LAYOUT: DEFAULT_LAYOUT, DEFAULT_BUNDLE: DEFAULT_BUNDLE,
     ANCHOR_X: ANCHOR_X, ANCHOR_Y: ANCHOR_Y, HIT_MODES: HIT_MODES, FIT_MODES: FIT_MODES,
+    SCROLL_DIRS: SCROLL_DIRS, TEXT_ALIGNS: TEXT_ALIGNS, applyScrollOffsets: applyScrollOffsets,
     BP_KEYS: BP_KEYS, BP_LABEL: BP_LABEL, DEFAULT_BP: DEFAULT_BP,
     num: num, round: round, isValidAnchor: isValidAnchor, anchorFractions: anchorFractions,
     sceneFit: sceneFit, breakpointOf: breakpointOf, resolveElement: resolveElement, layoutAt: layoutAt,
@@ -1499,9 +1683,38 @@ var LAYOUT_CORE = (function () {
     d.style.width = r[2] + 'px'; d.style.height = r[3] + 'px';
     if (C.num(e.rot, 0)) d.style.transform = 'rotate(' + C.num(e.rot, 0) + 'deg)';
     d.style.zIndex = String(10 + C.num(e.z, 1));
+    // D-185：不透明度 / 不可点 / 容器裁剪 / 原生滚动（设计器里也能真的滚，与产品一致）
+    if (e.opacity !== undefined && e.opacity < 1) d.style.opacity = String(e.opacity);
+    if (e.clickThrough) { d.style.pointerEvents = 'none'; d.classList.add('ct'); }
+    if (e.scroll) {
+      var dir = e.scroll.dir || 'v';
+      d.style.overflowX = (dir === 'h' || dir === 'both') ? 'auto' : 'hidden';
+      d.style.overflowY = (dir === 'v' || dir === 'both') ? 'auto' : 'hidden';
+      d.style.overscrollBehavior = 'contain';
+      d.classList.add('scrollbox');
+      if (e.scroll.fade) d.classList.add('scfade');
+      if (e.scroll.top) d.scrollTop = e.scroll.top;
+      if (e.scroll.left) d.scrollLeft = e.scroll.left;
+    } else if (e.kind === 'deco' && e.rect[2] > 40 && e.rect[3] > 40) {
+      d.style.overflow = 'hidden';   // 非滚动容器也裁一下子元素，避免"画到框外"看不出问题
+    }
     var url = assetUrl(e);
-    if (url) { var im = document.createElement('img'); im.src = url; d.appendChild(im); }
+    if (url) { var im = document.createElement('img'); im.src = url;
+      // 九宫格拉伸：按 9 片拉伸底图（圆角不糊）
+      if (e.nine && e.nine.slice > 0) {
+        im.style.borderImage = 'url(' + url + ') ' + e.nine.slice + ' fill stretch';
+        im.style.objectFit = 'fill';
+      }
+      d.appendChild(im); }
     else { var ph = document.createElement('div'); ph.className = 'ph'; d.appendChild(ph); }
+    // D-185：文字样式（字号/颜色/对齐/粗体）—— 设计器与产品用同一套语义
+    var tx = e.font || {};
+    d.classList.add('txtblock');
+    if (tx.size) d.style.setProperty('--fs', tx.size + 'px');
+    if (tx.color) d.style.setProperty('--txc', tx.color);
+    if (tx.align) d.style.setProperty('--tal', tx.align);
+    if (tx.lineHeight) d.style.setProperty('--lh', tx.lineHeight);
+    if (tx.bold) d.classList.add('bold');
     if (e.hit === 'path' && e.path && state.sel === e.id) {
       var ov = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       ov.setAttribute('class', 'hitov'); ov.setAttribute('viewBox', '0 0 100 100'); ov.setAttribute('preserveAspectRatio', 'none');
@@ -1802,13 +2015,18 @@ var LAYOUT_CORE = (function () {
     var e = state.sel ? el(state.sel) : null;
     var on = !!e;
     ['pId','pLabel','pKind','pAction','pPayload','pAsset','pAssetFile','pHit','pAnchor','pX','pY','pW','pH','pRot','pZ','pHidden','pWhen',
-     'btnOvSet','btnOvClear','btnShapeMode','pPath','pPathPreset','btnPathAdd','btnPathDel','pDesc']
+     'btnOvSet','btnOvClear','btnShapeMode','pPath','pPathPreset','btnPathAdd','btnPathDel','pDesc',
+     // D-185
+     'pParent','pScrollDir','pScrollTop','pScrollLeft','pScrollFade','pCellW','pCellH','pGapX','pGapY','pPadX','pPadY',
+     'btnGridApply','pFontSize','btnFontAuto','pTextAlign','pTextColor','pTextBold','pNine','pOpacity','pClickThrough']
       .forEach(function (k) { $(k).disabled = !on; });
     if (!e) {
-      ['pId','pLabel','pAction','pPayload','pAsset','pX','pY','pW','pH','pRot','pZ','pPath','pDesc'].forEach(function (k) { $(k).value = ''; });
+      ['pId','pLabel','pAction','pPayload','pAsset','pX','pY','pW','pH','pRot','pZ','pPath','pDesc',
+        'pScrollTop','pScrollLeft','pCellW','pCellH','pGapX','pGapY','pPadX','pPadY','pFontSize','pNine'].forEach(function (k) { $(k).value = ''; });
       $('pOvInfo').textContent = '—';
       $('pPathInfo').textContent = '—';
       $('pDescInfo').textContent = '—';
+      ['pParentInfo','pScrollInfo','pGridInfo','pNineInfo'].forEach(function (k) { $(k).textContent = '—'; });
       return;
     }
     var r = shownRect(e);
@@ -1847,6 +2065,75 @@ var LAYOUT_CORE = (function () {
     // desc（自然语言注释）：显示 + 提示它是不是"待补齐"（写了注释但动作/行为还没落地的元素）
     $('pDesc').value = e.desc || '';
     renderDescHint(e);
+    syncContainerProps(e);
+  }
+
+  /** D-185：容器相关面板（装进谁 / 滚动 / 图标大小 / 网格 / 文字 / 九宫格） */
+  function syncContainerProps(e) {
+    // 「装进谁」候选 = 本画面里除自己以外的**非滚动叶子**都能当容器；再排除会成环的那些
+    var opts = [''];
+    state.layout.elements.forEach(function (x) {
+      if (x.id === e.id) return;
+      // 排除"已经装在自己里面的"（成环）
+      var walk = x.parent, guard = 0, inside = false;
+      while (walk !== undefined && guard++ < 64) { if (walk === e.id) { inside = true; break; } walk = (el(walk) || {}).parent; }
+      if (!inside) opts.push(x.id);
+    });
+    var sel = $('pParent');
+    sel.innerHTML = '';
+    opts.forEach(function (id) {
+      var o = document.createElement('option');
+      o.value = id; o.textContent = id === '' ? '（不装，直接放画布上）' : id;
+      sel.appendChild(o);
+    });
+    sel.value = e.parent || '';
+    var kids = state.layout.elements.filter(function (x) { return x.parent === e.id; });
+    $('pParentInfo').innerHTML = e.parent
+      ? '装在「' + e.parent + '」里：坐标相对它的内容原点（会被它裁剪/滚动）。'
+      : (kids.length
+        ? '<span class="ok">这一块里装了 ' + kids.length + ' 个子元素（移动它，子元素跟着走）</span>'
+        : '没装进任何块，也没装别人 —— 直接放在画布上。');
+
+    // 滚动
+    var sc = e.scroll;
+    $('pScrollDir').value = sc ? (sc.dir || 'v') : '';
+    $('pScrollTop').value = sc && sc.top ? Math.round(sc.top) : '';
+    $('pScrollLeft').value = sc && sc.left ? Math.round(sc.left) : '';
+    $('pScrollFade').checked = !!(sc && sc.fade);
+    var over = 0, last = 0;
+    kids.forEach(function (k) { over = Math.max(over, k.rect[1] + k.rect[3]); last = Math.max(last, k.rect[0] + k.rect[2]); });
+    $('pScrollInfo').innerHTML = !sc
+      ? '不是滚动容器（内容超出会被画到框外面）。点「变成容器＋收进去」可一键改。'
+      : ('滚动方向 <b>' + sc.dir + '</b> · 子元素 ' + kids.length + ' 个 · 内容高 ' + Math.round(over)
+        + ' / 容器高 ' + Math.round(e.rect[3]) + (over > e.rect[3] ? ' <span class="ok">（会滚动）</span>' : ' <span class="warn">（还没溢出，滚不动）</span>'));
+
+    // 网格 / 图标大小
+    var gr = e.grid || {};
+    $('pCellW').value = gr.cellW ? Math.round(gr.cellW) : '';
+    $('pCellH').value = gr.cellH ? Math.round(gr.cellH) : '';
+    $('pGapX').value = gr.gapX ? Math.round(gr.gapX) : '';
+    $('pGapY').value = gr.gapY ? Math.round(gr.gapY) : '';
+    $('pPadX').value = gr.padX ? Math.round(gr.padX) : '';
+    $('pPadY').value = gr.padY ? Math.round(gr.padY) : '';
+    var cols = gr.cellW ? Math.max(1, Math.floor((e.rect[2] - 2 * (gr.padX || 0) + (gr.gapX || 0)) / (gr.cellW + (gr.gapX || 0)))) : 0;
+    $('pGridInfo').innerHTML = kids.length
+      ? ('子元素 ' + kids.length + ' 个' + (cols ? ' · 容器宽 ' + Math.round(e.rect[2]) + ' 可放 ' + cols + ' 列' : '')
+        + (gr.cellW || gr.cellH ? ' · 卡片 ' + (gr.cellW || '—') + '×' + (gr.cellH || '—') : ' · 还没设卡片尺寸'))
+      : '这块里还没有子元素，网格排不出东西（先做容器、再把元素装进来）。';
+
+    // 文字
+    var tx = e.font || {};
+    $('pFontSize').value = tx.size || '';
+    $('pTextAlign').value = tx.align || '';
+    $('pTextColor').value = /^#[0-9a-fA-F]{6}$/.test(tx.color || '') ? tx.color : '#e2eaf6';
+    $('pTextBold').checked = tx.bold === true;
+
+    // 九宫格 / 视觉
+    $('pNine').value = e.nine && e.nine.slice ? Math.round(e.nine.slice) : '';
+    $('pOpacity').value = e.opacity === undefined ? 1 : e.opacity;
+    $('pClickThrough').checked = e.clickThrough === true;
+    $('pNineInfo').innerHTML = (e.nine && e.nine.slice ? '<span class="ok">九宫格切片 ' + e.nine.slice + 'px</span>' : '九宫格关（底图整张拉伸，圆角会糊）')
+      + (e.asset ? '' : ' · <span class="warn">还没底图</span>');
   }
 
   /** 「注释」输入框下面的状态行：有没有写、按注释看还有哪些没落地 */
@@ -2237,6 +2524,148 @@ var LAYOUT_CORE = (function () {
     renderTree(); renderList(); renderJson(); renderIssues();
   });
   $('pDesc').addEventListener('blur', function () { syncProps(); });
+
+  /* ---------------- D-185：容器 / 滚动 / 网格 / 文字 的属性联动 ---------------- */
+
+  /** 把元素变成滚动容器，并把它**盖住的**（且原本不在别的容器里的）元素收成子元素 */
+  function makeScrollContainer(e, dir) {
+    var kids = state.layout.elements.filter(function (x) {
+      if (x.id === e.id || x.parent !== undefined) return false;
+      // 中心点落在容器框内 → 认为它属于这个容器
+      var cx = x.rect[0] + x.rect[2] / 2, cy = x.rect[1] + x.rect[3] / 2;
+      return cx > e.rect[0] && cx < e.rect[0] + e.rect[2] && cy > e.rect[1] && cy < e.rect[1] + e.rect[3];
+    });
+    e.scroll = Object.assign({ dir: dir || 'v' }, e.scroll || {});
+    kids.forEach(function (k) {
+      k.parent = e.id;
+      // 坐标从画布空间换算到"相对容器内容原点"
+      k.rect = [round(k.rect[0] - e.rect[0], 2), round(k.rect[1] - e.rect[1], 2), k.rect[2], k.rect[3]];
+    });
+    return kids.length;
+  }
+
+  /** 把子元素按等距网格排开（图标/卡片大小 = cellW×cellH） */
+  function applyGrid(e) {
+    var gr = Object.assign({ cellW: 64, cellH: 64, gapX: 8, gapY: 8, padX: 8, padY: 8 }, e.grid || {});
+    if (!(gr.cellW > 0)) gr.cellW = 64;
+    if (!(gr.cellH > 0)) gr.cellH = gr.cellW;
+    e.grid = gr;
+    var kids = state.layout.elements.filter(function (x) { return x.parent === e.id; });
+    if (!kids.length) return 0;
+    var usable = e.rect[2] - 2 * gr.padX;
+    var cols = Math.max(1, Math.floor((usable + gr.gapX) / (gr.cellW + gr.gapX)));
+    kids.forEach(function (k, i) {
+      var c = i % cols, r = Math.floor(i / cols);
+      k.rect = [round(gr.padX + c * (gr.cellW + gr.gapX), 2), round(gr.padY + r * (gr.cellH + gr.gapY), 2), gr.cellW, gr.cellH];
+    });
+    return kids.length;
+  }
+
+  function rebind() { renderStage(); renderTree(); renderList(); renderJson(); renderIssues(); renderPrevs(); syncProps(); }
+  function setEl(fn) { if (!state.sel) return; var e = el(state.sel); if (!e) return; push(); fn(e); rebind(); }
+
+  bindProp('pParent', function (e, n) {
+    push();
+    var v = n.value;
+    if (v === '') { delete e.parent; return; }
+    e.parent = v;
+    // 装进父块时，把坐标从画布空间换算到"相对父块"（保住屏幕上的位置观感）
+    var p = el(v);
+    if (p) e.rect = [round(e.rect[0] - p.rect[0], 2), round(e.rect[1] - p.rect[1], 2), e.rect[2], e.rect[3]];
+  });
+  bindProp('pScrollDir', function (e, n) {
+    push();
+    if (n.value === '') { delete e.scroll; return; }
+    e.scroll = Object.assign({ dir: n.value }, e.scroll || {});
+  });
+  bindProp('pScrollTop', function (e, n) {
+    push();
+    if (!e.scroll) e.scroll = { dir: 'v' };
+    var v = Number(n.value);
+    if (isFinite(v) && v > 0) e.scroll.top = v; else delete e.scroll.top;
+  });
+  bindProp('pScrollLeft', function (e, n) {
+    push();
+    if (!e.scroll) e.scroll = { dir: 'v' };
+    var v = Number(n.value);
+    if (isFinite(v) && v > 0) e.scroll.left = v; else delete e.scroll.left;
+  });
+  bindProp('pScrollFade', function (e, n) {
+    push();
+    if (!e.scroll) e.scroll = { dir: 'v' };
+    if (n.checked) e.scroll.fade = true; else delete e.scroll.fade;
+  }, 'change');
+  ['pCellW', 'pCellH', 'pGapX', 'pGapY', 'pPadX', 'pPadY'].forEach(function (id) {
+    var key = id.replace('pCell', 'cell').replace('pGap', 'gap').replace('pPad', 'pad');
+    key = key.charAt(0).toLowerCase() + key.slice(1);
+    bindProp(id, function (e, n) {
+      push();
+      e.grid = Object.assign({}, e.grid || {});
+      var v = Number(n.value);
+      if (isFinite(v) && v > 0) e.grid[key] = v; else delete e.grid[key];
+      if (!Object.keys(e.grid).length) delete e.grid;
+    });
+  });
+  $('btnGridApply').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel);
+    var n = applyGrid(e);
+    if (n) { rebind(); flash('已把 ' + n + ' 个子元素按网格排开'); }
+    else flash('这块里还没有子元素 —— 先用「变成容器＋收进去」把元素收进来');
+  });
+  $('btnMakeScroll').addEventListener('click', function () {
+    if (!state.sel) return;
+    var e = el(state.sel);
+    var n = makeScrollContainer(e, 'v');
+    rebind();
+    flash(n ? ('已变成滚动容器，并把盖住的 ' + n + ' 个元素收成子元素') : '已变成滚动容器（框内没有别的元素可收）');
+  });
+  bindProp('pFontSize', function (e, n) {
+    push();
+    e.font = Object.assign({}, e.font || {});
+    var v = Number(n.value);
+    if (isFinite(v) && v > 0) e.font.size = Math.round(v); else delete e.font.size;
+    if (!Object.keys(e.font).length) delete e.font;
+  });
+  $('btnFontAuto').addEventListener('click', function () {
+    if (!state.sel) return;
+    setEl(function (e) {
+      e.font = Object.assign({}, e.font || {});
+      e.font.size = Math.max(9, Math.round(e.rect[3] * 0.45));   // 行高 1.4 → 0.45 差不多占满一行
+    });
+    flash('已按块高自动定字号');
+  });
+  bindProp('pTextAlign', function (e, n) {
+    push();
+    e.font = Object.assign({}, e.font || {});
+    if (n.value) e.font.align = n.value; else delete e.font.align;
+    if (!Object.keys(e.font).length) delete e.font;
+  });
+  bindProp('pTextColor', function (e, n) {
+    push();
+    e.font = Object.assign({}, e.font || {});
+    e.font.color = n.value;
+  }, 'input');
+  bindProp('pTextBold', function (e, n) {
+    push();
+    e.font = Object.assign({}, e.font || {});
+    if (n.checked) e.font.bold = true; else delete e.font.bold;
+    if (!Object.keys(e.font).length) delete e.font;
+  }, 'change');
+  bindProp('pNine', function (e, n) {
+    push();
+    var v = Number(n.value);
+    if (isFinite(v) && v > 0) e.nine = { slice: Math.round(v) }; else delete e.nine;
+  });
+  bindProp('pOpacity', function (e, n) {
+    push();
+    var v = Number(n.value);
+    if (isFinite(v) && v >= 0 && v < 1) e.opacity = round(v, 2); else delete e.opacity;
+  }, 'input');
+  bindProp('pClickThrough', function (e, n) {
+    push();
+    if (n.checked) e.clickThrough = true; else delete e.clickThrough;
+  }, 'change');
   bindProp('pKind', function (e, n) { push(); e.kind = n.value; });
   bindProp('pAction', function (e, n) { push(); e.action = n.value.trim(); });
   bindProp('pPayload', function (e, n) {

@@ -17,7 +17,7 @@ const digest = crypto.createHash('sha256').update(core).digest('hex').slice(0, 1
 const out = [
   "'use strict';",
   '/* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**',
-  ' * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: ' + digest + '）',
+  ' * 真源：tools/layout/lab.html 的 <script id="core">（core digest: ' + digest + '）',
   ' * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。',
   ' *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。',
   ' * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。',

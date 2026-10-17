@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：runtime/layout-lab.html 的 <script id="core">（core digest: 0e3f7269ab637f16）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 761b6693c57b95af）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -16,6 +16,9 @@
   var ANCHOR_X = { l: 0, c: 0.5, r: 1 };
   var ANCHOR_Y = { t: 0, c: 0.5, b: 1 };
   var HIT_MODES = ['rect', 'ellipse', 'path', 'alpha'];
+  // 滚动容器方向（D-185）：none = 只裁剪不滚
+  var SCROLL_DIRS = ['v', 'h', 'both', 'none'];
+  var TEXT_ALIGNS = ['left', 'center', 'right'];
   var FIT_MODES = ['contain', 'cover', 'stretch'];
   var BP_KEYS = ['landscape', 'portrait', 'tablet'];
   var BP_LABEL = { landscape: '横屏', portrait: '竖屏', tablet: '平板' };
@@ -580,12 +583,33 @@
       out.push({ id: el.id, label: rawLabel, text: rt.text, asset: ra.text, assetRaw: rawAsset, payload: payload,
                  kind: el.kind || 'button', action: el.action || '', target: el.target || '',
                  setState: el.setState, when: el.when,
+                 parent: el.parent || '', scroll: el.scroll, font: el.font, grid: el.grid, nine: el.nine,
+                 opacity: num(el.opacity, 1), clickThrough: el.clickThrough === true,
                  hit: el.hit || 'rect', path: el.path || '',
                  rot: num(el.rot, 0), z: num(el.z, 1),
                  rect: [round(r.x, 2), round(r.y, 2), round(r.w, 2), round(r.h, 2)],
                  fromOverride: !!r.fromOverride });
     });
+    // D-185：把**祖先滚动容器的偏移**从子元素位置上扣掉 —— 这样产品渲染层与设计器的算法完全一致
+    //   （两边都只是"画在算好的坐标上"，不各写一遍语义）。若用原生 overflow 滚动，这些偏移量为 0。
+    applyScrollOffsets(out);
     return out;
+  }
+
+  /** 把每个元素沿 parent 链向上累积的 scroll(left/top) 从 rect 上扣掉（就地改 out） */
+  function applyScrollOffsets(out) {
+    var byId = {};
+    out.forEach(function (e) { byId[e.id] = e; });
+    out.forEach(function (e) {
+      var dx = 0, dy = 0, walk = e.parent, guard = 0;
+      while (walk && guard++ < 64) {
+        var p = byId[walk];
+        if (!p) break;
+        if (p.scroll) { dx += num(p.scroll.left, 0); dy += num(p.scroll.top, 0); }
+        walk = p.parent;
+      }
+      if (dx || dy) e.rect = [round(e.rect[0] - dx, 2), round(e.rect[1] - dy, 2), e.rect[2], e.rect[3]];
+    });
   }
 
   /* ---------- 吸附与辅助线 ---------- */
@@ -653,6 +677,61 @@
     // desc：**自然语言注释**（这一块是干什么的）。设计期字段，产品渲染不读它，
     //   只用于：① 工具里看清每个元素的职责；② 以后照它把"不完整/未实现"的功能补齐。
     if (el.desc) out.desc = String(el.desc);
+    // parent：这一块**装在哪一块里面**（把平铺列表变成层级）。父块必须会裁剪（见 validateLayout）。
+    //   rect 语义随之变成"相对父块内容原点" —— 与 CSS absolute 定位的直觉一致。
+    if (el.parent) out.parent = String(el.parent);
+    // scroll：这一块是**滚动容器**（固定大小的框，内容超出后可以丝滑上下/左右滚动）。
+    //   dir: v 纵向（默认）/ h 横向 / both 双向 / none 只裁剪不滚
+    //   left/top: **设计期初始偏移**（渲染层写成 scrollLeft/scrollTop，同时用作设计器里的定格）
+    //   fade: 两端渐隐遮罩（提示"还有内容"）
+    if (el.scroll && typeof el.scroll === 'object') {
+      var scr = {};
+      var dir = String(el.scroll.dir == null ? '' : el.scroll.dir);
+      // ⚠️ 非法值**原样保留**交给 validateLayout 报错 —— 静默改成 'v' 会让"看着像滚动容器但没生效"
+      //    变成最难查的一类问题（改了配置、界面上什么提示都没有）
+      if (dir !== '') scr.dir = dir;
+      var sleft = Math.max(0, num(el.scroll.left, 0));
+      var stop = Math.max(0, num(el.scroll.top, 0));
+      if (sleft) scr.left = round(sleft, 1);
+      if (stop) scr.top = round(stop, 1);
+      if (el.scroll.fade === true) scr.fade = true;
+      // 声明了 scroll 就一定留个 dir —— 否则"看着像滚动容器但没生效"
+      out.scroll = Object.keys(scr).length ? scr : { dir: 'v' };
+    }
+    // font：文字块的排版（标题/说明/数值这类纯文字块用）。**不叫 text** —— 解析后的元素里 	ext 是渲染后的文字，改叫 text 会撞车
+    if (el.font && typeof el.font === 'object') {
+      var tx = {};
+      var fsize = num(el.font.size, 0);
+      if (fsize > 0) tx.size = Math.round(fsize);           // 越界值由校验器报（不在这里夹）
+      if (el.font.align !== undefined && el.font.align !== null && el.font.align !== '') tx.align = String(el.font.align);
+      if (typeof el.font.color === 'string' && el.font.color !== '') tx.color = el.font.color;
+      if (el.font.bold === true) tx.bold = true;
+      if (num(el.font.lineHeight, 0) > 0) tx.lineHeight = round(num(el.font.lineHeight, 0), 2);
+      if (el.font.wrap === false) tx.wrap = false;
+      if (Object.keys(tx).length) out.font = tx;
+    }
+    // grid：把**子元素**按等距网格自动排（图标大小 = cell 尺寸）。只在"容器 + 子元素"里有意义。
+    if (el.grid && typeof el.grid === 'object') {
+      var gr = {};
+      var gw = num(el.grid.cellW, 0), gh = num(el.grid.cellH, 0);
+      if (gw > 0) gr.cellW = round(gw, 1);
+      if (gh > 0) gr.cellH = round(gh, 1);
+      if (num(el.grid.gapX, 0) > 0) gr.gapX = round(num(el.grid.gapX, 0), 1);
+      if (num(el.grid.gapY, 0) > 0) gr.gapY = round(num(el.grid.gapY, 0), 1);
+      if (num(el.grid.padX, 0) > 0) gr.padX = round(num(el.grid.padX, 0), 1);
+      if (num(el.grid.padY, 0) > 0) gr.padY = round(num(el.grid.padY, 0), 1);
+      if (num(el.grid.cols, 0) > 0) gr.cols = Math.round(num(el.grid.cols, 0));
+      if (num(el.grid.maxRows, 0) > 0) gr.maxRows = Math.round(num(el.grid.maxRows, 0));
+      if (Object.keys(gr).length) out.grid = gr;
+    }
+    // nine：九宫格拉伸（面板/按钮底图按 9 片拉伸，圆角不糊）；slice = 四边切片厚度（px）
+    if (el.nine && typeof el.nine === 'object' && num(el.nine.slice, 0) > 0) {
+      out.nine = { slice: Math.round(num(el.nine.slice, 0)) };
+    }
+    // 通用视觉：不透明度（0..1）；clickThrough = 不可点（把点击透给下层）
+    var op = num(el.opacity, 1);
+    if (op >= 0 && op < 1) out.opacity = round(op, 2);
+    if (el.clickThrough === true) out.clickThrough = true;
     // setState：点击后只改**本地显示状态**（例：切换主界面显示哪个出战配置），不导航、不写服务端
     if (el.setState && typeof el.setState === 'object' && Object.keys(el.setState).length) out.setState = el.setState;
     if (el.label) out.label = String(el.label);
@@ -740,11 +819,50 @@
         }
       }
       if (el.kind !== 'deco' && !el.asset) issues.push({ level: 'warn', msg: tag + '：还没指定素材路径（暂时显示占位）' });
+      // ---- D-185：容器 / 滚动 / 网格 / 文字 / 九宫格 ----
+      if (el.scroll) {
+        if (SCROLL_DIRS.indexOf(String(el.scroll.dir || '')) < 0)
+          issues.push({ level: 'error', msg: tag + '：scroll.dir 非法（' + el.scroll.dir + '，只能是 v / h / both / none）' });
+        if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+          issues.push({ level: 'warn', msg: tag + '：滚动容器自己有 action 的话会与"滑动"抢手势，确认是有意的' });
+      }
+      if (el.font) {
+        if (el.font.size !== undefined && !(el.font.size > 0 && el.font.size <= 200))
+          issues.push({ level: 'error', msg: tag + '：text.size 必须在 1..200 之间' });
+        if (el.font.align !== undefined && TEXT_ALIGNS.indexOf(el.font.align) < 0)
+          issues.push({ level: 'error', msg: tag + '：text.align 非法（' + el.font.align + '）' });
+      }
+      if (el.grid) {
+        if (!(el.grid.cellW > 0) && !(el.grid.cellH > 0) && !(el.grid.cols > 0))
+          issues.push({ level: 'warn', msg: tag + '：grid 既没写 cellW/cellH 也没写 cols，排不出网格' });
+        if (el.kind !== 'deco' && !el.scroll && el.parent === undefined)
+          issues.push({ level: 'warn', msg: tag + '：grid 是给**子元素**排位置用的，但这一块没有子元素也没有滚动区（自己不会动）' });
+      }
+      if (el.nine && !el.asset) issues.push({ level: 'warn', msg: tag + '：九宫格要配一张底图（asset），否则看不出拉伸效果' });
       tplKeysOf(el).forEach(function (k) {
         if (!TPL_KEYS[k]) issues.push({ level: 'error', msg: tag + '：占位符 {' + k + '} 不在键表里（可用：' + TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).join('/') + '）' });
       });
       if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
         issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
+    });
+    // parent 关系（D-185）：父块必须存在、不能自指、不能成环；装进 path 命中的父块要提醒（不裁剪）
+    var byId = {};
+    (layout.elements || []).forEach(function (x) { byId[x.id] = x; });
+    (layout.elements || []).forEach(function (el) {
+      var tag = el.id || '(无 id)';
+      if (el.parent === undefined) return;
+      if (el.parent === el.id) { issues.push({ level: 'error', msg: tag + '：parent 指向自己' }); return; }
+      if (!byId[el.parent]) { issues.push({ level: 'error', msg: tag + '：parent 指向不存在的元素「' + el.parent + '」' }); return; }
+      var walk = el.parent, guard = 0;
+      while (walk !== undefined && guard++ < 64) {
+        if (walk === el.id) { issues.push({ level: 'error', msg: tag + '：parent 关系成环（' + el.id + ' → … → ' + el.id + '）' }); break; }
+        var up = byId[walk];
+        walk = up ? up.parent : undefined;
+      }
+      var par = byId[el.parent];
+      if (par && par.hit === 'path') {
+        issues.push({ level: 'warn', msg: tag + '：装进了一个 path 命中的父块（多边形不裁剪子元素，只有滚动容器/rect 才会裁）' });
+      }
     });
     if (!(layout.elements || []).length) issues.push({ level: 'warn', msg: '一个元素都没有' });
     return issues;
@@ -774,7 +892,8 @@
     names.forEach(function (sn) {
       var sc = bundle.screens[sn];
       (sc.elements || []).forEach(function (el) {
-        var tag = sn + ' / ' + (el.id || '(无 id)');
+        // 消息一律带 [画面名] 前缀 —— 多画面下必须能定位（与 validateBundle 的既有约定一致）
+        var tag = '[' + sn + '] ' + (el.id || '(无 id)');
         if (!el.target) return;
         if (names.indexOf(el.target) < 0) {
           issues.push({ level: 'error', msg: tag + '：target 指向不存在的画面「' + el.target + '」（点它会跳进空处）' });
@@ -797,8 +916,8 @@
       if (!src.length) {
         issues.push({
           level: 'warn',
-          msg: (sc.role === 'modal' ? '弹窗「' : '整屏「') + n + '」没有任何元素指向它'
-            + (sc.role === 'modal' ? '（永远不会弹出来）' : '（从别的画面进不去）'),
+          msg: '[' + n + '] ' + (sc.role === 'modal' ? '弹窗' : '整屏')
+            + '没有任何元素指向它' + (sc.role === 'modal' ? '（永远不会弹出来）' : '（从别的画面进不去）'),
         });
       }
     });
@@ -808,6 +927,7 @@
   return {
     DEFAULT_LAYOUT: DEFAULT_LAYOUT, DEFAULT_BUNDLE: DEFAULT_BUNDLE,
     ANCHOR_X: ANCHOR_X, ANCHOR_Y: ANCHOR_Y, HIT_MODES: HIT_MODES, FIT_MODES: FIT_MODES,
+    SCROLL_DIRS: SCROLL_DIRS, TEXT_ALIGNS: TEXT_ALIGNS, applyScrollOffsets: applyScrollOffsets,
     BP_KEYS: BP_KEYS, BP_LABEL: BP_LABEL, DEFAULT_BP: DEFAULT_BP,
     num: num, round: round, isValidAnchor: isValidAnchor, anchorFractions: anchorFractions,
     sceneFit: sceneFit, breakpointOf: breakpointOf, resolveElement: resolveElement, layoutAt: layoutAt,
@@ -828,6 +948,6 @@
     validateHierarchy: validateHierarchy
   };
 })();
-  CORE.CORE_DIGEST = "0e3f7269ab637f16";
+  CORE.CORE_DIGEST = "761b6693c57b95af";
   return CORE;
 });

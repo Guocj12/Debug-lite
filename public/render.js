@@ -194,6 +194,8 @@
     if (el.hit === 'ellipse') cls += ' dl-hit-ellipse';
     if (!el.asset && !isDeco) cls += ' dl-ph';
     if (el.muted) cls += ' dl-muted';   // 候选不匹配：标灰（原因写在 label 里）
+    if (el.scroll) cls += ' dl-scroll';                    // D-185：滚动容器
+    if (el.clickThrough) cls += ' dl-clickthrough';        // D-185：不可点（透给下层）
     // 尺寸类：让 CSS 能给大控件配大字号（角色卡 300px 高，用 14px 字太小）
     if (el.rect[3] >= 160) cls += ' dl-lg'; else if (el.rect[3] <= 28) cls += ' dl-sm';
     var style = 'left:' + layPct(el.rect[0], canvas.w) + ';top:' + layPct(el.rect[1], canvas.h)
@@ -201,11 +203,39 @@
       + ';z-index:' + String(10 + (el.z || 1));
     if (el.rot) style += ';transform:rotate(' + Number(el.rot) + 'deg)';
     if (el.clip) style += ';--dl-clip:' + el.clip;
-    var attrs = ' class="' + cls + '" style="' + style + '" title="' + esc(el.id) + '"' + layAttrs(button);
+    if (el.opacity !== undefined && el.opacity < 1) style += ';opacity:' + Number(el.opacity);
+    // 文字样式（D-185）：字号/颜色/对齐/行高走 CSS 变量，由 app.css 消费
+    if (el.font) {
+      if (el.font.size) style += ';--dl-fs:' + Number(el.font.size) + 'px';
+      if (el.font.color) style += ';--dl-color:' + esc(String(el.font.color));
+      if (el.font.align) style += ';--dl-align:' + esc(String(el.font.align));
+      if (el.font.lineHeight) style += ';--dl-lh:' + Number(el.font.lineHeight);
+    }
+    // 滚动容器（D-185）：**用原生滚动**给"丝滑自然"的手感；设计期的 left/top 只是初始偏移
+    // 滚动容器（D-185）：**用原生滚动**给"丝滑自然"的手感；设计期的 left/top 写成初始偏移
+    var extraData = '';
+    if (el.scroll) {
+      var dir = el.scroll.dir || 'v';
+      style += ';overflow-x:' + ((dir === 'h' || dir === 'both') ? 'auto' : 'hidden');
+      style += ';overflow-y:' + ((dir === 'v' || dir === 'both') ? 'auto' : 'hidden');
+      style += ';-webkit-overflow-scrolling:touch';
+      if (el.scroll.fade) cls += ' dl-scroll-fade';
+      if (el.scroll.top) extraData += ' data-scroll-top="' + Number(el.scroll.top) + '"';
+      if (el.scroll.left) extraData += ' data-scroll-left="' + Number(el.scroll.left) + '"';
+    }
+    var attrs = ' class="' + cls + '" style="' + style + '" title="' + esc(el.id) + '"' + layAttrs(button) + extraData;
     if (!isDeco && el.action) attrs += ' data-action="' + esc(el.action) + '"';
     if (!isDeco && el.disabled) attrs += ' disabled';
     var inner = '';
-    if (el.asset) inner += '<img src="' + esc(el.asset) + '" alt="">';
+    if (el.asset) {
+      // 九宫格拉伸（D-185）：border-image 按 9 片拉伸，圆角/边框不糊
+      if (el.nine && el.nine.slice > 0) {
+        inner += '<img src="' + esc(el.asset) + '" alt=""'
+          + ' style="border-image:url(' + esc(el.asset) + ') ' + Number(el.nine.slice) + ' fill stretch">';
+      } else {
+        inner += '<img src="' + esc(el.asset) + '" alt="">';
+      }
+    }
     if (el.text) inner += '<span class="dl-txt">' + esc(el.text) + '</span>';
     return '<' + (isDeco ? 'div' : 'button type="button"') + attrs + '>' + inner + '</' + (isDeco ? 'div' : 'button') + '>';
   }
