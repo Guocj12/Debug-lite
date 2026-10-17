@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 761b6693c57b95af）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 3fb8c8b7d0354390）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -429,6 +429,60 @@
   }
 
   /**
+   * D-188：**网格自动流式排布**（用户 2026-10-05 口径）。
+   *
+   * 需求原文：「应能设定格子大小，**不硬性规定几乘几**，视仓库内物品数量**从左到右从上到下自行排布**，
+   *          横着显示不下就换行，竖着显示不下的变成滚动视图」。
+   *
+   * 为什么加在引擎（而不是前端投影层）：设计器与产品必须**共用同一份坐标算法**
+   *   —— 否则"在布局台里看着对、实现出来不对"，这正是 D-185 已经确立的原则。
+   *
+   * 算法（唯一实现处）：
+   *   1. `usableW = w − 2*padX`；`cols = max(1, floor((usableW + gapX) / (cellW + gapX)))`
+   *      （+gapX 是为了让"最后一个格子右边不需要间隙"也算得进去）
+   *   2. 第 i 个 → `row = floor(i/cols)`、`col = i%cols`
+   *      → `x = padX + col*(cellW+gapX)`、`y = padY + row*(cellH+gapY)`
+   *   3. `rect = [x, y, cellW, cellH]`（**相对父容器内容原点**，与 D-185 的 `parent` 语义一致）
+   *   4. `contentH = padY*2 + rows*cellH + (rows−1)*gapY`（`rows = ceil(n/cols)`）
+   *      —— 返回它供调用方在 `grid.autoHeight` 时**撑开内容高度**，外层 `scroll` 才能真正滚动。
+   *
+   * 返回 `{ rects, cols, rows, contentW, contentH }`；`n === 0` 时 `cols` 仍按容器宽算出
+   *   （布局台要知道"这个容器一行能放几个"），`rows = 0`、`contentH = padY*2`。
+   */
+  function gridFlowRects(containerRect, grid, n) {
+    var g = grid || {};
+    var w = num(containerRect && containerRect[2], 0);
+    var h = num(containerRect && containerRect[3], 0);
+    var cellW = num(g.cellW, 0), cellH = num(g.cellH, 0);
+    var gapX = num(g.gapX, 0), gapY = num(g.gapY, 0);
+    var padX = num(g.padX, 0), padY = num(g.padY, 0);
+    var count = Math.max(0, Math.round(num(n, 0)));
+    // 显式 cols 优先（用户可在布局台强制列数）；否则按容器宽自动算 —— 这是"不硬性规定几乘几"的落点
+    var explicit = num(g.cols, 0);
+    var usableW = Math.max(0, w - 2 * padX);
+    var auto = (cellW + gapX) > 0 ? Math.floor((usableW + gapX) / (cellW + gapX)) : 1;
+    var cols = explicit > 0 ? Math.round(explicit) : Math.max(1, auto);
+    var rects = [], i, row, col;
+    for (i = 0; i < count; i++) {
+      row = Math.floor(i / cols);
+      col = i % cols;
+      rects.push([
+        round(padX + col * (cellW + gapX), 2),
+        round(padY + row * (cellH + gapY), 2),
+        round(cellW, 2), round(cellH, 2),
+      ]);
+    }
+    var rows = count === 0 ? 0 : Math.ceil(count / cols);
+    var contentW = cols * cellW + Math.max(0, cols - 1) * gapX + 2 * padX;
+    var contentH = rows === 0 ? 2 * padY : (2 * padY + rows * cellH + Math.max(0, rows - 1) * gapY);
+    return {
+      rects: rects, cols: cols, rows: rows,
+      contentW: round(contentW, 2), contentH: round(contentH, 2),
+      containerH: h,
+    };
+  }
+
+  /**
    * 元素级"显示条件"（设计期状态）：`when: { activeSlot: 1 }` 或 `{ activeSlot: [1, 3] }`。
    * 用途：同一份布局在不同状态下某些元素显示/隐藏（例：三个出战配置各自的「出战」角标）。
    * 真代码的渲染层照同一条规则过滤即可（比在 CSS 里堆状态类更好测）。
@@ -448,6 +502,29 @@
       if (!hit) return false;
     }
     return true;
+  }
+
+  /* D-188：按钮按下行为四模式（用户 2026-10-05 口径；布局台与产品共用这一份判据） */
+  var PRESS_MODES = ['tap', 'hover', 'sticky', 'state'];
+
+  /**
+   * D-188：**按下态判定**（`press: 'state'` 用）。
+   * 与 `whenMatches` 同形（单值或数组、字符串化比较），但语义不同：
+   *   · `when`       决定元素**是否显示**；
+   *   · `pressWhen`  决定元素**是否显示为按下**。
+   * 缺 `pressKey` / `pressWhen` → false（不按下）；当前态没给该键的值 → false。
+   */
+  function pressActive(el, sstate) {
+    if (!el || el.press !== 'state') return false;
+    var k = el.pressKey;
+    if (typeof k !== 'string' || k === '') return false;
+    var w = el.pressWhen;
+    if (w === undefined || w === null) return false;
+    var st = sstate || {};
+    var got = st[k];
+    if (got === undefined || got === null) return false;
+    var want = Array.isArray(w) ? w : [w];
+    return want.some(function (v) { return String(v) === String(got); });
   }
 
   function num(v, dflt) { return typeof v === 'number' && isFinite(v) ? v : dflt; }
@@ -585,6 +662,12 @@
                  setState: el.setState, when: el.when,
                  parent: el.parent || '', scroll: el.scroll, font: el.font, grid: el.grid, nine: el.nine,
                  opacity: num(el.opacity, 1), clickThrough: el.clickThrough === true,
+                 // D-188：按下态素材（同样过模板替换，便于 `{roleIcon}` 这类键在两态间共用）
+                 assetPressed: el.assetPressed ? (data ? resolveTpl(el.assetPressed, data).text : el.assetPressed) : '',
+                 assetPressedRaw: el.assetPressed || '',
+                 // D-188：按下行为（`pressActive` 决定 `state` 模式下当前是否按下）
+                 press: el.press || '', pressKey: el.pressKey || '', pressWhen: el.pressWhen,
+                 pressed: pressActive(el, sstate),
                  hit: el.hit || 'rect', path: el.path || '',
                  rot: num(el.rot, 0), z: num(el.z, 1),
                  rect: [round(r.x, 2), round(r.y, 2), round(r.w, 2), round(r.h, 2)],
@@ -711,6 +794,7 @@
       if (Object.keys(tx).length) out.font = tx;
     }
     // grid：把**子元素**按等距网格自动排（图标大小 = cell 尺寸）。只在"容器 + 子元素"里有意义。
+    //   D-188 新增 `flow`（自动流式排布）与 `autoHeight`（行数超出容器高时把内容撑开 → 外层可滚）。
     if (el.grid && typeof el.grid === 'object') {
       var gr = {};
       var gw = num(el.grid.cellW, 0), gh = num(el.grid.cellH, 0);
@@ -722,6 +806,9 @@
       if (num(el.grid.padY, 0) > 0) gr.padY = round(num(el.grid.padY, 0), 1);
       if (num(el.grid.cols, 0) > 0) gr.cols = Math.round(num(el.grid.cols, 0));
       if (num(el.grid.maxRows, 0) > 0) gr.maxRows = Math.round(num(el.grid.maxRows, 0));
+      // D-188：布尔字段显式保留（false 也保留 —— "我明确关掉了自动排布"是有意义的信息）
+      if (el.grid.flow !== undefined) gr.flow = el.grid.flow === true;
+      if (el.grid.autoHeight !== undefined) gr.autoHeight = el.grid.autoHeight === true;
       if (Object.keys(gr).length) out.grid = gr;
     }
     // nine：九宫格拉伸（面板/按钮底图按 9 片拉伸，圆角不糊）；slice = 四边切片厚度（px）
@@ -737,6 +824,20 @@
     if (el.label) out.label = String(el.label);
     if (el.payload && typeof el.payload === 'object' && Object.keys(el.payload).length) out.payload = el.payload;
     if (el.asset) out.asset = String(el.asset);
+    // D-188：**按下态素材**（所有按钮类都应有「常态/按下」两张图）。常态仍用 `asset`。
+    //   刻意**不**在缺 `asset` 时也保留 `assetPressed` 到渲染层去猜 —— 这里原样保留，
+    //   由校验器报 warn（"声明了 assetPressed 但没声明 asset"），避免"按下去才看得见图"这种怪状态。
+    if (el.assetPressed) out.assetPressed = String(el.assetPressed);
+    // D-188：**按下行为四模式**（用户 2026-10-05 口径）：
+    //   'tap'    默认：点击期间按下，松开恢复（走 CSS :active）
+    //   'hover'  鼠标移上去即显示按下（走 CSS :hover）
+    //   'sticky' 点击后保持按下，直到其他触发条件解除（JS 加类）
+    //   'state'  由状态决定按下：pressKey 的值命中 pressWhen → 按下（如出战配置槽）
+    //   非法值**原样保留**交校验器报 error（与 scroll.dir/font 同口径，不静默改成默认值）。
+    if (el.press !== undefined && el.press !== null && el.press !== '') out.press = String(el.press);
+    if (el.pressKey !== undefined && el.pressKey !== null && el.pressKey !== '') out.pressKey = String(el.pressKey);
+    //   pressWhen 与 `when` 同形：支持单值或数组（`[1,3]`）
+    if (el.pressWhen !== undefined && el.pressWhen !== null && el.pressWhen !== '') out.pressWhen = el.pressWhen;
     if (out.hit === 'path' && el.path) {
       var parsed = parsePath(el.path);
       // 能解析 → 规范化写法（保证 diff 稳定）；不能解析（曲线等）→ 原样保留，由校验提示
@@ -837,7 +938,32 @@
           issues.push({ level: 'warn', msg: tag + '：grid 既没写 cellW/cellH 也没写 cols，排不出网格' });
         if (el.kind !== 'deco' && !el.scroll && el.parent === undefined)
           issues.push({ level: 'warn', msg: tag + '：grid 是给**子元素**排位置用的，但这一块没有子元素也没有滚动区（自己不会动）' });
+        // ---- D-188：网格自动流式排布 ----
+        if (el.grid.flow === true) {
+          if (!(el.grid.cellW > 0) || !(el.grid.cellH > 0))
+            issues.push({ level: 'error', msg: tag + '：grid.flow 自动排布必须同时给 cellW 与 cellH（格子大小是排布的唯一依据）' });
+          // 没滚动 → 物品多了会被裁掉，用户看不到后面那些（这是"看起来能放、其实放不下"的隐蔽坏状态）
+          if (!el.scroll)
+            issues.push({ level: 'warn', msg: tag + '：grid.flow 容器没有 scroll（物品超出后会被裁掉，看不到后面的）' });
+        }
+        if (el.grid.autoHeight === true && !el.scroll)
+          issues.push({ level: 'warn', msg: tag + '：grid.autoHeight 要配 scroll 才有意义（撑开高度是为了让外层能滚）' });
       }
+      // ---- D-188：按下行为四模式 ----
+      if (el.press !== undefined && el.press !== null && el.press !== '') {
+        if (PRESS_MODES.indexOf(String(el.press)) < 0)
+          issues.push({ level: 'error', msg: tag + '：press 非法（' + el.press + '，只能是 tap / hover / sticky / state）' });
+        if (el.press === 'state') {
+          if (typeof el.pressKey !== 'string' || el.pressKey === '')
+            issues.push({ level: 'error', msg: tag + '：press=state 必须给 pressKey（由哪个状态键决定按下）' });
+          else if (WHEN_KEYS.indexOf(el.pressKey) < 0)
+            issues.push({ level: 'error', msg: tag + '：pressKey 非法（' + el.pressKey + '，目前只支持 ' + WHEN_KEYS.join(' / ') + '）' });
+          if (el.pressWhen === undefined || el.pressWhen === null || el.pressWhen === '')
+            issues.push({ level: 'error', msg: tag + '：press=state 必须给 pressWhen（该键等于什么时按下）' });
+        }
+      }
+      if (el.assetPressed && !el.asset)
+        issues.push({ level: 'warn', msg: tag + '：只声明了按下态素材（assetPressed）却没有常态素材（asset）' });
       if (el.nine && !el.asset) issues.push({ level: 'warn', msg: tag + '：九宫格要配一张底图（asset），否则看不出拉伸效果' });
       tplKeysOf(el).forEach(function (k) {
         if (!TPL_KEYS[k]) issues.push({ level: 'error', msg: tag + '：占位符 {' + k + '} 不在键表里（可用：' + TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).join('/') + '）' });
@@ -945,9 +1071,12 @@
     insertVertex: insertVertex, removeVertex: removeVertex, pointInPolygon: pointInPolygon,
     clamp: clamp,
     normalizeElement: normalizeElement, normalizeLayout: normalizeLayout, validateLayout: validateLayout,
-    validateHierarchy: validateHierarchy
+    validateHierarchy: validateHierarchy,
+    // D-188：网格自动流式排布 + 按下行为四模式（设计器与产品共用的唯一判据）
+    gridFlowRects: gridFlowRects, pressActive: pressActive,
+    PRESS_MODES: PRESS_MODES
   };
 })();
-  CORE.CORE_DIGEST = "761b6693c57b95af";
+  CORE.CORE_DIGEST = "3fb8c8b7d0354390";
   return CORE;
 });

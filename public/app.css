@@ -38,6 +38,32 @@
   background:repeating-linear-gradient(45deg,#ffffff08,#ffffff08 6px,transparent 6px,transparent 12px)}
 /* 不规则按钮：多边形命中区。渲染层把 path 转成 polygon() 写进 --dl-clip */
 .dl-hit-path{clip-path:var(--dl-clip)}
+
+/* ---- D-188：按钮「常态/按下」双素材 + 四种按下行为 ----
+ * 语义（与引擎 layout-engine.js 的 PRESS_MODES 一一对应）：
+ *   tap    点击期间按下，松开恢复          → :active
+ *   hover  鼠标移上去即显示按下            → :hover
+ *   sticky 点击后保持按下，直到其他条件解除 → .dl-pressed（渲染层/动作层加类）
+ *   state  由状态决定（如出战配置槽）      → .dl-pressed（引擎 pressActive 已算好）
+ * 两态图缺任一 → 不产生视觉变化（渲染层只输出存在的那张），绝不凭空造图。
+ */
+.dl-el .dl-img-pressed{display:none}
+/* tap：按下瞬间（同时覆盖键盘 Space/Enter 的 :active） */
+.dl-press-tap:active .dl-img-pressed,
+.dl-press-tap.dl-pressed .dl-img-pressed{display:block}
+.dl-press-tap:active>img:not(.dl-img-pressed),
+.dl-press-tap.dl-pressed>img:not(.dl-img-pressed){display:none}
+/* hover：鼠标悬停即按下 */
+.dl-press-hover:hover .dl-img-pressed{display:block}
+.dl-press-hover:hover>img:not(.dl-img-pressed){display:none}
+/* sticky / state：完全由状态类决定（hover 不参与，避免"移开就弹回"） */
+.dl-press-sticky.dl-pressed .dl-img-pressed,
+.dl-press-state.dl-pressed .dl-img-pressed{display:block}
+.dl-press-sticky.dl-pressed>img:not(.dl-img-pressed),
+.dl-press-state.dl-pressed>img:not(.dl-img-pressed){display:none}
+/* 按下态的通用强调（素材缺失时至少看得出"它现在是被选中的"） */
+.dl-pressed{filter:brightness(1.18)}
+.dl-press-sticky,.dl-press-state{cursor:pointer}
 .dl-hit-ellipse{border-radius:50%}
 .dl-txt{position:relative;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
   padding:0 4px;text-shadow:0 1px 2px #000a;

@@ -57,8 +57,12 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //   2026-10-04：D-180——前端地基批（屏幕注册表 `public/screens.js`；本轮把"完整文字+按钮前端"
   //     恢复回来并保住布局工具与主界面布局，`goto-records` 从死按钮接成真屏 = 新增 `records` 屏）；
   //     D-181 恢复完整文字前端、D-182 关闭布局渲染、D-183 清理占位素材、
-  //     D-184 布局工具加层级树与元素注释字段、D-185 布局表加容器/滚动/图标尺寸/网格/文字样式/九宫格））
-  assert.equal(decided.size, 137, `D 编号数量应为 137（decisions.md 无跳段之外的编号）`);
+  //     D-184 布局工具加层级树与元素注释字段、D-185 布局表加容器/滚动/图标尺寸/网格/文字样式/九宫格）；
+  //   2026-10-05：D-186 选定「主界面当前显示哪份配置」的端点（`POST /me/configs/:slotId/select` +
+  //     档案 `configs.viewedSlotId` + `ARCHIVE_VERSION` 3）、D-187 分解端点
+  //     （`POST /me/warehouse/dismantle`，无产出；`aiNode`/`package` 不可分解）、
+  //     D-188 布局表驱动界面重启（引擎 `grid.flow` 自动流式排布 + `press` 按下四模式 + `assetPressed` 双素材））
+  assert.equal(decided.size, 140, `D 编号数量应为 140（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

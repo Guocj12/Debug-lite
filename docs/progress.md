@@ -471,8 +471,8 @@ D-184/D-185 我报过的"✓ 控件齐备"这一条**当时检的是错的文件
 
 | # | 待办 | 状态 |
 |---|---|---|
-| F-1 | 引擎：`grid.flow` 自动流式排布（按容器宽算列数 + 换行 + 撑高）+ `press` 四模式 + `assetPressed` 双素材 | ⏳ |
-| F-2 | 布局台：新字段面板 + 网格自动排布开关 + 条数预览 | ⏳ |
+| F-1 | 引擎：`grid.flow` 自动流式排布（按容器宽算列数 + 换行 + 撑高）+ `press` 四模式 + `assetPressed` 双素材 | ✅ **已完成（见下）** |
+| F-2 | 布局台：新字段面板 + 网格自动排布开关 + 条数预览 | ✅ **已完成（见下）** |
 | F-3 | `boot.js` 重开布局渲染（放回 `setLayout` 注入三行） | ⏳ |
 | F-4 | 布局表：仓库弹窗屏（6 选项卡 + 网格 + 滚动）+ 物品详情弹窗屏 | ⏳ |
 | F-5 | 前端投影：仓库弹窗/物品详情/主界面接线；`slot_1/2/3` + 「设为出战」按下态 | ⏳ |
@@ -481,6 +481,29 @@ D-184/D-185 我报过的"✓ 控件齐备"这一条**当时检的是错的文件
 
 **本轮已知偏差 / 待决**：占位素材**不生成**（用户口径：就用占位框）⇒ 布局渲染打开后界面全是占位框
 （**功能可验证、观感不可验证**）；「对战历史」本轮只做**空占位弹窗**（用户口径：先不做）。
+
+---
+
+### ✅ 已交付：引擎 + 布局台（D-188）
+
+| 件 | 落点 | 实测 |
+|---|---|---|
+| **`grid.flow` 网格自动流式排布** | 引擎 `gridFlowRects(containerRect, grid, n)`：`cols = max(1, floor((w−2·padX+gapX)/(cellW+gapX)))`（显式 `cols` 优先）→ 逐行填充，返回 `{rects,cols,rows,contentW,contentH}` | GF-1…GF-5（列数随容器宽变 / 左到右上下排 / `contentH` 随行数增 / 空列表 / 畸形输入不产生 NaN） |
+| **`grid.autoHeight`** | 行数超出容器高 → 撑开内容高 ⇒ 外层 `scroll` 才能真正滚 | GF-3（9 行 728 > 容器 300） |
+| **`press` 按下四模式** | `tap`（`:active`）/ `hover`（`:hover`）/ `sticky`（保持）/ `state`（`pressKey` 命中 `pressWhen`）；引擎 `pressActive` + `layoutAt` 产出 `pressed` | PB-1…PB-6 |
+| **`assetPressed` 双素材** | 常态仍 `asset`；`render.js` 两图并存 → CSS 按状态类切显隐；只有一张时无视觉变化 | PB-4/PB-5 |
+| **校验新增 7 条判据** | error：非法 `press`／`state` 缺键／`pressKey` 非法／`flow` 缺格尺寸；warn：只给按下图／`flow` 无 `scroll`／`autoHeight` 无 `scroll` | PB-6/PB-7 |
+| **布局台同步** | 新面板（按下素材/按下行为+状态键/自动排布/撑高内容/强制列数/预览条数）；舞台**就地显示 `grid.flow` 排布**；预览空壳；按下态可见（描边+角标）；设计态选择器同时驱动 `activeSlot` 与 `battleSlot` | `check-lab` 3/3、`test-layout-lab` 13 组、`test-layout-lab-browser` **15 组** |
+
+**修掉一个自造的启动异常（如实记录）**：app 脚本里首版写成 `CORE.gridFlowRects` / `CORE.pressActive`，
+而该作用域里 core 的别名是 `C` → jsdom 抛 `ReferenceError: CORE is not defined`，
+**表现为「拖动完全不生效」**（错误吞在事件回调里，表面看像"布局台坏了"）。由 runtime 的 jsdom
+交互测试抓出（`test-layout-lab-browser.js` 的拖动断言红）。**教训**：布局台的 app 脚本改动必须跑
+那 15 组 jsdom 断言，纯 `check-lab.js`（只查语法与控件齐备）抓不到这类运行时错误。
+
+**收口实跑（引擎批）**：`npm test` = **1286 通过 / 0 失败**（新增 14 条）；
+`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；`check-docs` PASS；引擎 digest `3fb8c8b7d0354390`
+（`lab.html` core 与 `public/layout-engine.js` 一致，PB-8 机器核对）。
 
 ---
 

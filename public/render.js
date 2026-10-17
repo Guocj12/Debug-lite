@@ -196,6 +196,10 @@
     if (el.muted) cls += ' dl-muted';   // 候选不匹配：标灰（原因写在 label 里）
     if (el.scroll) cls += ' dl-scroll';                    // D-185：滚动容器
     if (el.clickThrough) cls += ' dl-clickthrough';        // D-185：不可点（透给下层）
+    // D-188：按下行为四模式 —— 类名交给 CSS 处理（tap 走 :active、hover 走 :hover），
+    //   sticky/state 由引擎算出的 `pressed` 直接落类（服务端状态驱动的"保持按下"）。
+    if (el.press) cls += ' dl-press-' + String(el.press).replace(/[^a-z]/g, '');
+    if (el.pressed) cls += ' dl-pressed';
     // 尺寸类：让 CSS 能给大控件配大字号（角色卡 300px 高，用 14px 字太小）
     if (el.rect[3] >= 160) cls += ' dl-lg'; else if (el.rect[3] <= 28) cls += ' dl-sm';
     var style = 'left:' + layPct(el.rect[0], canvas.w) + ';top:' + layPct(el.rect[1], canvas.h)
@@ -235,6 +239,11 @@
       } else {
         inner += '<img src="' + esc(el.asset) + '" alt="">';
       }
+    }
+    // D-188：**按下态素材** —— 与常态图并存，由 CSS 按 `.dl-pressed` / `:hover` / `:active`
+    //   切换显隐（两态都有图时"按下"才看得见变化）。只有常态图时不输出第二张（降级为无变化）。
+    if (el.assetPressed) {
+      inner += '<img class="dl-img-pressed" src="' + esc(el.assetPressed) + '" alt="">';
     }
     if (el.text) inner += '<span class="dl-txt">' + esc(el.text) + '</span>';
     return '<' + (isDeco ? 'div' : 'button type="button"') + attrs + '>' + inner + '</' + (isDeco ? 'div' : 'button') + '>';
