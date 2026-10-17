@@ -54,6 +54,9 @@ const EXTRA_STATUS = Object.freeze({
   warehouse_missing: 404,
   // D-177：开包（包不存在/已被消耗 → 409；与 404 区分：包曾经属于该玩家）
   package_invalid: 409,
+  // D-187：分解（删除语义）—— "物品不存在"用**专属码**，不复用 `item_missing`
+  //   （后者在 docs/interfaces.md §2 固定为 409，属装配/拆卸路径的既有契约）。
+  item_not_found: 404,
 });
 
 function statusOf(code) {
@@ -706,6 +709,93 @@ function createAccount(options) {
     }
   }
 
+  /* ---------- D-187：分解（删除仓库物品）；D-186：选定「当前显示哪份配置」 ---------- */
+
+  // 单次分解的物品数上限（与开包同量级，纯请求防护常量）
+  const DISMANTLE_MAX = 100;
+
+  // POST /me/warehouse/dismantle：体 `{uids:[…]}`。
+  //   **无产出**（用户 2026-10-05 裁定：「先只删除，产出待定」）——所以这里**不**生成任何物品，
+  //   响应只回带删除后的仓库视图。三类拒绝（全部在**落盘之前**判完，保证"拒绝 = 零写入"）：
+  //     ① 不可分解的桶（`aiNode`/`package`，用户 Q16）→ 409 `item_not_dismantlable`
+  //     ② 被任何配置引用（D-163 的 `item_in_use` 同码同义）→ 409 `item_in_use`
+  //     ③ 仍装配在别人插槽里（`equipped===true`）→ 409 `plugin_equipped`
+  //   uid 不存在 → 404 `item_missing`。
+  async function dismantleItems(input) {
+    const o = input || {};
+    try {
+      await requireArchive(o.playerId);
+      const uids = Array.isArray(o.uids) ? o.uids : null;
+      if (!uids || uids.length === 0 || uids.length > DISMANTLE_MAX) {
+        return fail('bad_request', `uids 必须是 1..${DISMANTLE_MAX} 个物品 uid 的数组`);
+      }
+      if (uids.some((u) => typeof u !== 'string' || u === '')) {
+        return fail('bad_request', 'uids 每项必须是非空字符串');
+      }
+      if (new Set(uids).size !== uids.length) {
+        return fail('bad_request', 'uids 存在重复 uid');
+      }
+      const view = await store.getWarehouse(o.playerId);
+      // 逐条判定，**全部通过才落盘**（collect-then-apply：避免"删了一半才发现不合法"）
+      const details = [];
+      const usage = view.usage || {};
+      for (const uid of uids) {
+        const found = archiveMod.findWarehouseItem(view.warehouse, uid);
+        if (!found) {
+          // 删除语义下"没这件东西"是 **404**，故用**专属码** `item_not_found`
+          //   （不复用装配路径的 `item_missing`：那个码在接口契约里固定是 409，
+          //    改它会同时改掉装配/拆卸两个已文档化的端点 —— 见 docs/interfaces.md §2）。
+          details.push(detailOf('item_not_found', `物品不在仓库: ${uid}`, 'uids'));
+          continue;
+        }
+        if (!archiveMod.isDismantlableKind(found.item.kind)) {
+          details.push(detailOf('item_not_dismantlable',
+            `${found.item.kind} 不可分解（AI 节点与包不可分解）: ${uid}`, 'uids'));
+          continue;
+        }
+        const usedBy = usage[uid] && Array.isArray(usage[uid].slotIds) ? usage[uid].slotIds : [];
+        if (usedBy.length > 0) {
+          details.push(detailOf('item_in_use', `物品被配置使用中（${usedBy.join('、')}）: ${uid}`, 'uids'));
+          continue;
+        }
+        if (found.item.equipped === true) {
+          details.push(detailOf('plugin_equipped', `插件仍装配中，请先拆卸: ${uid}`, 'uids'));
+          continue;
+        }
+      }
+      if (details.length > 0) {
+        // 错误码取**首个**违规项的码（details 里逐条写清原因，前端按行展示）
+        return fail(details[0].code, '分解被拒绝（详见 details）', details);
+      }
+      const applied = await store.dismantleItems({ playerId: o.playerId, uids });
+      logWrite('dismantleItems', { playerId: o.playerId, count: uids.length });
+      return ok({
+        dismantled: applied.dismantled,
+        warehouse: applied.warehouse, usage: applied.usage, counts: applied.counts, caps: applied.caps,
+      });
+    } catch (err) {
+      return toFailure(err, log, 'dismantleItems');
+    }
+  }
+
+  // POST /me/configs/:slotId/select（D-186）：只改「主界面当前显示哪份配置」。
+  //   **与 activate 完全分开**：不校验完整性、不动快照、不改出战槽。
+  //   槽不存在 → 404 `slot_not_found`（路径参数由 HTTP 层传入）。
+  async function selectViewedSlot(input) {
+    const o = input || {};
+    try {
+      const archive = await requireArchive(o.playerId);
+      if (!archiveMod.findSlot(archive, o.slotId)) {
+        return fail('slot_not_found', `配置槽 ${o.slotId} 不存在`);
+      }
+      const res = await store.setViewedSlot({ playerId: o.playerId, slotId: o.slotId });
+      logWrite('selectViewedSlot', { playerId: o.playerId, slotId: o.slotId });
+      return ok({ viewedSlot: res.viewedSlot });
+    } catch (err) {
+      return toFailure(err, log, 'selectViewedSlot');
+    }
+  }
+
   /* ---------- D-177：开包（消耗包 → 产出物品；服务端独占随机性，同 D-162） ---------- */
 
   // 包 uids 的入参上限（单次开包数量；与 record.recent 同量级，纯请求防护常量）
@@ -1326,11 +1416,14 @@ function createAccount(options) {
     saveConfig,
     activateConfig,
     deleteSlot,
-    // D-159：服务端权威仓库（真源 + 装配/拆卸）；D-177：开包
+    // D-159：服务端权威仓库（真源 + 装配/拆卸）；D-177：开包；D-187：分解
     getWarehouse,
     assemblePlugin,
     disassemblePlugin,
     openPackages,
+    dismantleItems,
+    // D-186：选定「当前显示哪份配置」（不是出战）
+    selectViewedSlot,
     // D-161：AI 库
     listAi,
     createAi,

@@ -117,7 +117,7 @@ const CASES = [
     const arch = a.archive;
     assert.match(arch.playerId, /^pl_[0-9a-f]{16}$/);
     assert.match(arch.publicId, /^u_[0-9a-f]{8}$/);
-    assert.equal(arch.archiveVersion, 2, 'D-159：ARCHIVE_VERSION=2');
+    assert.equal(arch.archiveVersion, 3, 'D-186：ARCHIVE_VERSION=3（v3 补 configs.viewedSlotId）');
     for (const key of ['playerId', 'publicId', 'nickname', 'createdAt', 'lastLoginAt', 'lastSeenAt', 'auth',
       'progress', 'rating', 'configs', 'pool', 'record', 'flags',
       // D-159/D-161：服务端权威仓库段 + AI 库段

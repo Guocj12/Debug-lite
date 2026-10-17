@@ -33,7 +33,7 @@ function newArchive(playerId, opts) {
 
 test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注册即有默认槽与快照 + 校验通过', () => {
   const a = newArchive();
-  assert.equal(a.archiveVersion, 2, 'D-159：ARCHIVE_VERSION=2');
+  assert.equal(a.archiveVersion, 3, 'D-186：ARCHIVE_VERSION=3（v3 补 configs.viewedSlotId）');
   assert.equal(a.playerId, PID1);
   assert.match(a.publicId, /^u_[0-9a-f]{8}$/);
   assert.equal(a.progress.tier, 'common');
@@ -43,6 +43,7 @@ test('ARC-1 createArchive：§5.2 字段全表 + D-159 仓库段/AI 库段 + 注
   assert.equal(a.configs.slots.length, 1);
   assert.equal(a.configs.slots[0].isDefault, true);
   assert.equal(a.configs.activeSlotId, 'slot1');
+  assert.equal(a.configs.viewedSlotId, 'slot1', 'D-186：注册时「当前显示」= 出战槽');
   assert.equal(a.configs.activeSnapshotHash, SHA_A);
   assert.equal(a.pool.inPool, true);
   assert.equal(a.record.appliedSeq, 0);
@@ -248,28 +249,30 @@ test('ARC-3 槽位纯操作：上限/可删性/激活同步', () => {
   assert.equal(arch.syncActiveSnapshot(a), null, '无槽 → activeSnapshotHash 为 null');
 });
 
-test('ARC-4 迁移：v0 → v2 补齐字段（含空仓库/AI 库）并记 store.migrate；更高版本拒绝启动', () => {
+test('ARC-4 迁移：v0 → v3 补齐字段（含空仓库/AI 库/viewedSlotId）并记 store.migrate；更高版本拒绝启动', () => {
   const events = [];
   const logger = { info: (ch, ev, msg, data) => events.push({ ch, ev, msg, data }), warn: () => {}, debug: () => {}, trace: () => {}, error: () => {}, log: () => {} };
   const v0 = { playerId: PID1, nickname: 'legacy', rating: { points: 77 } };
   const res = arch.migrateArchive(v0, { logger });
   assert.equal(res.migrated, true);
   assert.equal(res.from, 0);
-  // D-159：ARCHIVE_VERSION=2 → v0 需连跳两级（v0→v1→v2）
-  assert.equal(res.to, 2);
-  assert.equal(res.archive.archiveVersion, 2);
+  // D-159=2 / D-186=3 → v0 需连跳三级（v0→v1→v2→v3）
+  assert.equal(res.to, 3);
+  assert.equal(res.archive.archiveVersion, 3);
   assert.equal(res.archive.rating.points, 77, '保留 v0 已有字段');
   assert.equal(res.archive.progress.tier, 'common', '补齐缺失字段');
   // D-159：迁移只补**空**仓库（老账号**不**补发 starter）；D-161：补空 AI 库
   assert.deepEqual(res.archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] }, starterIssued: false, grantIds: [] });
   assert.deepEqual(res.archive.ai, { items: [] });
+  // D-186：无槽的 v0 档案 → viewedSlotId 兜底为 null（一个槽都没有的异常态，合法）
+  assert.equal(res.archive.configs.viewedSlotId, null, 'D-186：无槽档案兜底 null');
   assert.equal(events[0].ev, 'store.migrate');
   assert.equal(events[0].ch, 'store');
   assert.equal(events[0].data.playerId, PID1);
   assert.equal(events[0].data.from, 0);
-  assert.equal(events[0].data.to, 2);
-  assert.equal(events[0].msg, '档案迁移 0 → 2');
-  // v1 存量档案（已有 archiveVersion=1）→ 只补 v1→v2：老账号保持空仓、不发 starter
+  assert.equal(events[0].data.to, 3);
+  assert.equal(events[0].msg, '档案迁移 0 → 3');
+  // v1 存量档案（已有 archiveVersion=1）→ 连跳 v1→v2→v3：老账号保持空仓、不发 starter
   const v1 = {
     playerId: PID1, publicId: 'u_11111111', nickname: 'legacy1', auth: null,
     progress: { tier: 'common', peakTier: 'common' }, rating: { points: 5, peakPoints: 5 },
@@ -280,13 +283,27 @@ test('ARC-4 迁移：v0 → v2 补齐字段（含空仓库/AI 库）并记 store
   const res1 = arch.migrateArchive(v1, { logger });
   assert.equal(res1.migrated, true);
   assert.equal(res1.from, 1);
-  assert.equal(res1.to, 2);
+  assert.equal(res1.to, 3);
   assert.equal(res1.archive.warehouse.starterIssued, false, 'D-159：v1 存量档案迁移不补发 starter');
   assert.deepEqual(arch.warehouseCounts(res1.archive.warehouse), { role: 0, skill: 0, rolePlugin: 0, skillPlugin: 0, package: 0, aiNode: 0 });
   assert.deepEqual(res1.archive.ai.items, []);
+  // D-186：v2 存量档案（有出战槽）→ 只补 v2→v3，viewedSlotId 跟随出战槽
+  const v2 = {
+    playerId: PID1, publicId: 'u_11111111', nickname: 'legacy2', auth: null,
+    progress: { tier: 'common', peakTier: 'common', tierUpdatedAt: 0, batchesPlayed: 0, batchesPromoted: 0, lastBatchId: null, lastPromotedBatchId: null },
+    rating: { points: 5, peakPoints: 5, games: 0, wins: 0, losses: 0, draws: 0, lastBattleAt: null, seasonId: 's0' },
+    configs: { slots: [{ slotId: 'slot7', name: '旧配置', isDefault: true, snapshot: null, loadout: null }], activeSlotId: 'slot7', activeSnapshotHash: null },
+    pool: { inPool: true, enteredAt: 0, lastDrawnAt: null, drawnCount: 0, lastOpponentAt: {} },
+    record: { appliedSeq: 0, recent: [], stats: { attack: { wins: 0, losses: 0, draws: 0 }, defense: { wins: 0, losses: 0, draws: 0 } }, unread: { attack: 0, defense: 0, fromSeq: 0 } },
+    flags: { rebuiltFromCheckpoint: false }, archiveVersion: 2,
+  };
+  const res2 = arch.migrateArchive(v2, { logger });
+  assert.equal(res2.from, 2);
+  assert.equal(res2.to, 3);
+  assert.equal(res2.archive.configs.viewedSlotId, 'slot7', 'D-186：v2 迁移时 viewedSlotId 跟随出战槽');
   const same = arch.migrateArchive(newArchive(), { logger });
   assert.equal(same.migrated, false);
-  assert.throws(() => arch.migrateArchive({ ...newArchive(), archiveVersion: 3 }, { logger }),
+  assert.throws(() => arch.migrateArchive({ ...newArchive(), archiveVersion: 4 }, { logger }),
     (e) => e.code === 'store_version_unsupported' && e.fatal === true);
   assert.equal(typeof arch.MIGRATIONS[1], 'function');
   assert.equal(typeof arch.MIGRATIONS[2], 'function');

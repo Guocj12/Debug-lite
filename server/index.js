@@ -1379,6 +1379,19 @@ function createHandler(logger, extraRoutes, runtime) {
         }));
       },
     },
+    // D-187：分解（删除仓库物品）—— 体 `{uids:[…]}`；**无产出**（用户 2026-10-05 裁定：先只删除）。
+    //   拒绝码：`item_not_dismantlable`（AI 节点/包）/`item_in_use`（被配置引用）/`plugin_equipped`（仍装配）/`item_missing`。
+    '/api/v1/me/warehouse/dismantle': {
+      auth: true,
+      redact: true,
+      handler: async (ctx) => {
+        const body = bodyOf(ctx);
+        if (body === null) return failStatus(400, 'bad_json', '请求体不是合法 JSON');
+        return respond(await rt.account.dismantleItems({
+          playerId: ctx.player.playerId, uids: body.uids,
+        }));
+      },
+    },
     // D-161：AI 库创建（命名保存；上限 100 → 409 ai_limit）；D-172：`status` 缺省/ready 时服务端完整校验
     '/api/v1/me/ai': {
       auth: true,
@@ -1601,6 +1614,11 @@ function createHandler(logger, extraRoutes, runtime) {
       }
       if (parts.length === 2 && parts[1] === 'activate' && req.method === 'POST') {
         return runEntry({ auth: true, handler: async (c) => respond(await rt.account.activateConfig({ playerId: c.player.playerId, slotId })) }, ctx);
+      }
+      // D-186：POST /me/configs/:slotId/select —— 只改「主界面当前显示哪份配置」。
+      //   **与 activate 分开**：不校验完整性、不动快照、不改出战槽（"在看 slot2、出战是 slot1" 合法）。
+      if (parts.length === 2 && parts[1] === 'select' && req.method === 'POST') {
+        return runEntry({ auth: true, handler: async (c) => respond(await rt.account.selectViewedSlot({ playerId: c.player.playerId, slotId })) }, ctx);
       }
     }
 

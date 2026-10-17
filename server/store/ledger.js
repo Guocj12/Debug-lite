@@ -243,6 +243,35 @@ function buildPackageGrantRecord(input) {
   };
 }
 
+// D-187：分解的幂等键 —— 内容寻址到 (playerId, **排序后**的 uid 集合)。
+//   排序是承重的：`{uids:['b','a']}` 与 `{uids:['a','b']}` 必须是**同一个**操作（否则重放会二次删除）。
+function dismantleGrantIdOf(input) {
+  const o = input || {};
+  const uids = Array.isArray(o.uids) ? o.uids.slice().sort() : [];
+  return `dm_${shortDigest([o.playerId || '', uids.join(',')].join('|'), 16)}`;
+}
+
+// D-187：warehouse.dismantled —— 分解（删除仓库物品）。**无产出**（用户 2026-10-05 裁定：先只删除）。
+//   记录只带 uid 列表（**不带物品正文**）：真源是"删掉这些 uid"，重放时找不到的 uid 只记 warn。
+function buildDismantleRecord(input) {
+  const o = input || {};
+  const uids = Array.isArray(o.uids) ? o.uids.slice().sort() : [];
+  return {
+    type: 'warehouse.dismantled', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    dismantleId: o.dismantleId || dismantleGrantIdOf({ playerId: o.playerId, uids }),
+    uids,
+  };
+}
+
+// D-186：config.viewed —— 「主界面当前显示哪份配置」（**不是出战**，不触发完整性校验）。
+function buildConfigViewedRecord(input) {
+  const o = input || {};
+  return {
+    type: 'config.viewed', v: RECORD_VERSION, at: o.at, playerId: o.playerId,
+    slotId: o.slotId,
+  };
+}
+
 // D-177：package.opened —— 开包（consume = 被消耗的包 uid；items = 产出物品正文）
 function buildPackageOpenRecord(input) {
   const o = input || {};
@@ -413,6 +442,9 @@ module.exports = {
   buildBoxRecord,
   packageGrantIdOf,
   packageOpenGrantIdOf,
+  dismantleGrantIdOf,
+  buildDismantleRecord,
+  buildConfigViewedRecord,
   buildPackageGrantRecord,
   buildPackageOpenRecord,
   buildWarehouseRecord,

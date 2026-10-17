@@ -10,7 +10,7 @@ const { nullLogger } = require('../../shared/log.js');
 const { StoreError } = require('./errors.js');
 const { deepClone, isHash } = require('./canonical.js');
 
-const ARCHIVE_VERSION = 2;
+const ARCHIVE_VERSION = 3;
 const RECORD_VERSION = 1;
 const TIERS = Object.freeze(['common', 'rare', 'epic', 'legendary', 'mythic']);
 const DEFAULT_MAX_SLOTS = 3;
@@ -36,7 +36,7 @@ function bucketOfKind(kind) {
 const GRANT_WINDOW = 256;
 // 这些记录改变的是**状态量**（仓库正文 / AI 库），无法由"段内增量"无损重建 →
 //   含它们的 journal 段**不参与 compact**（真源始终留在 journal；检查点里的物化态只作降级兜底）
-const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'ai.created', 'ai.updated', 'ai.deleted', 'package.granted', 'package.opened']);
+const NON_COMPACTABLE = Object.freeze(['box.opened', 'warehouse.assemble', 'warehouse.disassemble', 'warehouse.dismantled', 'ai.created', 'ai.updated', 'ai.deleted', 'package.granted', 'package.opened']);
 
 // D-172：AI 库条目的状态（`ready` = 正式、`draft` = 草稿）。**字段可缺省**（旧档案无该字段 → 视为 ready，
 //   因此不需要档案版本迁移）；非法取值一律按 ready 处理（写路径已挡，这里只做读路径兜底）。
@@ -87,6 +87,15 @@ function findWarehouseItem(warehouse, uid) {
     if (index >= 0) return { bucket: key, item: list[index], index };
   }
   return null;
+}
+
+// D-187：哪些桶的物品**可分解**（用户 2026-10-05 裁定：「ai 节点和包不可分解，其他都可」）。
+//   理由：`aiNode` 是**堆叠**条目（`{nodeId,count}`，一 uid = 一堆），删它要单独做减堆叠语义，
+//   且它与 AI 编辑器的节点库绑定；`package` 是**消耗品**（正解是"开包"而不是"扔掉"）。
+//   **单一判据**：HTTP 层、档案 apply、检查点物化三处都必须调它（否则三方会漂移）。
+const DISMANTLABLE_KINDS = Object.freeze(['role', 'skill', 'rolePlugin', 'skillPlugin']);
+function isDismantlableKind(kind) {
+  return DISMANTLABLE_KINDS.indexOf(kind) >= 0;
 }
 
 // D-163（2026-09-25 热修）：发放路径的 uid 必须**四桶唯一**。
@@ -229,6 +238,10 @@ const RECORD_TYPES = Object.freeze([
   // D-176/D-177：包（模块包）—— 战斗掉落发放（package.granted）与开包（package.opened：消耗包 + 产出物品）
   'package.granted',
   'package.opened',
+  // D-186：「主界面当前显示哪份配置」（不是出战；不校验完整性）
+  'config.viewed',
+  // D-187：分解（删除仓库物品；**无产出**）
+  'warehouse.dismantled',
   'checkpoint',
 ]);
 
@@ -331,7 +344,9 @@ function createArchiveShell(playerId, at) {
     rating: {
       points: 0, peakPoints: 0, games: 0, wins: 0, losses: 0, draws: 0, lastBattleAt: null, seasonId: 's0',
     },
-    configs: { slots: [], activeSlotId: null, activeSnapshotHash: null },
+    // D-186：`viewedSlotId` = 「主界面当前显示哪份配置」（与出战配置 `activeSlotId` **完全分开**）。
+    //   注册时=出战槽；写它**不触发**任何完整性校验（不是出战，只是"在看哪一份"）。
+    configs: { slots: [], activeSlotId: null, activeSnapshotHash: null, viewedSlotId: null },
     pool: { inPool: true, enteredAt: ts, lastDrawnAt: null, drawnCount: 0, lastOpponentAt: {} },
     record: {
       appliedSeq: 0,
@@ -398,6 +413,8 @@ function createArchive(input) {
     }
     archive.configs.slots = slots;
     archive.configs.activeSlotId = activeId === null ? slots[0].slotId : activeId;
+    // D-186：注册时「当前显示」= 出战槽（刚进来看到的就是出战那份）
+    archive.configs.viewedSlotId = archive.configs.activeSlotId;
     const active = slots.find((s) => s.slotId === archive.configs.activeSlotId);
     archive.configs.activeSnapshotHash = active && active.snapshot ? active.snapshot.hash : null;
     archive.flags.unverifiedLoadout = !(active && active.snapshot && active.snapshot.verifiedAgainstWarehouse);
@@ -463,6 +480,12 @@ function validateArchive(archive, options) {
       else if (!active) pushError(errors, 'no_active_config', `activeSlotId=${archive.configs.activeSlotId} 不存在`, 'configs.activeSlotId');
       else if (active.snapshot && archive.configs.activeSnapshotHash !== active.snapshot.hash) {
         pushError(errors, 'store_inconsistent', 'activeSnapshotHash 与出战槽快照不一致', 'configs.activeSnapshotHash');
+      }
+      // D-186：`viewedSlotId` 必须是**真实存在的槽**（NULL 合法 = 一个槽都没有的异常态）。
+      //   **刻意不要求它等于 activeSlotId** —— "在看 slot2、出战是 slot1" 是合法且被产品使用的状态。
+      const viewed = archive.configs.viewedSlotId;
+      if (viewed !== null && viewed !== undefined && !slots.some((s) => s.slotId === viewed)) {
+        pushError(errors, 'store_inconsistent', `viewedSlotId=${viewed} 不存在`, 'configs.viewedSlotId');
       }
     }
   }
@@ -588,7 +611,24 @@ function migrateV1toV2(raw) {
   return out;
 }
 
-const MIGRATIONS = Object.freeze({ 1: migrateV0toV1, 2: migrateV1toV2 });
+// v2 → v3（D-186）：补齐 `configs.viewedSlotId`（「主界面当前显示哪份配置」）。
+//   兜底取值链：出战槽 `activeSlotId` → 首个槽 → null。
+//   · **不伪造"玩家看过哪一份"**：它只是"到 v3 之前没有这个量"的代理，默认跟随出战配置
+//     （这也正是产品语义：刚进来看到的就是出战那份）。
+//   · 老档案若连出战槽都没有（异常态），回落到首个槽；一个槽都没有 → null（前端按"无配置"渲染）。
+function migrateV2toV3(raw) {
+  const out = deepClone(raw);
+  if (!out.configs || typeof out.configs !== 'object') out.configs = { slots: [], activeSlotId: null, activeSnapshotHash: null };
+  const cfg = out.configs;
+  if (cfg.viewedSlotId === undefined || cfg.viewedSlotId === null) {
+    const slots = Array.isArray(cfg.slots) ? cfg.slots : [];
+    const fallback = typeof cfg.activeSlotId === 'string' ? cfg.activeSlotId : (slots[0] ? slots[0].slotId : null);
+    cfg.viewedSlotId = fallback;
+  }
+  return out;
+}
+
+const MIGRATIONS = Object.freeze({ 1: migrateV0toV1, 2: migrateV1toV2, 3: migrateV2toV3 });
 
 // D-171：老档案缺 `progress.tierUpdatedAt`（段位榜排序键）时的**一次性兜底盖章**。
 //   · 取值链：`createdAt`（账号创建时间，最保守的"至少不比它晚"代理）→ `updatedAt` → 0；
@@ -748,6 +788,19 @@ function syncActiveSnapshot(archive) {
   return archive.configs.activeSnapshotHash;
 }
 
+// D-186：`viewedSlotId` 的**自愈**（「主界面当前显示哪份配置」）。
+//   不变量：它必须是**真实存在的槽**；槽被删/从未设置 → 回落到出战槽 → 再回落首个槽 → null。
+//   调用点：① 建槽后 ② 删槽后 ③ 出战槽切换后 ④ 读档时（migrateV2toV3 已兜底，这里是运行期护栏）。
+//   **刻意不把它设为"必须等于出战槽"** —— 玩家可以"在看 slot2、出战是 slot1"，这正是它的用途。
+function syncViewedSlot(archive) {
+  const cfg = archive.configs;
+  const slots = Array.isArray(cfg.slots) ? cfg.slots : [];
+  if (findSlot(archive, cfg.viewedSlotId)) return cfg.viewedSlotId;
+  const fallback = findSlot(archive, cfg.activeSlotId) ? cfg.activeSlotId : (slots[0] ? slots[0].slotId : null);
+  cfg.viewedSlotId = fallback;
+  return cfg.viewedSlotId;
+}
+
 // ---------- journal 记录 → 档案（幂等；调用方负责 appliedSeq 水位与落盘） ----------
 
 // 战绩环形：**按 seq 升序插入**（不是简单 push）。
@@ -905,6 +958,7 @@ async function applyConfigSaved(archive, record, ctx) {
     }
     archive.configs.slots = archive.configs.slots.filter((s) => s.slotId !== record.slotId);
     syncActiveSnapshot(archive);
+    syncViewedSlot(archive);   // D-186：被删的槽若正是"当前显示"，回落到出战槽/首个槽
     return { changed: true };
   }
   const at = Number.isInteger(record.at) ? record.at : ctx.now();
@@ -940,6 +994,12 @@ async function applyConfigSaved(archive, record, ctx) {
     archive.configs.activeSlotId = slot.slotId;
   }
   syncActiveSnapshot(archive);
+  // D-186：**建槽时若有 `create` 且当前没有"正在看的"配置 → 跟随它**（否则新槽建出来是"看不见的"）。
+  //   注意：「出战切换」**不改** `viewedSlotId` —— 玩家在看哪份与出战是哪份是两件事。
+  if (archive.configs.viewedSlotId === undefined || archive.configs.viewedSlotId === null) {
+    archive.configs.viewedSlotId = slot.slotId;
+  }
+  syncViewedSlot(archive);
   if (record.warehouseVerified === true) archive.flags.unverifiedLoadout = false;
   return { changed: true };
 }
@@ -1334,6 +1394,53 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
       }
       return { changed: true };
     }
+    // D-187：分解（删除仓库物品）—— **纯删除、无产出**（用户 2026-10-05 裁定：「先只删除，产出待定」）。
+    //   幂等键 = `dismantleId`（= 排序后 uid 集合的哈希，由 ledger 生成），落 `grantIds` 同一环形窗口：
+    //   · 重放同一条记录 → 环里已有该 id → 跳过（否则第二次会找不到物品、只记 warn，档案不漂移但日志噪声）；
+    //   · 半应用（只删了一半就崩）→ 重放时对已不存在的 uid 只记 warn，最终态仍收敛。
+    case 'warehouse.dismantled': {
+      const ring = (archive.warehouse && Array.isArray(archive.warehouse.grantIds)) ? archive.warehouse.grantIds : [];
+      if (record.dismantleId && ring.some((g) => g && g.grantId === record.dismantleId)) return { changed: false };
+      const removed = [];
+      for (const uid of Array.isArray(record.uids) ? record.uids : []) {
+        const found = findWarehouseItem(archive.warehouse, uid);
+        if (!found) {
+          ctx.logger.warn('store', 'store.error', `分解记录引用的物品不在仓库：${uid}`, { playerId, uid });
+          continue;
+        }
+        // 防御：**可分解性在这里再判一次**（HTTP 已判过；这里是畸形/重放记录的护栏）。
+        //   不合法的**不删**（宁可不删也不造成"档案里少了一件不该少的"）。
+        if (!isDismantlableKind(found.item.kind)) {
+          ctx.logger.warn('store', 'store.error', `分解记录含不可分解物品（${found.item.kind}）：${uid}`, { playerId, uid, kind: found.item.kind });
+          continue;
+        }
+        // 防御：仍被装配引用的插件**不删**（否则 `slots[].pluginUid` 会永久悬空）
+        if (found.item.equipped === true) {
+          ctx.logger.warn('store', 'store.error', `分解记录含仍在装配中的物品：${uid}`, { playerId, uid });
+          continue;
+        }
+        found.bucket && archive.warehouse.buckets[found.bucket].splice(found.index, 1);
+        removed.push(uid);
+      }
+      const ring2 = (archive.warehouse && Array.isArray(archive.warehouse.grantIds)) ? archive.warehouse.grantIds : [];
+      if (record.dismantleId) {
+        ring2.push({ grantId: record.dismantleId, seq: record.seq, at, count: 0, removed, dismantled: removed.length });
+        while (ring2.length > GRANT_WINDOW) ring2.shift();
+        archive.warehouse.grantIds = ring2;
+      }
+      return { changed: removed.length > 0 || !!record.dismantleId };
+    }
+    // D-186：「当前显示哪份配置」（**不是出战**）——纯档案字段写入，不触碰快照/完整性。
+    //   幂等：值相同 → changed:false（重复记录不产生写入，`syncViewedSlot` 自带存在性护栏）。
+    case 'config.viewed': {
+      if (!findSlot(archive, record.slotId)) {
+        ctx.logger.warn('store', 'store.error', `config.viewed 指向不存在的槽：${record.slotId}`, { playerId, slotId: record.slotId });
+        return { changed: false };
+      }
+      if (archive.configs.viewedSlotId === record.slotId) return { changed: false };
+      archive.configs.viewedSlotId = record.slotId;
+      return { changed: true };
+    }
     // D-161：AI 库；D-172：`status`（缺省 = ready，旧记录无该字段照旧可用）；D-178：`blueprint/traceMap/compilerVersion`
     case 'ai.created': {
       if (findAi(archive, record.aiId)) return { changed: false };
@@ -1406,6 +1513,18 @@ async function applyRecordToArchive(archive, record, playerId, ctx) {
 //   含仓库/AI 变更的段不参与 compact，故真源仍是 journal，见 NON_COMPACTABLE）。
 function applyRecordToMaterializedWarehouse(wh, record) {
   if (!wh || !record) return;
+  // D-187：分解（删除）—— 与 applyRecordToArchive 同序：先按 uid 找桶、再从桶里删。
+  //   不可分解/仍装配中的**同样跳过**（两侧判据必须一致，否则检查点重建后会与真源漂移）。
+  if (record.type === 'warehouse.dismantled') {
+    for (const uid of Array.isArray(record.uids) ? record.uids : []) {
+      const found = findWarehouseItem(wh, uid);
+      if (!found) continue;
+      if (!isDismantlableKind(found.item.kind)) continue;
+      if (found.item.equipped === true) continue;
+      wh.buckets[found.bucket].splice(found.index, 1);
+    }
+    return;
+  }
   // D-176/D-177：开包先在物化态里消耗掉被开的包（与 applyRecordToArchive 同序：先消耗、后产出）
   if (record.type === 'package.opened') {
     for (const uid of Array.isArray(record.consume) ? record.consume : []) {
@@ -1492,7 +1611,8 @@ function aggregateRecords(records) {
       continue;
     }
     if (record.type === 'box.opened' || record.type === 'package.granted' || record.type === 'package.opened'
-      || record.type === 'warehouse.assemble' || record.type === 'warehouse.disassemble') {
+      || record.type === 'warehouse.assemble' || record.type === 'warehouse.disassemble'
+      || record.type === 'warehouse.dismantled') {
       const t = ensure(record.playerId);
       if (!t.warehouse) t.warehouse = emptyWarehouse();
       applyRecordToMaterializedWarehouse(t.warehouse, record);
@@ -1643,6 +1763,11 @@ function summaryOf(archive) {
     activeSlotId: archive.configs.activeSlotId,
     activeSnapshotHash: archive.configs.activeSnapshotHash,
     activeSlotName: active ? active.name : null,
+    // D-186：`viewedSlotId` = 「主界面当前显示哪份配置」（可与出战槽不同）。
+    //   `battleSlot` 是它的**布局投影用别名**（主界面「出战」徽章按它做 `when`/按下态判定）；
+    //   两者取值相同、语义不同 —— `viewedSlot` 是"在看哪份"，`battleSlot` 是"这份是不是出战那份"的对照量。
+    viewedSlotId: archive.configs.viewedSlotId === undefined ? null : archive.configs.viewedSlotId,
+    battleSlot: archive.configs.activeSlotId,
     pool: { inPool: archive.pool.inPool, drawnCount: archive.pool.drawnCount },
     record: { stats: deepClone(archive.record.stats), unread: unreadOf(archive) },
     flags: { unverifiedLoadout: !!archive.flags.unverifiedLoadout, isBot: !!archive.flags.isBot },
@@ -1697,6 +1822,8 @@ module.exports = {
   WAREHOUSE_BUCKETS,
   BUCKET_OF_KIND,
   bucketOfKind,
+  DISMANTLABLE_KINDS,
+  isDismantlableKind,
   GRANT_WINDOW,
   PLAYER_ID_RE,
   PUBLIC_ID_RE,
@@ -1732,6 +1859,7 @@ module.exports = {
   createArchive,
   createArchiveShell,
   createSlot,
+  syncViewedSlot,
   defaultRecentLimit,
   defenseSummaryOf,
   findSlot,

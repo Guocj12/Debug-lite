@@ -110,8 +110,8 @@ test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；�
     const res = await fx.account.getSummary(u.playerId);
     assert.equal(res.ok, true);
     assert.deepEqual(Object.keys(res.data).sort(), [
-      'activeSlotId', 'activeSlotName', 'activeSnapshotHash', 'flags', 'nickname', 'pool',
-      'progress', 'publicId', 'rating', 'record', 'slots',
+      'activeSlotId', 'activeSlotName', 'activeSnapshotHash', 'battleSlot', 'flags', 'nickname', 'pool',
+      'progress', 'publicId', 'rating', 'record', 'slots', 'viewedSlotId',
     ]);
     assert.equal(res.data.nickname, '摘要');
     assert.match(res.data.publicId, /^u_[0-9a-f]{8}$/);
@@ -127,6 +127,9 @@ test('ACC-1 getSummary：§10.2 形状（段位/积分/未读/槽位/pool）；�
     assert.equal(res.data.slots[1].snapshotHash, null, 'D-160：非出战空槽无快照');
     assert.equal(res.data.slots[2].snapshotHash, null, 'D-160：非出战空槽无快照');
     assert.equal(res.data.activeSlotId, 'slot1');
+    // D-186：注册时「当前显示」= 出战槽；`battleSlot` 是布局投影用的出战槽别名
+    assert.equal(res.data.viewedSlotId, 'slot1', 'D-186：注册时 viewedSlotId = 出战槽');
+    assert.equal(res.data.battleSlot, 'slot1', 'D-186：battleSlot = 出战槽（布局按下态判据）');
     assert.equal(res.data.flags.unverifiedLoadout, false, 'D-159：starter 自带服务端权威仓库 → 注册即已校验');
     assert.deepEqual(res.data.pool, { inPool: true, drawnCount: 0 });
     assert.deepEqual(res.data.record.unread, { attack: 0, defense: 0, fromSeq: 0 });

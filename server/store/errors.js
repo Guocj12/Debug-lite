@@ -40,6 +40,8 @@ const STATUS_BY_CODE = Object.freeze({
   points_exceeded: 409,              // 角色插件点数不足
   plugin_equipped: 409,              // 插件已装配别处
   item_in_use: 409,                  // D-163：该物品已被**另一份配置**引用（一件物品同时只能装配到一份配置）
+  // D-187：分解（删除仓库物品）
+  item_not_dismantlable: 409,        // 该桶不可分解（AI 节点是堆叠、包是消耗品）；用户 2026-10-05 裁定
   tier_locked: 409,                  // 段位门控拒绝（门控开启时）
   slot_empty: 404,                   // 拆卸时槽为空（core/items 口径）
   plugin_missing: 404,               // 拆卸时悬挂引用/插件不在仓库

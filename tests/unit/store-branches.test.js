@@ -301,18 +301,21 @@ test('BR-11 档案版本迁移：磁盘上的 v0 档案在读取时升级并原�
       },
     }), 'utf8');
     const archive = await store.loadArchive(pid);
-    assert.equal(archive.archiveVersion, 2, '读档时升级到当前版本（D-159：ARCHIVE_VERSION=2）');
+    assert.equal(archive.archiveVersion, 3, '读档时升级到当前版本（D-186：ARCHIVE_VERSION=3）');
     assert.equal(archive.rating.points, 33, '保留 v0 已有字段');
     assert.equal(archive.progress.tier, 'common', '补齐缺失段');
     assert.equal(archive.record.appliedSeq, 0);
-    // D-159/D-161：v0 → v2 连跳两级 → 补齐**空**仓库段与 AI 库段（老账号不发 starter）
+    // D-159/D-161：v0 → v3 连跳三级 → 补齐**空**仓库段与 AI 库段（老账号不发 starter）
     assert.deepEqual(archive.warehouse, { buckets: { role: [], skill: [], rolePlugin: [], skillPlugin: [], package: [], aiNode: [] }, starterIssued: false, grantIds: [] });
     assert.deepEqual(archive.ai, { items: [] });
+    // D-186：v0 → v3 迁移补齐 viewedSlotId（跟随出战槽）
+    assert.equal(archive.configs.viewedSlotId, 'slot1', 'D-186：迁移时 viewedSlotId 跟随出战槽');
     assert.ok(log.has('store.migrate'));
     const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
-    assert.equal(onDisk.archiveVersion, 2, '升级后立即原子写回');
+    assert.equal(onDisk.archiveVersion, 3, '升级后立即原子写回');
     assert.equal(onDisk.warehouse.starterIssued, false, '写回的空仓库同样带 starterIssued:false');
     assert.deepEqual(onDisk.ai.items, []);
+    assert.equal(onDisk.configs.viewedSlotId, 'slot1', '写回档案同样带 viewedSlotId');
     assert.equal(store.index.get(pid).points, 33, '索引同步');
   } finally {
     await store.close();

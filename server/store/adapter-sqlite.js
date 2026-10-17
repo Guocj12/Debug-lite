@@ -61,7 +61,9 @@ function createSqliteAdapter(options) {
     'freezeSnapshot', 'append', 'applyRecord', 'settleBattle', 'records', 'defenseSummary', 'recover',
     'rebuildIndex', 'stats',
     // D-159/D-161：服务端权威仓库 + AI 库（迁移时必须逐项等价实现）；D-172：AI 库编辑
+    //   D-177：开包；D-186：选定显示配置；D-187：分解
     'getWarehouse', 'grantBox', 'applyWarehouseChange', 'listAi', 'createAi', 'updateAi', 'deleteAi',
+    'openPackages', 'setViewedSlot', 'dismantleItems',
   ]) {
     adapter[name] = notImpl;
   }

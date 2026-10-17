@@ -1245,6 +1245,49 @@ function createJsonAdapter(options) {
     });
   }
 
+  // D-187：分解（删除仓库物品）。**无产出**（用户 2026-10-05 裁定：先只删除，产出待定）。
+  //   校验在 L6（server/account.js）前置完成；本层只落**无正文**的增量记录（记录体积 = uid 列表，恒定）。
+  //   幂等由 ledger 的 `dismantleId`（排序后 uid 集合的内容哈希）保证，见 archive.js 的 `warehouse.dismantled`。
+  async function dismantleItems(input) {
+    const o = input || {};
+    const uids = Array.isArray(o.uids) ? o.uids.slice().sort() : [];
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      // 落盘前再判一次存在性（L6 已判；这里防"判完到落盘之间被并发改掉"）
+      const missing = uids.filter((uid) => !archiveMod.findWarehouseItem(archive.warehouse, uid));
+      if (missing.length > 0) {
+        throw new StoreError('item_missing', '待分解的物品不在仓库中', missing.map((uid) => ({
+          path: 'uids', code: 'item_missing', message: `物品不存在: ${uid}`,
+        })));
+      }
+      const record = ledger.buildDismantleRecord({ playerId: o.playerId, uids, at: nowFn() });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), dismantled: uids, ...warehouseView(updated) };
+    });
+  }
+
+  // D-186：选定「主界面当前显示哪份配置」（**不是出战**：不校验完整性、不动快照）。
+  async function setViewedSlot(input) {
+    const o = input || {};
+    return queueFor(o.playerId, async () => {
+      const archive = readArchiveRaw(o.playerId);
+      if (!archive) throw new StoreError('store_not_found', `档案 ${o.playerId} 不存在`);
+      if (!archiveMod.findSlot(archive, o.slotId)) {
+        throw new StoreError('slot_not_found', `配置槽 ${o.slotId} 不存在`);
+      }
+      const record = ledger.buildConfigViewedRecord({ playerId: o.playerId, slotId: o.slotId, at: nowFn() });
+      const appended = await journal.append(record);
+      await applyForPlayer(appended, o.playerId);
+      saveIndex();
+      const updated = readArchiveRaw(o.playerId);
+      return { archive: deepClone(updated), viewedSlot: updated.configs.viewedSlotId };
+    });
+  }
+
   // 装配/拆卸：**校验在 L6（server/account.js）用 core/items 纯函数前置完成**；本层只落增量记录，
   //   使回放/恢复可确定性重演（记录体积恒定，不携带整仓）。
   async function applyWarehouseChange(input) {
@@ -1471,6 +1514,8 @@ function createJsonAdapter(options) {
     grantBox,
     grantPackages,
     openPackages,
+    dismantleItems,
+    setViewedSlot,
     applyWarehouseChange,
     // D-161：AI 库；D-172：新增编辑保存
     listAi,
