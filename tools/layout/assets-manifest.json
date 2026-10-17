@@ -55,14 +55,14 @@
   }
  },
  "summary": {
-  "total": 158,
+  "total": 170,
   "present": 0,
   "placeholder": 0,
   "real": 0,
   "inInbox": 0,
-  "missing": 154,
+  "missing": 166,
   "optional": 4,
-  "requiredMissing": 154,
+  "requiredMissing": 166,
   "byKind": {
    "role": {
     "total": 11,
@@ -146,16 +146,16 @@
     "real": 0
    },
    "ui": {
-    "total": 28,
+    "total": 40,
     "present": 0,
-    "missing": 28,
+    "missing": 40,
     "inbox": 0,
     "optional": 0,
     "placeholder": 0,
     "real": 0
    }
   },
-  "coreMissing": 54
+  "coreMissing": 66
  },
  "entries": [
   {
@@ -2965,6 +2965,246 @@
    "source": "布局表 modal_skill2_slots",
    "usedBy": [
     "modal_skill2_slots"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_role.webp",
+   "kind": "ui",
+   "id": "tab_role",
+   "label": "角色 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_skill.webp",
+   "kind": "ui",
+   "id": "tab_skill",
+   "label": "技能 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_rolePlugin.webp",
+   "kind": "ui",
+   "id": "tab_rolePlugin",
+   "label": "角色插件 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_skillPlugin.webp",
+   "kind": "ui",
+   "id": "tab_skillPlugin",
+   "label": "技能插件 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_package.webp",
+   "kind": "ui",
+   "id": "tab_package",
+   "label": "包 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/tab_aiNode.webp",
+   "kind": "ui",
+   "id": "tab_aiNode",
+   "label": "AI节点 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/wh_panel.webp",
+   "kind": "ui",
+   "id": "wh_panel",
+   "label": "wh_panel 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/wh_close.webp",
+   "kind": "ui",
+   "id": "wh_close",
+   "label": "关闭 素材",
+   "source": "布局表 modal_warehouse",
+   "usedBy": [
+    "modal_warehouse"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/det_panel.webp",
+   "kind": "ui",
+   "id": "det_panel",
+   "label": "det_panel 素材",
+   "source": "布局表 modal_item_detail",
+   "usedBy": [
+    "modal_item_detail"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/det_open.webp",
+   "kind": "ui",
+   "id": "det_open",
+   "label": "开包 素材",
+   "source": "布局表 modal_item_detail",
+   "usedBy": [
+    "modal_item_detail"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/det_dismantle.webp",
+   "kind": "ui",
+   "id": "det_dismantle",
+   "label": "分解 素材",
+   "source": "布局表 modal_item_detail",
+   "usedBy": [
+    "modal_item_detail"
+   ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/det_close.webp",
+   "kind": "ui",
+   "id": "det_close",
+   "label": "关闭 素材",
+   "source": "布局表 modal_item_detail",
+   "usedBy": [
+    "modal_item_detail"
    ],
    "present": false,
    "inbox": null,

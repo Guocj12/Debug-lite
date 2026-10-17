@@ -36,17 +36,27 @@ const F2_ACTIONS = ['goto-admin', 'admin-refresh-accounts', 'accounts-prev', 'ac
   'admin-account-patch'];
 // F3 实际注册的非管理动作：提交② 17（主界面线）+ 提交③ 9（出战配置编辑器）
 //   **F8/D-176**：删 `goto-box`/`box-open`（开箱屏退役）、加 `package-open`（仓库屏「包」桶）
-const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-warehouse', 'goto-quick', 'goto-tournament',
-  'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub', 'refresh-warehouse', 'warehouse-bucket',
-  'item-open', 'config-open', 'package-open', 'modal-close', 'settings-nickname-save',
+//   **D-188**：`goto-warehouse` 随之删除（它切到的 `warehouse` 独立屏不复存在）
+const F3_ACTIONS = ['goto-hub', 'goto-profile', 'goto-quick', 'goto-tournament',
+  'goto-leaderboard', 'goto-ai-editor', 'goto-settings', 'refresh-hub',
+  // D-188：`refresh-warehouse` / `warehouse-bucket` / `item-open` / `package-open` 随 `warehouse`
+  //   **独立屏**一起下线（仓库改弹窗）；替代品见下方 F11_ACTIONS。
+  'config-open', 'modal-close', 'settings-nickname-save',
   // 提交③：出战配置编辑器（03 §4）
   'config-save', 'config-activate', 'slot-pick', 'slot-set', 'ai-pick', 'ai-set',
   'plugin-pick', 'plugin-set', 'plugin-clear'];
 // F9/D-180（03 §4「布局表驱动的主界面」）：径向插槽流 + 战绩入口 的 7 个非管理动作。
-//   `layout-open`/`layout-switch-config`/`layout-activate` 由主界面本身的布局元素渲染；
+//   `layout-open`/`layout-activate` 由主界面本身的布局元素渲染；
 //   `layout-set-slot`/`layout-assemble`/`layout-disassemble` 由径向弹窗里的候选行渲染（互斥子态，见 adminRenderings）。
-const F9_ACTIONS = ['layout-open', 'layout-switch-config', 'layout-activate', 'layout-set-slot',
+//   D-188：`layout-switch-config` 下线（由 `config-select` 取代 —— 本地切换 + 落服务端 `viewedSlotId`）。
+const F9_ACTIONS = ['layout-open', 'layout-activate', 'layout-set-slot',
   'layout-assemble', 'layout-disassemble', 'goto-records'];
+// D-188（09-layout-driven-ui.md §4–§7）：**仓库弹窗 + 物品详情弹窗 + 选定显示配置** 的 6 个动作。
+//   · `warehouse-open` / `config-select` 由**主界面布局元素**渲染（仓库按钮 / 1-2-3 号槽按钮）；
+//   · `warehouse-tab` / `warehouse-item-open` 由 `modal_warehouse` 渲染（选项卡 / 网格格子）；
+//   · `warehouse-dismantle` / `warehouse-package-open` 由 `modal_item_detail` 渲染（按桶互斥）。
+const F11_ACTIONS = ['warehouse-open', 'warehouse-tab', 'warehouse-item-open',
+  'warehouse-dismantle', 'warehouse-package-open', 'config-select'];
 // F10/D-180：对战历史屏（`GET /me/records` + `GET /me/defense`）—— `goto-records` 从"死按钮"接成真屏，
 //   并新增 3 个动作（筛选 / 标记已读 / 刷新）。见 docs/frontend/03-hub-warehouse-loadout.md §3.9。
 const F10_ACTIONS = ['records-filter', 'records-seen', 'refresh-records'];
@@ -325,14 +335,22 @@ function adminRenderings() {
   list.push(htmlFor(adminState('accounts', { admin: Object.assign(store.emptyAdmin(), {
     accounts: accountsEnvelope(), confirm: { kind: 'delete', playerId: ROW.playerId, publicId: ROW.publicId },
   }) })));
-  const itemDetail = adminState('warehouse', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
-  itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
-  list.push(htmlFor(itemDetail));
-  // F8/D-176：仓库屏**包桶**态 —— `package-open` 的唯一渲染宿主
-  list.push(htmlFor(adminState('warehouse', {
-    warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }),
-    warehouseBucket: 'package',
-  })));
+  // D-188：**仓库弹窗 + 物品详情弹窗**的可达态（每个桶一组）—— 管理态同样要能调到它们，
+  //   否则 warehouse-tab / warehouse-item-open / warehouse-dismantle / warehouse-package-open
+  //   会被 AU-1 判成"注册了没入口"。`warehouse-open` / `config-select` 由主界面布局元素渲染。
+  ['role', 'package', 'aiNode'].forEach((bucket) => {
+    const whModal = adminState('hub', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
+    whModal.configs.data = CONFIGS_ENVELOPE;
+    whModal.warehouseTab = bucket;
+    whModal.hub = { slot: 0, modals: [{ name: 'modal_warehouse', ctx: {} }] };
+    list.push(htmlFor(whModal));
+    const detModal = adminState('hub', { warehouse: Object.assign(store.emptyWarehouse(), { envelope: WAREHOUSE_ENVELOPE }) });
+    detModal.configs.data = CONFIGS_ENVELOPE;
+    detModal.warehouseTab = bucket;
+    detModal.hub = { slot: 0, modals: [{ name: 'modal_warehouse', ctx: {} }, { name: 'modal_item_detail', ctx: {} }] };
+    detModal.warehouseItem = { uid: bucket === 'package' ? 'pkg_1' : 'item_0', bucket };
+    list.push(htmlFor(detModal));
+  });
   // 提交③：编辑器 + 三个二级选择弹窗（slot-set / ai-set / plugin-set / plugin-clear 的宿主）
   list.push(htmlFor(adminConfigState({ kind: 'config', slotId: 'slot1' })));
   list.push(htmlFor(adminConfigState({ kind: 'slot-pick', slotId: 'slot1', pos: 'role' })));
@@ -360,7 +378,7 @@ function adminRenderings() {
 
 test('AU-1 管理员态全部屏的 data-action 集合 == ACTIONS 注册表（双向；F5 后按实际值核对）', () => {
   // F1 + F2 + F3（提交②/③）+ F6 + F7 + F5 的六段白名单与本文件同步登记（防止"文档动作没实现/实现了没登记"）
-  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS, ...F9_ACTIONS, ...F10_ACTIONS])].sort();
+  const documented = [...new Set([...F1_ACTIONS, ...F2_ACTIONS, ...F3_ACTIONS, ...F6_ACTIONS, ...F7_ACTIONS, ...F5_ACTIONS, ...F9_ACTIONS, ...F10_ACTIONS, ...F11_ACTIONS])].sort();
   assert.deepEqual(documented, ACTION_NAMES,
     `动作白名单与分册 §4 表格不一致：${ACTION_NAMES.join(', ')}`);
   const rendered = new Set();

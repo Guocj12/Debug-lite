@@ -170,6 +170,10 @@
       hub: { slot: 0, modals: [] },   // 0 = follow activeSlotId; 1..3 = user picked one
       warehouse: emptyWarehouse(),
       warehouseBucket: 'role',
+      // D-188：仓库**弹窗**的当前分类（6 个桶之一）与物品详情弹窗当前展示的物品。
+      //   与 `warehouseBucket`（旧仓库屏）分开维护：弹窗与屏是两套玩家路径，不共享选择。
+      warehouseTab: 'role',
+      warehouseItem: null,   // { uid, bucket } | null（null = 详情未打开）
       // F8/D-177：最近一次 POST /me/warehouse/open-package 的结果（`lines` 由 format.js 投影；同 F3 开箱结果的口径）
       packages: { result: null },
       configs: emptyConfigs(),
@@ -298,6 +302,22 @@
         return Object.assign({}, state, {
           warehouseBucket: WAREHOUSE_BUCKETS.indexOf(action.bucket) === -1 ? state.warehouseBucket : action.bucket,
         });
+      // D-188：仓库弹窗的当前分类（**独立于旧仓库屏的 `warehouseBucket`**：那个是屏状态，
+      //   这个是弹窗状态；两者不共享，避免"关掉弹窗再开，分类被别处改过"这种串味）。
+      case 'warehouse.tab.set':
+        return Object.assign({}, state, {
+          warehouseTab: WAREHOUSE_BUCKETS.indexOf(action.bucket) === -1
+            ? state.warehouseTab
+            : action.bucket,
+        });
+      // D-188：物品详情弹窗当前展示的物品（uid + 所属桶）。`clear` = 收起详情。
+      case 'warehouse.item.set':
+        return Object.assign({}, state, {
+          warehouseItem: { uid: String(action.uid), bucket: String(action.bucket || '') },
+        });
+      case 'warehouse.item.clear':
+        return state.warehouseItem === null ? state
+          : Object.assign({}, state, { warehouseItem: null });
       // F8/D-177：开包结果（POST /me/warehouse/open-package 的信封；由 format.js 投影成行）
       case 'package.result.set':
         return Object.assign({}, state, { packages: { result: action.result || null } });

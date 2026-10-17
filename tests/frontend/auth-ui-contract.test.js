@@ -291,16 +291,9 @@ function aiBpEditState(cursor, blueprint, extra) {
 }
 
 function nonAdminRenderings() {  const list = store.VIEWS.map((view) => stateFor(view));
-  const itemDetail = stateFor('warehouse');
-  itemDetail.warehouse.envelope = WAREHOUSE_ENVELOPE;
-  itemDetail.modal = { kind: 'item-detail', uid: 'item_0' };
-  list.push(itemDetail);
-  // F8/D-176：仓库屏**包桶**的可达态 —— `package-open` 只在包桶的行上渲染，
-  //   不纳入本集合就会被 UI-2 判成"注册了没入口"
-  const packageBucket = stateFor('warehouse');
-  packageBucket.warehouse.envelope = WAREHOUSE_ENVELOPE;
-  packageBucket.warehouseBucket = 'package';
-  list.push(packageBucket);
+  // F8/D-176：仓库屏**包桶**的可达态 —— `package-open` 只在包桶的行上渲染。
+  //   D-188：`warehouse` **独立屏已删除**（仓库改弹窗），故这里不再需要"仓库屏"的两个状态；
+  //   包桶的可达态改由下方 `modal_warehouse` 弹窗状态承担（`warehouse-package-open` 在那里）。
   // 提交③：编辑器（弹窗 A）+ 三个二级选择弹窗（弹窗 B）—— slot-set / ai-set / plugin-set /
   //   plugin-clear 只在二级弹窗里出现，故必须把它们作为可达状态纳入渲染集合
   list.push(configEditorState('hub', { kind: 'config', slotId: 'slot1' }));
@@ -332,6 +325,27 @@ function nonAdminRenderings() {  const list = store.VIEWS.map((view) => stateFor
     hubModal.warehouse.envelope = WAREHOUSE_ENVELOPE;
     hubModal.hub = { slot: 0, modals: [m] };
     list.push(hubModal);
+  });
+  // D-188：**仓库弹窗**（用户口径：仓库不是页面而是弹窗）—— 每个桶一个可达态，
+  //   否则 warehouse-tab / warehouse-item-open / warehouse-dismantle / warehouse-package-open
+  //   会被 UI-2 判成"注册了但没入口"。`config-select` 由主界面 1/2/3 号按钮承担（同在布局表里）。
+  ['role', 'package', 'aiNode'].forEach((bucket) => {
+    const whModal = stateFor('hub');
+    whModal.profile = hubLayout.profile;
+    whModal.configs.data = CONFIGS_ENVELOPE;
+    whModal.warehouse.envelope = WAREHOUSE_ENVELOPE;
+    whModal.warehouseTab = bucket;
+    whModal.hub = { slot: 0, modals: [{ name: 'modal_warehouse', ctx: {} }] };
+    list.push(whModal);
+    // 再叠一层**物品详情弹窗**（分解/开包按钮在这里）
+    const detModal = stateFor('hub');
+    detModal.profile = hubLayout.profile;
+    detModal.configs.data = CONFIGS_ENVELOPE;
+    detModal.warehouse.envelope = WAREHOUSE_ENVELOPE;
+    detModal.warehouseTab = bucket;
+    detModal.hub = { slot: 0, modals: [{ name: 'modal_warehouse', ctx: {} }, { name: 'modal_item_detail', ctx: {} }] };
+    detModal.warehouseItem = { uid: bucket === 'package' ? 'pkg_1' : 'item_0', bucket };
+    list.push(detModal);
   });
   list.push(quickState({ frames: QUICK_FRAMES, battleId: 'b_fe6', index: 0 }));
   list.push(quickState({ frames: null, battleId: 'b_fe6', index: 0 }));

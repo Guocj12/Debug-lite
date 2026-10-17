@@ -108,6 +108,15 @@
       activateConfig: function (token, slotId) {
         return call('POST', '/api/v1/me/configs/' + encodeURIComponent(String(slotId)) + '/activate', {}, token);
       },
+      // D-188：分解（删除仓库物品）—— 体 `{uids:[…]}`（1..100、不重复）；**无产出**（先只删除）。
+      //   拒绝码：item_not_dismantlable（AI 节点/包）/ item_in_use（被配置引用）/
+      //           plugin_equipped（仍装配）/ item_not_found（uid 不在仓库，404）
+      dismantle: function (token, input) { return call('POST', '/api/v1/me/warehouse/dismantle', input, token); },
+      // D-186：选定「主界面当前显示哪份配置」（**不是**出战）—— 与 activateConfig 完全分开。
+      //   可选空槽、不动快照、不改出战槽；服务端持久化到档案 `configs.viewedSlotId`。
+      selectConfig: function (token, slotId) {
+        return call('POST', '/api/v1/me/configs/' + encodeURIComponent(String(slotId)) + '/select', {}, token);
+      },
       setNickname: function (token, input) { return call('PUT', '/api/v1/me/nickname', input, token); },
       // F6（04 §1）：快速对战 + 归档回放。**开箱不传 seed，快速对战也不传 seed**（seed 由服务端生成并回带）。
       quickRun: function (token, input) { return call('POST', '/api/v1/quick/run', input === undefined ? {} : input, token); },

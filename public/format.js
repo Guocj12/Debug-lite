@@ -2980,6 +2980,177 @@
       _role: role, _skills: skills,
     };
   }
+  /**
+   * D-188：仓库弹窗的**容量行**（`{whCapacity}`）。读 `/me/warehouse` 的 `counts`/`caps`。
+   *   形如 `角色 3/500 · 共 37 件`；尚未取到数据时如实写"尚未读取"（不假装有数据）。
+   */
+  function warehouseCapacityLine(state, bucket) {
+    var wh = state.warehouse ? state.warehouse.envelope : null;
+    var label = BUCKET_LABELS[bucket] === undefined ? bucket : BUCKET_LABELS[bucket];
+    if (wh === null) return label + '：尚未读取仓库（点「关闭」后重开一次）';
+    var counts = pick(wh, 'data.counts');
+    var caps = pick(wh, 'data.caps');
+    var n = counts && typeof counts[bucket] === 'number' ? counts[bucket] : 0;
+    var cap = caps && typeof caps[bucket] === 'number' ? caps[bucket] : 0;
+    var total = 0;
+    if (counts && typeof counts === 'object') {
+      Object.keys(counts).forEach(function (k) { if (typeof counts[k] === 'number') total += counts[k]; });
+    }
+    return label + ' ' + n + '/' + cap + ' · 仓库共 ' + total + ' 件';
+  }
+
+  /**
+   * D-188：**物品详情**投影（`modal_item_detail` 的 `{detXxx}` 键）。
+   *   数据源 = 已读到的 `GET /me/warehouse`（**零新接口**，字段全部来自真实响应）。
+   *   用户口径：**全部属性、按类别分组**；包可开包、其他可分解、AI 节点只读。
+   *   返回 `{uid,title,sub,icon,lines,canOpen,canDismantle}`；
+   *   物品找不到（被分解/换桶）时返回一组**可读的占位**，不当成"空弹窗"。
+   */
+  function layItemDetail(state) {
+    var sel = state.warehouseItem;
+    var empty = { uid: '', title: '（没有选中物品）', sub: '', icon: '', lines: ['请从仓库里点一件物品。'], canOpen: false, canDismantle: false };
+    if (!sel || typeof sel !== 'object' || !sel.uid) return empty;
+    var wh = state.warehouse ? state.warehouse.envelope : null;
+    var bucket = sel.bucket || '';
+    var list = arrayOf(pick(wh, 'data.buckets.' + bucket));
+    var item = null;
+    for (var i = 0; i < list.length; i++) { if (or(pick(list[i], 'uid'), '') === sel.uid) { item = list[i]; break; } }
+    if (item === null) {
+      return {
+        uid: sel.uid, title: '（物品不在了）', sub: '它可能已被分解或装箱',
+        icon: '', lines: ['仓库里已经没有这件物品。'], canOpen: false, canDismantle: false,
+      };
+    }
+    var lines = [];
+    var q = or(pick(item, 'quality'), '');
+    var qcn = LAYER_TIER_CN_OR(q);
+    var sub = (BUCKET_LABELS[bucket] === undefined ? bucket : BUCKET_LABELS[bucket]) + (q ? ' · ' + qcn + '品' : '');
+    var title = or(pick(item, 'name'), '(未命名)');
+    var icon = '';
+    var canOpen = bucket === 'package';
+    // 用户口径：**ai节点和包不可分解，其他都可**
+    var canDismantle = bucket !== 'package' && bucket !== 'aiNode';
+
+    if (bucket === 'role') {
+      icon = layIcon('role', pick(item, 'templateId'));
+      lines.push('【基本信息】');
+      lines.push('品质：' + qcn + '　模板：' + or(pick(item, 'templateId'), '未知'));
+      lines.push('解锁段位：' + (TIER_CN_OF(or(pick(item, 'unlockTier'), '')) || '未知'));
+      lines.push('插槽数：' + String(numOr(pick(item, 'slotCount'), 0)) + '　插件点数：' + String(numOr(pick(item, 'pluginPoints'), 0)));
+      var st = pick(item, 'stats') || {};
+      lines.push('【五维】');
+      lines.push('生命 ' + numOr(pick(st, 'hp'), 0) + '　攻击 ' + numOr(pick(st, 'atk'), 0) + '　防御 ' + numOr(pick(st, 'def'), 0));
+      lines.push('技能点 ' + numOr(pick(st, 'sp'), 0) + '　法力 ' + numOr(pick(st, 'mp'), 0));
+      var rg = pick(item, 'regen') || {};
+      lines.push('【每 tick 回复】技能点 ' + numOr(pick(rg, 'sp'), 0) + '　法力 ' + numOr(pick(rg, 'mp'), 0));
+      pushSlotLines(lines, state, item);
+    } else if (bucket === 'skill') {
+      icon = layIcon('skill', pick(item, 'templateId'));
+      var pa = pick(item, 'params') || {};
+      lines.push('【基本信息】');
+      lines.push('品质：' + qcn + '　模板：' + or(pick(item, 'templateId'), '未知'));
+      lines.push('解锁段位：' + (TIER_CN_OF(or(pick(item, 'unlockTier'), '')) || '未知'));
+      lines.push('【战斗参数】');
+      lines.push('伤害倍率：' + numOr(pick(pa, 'multiplier'), 0));
+      lines.push('冷却：' + numOr(pick(pa, 'cooldown'), 0) + ' tick　弹幕等级：' + numOr(pick(pa, 'bulletLevel'), 0) + '（1 最高）');
+      var rng = pick(pa, 'range');
+      if (Array.isArray(rng)) lines.push('射程：' + numOr(rng[0], 0) + ' ~ ' + numOr(rng[1], 0) + ' 格');
+      lines.push('衰减：' + numOr(pick(pa, 'falloff'), 0));
+      var cost = pick(pa, 'cost') || {};
+      lines.push('【消耗】生命 ' + numOr(pick(cost, 'hp'), 0) + '　法力 ' + numOr(pick(cost, 'mp'), 0) + '　技能点 ' + numOr(pick(cost, 'sp'), 0));
+      pushSlotLines(lines, state, item);
+      lines.push('【表现】');
+      lines.push('动画键：' + or(pick(item, 'animKey'), '—') + '　音效键：' + or(pick(item, 'sfxKey'), '—'));
+    } else if (bucket === 'rolePlugin' || bucket === 'skillPlugin') {
+      icon = layIcon('plugin', layPluginIconKey(item));
+      lines.push('【基本信息】');
+      lines.push('类别：' + or(pick(item, 'category'), '—') + '　品质：' + qcn + '　档位：' + String(numOr(pick(item, 'tier'), 0)));
+      lines.push('适配槽：' + or(pick(item, 'slot'), '—') + '　装配状态：' + (pick(item, 'equipped') === true ? '已装配' : '未装配'));
+      if (bucket === 'rolePlugin') lines.push('点数消耗：' + String(numOr(pick(item, 'pointCost'), 0)));
+      lines.push('【词条】');
+      var afs = arrayOf(pick(item, 'affixes'));
+      if (!afs.length) lines.push('（无词条）');
+      afs.forEach(function (a) { lines.push('· ' + or(pick(a, 'desc'), or(pick(a, 'id'), '词条'))); });
+      var exc = pick(item, 'exclusive');
+      if (exc !== undefined && exc !== null && typeof exc === 'object') {
+        lines.push('【专属覆盖】');
+        var ft = arrayOf(pick(exc, 'forTypes'));
+        if (ft.length) lines.push('适用技能类型：' + ft.join('、'));
+        var ovr = pick(exc, 'overrides');
+        if (ovr && typeof ovr === 'object') {
+          Object.keys(ovr).forEach(function (k) {
+            var v = ovr[k];
+            lines.push('· ' + k + ' → ' + (typeof v === 'object' ? JSON.stringify(v) : String(v)));
+          });
+        }
+      }
+      var fts = arrayOf(pick(item, 'forTypes'));
+      if (fts.length) lines.push('适用技能类型：' + fts.join('、'));
+    } else if (bucket === 'package') {
+      icon = layIcon('package', or(pick(item, 'packageKind'), ''));
+      lines.push('【基本信息】');
+      lines.push('包类型：' + or(pick(item, 'packageKind'), '未知') + '　品质：' + qcn);
+      lines.push('质量档：' + String(numOr(pick(item, 'qualityPercent'), 0)) + '%');
+      lines.push('【说明】');
+      lines.push('包只在快速对战中掉落；点下方「开包」使用它（消耗该包并随机获得物品）。');
+    } else if (bucket === 'aiNode') {
+      icon = layIcon('ai', or(pick(item, 'nodeId'), ''));
+      lines.push('【基本信息】');
+      lines.push('节点 id：' + or(pick(item, 'nodeId'), '未知') + '　类别：' + or(pick(item, 'category'), '—'));
+      lines.push('品质：' + qcn + '　堆叠数量：' + String(numOr(pick(item, 'count'), 1)));
+      lines.push('【说明】');
+      lines.push('AI 积木节点：在「AI 编辑」里用它们搭逻辑。节点不可分解（它是堆叠条目）。');
+    }
+    return { uid: sel.uid, title: title, sub: sub, icon: icon, lines: lines, canOpen: canOpen, canDismantle: canDismantle };
+  }
+
+  /** 角色/技能共用的「插槽与已装插件」段（D-188；插件名从仓库里现取） */
+  function pushSlotLines(lines, state, item) {
+    lines.push('【插槽】');
+    var slots = arrayOf(pick(item, 'slots'));
+    if (!slots.length) { lines.push('（没有插槽）'); return; }
+    slots.forEach(function (s, i) {
+      var type = or(pick(s, 'type'), '未知');
+      var pu = pick(s, 'pluginUid');
+      var pname = (pu === undefined || pu === null || pu === '') ? '空' : pluginLabelOf(state, pu);
+      lines.push('插槽' + (i + 1) + '［' + type + '］：' + (pname === '' ? '空' : pname));
+    });
+  }
+  function numOr(v, dflt) { return (typeof v === 'number' && isFinite(v)) ? v : dflt; }
+  function TIER_CN_OF(t) { return LAY_TIER_CN[t] || null; }
+  function LAYER_TIER_CN_OR(q) { return LAY_TIER_CN[q] || q || '未知'; }
+
+  /**
+   * D-188：**仓库某个桶 → 网格物品**（供 `gridFrom` 展开）。
+   *   与 `layRows` 的分工：那个产出"列表行"（带 `fits`/`reason` 的候选语义，用于装配弹窗）；
+   *   这个产出"格子"（带图标 + 品质 + 数量徽标，用于仓库浏览），**不做适配判定**（仓库只是看东西）。
+   *   图标规则与 `layRows` 保持一致（插件走 `layPluginIconKey`，其余走 `templateId`）。
+   */
+  function layBucketItems(state, bucket) {
+    var wh = state.warehouse ? state.warehouse.envelope : null;
+    var list = arrayOf(pick(wh, 'data.buckets.' + bucket));
+    return list.map(function (it) {
+      var q = or(pick(it, 'quality'), '');
+      var kind = bucket === 'rolePlugin' || bucket === 'skillPlugin' ? 'plugin'
+        : (bucket === 'aiNode' ? 'ai' : (bucket === 'package' ? 'package' : bucket));
+      var icon;
+      if (bucket === 'aiNode') icon = layIcon('ai', or(pick(it, 'nodeId'), ''));
+      else if (bucket === 'package') icon = layIcon('package', or(pick(it, 'packageKind'), ''));
+      else if (kind === 'plugin') icon = layIcon('plugin', layPluginIconKey(it));
+      else icon = layIcon(bucket, pick(it, 'templateId'));
+      var rawCount = pick(it, 'count');
+      var count = (typeof rawCount === 'number' && isFinite(rawCount) && rawCount > 0) ? Math.floor(rawCount) : 1;
+      var name = or(pick(it, 'name'), '(未命名)');
+      return {
+        uid: or(pick(it, 'uid'), ''), item: it,
+        // 格子文字：名字 +（品质）；AI 节点堆叠 >1 时带 ×N
+        label: name + (q ? '（' + (LAY_TIER_CN[q] || q) + '）' : '') + (count > 1 ? ' ×' + count : ''),
+        icon: icon,
+        count: count,
+        quality: q,
+      };
+    });
+  }
   /** 后端候选（仓库桶）→ 列表行；按屏幕语义过滤类型 */
   function layRows(state, source, ctx, flat) {
     var wh = state.warehouse ? state.warehouse.envelope : null;
@@ -3031,12 +3202,18 @@
     //   · 带 target 的元素 = 打开该子画面     → layout-open（把目标画面与上下文带给动作）
     //   · 带 setState 的元素 = 只切显示配置   → layout-switch-config（不改服务端"出战"）
     //   · config-activate 依赖旧编辑器的草稿  → layout-activate（布局路径直接打服务端）
+    //
+    //   ⚠️ **D-188：显式声明的动作优先**（下面每个分支都先看 `e.action` 是否已被布局表指定）。
+    //     重写规则是给"历史布局表里没写动作的老元素"兜底的；一旦布局表自己写了动作
+    //     （如 `warehouse-open` / `config-select`），就**必须原样保留** —— 否则
+    //     "我在布局表里明明接了动作，界面却仍走旧路径"是极难查的一类问题
+    //     （本轮真实踩到：`wh` 的 btn_warehouse 被无条件改成 `layout-open`）。
+    var DERIVED_ACTIONS = { 'layout-open': 1, 'layout-activate': 1 };
     out.forEach(function (e) {
-      if (e.setState) {
-        e.action = 'layout-switch-config';
-        e.payload = { slot: e.setState.activeSlot };
-        return;
-      }
+      // 布局表**显式写了**一个非派生动作 → 尊重它（例如 warehouse-open / config-select / warehouse-tab）
+      if (e.action && e.action !== 'config-activate' && !DERIVED_ACTIONS[e.action]) return;
+      // D-188：`setState` 的老兜底（→ `layout-switch-config`）**已删除** —— 那个动作随 D-188 下线，
+      //   主界面 1/2/3 现在由布局表**显式**写 `config-select`（见上方早返回）。这里再兜底会指向死动作。
       if (e.target && bundle.screens[e.target]) {
         var pos = (e.payload && e.payload.pos) || 'role';
         var item = pos === 'role' ? flat._role : layItem(flat._skills[LAY_POS[pos] || 0]);
@@ -3119,6 +3296,69 @@
         });
       }
     }
+    // D-188：**仓库网格**（`gridFrom`）—— 把当前桶的物品按 `grid.flow` 自动流式排布。
+    //   与 `listFrom` 的区别：那个是"一列等距行"（pitch），这个是"按格子尺寸自动算列数 + 换行 + 溢出可滚"。
+    //   坐标一律由引擎的 `gridFlowRects` 算（与布局台同一份算法），本层**只喂数据、不重复几何**。
+    if (sc.gridFrom) {
+      var cell = out.filter(function (e) { return e.id === sc.gridFrom.prototype; })[0];
+      var box = out.filter(function (e) { return e.id === sc.gridFrom.container; })[0];
+      out = out.filter(function (e) { return e.id !== sc.gridFrom.prototype; });
+      // D-188：`source === 'tab'` = 「当前选中的分类桶」（由 `state.warehouseTab` 决定），
+      //   仓库弹窗用的就是它 —— 这样切选项卡只改 state，不必改布局表。
+      var bucket = sc.gridFrom.source === 'tab' ? (state.warehouseTab || 'role') : sc.gridFrom.source;
+      var items = layBucketItems(state, bucket);
+      if (box) {
+        var flow = C.gridFlowRects(box.rect, box.grid || {}, items.length);
+        // grid.autoHeight：行数超出容器高 → 把容器内容高撑开（渲染层据此让 scroll 生效）
+        if (box.grid && box.grid.autoHeight === true && flow.contentH > box.rect[3]) {
+          box.contentH = flow.contentH;
+        }
+        box.gridInfo = { cols: flow.cols, rows: flow.rows, contentH: flow.contentH, count: items.length };
+        if (!items.length) {
+          out.push({
+            id: 'ghost_empty', kind: 'deco', hit: 'rect', z: 6, parent: box.id,
+            rect: [Number(box.grid && box.grid.padX) || 8, Number(box.grid && box.grid.padY) || 8, 240, 24],
+            label: '这个分类里还没有东西', text: '这个分类里还没有东西',
+          });
+        }
+        items.forEach(function (it, i) {
+          if (!flow.rects[i]) return;
+          var rel = flow.rects[i];
+          out.push({
+            id: 'gitem_' + i, kind: 'button', hit: 'rect', z: 6,
+            parent: box.id,
+            // 相对父容器内容原点（与 D-185 的 parent 语义一致）
+            rect: [box.rect[0] + rel[0], box.rect[1] + rel[1], rel[2], rel[3]],
+            label: it.label, text: it.label, asset: it.icon,
+            action: 'warehouse-item-open',
+            payload: { uid: it.uid, bucket: bucket },
+          });
+        });
+      }
+      // 容量行（`{whCapacity}`）：读投影层自己产出的文本（render 层零逻辑）
+      var capEl = out.filter(function (e) { return e.id === 'wh_capacity'; })[0];
+      if (capEl) capEl.text = warehouseCapacityLine(state, bucket);
+    }
+    // D-188：**物品详情弹窗** —— 把当前物品（`state.warehouseItem`）展开成"按类别分组的属性行"。
+    //   数据全部来自已读到的 `/me/warehouse`（**零新接口**）；`{detXxx}` 键喂给布局表。
+    if (name === 'modal_item_detail') {
+      var det = layItemDetail(state);
+      out.forEach(function (e) {
+        if (e.id === 'det_title') e.text = det.title;
+        else if (e.id === 'det_sub') e.text = det.sub;
+        else if (e.id === 'det_lines') e.text = det.lines.join('\n');
+        else if (e.id === 'det_icon') e.asset = det.icon;
+      });
+      // 操作按钮：按桶决定**显示哪个**（用户口径：包→开包；其他→分解；AI 节点→都不给）
+      var keepBtn = { det_open: det.canOpen, det_dismantle: det.canDismantle };
+      out = out.filter(function (e) {
+        return !(keepBtn[e.id] === false);
+      });
+      // uid 载荷：详情弹窗的按钮要作用在**当前物品**上（布局表里写的是 `{detUid}`）
+      out.forEach(function (e) {
+        if (e.payload && e.payload.uid === '{detUid}') e.payload = { uid: det.uid };
+      });
+    }
     // busy（有请求在飞）时**所有布局按钮一律禁用**（UI-5：防重复提交）；装饰件不受影响
     if (busy) {
       out.forEach(function (e) { if (e.kind !== 'deco') e.disabled = true; });
@@ -3158,7 +3398,9 @@
     // 无登录态（无 /me）时不走布局：让 hub 继续用旧文字界面，避免"半屏空数据"
     if (!LAYOUT || !state.profile || state.profile.data === null || state.profile.data === undefined) return null;
     var flat = layFlat(state);
-    var sstate = { activeSlot: flat.activeSlot, battleSlot: flat.battleSlot };
+    // D-188：`warehouseTab` 进设计期状态 —— 它是仓库弹窗选项卡「选中保持按下」的判据
+    //   （`press:'state'` + `pressKey:'warehouseTab'` + `pressWhen:'<桶名>'`）。
+    var sstate = { activeSlot: flat.activeSlot, battleSlot: flat.battleSlot, warehouseTab: state.warehouseTab };
     var stack = (state.hub && state.hub.modals) || [];
     var layers = [{ name: 'hub', role: 'screen', mask: null, elements: layScreen(state, 'hub', sstate, flat, {}, busy) }];
     stack.forEach(function (entry) {
@@ -3176,7 +3418,7 @@
   function hubViewModel(state, notice, busy) {
     var buttons = [
       { action: 'goto-profile', label: '用户', kind: 'button', disabled: busy },
-      { action: 'goto-warehouse', label: '仓库', kind: 'button', disabled: busy },
+      { action: 'warehouse-open', label: '仓库', kind: 'button', disabled: busy },
       { action: 'goto-quick', label: '快速对战', kind: 'button', disabled: busy },
       { action: 'goto-tournament', label: '锦标赛', kind: 'button', disabled: busy },
       { action: 'goto-leaderboard', label: '排行榜', kind: 'button', disabled: busy },
@@ -3242,41 +3484,9 @@
     });
   }
 
-  // F3 §3.3：仓库
-  function warehouseViewModel(state, notice, busy) {
-    var env = state.warehouse ? state.warehouse.envelope : null;
-    var bucket = state.warehouseBucket;
-    var rows = env === null ? [] : itemRows(env, bucket, busy);
-    var lines = [env === null ? '（尚未读取仓库：点「刷新」）' : warehouseCapacityText(env)];
-    if (env !== null && rows.length === 0) lines.push(EMPTY_WAREHOUSE_TEXT);
-    // F8/D-177：开包结果区（最近一次 POST /me/warehouse/open-package）+ 满仓本地拦截提示
-    var full = packageFullNotice(state);
-    if (full !== null) lines.push(full);
-    var result = state.packages ? state.packages.result : null;
-    if (result && Array.isArray(result.lines)) {
-      for (var i = 0; i < result.lines.length; i++) lines.push(result.lines[i]);
-      if (result.lines.length > 1) lines.push(PACKAGE_STALE_HINT);
-    }
-    return vm('仓库', {
-      notice: notice,
-      hint: bucket === 'package'
-        ? '点「开包」使用包（消耗该包并随机获得物品）；点名字看详情。包只在快速对战中掉落'
-        : '每行只显示物品名字：点名字看详情；数据源 = GET /me/warehouse（服务端权威）',
-      lines: lines,
-      rows: rows,
-      buttons: [
-        { action: 'warehouse-bucket', label: '角色', kind: 'button', disabled: busy, bucket: 'role' },
-        { action: 'warehouse-bucket', label: '技能', kind: 'button', disabled: busy, bucket: 'skill' },
-        { action: 'warehouse-bucket', label: '角色插件', kind: 'button', disabled: busy, bucket: 'rolePlugin' },
-        { action: 'warehouse-bucket', label: '技能插件', kind: 'button', disabled: busy, bucket: 'skillPlugin' },
-        { action: 'warehouse-bucket', label: '包', kind: 'button', disabled: busy, bucket: 'package' },
-        { action: 'warehouse-bucket', label: 'AI节点', kind: 'button', disabled: busy, bucket: 'aiNode' },
-        { action: 'refresh-warehouse', label: '刷新', kind: 'button', disabled: busy },
-        { action: 'goto-hub', label: '返回主界面', kind: 'button', disabled: busy },
-      ],
-      modal: modalViewModel(state, busy),
-    });
-  }
+  // D-188：`warehouseViewModel`（旧仓库**屏**的投影）已随该屏删除。
+  //   仓库现在由布局表的 `modal_warehouse` 承载，投影走 `layScreen` 的 `gridFrom` 分支；
+  //   物品详情走 `layItemDetail`。**不留空实现** —— 留下会渲染出不可达动作（UI-2 判红）。
 
   // F3 §3.5：设置（登出**只在此屏**；FR-11）
   function settingsViewModel(state, notice, busy) {
@@ -3407,8 +3617,9 @@
     if (state.view === 'accounts') return accountsViewModel(state, notice, busy);
     if (state.view === 'hub') return hubViewModel(state, notice, busy);
     if (state.view === 'profile') return profileViewModel(state, notice, busy);
-    if (state.view === 'warehouse') return warehouseViewModel(state, notice, busy);
-    // F8/D-176：`view === 'box'` 已删除（开箱屏退役 → 开包在仓库屏的「包」桶内完成）
+    // D-188：`view === 'warehouse'` 已删除 —— 仓库改为覆盖在主界面上的**弹窗**
+    //   （`state.hub.modals` 里的 `modal_warehouse`），不再是独立屏。
+    // F8/D-176：`view === 'box'` 已删除（开箱屏退役 → 开包在仓库的「包」桶内完成）
     if (state.view === 'settings') return settingsViewModel(state, notice, busy);
     if (state.view === 'quick') return quickViewModel(state, notice, busy);   // F6（04 分册）
     if (state.view === 'tournament') return tournamentViewModel(state, notice, busy);   // F7（05 分册）
@@ -3527,6 +3738,11 @@
     bucketItems: bucketItems,
     capOf: capOf,
     warehouseCapacityText: warehouseCapacityText,
+    // D-188：仓库弹窗（网格 + 容量行）与物品详情弹窗（按类别分组的属性行）的投影。
+    //   导出供测试与 actions 复用；`layItemDetail` 的返回形状见其函数注释。
+    warehouseCapacityLine: warehouseCapacityLine,
+    layBucketItems: layBucketItems,
+    layItemDetail: layItemDetail,
     // D-178：积木节点（GET /me/ai/nodes）——目录/限额/模板/库存摘要
     aiNodesCatalogOf: aiNodesCatalogOf,
     aiNodesLimitsOf: aiNodesLimitsOf,

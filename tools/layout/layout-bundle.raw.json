@@ -65,7 +65,7 @@
         {
           "id": "btn_warehouse",
           "kind": "button",
-          "action": "goto-warehouse",
+          "action": "warehouse-open",
           "hit": "alpha",
           "anchor": "lt",
           "rect": [
@@ -75,7 +75,11 @@
             64
           ],
           "label": "仓库",
-          "asset": "assets/ui/btn_warehouse.webp"
+          "asset": "assets/ui/btn_warehouse.webp",
+          "target": "modal_warehouse",
+          "press": "tap",
+          "assetPressed": "assets/ui/btn_warehouse_pressed.webp",
+          "desc": "打开仓库弹窗（D-188：仓库从独立屏改为弹窗）。上面 6 个选项卡切分类，下方网格按格子尺寸自动排布、超出可滚；点物品弹出详情。"
         },
         {
           "id": "btn_ai",
@@ -239,7 +243,7 @@
         {
           "id": "slot_1",
           "kind": "button",
-          "action": "",
+          "action": "config-select",
           "hit": "rect",
           "anchor": "ct",
           "rect": [
@@ -252,12 +256,17 @@
             "activeSlot": 1
           },
           "label": "1",
-          "asset": "assets/ui/slot_1.webp"
+          "asset": "assets/ui/slot_1.webp",
+          "press": "state",
+          "pressKey": "activeSlot",
+          "pressWhen": 1,
+          "assetPressed": "assets/ui/slot_1_pressed.webp",
+          "desc": "切换主界面**显示**哪份配置（不改出战）。当前显示的那一份保持按下（press:state + activeSlot）。同时把选择持久化到服务端（POST /me/configs/:slotId/select）。"
         },
         {
           "id": "slot_2",
           "kind": "button",
-          "action": "",
+          "action": "config-select",
           "hit": "rect",
           "anchor": "ct",
           "rect": [
@@ -270,12 +279,17 @@
             "activeSlot": 2
           },
           "label": "2",
-          "asset": "assets/ui/slot_2.webp"
+          "asset": "assets/ui/slot_2.webp",
+          "press": "state",
+          "pressKey": "activeSlot",
+          "pressWhen": 2,
+          "assetPressed": "assets/ui/slot_2_pressed.webp",
+          "desc": "切换主界面**显示**哪份配置（不改出战）。当前显示的那一份保持按下（press:state + activeSlot）。同时把选择持久化到服务端（POST /me/configs/:slotId/select）。"
         },
         {
           "id": "slot_3",
           "kind": "button",
-          "action": "",
+          "action": "config-select",
           "hit": "rect",
           "anchor": "ct",
           "rect": [
@@ -288,7 +302,12 @@
             "activeSlot": 3
           },
           "label": "3",
-          "asset": "assets/ui/slot_3.webp"
+          "asset": "assets/ui/slot_3.webp",
+          "press": "state",
+          "pressKey": "activeSlot",
+          "pressWhen": 3,
+          "assetPressed": "assets/ui/slot_3_pressed.webp",
+          "desc": "切换主界面**显示**哪份配置（不改出战）。当前显示的那一份保持按下（press:state + activeSlot）。同时把选择持久化到服务端（POST /me/configs/:slotId/select）。"
         },
         {
           "id": "设为出战（将当前配置设为出战）",
@@ -302,7 +321,12 @@
             128,
             36
           ],
-          "asset": "assets/ui/设为出战（将当前配置设为出战）.webp"
+          "asset": "assets/ui/设为出战（将当前配置设为出战）.webp",
+          "press": "state",
+          "pressKey": "battleSlot",
+          "pressWhen": "{configId}",
+          "assetPressed": "assets/ui/btn_activate_pressed.webp",
+          "desc": "把当前显示的配置**设为出战**（会触发服务端完整性校验）。当前显示的这份就是出战那份时显示为按下（press:state + battleSlot，pressWhen={configId} 动态跟随）。"
         },
         {
           "id": "对战历史",
@@ -1305,6 +1329,459 @@
       "mask": {
         "color": "#000000",
         "opacity": 0.55,
+        "closeOnMaskClick": true,
+        "blocksBackground": true
+      }
+    },
+    "modal_warehouse": {
+      "role": "modal",
+      "name": "modal_warehouse",
+      "background": {
+        "asset": "",
+        "fit": "cover"
+      },
+      "elements": [
+        {
+          "id": "tab_role",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            175,
+            74,
+            150,
+            44
+          ],
+          "label": "角色",
+          "payload": {
+            "bucket": "role"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "role",
+          "asset": "assets/ui/tab_role.webp",
+          "assetPressed": "assets/ui/tab_role_pressed.webp",
+          "desc": "切到「角色」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "tab_skill",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            331,
+            74,
+            150,
+            44
+          ],
+          "label": "技能",
+          "payload": {
+            "bucket": "skill"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "skill",
+          "asset": "assets/ui/tab_skill.webp",
+          "assetPressed": "assets/ui/tab_skill_pressed.webp",
+          "desc": "切到「技能」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "tab_rolePlugin",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            487,
+            74,
+            150,
+            44
+          ],
+          "label": "角色插件",
+          "payload": {
+            "bucket": "rolePlugin"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "rolePlugin",
+          "asset": "assets/ui/tab_rolePlugin.webp",
+          "assetPressed": "assets/ui/tab_rolePlugin_pressed.webp",
+          "desc": "切到「角色插件」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "tab_skillPlugin",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            643,
+            74,
+            150,
+            44
+          ],
+          "label": "技能插件",
+          "payload": {
+            "bucket": "skillPlugin"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "skillPlugin",
+          "asset": "assets/ui/tab_skillPlugin.webp",
+          "assetPressed": "assets/ui/tab_skillPlugin_pressed.webp",
+          "desc": "切到「技能插件」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "tab_package",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            799,
+            74,
+            150,
+            44
+          ],
+          "label": "包",
+          "payload": {
+            "bucket": "package"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "package",
+          "asset": "assets/ui/tab_package.webp",
+          "assetPressed": "assets/ui/tab_package_pressed.webp",
+          "desc": "切到「包」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "tab_aiNode",
+          "kind": "button",
+          "action": "warehouse-tab",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            955,
+            74,
+            150,
+            44
+          ],
+          "label": "AI节点",
+          "payload": {
+            "bucket": "aiNode"
+          },
+          "z": 6,
+          "press": "state",
+          "pressKey": "warehouseTab",
+          "pressWhen": "aiNode",
+          "asset": "assets/ui/tab_aiNode.webp",
+          "assetPressed": "assets/ui/tab_aiNode_pressed.webp",
+          "desc": "切到「AI节点」分类。选中时保持按下（press:state 由 warehouseTab 决定）。"
+        },
+        {
+          "id": "wh_panel",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            200,
+            132,
+            880,
+            500
+          ],
+          "z": 5,
+          "asset": "assets/ui/wh_panel.webp",
+          "nine": {
+            "slice": 24
+          },
+          "desc": "仓库面板底图（九宫格拉伸）。"
+        },
+        {
+          "id": "wh_grid",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            216,
+            148,
+            848,
+            452
+          ],
+          "z": 6,
+          "scroll": {
+            "dir": "v"
+          },
+          "grid": {
+            "flow": true,
+            "autoHeight": true,
+            "cellW": 96,
+            "cellH": 96,
+            "gapX": 10,
+            "gapY": 10,
+            "padX": 10,
+            "padY": 10
+          },
+          "desc": "仓库物品网格：格子 96×96、间距 10、内边距 10。列数按容器宽自动算（不硬性规定几乘几），从左到右从上到下排，横放不下自动换行，竖放不下本框可滚动。"
+        },
+        {
+          "id": "wh_cell",
+          "kind": "button",
+          "action": "warehouse-item-open",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            0,
+            96,
+            96
+          ],
+          "label": "{itemName}",
+          "payload": {
+            "uid": "{itemUid}"
+          },
+          "z": 6,
+          "asset": "{itemIcon}",
+          "assetPressed": "{itemIcon}",
+          "press": "tap",
+          "desc": "一个仓库格子。点它打开该物品的详情弹窗。位置与大小由 wh_grid 的网格自动排布决定。"
+        },
+        {
+          "id": "wh_capacity",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            216,
+            108,
+            848,
+            26
+          ],
+          "label": "{whCapacity}",
+          "z": 7,
+          "font": {
+            "size": 14,
+            "align": "left"
+          },
+          "desc": "当前分类的容量与件数（由投影层按 /me/warehouse 的 counts/caps 填）。"
+        },
+        {
+          "id": "wh_close",
+          "kind": "button",
+          "action": "modal-close",
+          "hit": "rect",
+          "anchor": "cb",
+          "rect": [
+            590,
+            640,
+            100,
+            40
+          ],
+          "label": "关闭",
+          "z": 8,
+          "press": "tap",
+          "asset": "assets/ui/wh_close.webp",
+          "assetPressed": "assets/ui/wh_close_pressed.webp",
+          "desc": "关闭仓库弹窗。用户口径取消了右上角 X，所以关在底部居中；点遮罩也可关。"
+        }
+      ],
+      "gridFrom": {
+        "source": "tab",
+        "container": "wh_grid",
+        "prototype": "wh_cell"
+      },
+      "mask": {
+        "color": "#000000",
+        "opacity": 0.55,
+        "closeOnMaskClick": true,
+        "blocksBackground": true
+      }
+    },
+    "modal_item_detail": {
+      "role": "modal",
+      "name": "modal_item_detail",
+      "background": {
+        "asset": "",
+        "fit": "cover"
+      },
+      "elements": [
+        {
+          "id": "det_panel",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "ct",
+          "rect": [
+            390,
+            130,
+            500,
+            470
+          ],
+          "z": 5,
+          "asset": "assets/ui/det_panel.webp",
+          "nine": {
+            "slice": 24
+          },
+          "desc": "物品详情面板底图。"
+        },
+        {
+          "id": "det_icon",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            414,
+            154,
+            96,
+            96
+          ],
+          "z": 6,
+          "asset": "{detIcon}",
+          "desc": "物品图标（按当前物品的类型/id 取，与仓库格子同一套命名规则）。"
+        },
+        {
+          "id": "det_title",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            526,
+            154,
+            340,
+            30
+          ],
+          "z": 6,
+          "label": "{detTitle}",
+          "font": {
+            "size": 18,
+            "align": "left",
+            "bold": true
+          },
+          "desc": "物品名字（含品质）。"
+        },
+        {
+          "id": "det_sub",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            526,
+            186,
+            340,
+            22
+          ],
+          "z": 6,
+          "label": "{detSub}",
+          "font": {
+            "size": 13,
+            "align": "left",
+            "color": "#8b98ac"
+          },
+          "desc": "物品副标题（类别 / 品质 / 堆叠数等一行摘要）。"
+        },
+        {
+          "id": "det_lines",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            414,
+            262,
+            452,
+            240
+          ],
+          "z": 6,
+          "scroll": {
+            "dir": "v"
+          },
+          "label": "{detLines}",
+          "font": {
+            "size": 14,
+            "align": "left",
+            "lineHeight": 1.5
+          },
+          "desc": "按类别分组的完整属性（每行一条，由投影层产出）。属性多时本区域可滚动。"
+        },
+        {
+          "id": "det_open",
+          "kind": "button",
+          "action": "warehouse-package-open",
+          "hit": "rect",
+          "anchor": "cb",
+          "rect": [
+            512,
+            524,
+            120,
+            44
+          ],
+          "z": 7,
+          "label": "开包",
+          "payload": {
+            "uid": "{detUid}"
+          },
+          "press": "tap",
+          "asset": "assets/ui/det_open.webp",
+          "assetPressed": "assets/ui/det_open_pressed.webp",
+          "desc": "开这个包（仅「包」分类显示）。开包会消耗包并产出物品。"
+        },
+        {
+          "id": "det_dismantle",
+          "kind": "button",
+          "action": "warehouse-dismantle",
+          "hit": "rect",
+          "anchor": "cb",
+          "rect": [
+            648,
+            524,
+            120,
+            44
+          ],
+          "z": 7,
+          "label": "分解",
+          "payload": {
+            "uid": "{detUid}"
+          },
+          "press": "tap",
+          "asset": "assets/ui/det_dismantle.webp",
+          "assetPressed": "assets/ui/det_dismantle_pressed.webp",
+          "desc": "分解（删除）这个物品。**直接分解、无二次确认**（用户口径）。AI 节点与包不可分解；被出战配置引用的物品会被服务端拒绝（409 item_in_use）。"
+        },
+        {
+          "id": "det_close",
+          "kind": "button",
+          "action": "modal-close",
+          "hit": "rect",
+          "anchor": "cb",
+          "rect": [
+            590,
+            578,
+            100,
+            36
+          ],
+          "z": 7,
+          "label": "关闭",
+          "press": "tap",
+          "asset": "assets/ui/det_close.webp",
+          "assetPressed": "assets/ui/det_close_pressed.webp",
+          "desc": "关闭详情弹窗，回到仓库。"
+        }
+      ],
+      "mask": {
+        "color": "#000000",
+        "opacity": 0.45,
         "closeOnMaskClick": true,
         "blocksBackground": true
       }

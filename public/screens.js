@@ -53,7 +53,8 @@
       plan: null,
       layout: "hub",
       project: "hubViewModel",
-      actions: ["goto-profile","goto-warehouse","goto-quick","goto-tournament","goto-leaderboard","goto-ai-editor","goto-settings","goto-records","config-open","refresh-hub","goto-hub","layout-open","layout-switch-config","layout-assemble","layout-disassemble","layout-activate","layout-set-slot","modal-close"],
+      // D-188：仓库从独立屏改为**弹窗**（`warehouse-open`），新增物品详情/分解/开包/选定显示配置。
+      actions: ["goto-profile","goto-quick","goto-tournament","goto-leaderboard","goto-ai-editor","goto-settings","goto-records","config-open","refresh-hub","goto-hub","layout-open","layout-assemble","layout-disassemble","layout-activate","layout-set-slot","modal-close","warehouse-open","warehouse-tab","warehouse-item-open","warehouse-dismantle","warehouse-package-open","config-select"],
       data: ["me","me/configs","me/warehouse"],
     },
     "profile": {
@@ -92,15 +93,9 @@
       actions: ["accounts-prev","accounts-next","accounts-size-20","accounts-size-50","accounts-size-100","admin-delete-account","confirm-yes","confirm-no","goto-admin","goto-hub","admin-refresh-accounts"],
       data: ["admin/accounts"],
     },
-    "warehouse": {
-      title: "仓库",
-      status: 'ready',
-      plan: null,
-      layout: null,
-      project: "warehouseViewModel",
-      actions: ["warehouse-bucket","item-open","package-open","refresh-warehouse","goto-hub","modal-close"],
-      data: ["me/warehouse"],
-    },
+    // D-188：`warehouse` **独立屏已删除** —— 仓库改为覆盖在主界面上的**弹窗**
+    //   （用户口径：「仓库不是一个页面而是弹窗」）。它的入口是 hub 的 `warehouse-open`，
+    //   内容由布局表的 `modal_warehouse` 承载；旧屏的投影/动作随之下线。
     "settings": {
       title: "设置",
       status: 'ready',

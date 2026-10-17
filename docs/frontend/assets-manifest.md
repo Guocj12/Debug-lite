@@ -5,7 +5,7 @@
 > 然后跑 `node tools/layout/apply-assets.js` —— 它会改名/转格式/缩放并放进 `public/assets/` 对应目录。
 > 🧩 = 程序生成的**占位图**（界面已经不再显示虚线框，但还不是美术成品）；替换方式见下方说明。
 
-**总览**：共 158 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 0 ｜ 📥 收件夹待归位 0 ｜ **缺 154**（可选 4）
+**总览**：共 170 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 0 ｜ 📥 收件夹待归位 0 ｜ **缺 166**（可选 4）
 
 > 换成真图：把同名文件放进 `assets-inbox/` 跑 `npm run assets:apply`，或直接覆盖 `public/assets/` 下的同名文件。
 > 重新跑生成脚本**不会**覆盖你的真图 —— 脚本只覆盖登记在 `tools/layout/placeholders.json` 里的文件。
@@ -18,7 +18,7 @@
 | 插件 | 41 | 0 | 0 | 41 | 128×128 · webp | 插件图标，透明底，正方形 |
 | AI 积木节点 | 54 | 0 | 0 | 54 | 128×128 · webp | AI 积木节点图标，透明底 |
 | 包/宝箱 | 5 | 0 | 0 | 5 | 256×256 · webp | 包/宝箱图标，透明底 |
-| 界面按钮/控件 | 28 | 0 | 0 | 28 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
+| 界面按钮/控件 | 40 | 0 | 0 | 40 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
 | 品质边框 | 5 | 0 | 0 | 5 | 256×256 · svg | 品质边框（矢量，颜色按 qualities.json 的 color） |
 | 段位图标 | 5 | 0 | 0 | 5 | 64×64 · svg | 段位图标（矢量，颜色按 qualities.json 的 color） |
 | 音效（可选） | 4 | 0 | 0 | 4 | — · mp3 | 技能音效（可选；布局表暂时不用） |
@@ -169,7 +169,7 @@
 | ❌ 缺 | · 后补 | `skillPlugin.webp` | `assets/package/skillPlugin.webp` | 技能插件包 | server/data/package-config.json |
 | ❌ 缺 | · 后补 | `aiNode.webp` | `assets/package/aiNode.webp` | AI节点包 | server/data/package-config.json |
 
-## 界面按钮/控件（28）
+## 界面按钮/控件（40）
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
@@ -201,6 +201,18 @@
 | ❌ 缺 | ★ 先做 | `splug_panel.webp` | `assets/ui/splug_panel.webp` | 该插槽的**技能插件**候选 素材 | modal_skill_plugin_pick |
 | ❌ 缺 | ★ 先做 | `splug_title.webp` | `assets/ui/splug_title.webp` | 可装 / 可换的技能插件 素材 | modal_skill_plugin_pick |
 | ❌ 缺 | ★ 先做 | `new_1.webp` | `assets/ui/new_1.webp` | 技能2（再点一次看技能） 素材 | modal_skill2_slots |
+| ❌ 缺 | ★ 先做 | `tab_role.webp` | `assets/ui/tab_role.webp` | 角色 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `tab_skill.webp` | `assets/ui/tab_skill.webp` | 技能 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `tab_rolePlugin.webp` | `assets/ui/tab_rolePlugin.webp` | 角色插件 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `tab_skillPlugin.webp` | `assets/ui/tab_skillPlugin.webp` | 技能插件 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `tab_package.webp` | `assets/ui/tab_package.webp` | 包 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `tab_aiNode.webp` | `assets/ui/tab_aiNode.webp` | AI节点 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `wh_panel.webp` | `assets/ui/wh_panel.webp` | wh_panel 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `wh_close.webp` | `assets/ui/wh_close.webp` | 关闭 素材 | modal_warehouse |
+| ❌ 缺 | ★ 先做 | `det_panel.webp` | `assets/ui/det_panel.webp` | det_panel 素材 | modal_item_detail |
+| ❌ 缺 | ★ 先做 | `det_open.webp` | `assets/ui/det_open.webp` | 开包 素材 | modal_item_detail |
+| ❌ 缺 | ★ 先做 | `det_dismantle.webp` | `assets/ui/det_dismantle.webp` | 分解 素材 | modal_item_detail |
+| ❌ 缺 | ★ 先做 | `det_close.webp` | `assets/ui/det_close.webp` | 关闭 素材 | modal_item_detail |
 
 ## 品质边框（5）
 

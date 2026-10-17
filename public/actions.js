@@ -882,14 +882,10 @@
       run: function (ctx) { return goView(ctx, 'profile'); },
     },
 
-    // 切到仓库屏**并**取真源（03 §4：成功可见文本「仓库」+ 列表更新）
-    'goto-warehouse': {
-      label: '仓库',
-      run: function (ctx) {
-        ctx.dispatch({ type: 'view.go', view: 'warehouse' });
-        return loadWarehouse(ctx);
-      },
-    },
+    // D-188：`goto-warehouse` **已删除** —— 它切到的 `warehouse` 独立屏不复存在
+    //   （仓库改为覆盖在主界面上的弹窗）。仓库的唯一入口是 `warehouse-open`：
+    //   它进主界面（若当前不在）并压入 `modal_warehouse` 弹窗。
+    //   兜底文字版主界面的「仓库」按钮同样指向 `warehouse-open`（见 format.hubViewModel）。
 
     'goto-quick': {
       label: '快速对战',
@@ -929,45 +925,99 @@
       run: function (ctx, payload) { return loadHub(ctx, payload); },
     },
 
-    'refresh-warehouse': {
-      label: '刷新',
-      run: function (ctx) { return loadWarehouse(ctx); },
+    // D-188：`refresh-warehouse` / `warehouse-bucket` / `item-open` / `package-open` 四个动作
+    //   **随 `warehouse` 独立屏一起删除**（用户口径：「仓库不是一个页面而是弹窗」）。
+    //   替代品：`warehouse-open`（开弹窗 + 取真源）/ `warehouse-tab`（切分类）/
+    //   `warehouse-item-open`（详情）/ `warehouse-package-open`（开包）。
+    //   **删除而非留空壳**：留下不可达动作会被 UI-2 的"无不可达入口"判据直接判红。
+
+    /* ---------- D-188：仓库弹窗 / 物品详情弹窗 / 选定显示配置 ---------- */
+
+    // 打开**仓库弹窗**（D-188：仓库从独立屏改为弹窗）。
+    //   形态：`state.hub.modals` 压入 `modal_warehouse`（与径向插槽弹窗同一套弹窗栈）。
+    //   数据：先开弹窗（立即有反馈）再静默取真源；取数失败时弹窗仍在、提示可见（不假装成功）。
+    'warehouse-open': {
+      label: '仓库',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        if (!ctx.state.session.token) return sessionLost(ctx, null);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        ctx.dispatch({ type: 'warehouse.item.clear' });
+        // 弹窗承载在主界面上：若当前不在主界面（如从别的屏过来），先切回来
+        ctx.dispatch({ type: 'view.go', view: 'hub' });
+        ctx.dispatch({ type: 'hub.modal.push', screen: 'modal_warehouse', ctx: {} });
+        // 每开一次都回到第一个分类（避免上次看的是 AI 节点、这次一进来空一片）
+        ctx.dispatch({ type: 'warehouse.tab.set', bucket: 'role' });
+        return loadWarehouse(ctx, { quiet: true });
+      },
     },
 
-    // 分桶切换是**纯本地**动作（不再请求；数据一次取全）
-    'warehouse-bucket': {
-      label: '分桶',
+    // 切仓库分类（纯本地：`/me/warehouse` 一次取全，切桶不再请求）
+    'warehouse-tab': {
+      label: '分类',
       run: function (ctx, payload) {
         var bucket = payload && typeof payload.bucket === 'string' ? payload.bucket : '';
         if (bucket === '') {
-          noticeNotice(ctx, 'error', '缺少分桶名（warehouse-bucket 需要 data-bucket）');
+          noticeNotice(ctx, 'error', '缺少分类名（warehouse-tab 需要 data-bucket）');
           return Promise.resolve();
         }
-        ctx.dispatch({ type: 'warehouse.bucket.set', bucket: bucket });
+        ctx.dispatch({ type: 'warehouse.tab.set', bucket: bucket });
+        ctx.dispatch({ type: 'warehouse.item.clear' });   // 换分类即收起详情（详情属于上一分类的物品）
         return Promise.resolve();
       },
     },
 
-    // 打开物品详情弹窗（03 §3.3/§3.8；纯本地，不发请求）
-    'item-open': {
+    // 打开**物品详情弹窗**（D-188）：压入 `modal_item_detail`，把 uid 记进 state（投影层据此取物品）
+    //   纯本地（物品正文已在 `/me/warehouse` 里，无需再请求）。
+    'warehouse-item-open': {
       label: '物品详情',
       run: function (ctx, payload) {
-        var uid = payload && typeof payload.uid === 'string' && payload.uid !== '' ? payload.uid : '';
-        if (uid === '') {
-          noticeNotice(ctx, 'error', '缺少物品 uid（item-open 需要 data-uid）');
+        var uid = uidOf(payload);
+        if (uid === null) {
+          noticeNotice(ctx, 'error', '缺少物品 uid（warehouse-item-open 需要 data-uid）');
           return Promise.resolve();
         }
-        ctx.dispatch({ type: 'modal.set', modal: { kind: 'item-detail', uid: uid } });
+        var bucket = payload && typeof payload.bucket === 'string' ? payload.bucket : '';
+        ctx.dispatch({ type: 'warehouse.item.set', uid: uid, bucket: bucket });
+        ctx.dispatch({ type: 'hub.modal.push', screen: 'modal_item_detail', ctx: {} });
         return Promise.resolve();
       },
     },
 
-    // 开包（F8/D-177）：仓库屏「包」桶的行级动作（`data-uid`）。
-    //   客户端只做两件本地事：① 缺 uid → 拦下不发请求；② 已满仓 → 拦下（B-2，靠已读到的 caps/桶长度）。
-    //   成功后：用响应回带的 `warehouse/usage/caps` 并回 `state.warehouse`（容量行立即变化），
-    //   结果进 `state.packages.result`，并**静默刷新一次仓库**（与服务端真源对齐，同 F3 开箱口径）。
-    //   `package_invalid`（包已被消耗）/`warehouse_full` 一律走服务端文案（按钮永不无声）。
-    'package-open': {
+    // 分解（删除）当前详情里的物品（D-187 端点）。**无二次确认**（用户口径：「直接分解，不确认」）。
+    //   成功后：收起详情弹窗 + 静默刷新仓库真源（格子与容量行立即变化）。
+    //   被拒（item_in_use / plugin_equipped / item_not_dismantlable）一律走服务端文案。
+    'warehouse-dismantle': {
+      label: '分解',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var uid = uidOf(payload);
+        if (uid === null) {
+          noticeNotice(ctx, 'error', '缺少物品 uid（warehouse-dismantle 需要 data-uid）');
+          return Promise.resolve();
+        }
+        busy(ctx, true);
+        ctx.dispatch({ type: 'notice.set', notice: null });
+        return ctx.api.dismantle(token, { uids: [uid] }).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          ctx.dispatch({ type: 'warehouse.set', envelope: ctx.format.warehouseChangeEnvelope(result.envelope) });
+          ctx.dispatch({ type: 'warehouse.item.clear' });
+          ctx.dispatch({ type: 'hub.modal.pop' });      // 收起详情弹窗
+          noticeNotice(ctx, 'info', '已分解 1 件');
+          return loadWarehouse(ctx, { quiet: true });
+        });
+      },
+    },
+
+    // 开包（详情弹窗里的「开包」按钮，走 F8/D-177 已有端点）。成功后同样收起详情并刷新。
+    'warehouse-package-open': {
       label: '开包',
       run: function (ctx, payload) {
         if (ctx.state.busy) return Promise.resolve();
@@ -975,14 +1025,11 @@
         if (!token) return sessionLost(ctx, null);
         var uid = uidOf(payload);
         if (uid === null) {
-          noticeNotice(ctx, 'error', '缺少包 uid（package-open 需要 data-uid）');
+          noticeNotice(ctx, 'error', '缺少包 uid（warehouse-package-open 需要 data-uid）');
           return Promise.resolve();
         }
         var full = ctx.format.packageFullNotice(ctx.state);
-        if (full !== null) {
-          noticeNotice(ctx, 'error', full);
-          return Promise.resolve();
-        }
+        if (full !== null) { noticeNotice(ctx, 'error', full); return Promise.resolve(); }
         busy(ctx, true);
         ctx.dispatch({ type: 'notice.set', notice: null });
         return ctx.api.openPackage(token, { packageUids: [uid] }).then(function (result) {
@@ -994,8 +1041,41 @@
           }
           ctx.dispatch({ type: 'package.result.set', result: { lines: ctx.format.packageResultLines(result.envelope) } });
           ctx.dispatch({ type: 'warehouse.set', envelope: ctx.format.warehouseChangeEnvelope(result.envelope) });
+          ctx.dispatch({ type: 'warehouse.item.clear' });
+          ctx.dispatch({ type: 'hub.modal.pop' });
           noticeNotice(ctx, 'info', ctx.format.PACKAGE_OK_TEXT);
-          return loadWarehouse(ctx, { quiet: true }).then(function () { return undefined; });
+          return loadWarehouse(ctx, { quiet: true });
+        });
+      },
+    },
+
+    // 选定「主界面当前显示哪份配置」（D-186 端点）。**与设为出战分开**：
+    //   本地先切显示（立即生效），再持久化到服务端；服务端拒绝（如槽不存在）时如实报错但不回滚显示
+    //   —— 显示只是"在看哪份"，不影响出战与对局，回滚反而让界面跳来跳去。
+    'config-select': {
+      label: '查看配置',
+      run: function (ctx, payload) {
+        var slot = intOf(payload === null || payload === undefined ? null : payload.slot);
+        if (slot === null || slot < 1 || slot > 3) {
+          noticeNotice(ctx, 'error', '缺少配置槽号（config-select 需要 data-slot=1..3）');
+          return Promise.resolve();
+        }
+        ctx.dispatch({ type: 'hub.slot.set', slot: slot });
+        var token = ctx.state.session.token;
+        if (!token) return sessionLost(ctx, null);
+        var slotId = 'slot' + slot;
+        var hadModal = ctx.state.modal !== null;
+        busy(ctx, true);
+        return ctx.api.selectConfig(token, slotId).then(function (result) {
+          busy(ctx, false);
+          if (result.transport === 'error') return failFrom(ctx, result);
+          if (!ctx.format.isOk(result.envelope)) {
+            if (ctx.format.isSessionError(result.envelope)) return sessionLost(ctx, result);
+            return failFrom(ctx, result);
+          }
+          // 档案侧的 viewedSlotId 变了 → 重取 /me（`activeSlotId`/`battleSlot` 供按下态与出战角标）
+          if (!hadModal) return loadProfile(ctx, token).then(function () { return undefined; });
+          return undefined;
         });
       },
     },
@@ -1415,14 +1495,9 @@
     },
 
     // 只切换「主界面显示哪份配置」（不碰服务端的出战配置）
-    'layout-switch-config': {
-      label: '查看配置',
-      run: function (ctx, payload) {
-        var slot = intOf(payload === null || payload === undefined ? null : payload.slot);
-        ctx.dispatch({ type: 'hub.slot.set', slot: slot === null ? 1 : slot });
-        return Promise.resolve();
-      },
-    },
+    // D-188：`layout-switch-config` **已删除** —— 它只切本地显示、不落服务端；
+    //   主界面 1/2/3 号按钮现由 `config-select` 承担（本地切换 **+** 持久化到档案 `viewedSlotId`，D-186）。
+    //   保留它会造成"两个动作语义重叠、其中一个不可达"（UI-2 直接判红）。
 
     // 装配插件（POST /me/warehouse/assemble）：插件 uid + 目标物品 uid + 插槽序号
     'layout-assemble': {

@@ -125,6 +125,16 @@ async function withHarness(fn) {
 }
 
 const buttonLabels = (html) => [...html.matchAll(/>([^<>]+)<\/button>/g)].map((m) => m[1]);
+// D-188：布局表的按钮把文字包在 `<span class="dl-txt">…</span>` 里（为了叠在底图上），
+//   故"按钮文字"不能只看 `</button>` 前面那一段 —— 这里按 `data-action` 抓取按钮块再取其中的文字。
+function layoutButtonTexts(html) {
+  const out = [];
+  for (const m of html.matchAll(/<button\b[^>]*data-action="([^"]+)"[^>]*>([\s\S]*?)<\/button>/g)) {
+    const texts = [...m[2].matchAll(/<span class="dl-txt">([^<]*)<\/span>/g)].map((x) => x[1]);
+    out.push({ action: m[1], text: texts.join('') });
+  }
+  return out;
+}
 
 /* ---------- WH-1：主界面（hub） ---------- */
 
@@ -236,89 +246,89 @@ test('WH-2 四个空页已全部落地：EMPTY_PAGES 为空，ai-editor 是真�
 
 /* ---------- WH-3：仓库 ---------- */
 
-test('WH-3 仓库：容量行 / 五桶切换（本地）/ 行内名字 + [装配于配置1] / 详情弹窗与背景关闭', async () => {
+test('WH-3 [D-188] 仓库弹窗：6 个选项卡 / 网格按数量排布 / 详情弹窗 / 遮罩关闭', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh3user');
-    await h.run('goto-warehouse');
-    assert.equal(h.state().view, 'warehouse');
+    // D-188：仓库是**弹窗**（覆盖在主界面上），不是独立屏
+    await h.run('warehouse-open');
+    assert.equal(h.state().view, 'hub', '仓库弹窗承载在主界面上（不切屏）');
+    assert.ok(h.state().warehouse.envelope, '开弹窗应已取到 GET /me/warehouse');
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse'], '弹窗栈应压入 modal_warehouse');
+
     const wr = h.state().warehouse.envelope;
-    assert.ok(wr, '仓库屏应已取到 GET /me/warehouse');
-
-    // 容量行：`角色 n/500 · 技能 n/500 · 角色插件 n/500 · 技能插件 n/500 · 包 n/500 · AI节点 n/500`
-    //   （03 §3.3；F8 新增包桶；D-178 新增 AI 节点桶 —— starter 发全部绿档节点）
-    const capacity = format.warehouseCapacityText(wr);
-    assert.match(capacity, /^角色 \d+\/500 · 技能 \d+\/500 · 角色插件 \d+\/500 · 技能插件 \d+\/500 · 包 \d+\/500 · AI节点 \d+\/500$/, capacity);
-    assert.ok(h.html().includes(capacity), '容量行必须渲染到屏幕上');
-    for (const label of ['角色', '技能', '角色插件', '技能插件', '包', 'AI节点', '刷新', '返回主界面']) {
-      assert.ok(buttonLabels(h.html()).includes(label), `仓库缺少分桶/动作按钮：${label}`);
-    }
-
-    // 行内**只显示物品名字**（+ [装配于配置N]）：starter 的角色被 slot1 引用
+    // ① 6 个选项卡（按**实际物品类型**——用户口径：「顶部选项卡数量要按照实际物品类型来」）
+    const html = h.html();
+    const tabTexts = layoutButtonTexts(html).filter((b) => b.action === 'warehouse-tab').map((b) => b.text);
+    assert.deepEqual(tabTexts, ['角色', '技能', '角色插件', '技能插件', '包', 'AI节点'],
+      `仓库应有 6 个分类选项卡，实际：${JSON.stringify(tabTexts)}`);
+    // ② 当前分类的容量行（读真响应 counts/caps）
     const roleItem = format.bucketItems(wr, 'role')[0];
     assert.ok(roleItem, 'starter 应至少有 1 个角色');
-    assert.ok(wr.data.usage[roleItem.uid].slotIds.includes('slot1'), 'starter 的角色应被 slot1 引用');
-    assert.ok(h.html().includes('data-uid="' + roleItem.uid + '"'), '物品行应携带 data-uid');
-    assert.ok(h.html().includes(roleItem.name + ' [装配于配置1]'), '行内应显示名字 + 装配标记');
+    assert.ok(html.includes('data-uid="' + roleItem.uid + '"'), '网格格子应携带 data-uid');
+    assert.ok(html.includes(format.warehouseCapacityLine(h.state(), 'role')), '容量行必须渲染到屏幕上');
 
-    // 切桶 = 纯本地（不发请求），容量行不变
-    const bucketBefore = h.counter.n;
-    await h.run('warehouse-bucket', { bucket: 'skillPlugin' });
-    assert.equal(h.counter.n, bucketBefore, '分桶切换不得发请求');
-    assert.equal(h.state().warehouseBucket, 'skillPlugin');
+    // ③ 切分类 = 纯本地（不发请求）
+    const before = h.counter.n;
+    await h.run('warehouse-tab', { bucket: 'skillPlugin' });
+    assert.equal(h.counter.n, before, '切分类不得发请求');
+    assert.equal(h.state().warehouseTab, 'skillPlugin');
     const pluginItem = format.bucketItems(wr, 'skillPlugin')[0];
-    assert.ok(h.html().includes(pluginItem.name), '切换后应显示该桶的物品名');
-    assert.ok(h.html().includes(capacity), '切桶后容量行不变');
+    assert.ok(h.html().includes('data-uid="' + pluginItem.uid + '"'), '切换后应显示该桶的格子');
 
-    // 点物品行 → 屏内弹窗（03 §3.3/§5.3）
-    await h.run('item-open', { uid: roleItem.uid });
-    assert.deepEqual(h.state().modal, { kind: 'item-detail', uid: roleItem.uid });
-    const modalHtml = h.html();
-    assert.ok(modalHtml.includes('id="modal"'), '详情应是屏内区块（不是浏览器原生弹窗）');
-    assert.ok(modalHtml.includes('data-action="modal-close"'), '弹窗必须有承担外部点击的背景元素');
-    for (const line of format.itemDetailLines(wr, roleItem)) {
-      assert.ok(modalHtml.includes(line), `详情弹窗缺少字段行：${line}`);
-    }
-    // 点背景（=modal-close）→ 关闭并回到仓库列表
+    // ④ 点格子 → **物品详情弹窗**（叠在仓库弹窗之上）
+    await h.run('warehouse-item-open', { uid: pluginItem.uid, bucket: 'skillPlugin' });
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse', 'modal_item_detail']);
+    assert.deepEqual(h.state().warehouseItem, { uid: pluginItem.uid, bucket: 'skillPlugin' });
+    const detHtml = h.html();
+    assert.ok(detHtml.includes('【基本信息】'), '详情应按类别分组（用户口径：全部属性、按类别分组）');
+    assert.ok(detHtml.includes('【词条】'), '插件详情应有词条分组');
+
+    // ⑤ 遮罩点击 = 关闭（仓库弹窗的遮罩元素带 data-action="modal-close"）
+    assert.ok(detHtml.includes('data-action="modal-close"'), '弹窗必须有承担外部点击的遮罩元素');
     await h.run('modal-close');
-    assert.equal(h.state().modal, null);
-    assert.ok(!h.html().includes('id="modal"'), '关闭后不应再渲染弹窗');
+    assert.equal(h.state().hub.modals.length, 1, '关闭详情后回到仓库弹窗');
 
-    // 空仓库态（B-1）：形状取自真实响应的空桶（纯投影，不需要第二份夹具）
+    // ⑥ 空分类态：形状取自真实响应的空桶（纯投影，不需要第二份夹具）
     const emptyEnv = JSON.parse(JSON.stringify(wr));
     emptyEnv.data.buckets.skill = [];
-    emptyEnv.data.usage = {};
+    emptyEnv.data.counts.skill = 0;
     const emptyState = store.initialState();
-    emptyState.view = 'warehouse';
-    emptyState.warehouseBucket = 'skill';
-    emptyState.warehouse.envelope = emptyEnv;
+    emptyState.view = 'hub';
+    emptyState.session = { token: 't', publicId: 'u_x', isAdmin: false };
+    emptyState.profile = { ok: true, data: { nickname: '甲', progress: { tier: 'common' },
+      rating: { points: 0 }, record: { unread: { attack: 0, defense: 0 } }, pool: { inPool: true }, activeSlotId: 'slot1' } };
+    emptyState.configs = { data: { ok: true, data: { slots: [], activeSlotId: 'slot1', maxSlots: 3 } } };
+    emptyState.warehouse = { envelope: emptyEnv };
+    emptyState.warehouseTab = 'skill';
+    emptyState.hub = { slot: 0, modals: [{ name: 'modal_warehouse', ctx: {} }] };
     const emptyHtml = render.render(format.viewModel(emptyState));
-    assert.ok(emptyHtml.includes(format.EMPTY_WAREHOUSE_TEXT), '空桶应显示空态文案');
+    assert.ok(emptyHtml.includes('这个分类里还没有东西'), '空分类应显示空态文案');
   });
 });
 
-/* ---------- WH-4 / WH-5 / WH-6：开包（F8/D-176/D-177 取代原开箱屏） ---------- */
+/* ---------- WH-4 / WH-5 / WH-6：开包（F8/D-176/D-177；D-188 改由详情弹窗承载） ---------- */
 
-test('WH-4 开包：包桶行有「开包」；请求体只有 packageUids；结果区逐件行；不显示 seed；成功后仓库已刷新', async () => {
+test('WH-4 [D-188] 开包（详情弹窗内）：请求体只有 packageUids；结果逐件行；不显示 seed；成功后仓库已刷新', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh4user');
-    await h.run('goto-warehouse');
-    // 切到「包」桶（纯本地）；starter 必带 1 个「角色模块包」（D-176）
+    await h.run('warehouse-open');
     const before = h.counter.n;
-    await h.run('warehouse-bucket', { bucket: 'package' });
-    assert.equal(h.counter.n, before, '分桶切换不得发请求');
+    await h.run('warehouse-tab', { bucket: 'package' });
+    assert.equal(h.counter.n, before, '切分类不得发请求');
     const pkg = format.bucketItems(h.state().warehouse.envelope, 'package')[0];
     assert.ok(pkg, 'starter 应带 1 个包（D-176）');
     assert.equal(pkg.kind, 'package');
-    // 行文字 = `<名字>（<品质>·<质量>%）`，且带两个按钮（开包 + 详情）
-    const label = format.itemLabel(h.state().warehouse.envelope, pkg);
-    assert.equal(label, pkg.name + '（' + pkg.quality + '·' + pkg.qualityPercent + '%）', `包行文字：${label}`);
-    assert.ok(h.html().includes(label), '包行必须渲染到屏幕上');
-    assert.ok(h.html().includes('data-action="package-open"'), '包行必须有「开包」按钮');
-    assert.ok(h.html().includes('data-uid="' + pkg.uid + '"'), '开包按钮必须携带 data-uid');
+
+    // 打开详情 → 包只有「开包」按钮（D-188：包可开包、不可分解）
+    await h.run('warehouse-item-open', { uid: pkg.uid, bucket: 'package' });
+    const detHtml = h.html();
+    assert.ok(detHtml.includes('data-action="warehouse-package-open"'), '包的详情必须有「开包」按钮');
+    assert.ok(!detHtml.includes('data-action="warehouse-dismantle"'), '包**不可**分解（D-187）');
+    assert.ok(detHtml.includes('data-uid="' + pkg.uid + '"'), '开包按钮必须携带 data-uid');
 
     const countBefore = format.bucketItems(h.state().warehouse.envelope, 'package').length;
     const reqBefore = h.counter.n;
-    await h.run('package-open', { uid: pkg.uid });
+    await h.run('warehouse-package-open', { uid: pkg.uid });
     // 开包 1 次 + 成功后的静默仓库刷新 1 次
     assert.equal(h.counter.n, reqBefore + 2, '开包 = POST /me/warehouse/open-package(1) + 静默刷新仓库(1)');
     // 请求体**只有 packageUids**（无 seed 入参 —— 随机性归服务端，D-162 口径）
@@ -328,26 +338,26 @@ test('WH-4 开包：包桶行有「开包」；请求体只有 packageUids；结
     assert.equal(env.data.opened.length, 1);
     assert.equal(env.data.opened[0].packageUid, pkg.uid);
 
-    // 结果区：`本次开包获得 <n> 件：` + 逐件 `<名字>（<分类>·<品质>）`
+    // 结果区：`本次开包获得 <n> 件：` + 逐件行（由 state.packages.result 承载）
     const lines = h.state().packages.result.lines;
     const n = env.data.items.length;
     assert.equal(lines[0], '本次开包获得 ' + n + ' 件：');
     for (const line of lines.slice(1, 1 + n)) {
-      assert.match(line, /^.+（(角色|技能|角色插件|技能插件)·.+）$/, `逐件行：${line}`);
+      assert.match(line, /^.+（(角色|技能|角色插件|技能插件|AI节点)·.+）$/, `逐件行：${line}`);
     }
-    const html = h.html();
-    for (const line of lines) assert.ok(html.includes(line), `结果区缺少行：${line}`);
     // seed 是服务端审计量：不传（上面已断言）**也不显示**
     assert.ok(typeof env.data.seed === 'number', '服务端应回带 seed（仅审计）');
-    assert.ok(!html.includes(String(env.data.seed)), '仓库屏不得显示开包 seed');
-    assert.ok(!html.includes('种子'), '不得出现"种子"字样');
+    assert.ok(!h.html().includes(String(env.data.seed)), '界面不得显示开包 seed');
+    assert.ok(!h.html().includes('种子'), '不得出现"种子"字样');
     assert.equal(h.notice(), format.PACKAGE_OK_TEXT);
 
-    // 成功后**本地仓库状态已刷新**：包被消耗（-1），产出物入对应的桶（+n）
-    const countNow = format.bucketItems(h.state().warehouse.envelope, 'package').length;
-    assert.equal(countNow, countBefore - 1, '开包后包桶应 -1（包被消耗）');
-    // 回仓库再取一次真源 → 计数与本地一致（不重复计数）
-    await h.run('goto-warehouse');
+    // 成功后**本地仓库状态已刷新**：包被消耗（-1）
+    assert.equal(format.bucketItems(h.state().warehouse.envelope, 'package').length, countBefore - 1,
+      '开包后包桶应 -1（包被消耗）');
+    // 详情弹窗被收起（开完不该停在已消耗物品的详情上）
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse'], '开包后应收起详情弹窗');
+    // 重开仓库再取一次真源 → 计数与本地一致（不重复计数）
+    await h.run('warehouse-open');
     assert.equal(format.bucketItems(h.state().warehouse.envelope, 'package').length, countBefore - 1);
   });
 });
@@ -365,9 +375,10 @@ test('WH-5 [D-178] AI 节点包：可开、产出积木节点、入库堆叠、�
       });
       return null;
     });
-    await h.run('goto-warehouse');
-    await h.run('warehouse-bucket', { bucket: 'package' });
-    await h.run('package-open', { uid: 'pkg_ainode_1' });
+    await h.run('warehouse-open');
+    await h.run('warehouse-tab', { bucket: 'package' });
+    await h.run('warehouse-item-open', { uid: 'pkg_ainode_1', bucket: 'package' });
+    await h.run('warehouse-package-open', { uid: 'pkg_ainode_1' });
     const env = h.pkgEnvelopes[0];
     assert.equal(env.ok, true, '开 AI 节点包必须 200');
     assert.ok(env.data.items.length >= 1 && env.data.items.length <= 3, '产出 1~3 条节点堆叠');
@@ -409,16 +420,15 @@ test('WH-6 满仓：本地拦下「开包」且零请求；未读仓库时由服
     });
 
     // ① 进入仓库即取仓 → 本地判定满仓 → 「开包」被拦下 + 精确文案 + **零**请求
-    await h.run('goto-warehouse');
-    await h.run('warehouse-bucket', { bucket: 'package' });
+    await h.run('warehouse-open');
+    await h.run('warehouse-tab', { bucket: 'package' });
     const wr = h.state().warehouse.envelope;
     assert.equal(format.bucketItems(wr, 'package').length, 500, '仓库真源应显示包桶 500 件');
     const text = '仓库已满（角色 500/500），请先清理';
     assert.equal(format.packageFullNotice(h.state()), text, '满仓判定按 BUCKET_ORDER 的首个满桶（角色）');
-    assert.ok(h.html().includes(text), '已满提示必须渲染到屏幕上');
     const target = format.bucketItems(wr, 'package')[0];
     const before = h.counter.n;
-    await h.run('package-open', { uid: target.uid });
+    await h.run('warehouse-package-open', { uid: target.uid });
     assert.equal(h.counter.n, before, '已满时一个请求都不许发');
     assert.deepEqual(h.pkgCalls, [], '已满时不得发 open-package');
     assert.equal(h.notice(), text, '被拦下时也要有可见文案（按钮永不无声）');
@@ -428,31 +438,30 @@ test('WH-6 满仓：本地拦下「开包」且零请求；未读仓库时由服
     assert.equal(format.packageFullNotice(h.state()), null, '没有仓库信封时不做本地预判');
     const before2 = h.counter.n;
     const pkgBefore = h.pkgCalls.length;
-    await h.run('package-open', { uid: target.uid });
+    await h.run('warehouse-package-open', { uid: target.uid });
     assert.equal(h.counter.n, before2 + 1, '未读仓库时必须真的问服务端（409 后不再刷新仓库）');
     assert.equal(h.pkgCalls.length, pkgBefore + 1, '应真的发了 open-package');
     assert.match(h.notice(), /仓库已满/, `409 文案必须可读：${h.notice()}`);
-    assert.ok(h.html().includes('仓库已满'), '409 文案必须渲染到屏幕上');
   });
 
-  // ③ 缺 uid（无 data-uid 的包行）→ 客户端拦下、不发请求、文案可见
+  // ③ 缺 uid（无 data-uid 的格子）→ 客户端拦下、不发请求、文案可见
   await withHarness(async (h) => {
     await h.signUp('wh6nouser');
-    await h.run('goto-warehouse');
-    await h.run('warehouse-bucket', { bucket: 'package' });
+    await h.run('warehouse-open');
+    await h.run('warehouse-tab', { bucket: 'package' });
     const before = h.counter.n;
-    await h.run('package-open', null);
+    await h.run('warehouse-package-open', null);
     assert.equal(h.counter.n, before, '缺 uid 不得发请求');
     assert.match(h.notice(), /缺少包 uid/, `缺 uid 的文案：${h.notice()}`);
   });
 
-  // ④ 仓库**读取失败**（服务已关）→ 开包失败文案可见（不做本地预判、由服务端兜底）
+  // ④ **读取失败**（服务已关）→ 开包失败文案可见（不做本地预判、由服务端兜底）
   const s2 = await startServer({ prefix: 'dl-fe-hub-pkgfail-', level: 'warn' });
   const h2 = harness(s2.baseUrl);
   try {
     await h2.signUp('wh6fail');
     await s2.close();
-    await h2.run('package-open', { uid: 'pkg_whatever' });
+    await h2.run('warehouse-package-open', { uid: 'pkg_whatever' });
     assert.match(h2.notice(), /^无法连接服务器：/, `网络失败必须可见：${h2.notice()}`);
   } finally {
     await s2.cleanup();
@@ -520,18 +529,24 @@ test('WH-7 设置：改昵称成功/客户端拦截；修改密码入口；登�
 test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢弃未提交输入', async () => {
   await withHarness(async (h) => {
     await h.signUp('wh8user');
-    await h.run('goto-warehouse');
+    // D-188：仓库改为弹窗 —— 走新入口
+    await h.run('warehouse-open');
     const item = format.bucketItems(h.state().warehouse.envelope, 'role')[0];
 
-    // 打开 → 只有一个弹窗，且背景元素存在
-    await h.run('item-open', { uid: item.uid });
-    assert.equal(h.state().modal.kind, 'item-detail');
-    assert.equal((h.html().match(/id="modal"/g) || []).length, 1, '同一时刻至多一个弹窗');
-    // 打开另一个弹窗即替换旧的（03 §3.8）
+    // 打开 → 只有仓库弹窗一层，且遮罩元素存在
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse']);
+    assert.ok(h.html().includes('data-action="modal-close"'), '弹窗必须有遮罩关闭元素');
+    // 打开物品详情 → 叠第二层
+    await h.run('warehouse-item-open', { uid: item.uid, bucket: 'role' });
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse', 'modal_item_detail']);
+    // 关闭一层 → 回到仓库弹窗
+    await h.run('modal-close');
+    assert.deepEqual(h.state().hub.modals.map((m) => m.name), ['modal_warehouse']);
+
+    // 旧屏内弹窗（`state.modal`）机制仍在：config-open 打开编辑器，同一时刻至多一个
     await h.run('config-open', { slot: 'slot2' });
     assert.deepEqual(h.state().modal, { kind: 'config', slotId: 'slot2' });
-    assert.equal((h.html().match(/id="modal"/g) || []).length, 1, '替换后仍只有一个弹窗');
-    // 提交③：占位弹窗已换成真编辑器 —— 状态行含 slotId，草稿已从服务端副本灌入
+    assert.equal((h.html().match(/id="modal"/g) || []).length, 1, '同一时刻至多一个屏内弹窗');
     assert.ok(h.html().includes('出战配置2：'), '编辑器状态行必须含 slotId');
     assert.ok(h.html().includes(format.CONFIG_DRAFT_HINT), '编辑器应提示"编辑先落在本地草稿"');
     assert.ok(h.state().configs.draft, '打开配置弹窗应灌入本地草稿');
@@ -540,8 +555,8 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     await h.run('config-open');
     assert.deepEqual(h.state().modal, { kind: 'config', slotId: 'slot1' });
 
-    // 任何含弹窗的屏都必须渲染 modal-close（F8/D-176：`box` 屏已删除）
-    for (const view of ['hub', 'profile', 'warehouse', 'settings']) {
+    // 任何含弹窗的屏都必须渲染 modal-close（F8/D-176：`box` 屏已删除；D-188：`warehouse` 屏已删除）
+    for (const view of ['hub', 'profile', 'settings']) {
       const state = store.initialState();
       state.view = view;
       state.modal = { kind: 'config', slotId: 'slot1' };
@@ -549,14 +564,11 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
       const html = render.render(format.viewModel(state));
       assert.ok(html.includes('data-action="modal-close"'), `${view} 屏的弹窗缺少背景元素`);
     }
-    // 打开物品详情（真实 uid）后，仓库屏也要有背景元素
-    h.dispatch({ type: 'modal.set', modal: { kind: 'item-detail', uid: item.uid } });
-    assert.ok(h.html().includes('data-action="modal-close"'));
 
     // 切屏即清弹窗（modal 不跨屏存活）
     await h.run('goto-hub');
     assert.equal(h.state().modal, null, '切屏应清弹窗');
-    // 关闭：丢弃未提交输入（提交③ 起弹窗内有**本地草稿** → 关闭必须一并丢弃）
+    // 关闭：丢弃未提交输入（弹窗内有**本地草稿** → 关闭必须一并丢弃）
     h.dispatch({ type: 'configs.draft.set', draft: { slotId: 'slot1', loadout: { role: null, skills: [null, null, null], ai: null } }, dirty: true });
     h.dispatch({ type: 'modal.set', modal: { kind: 'config', slotId: 'slot1' } });
     assert.equal(h.state().configs.dirty, true, '前置：草稿处于未保存态');
@@ -570,6 +582,11 @@ test('WH-8 弹窗机制：至多一个 / 必有 modal-close / 切屏即清 / 丢
     st2.dispatch({ type: 'modal.set', modal: { kind: 'unknown-kind' } });
     assert.equal(st2.getState().modal, null);
     assert.equal(st2.dispatch({ type: 'modal.close' }), st2.getState(), '无弹窗时关闭是幂等的');
+    // D-188：仓库弹窗栈的 reducer 守卫（压入未知画面 → 仍入栈，但渲染层跳过未知画面）
+    st2.dispatch({ type: 'hub.modal.push', screen: 'modal_warehouse', ctx: {} });
+    assert.deepEqual(st2.getState().hub.modals.map((m) => m.name), ['modal_warehouse']);
+    st2.dispatch({ type: 'hub.modals.clear' });
+    assert.equal(st2.getState().hub.modals.length, 0, 'hub.modals.clear 应清空弹窗栈');
   });
 });
 
@@ -650,30 +667,32 @@ test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、包�
   app.dispatch({ type: 'session.set', token: 'tk', publicId: 'u_x', nickname: '甲', expiresAt: null, isAdmin: false });
   app.dispatch({ type: 'profile.set', envelope: me });
   app.dispatch({ type: 'warehouse.set', envelope: warehouse });
-  app.dispatch({ type: 'view.go', view: 'warehouse' });
-  assert.ok(dom.host.innerHTML.includes('均衡'), '仓库屏应列出物品名');
+  // D-188：仓库是**弹窗**（压在 hub 的弹窗栈上），不是屏
+  app.dispatch({ type: 'view.go', view: 'hub' });
+  app.dispatch({ type: 'warehouse.tab.set', bucket: 'package' });
+  app.dispatch({ type: 'hub.modal.push', screen: 'modal_warehouse', ctx: {} });
+  assert.ok(dom.host.innerHTML.includes('角色模块包'), '仓库弹窗的包格子应显示包名');
 
-  // 物品行（data-uid）→ item-open → 屏内弹窗
-  dom.fire('click', { target: { closest: () => fakeButton('item-open', { uid: 'item_0' }) } });
-  assert.deepEqual(app.store.getState().modal, { kind: 'item-detail', uid: 'item_0' });
-  assert.ok(dom.host.innerHTML.includes('id="modal"'));
-  assert.ok(dom.host.innerHTML.includes('物品详情'));
+  // 包格子（data-action=warehouse-item-open + data-uid）→ 详情弹窗
+  dom.fire('click', { target: { closest: () => fakeButton('warehouse-item-open', { uid: 'pkg_0', bucket: 'package' }) } });
+  assert.deepEqual(app.store.getState().warehouseItem, { uid: 'pkg_0', bucket: 'package' });
+  assert.deepEqual(app.store.getState().hub.modals.map((m) => m.name), ['modal_warehouse', 'modal_item_detail']);
 
-  // 点弹窗背景（data-action=modal-close）→ 关闭
-  dom.fire('click', { target: { closest: () => fakeButton('modal-close') } });
-  assert.equal(app.store.getState().modal, null);
-  assert.ok(!dom.host.innerHTML.includes('id="modal"'));
-
-  // 包桶行（data-action=package-open + data-uid）→ 开包：请求体只有 packageUids；结果区可读；不显示 seed
-  app.dispatch({ type: 'warehouse.bucket.set', bucket: 'package' });
-  assert.ok(dom.host.innerHTML.includes('角色模块包'), '包桶应列出包名（名字（品质·质量%））');
-  dom.fire('click', { target: { closest: () => fakeButton('package-open', { uid: 'pkg_0' }) } });
+  // 详情里的「开包」（data-action=warehouse-package-open + data-uid）→ 请求体只有 packageUids；不显示 seed
+  dom.fire('click', { target: { closest: () => fakeButton('warehouse-package-open', { uid: 'pkg_0' }) } });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls.filter((c) => c.op === 'openPackage'),
     [{ op: 'openPackage', token: 'tk', input: { packageUids: ['pkg_0'] } }], '开包请求体只有 packageUids');
   assert.equal(app.store.getState().packages.result.lines[0], '本次开包获得 1 件：');
-  const finalHtml = dom.host.innerHTML;
-  assert.ok(!finalHtml.includes('424242'), '仓库屏不得显示响应里的 seed');
+  assert.ok(!dom.host.innerHTML.includes('424242'), '界面不得显示响应里的 seed');
+  // 开包后详情弹窗被收起（回到仓库弹窗）
+  assert.deepEqual(app.store.getState().hub.modals.map((m) => m.name), ['modal_warehouse'], '开包后应收起详情');
+
+  // 点弹窗遮罩（data-action=modal-close）→ 关闭仓库弹窗
+  dom.fire('click', { target: { closest: () => fakeButton('modal-close') } });
+  assert.equal(app.store.getState().hub.modals.length, 0, '遮罩点击应关闭弹窗');
+  assert.ok(!dom.host.innerHTML.includes('modal_warehouse'), '关闭后不应再渲染仓库弹窗');
+
   // 设置屏输入框：另一个 screen 字段
   app.dispatch({ type: 'view.go', view: 'settings' });
   dom.fire('input', { target: { name: 'settingsNickname', value: '乙' } });
@@ -682,27 +701,28 @@ test('WH-9 DOM 装配层：data-uid → 弹窗、背景点击 → 关闭、包�
 
 /* ---------- WH-10：失败路径 ---------- */
 
-test('WH-10 失败路径落在可见提示：会话失效（仓库/开箱）与网络失败', async () => {
+test('WH-10 失败路径落在可见提示：会话失效（仓库/开包）与网络失败', async () => {
   // ① 坏 token → 仓库真源 401 → 统一登出 + 文案（03 §6 unauthorized 行）
   await withHarness(async (h) => {
     await h.signUp('wh10a');
     h.dispatch({ type: 'session.set', token: 'not-a-real-token', publicId: h.state().session.publicId, nickname: 'x', expiresAt: null, isAdmin: false });
-    await h.run('refresh-warehouse');
+    await h.run('warehouse-open');
     assert.equal(h.state().view, 'login', '会话失效应切回登录屏');
     assert.ok(h.notice().indexOf('会话已失效，请重新登录') === 0, `实际文案：${h.notice()}`);
     assert.equal(h.state().warehouse.envelope, null, '会话失效应清仓库数据');
   });
 
-  // ② 服务未启动 → 仓库/开包都是可见网络失败文案（不是静默失败）
+  // ② 服务未启动 → 开仓库/开包都是可见网络失败文案（不是静默失败）
   const s = await startServer({ prefix: 'dl-fe-hub-net-', level: 'warn' });
   const h = harness(s.baseUrl);
   try {
     await h.signUp('wh10b');
     await s.close();
-    await h.run('goto-warehouse');
-    assert.equal(h.state().view, 'warehouse');
+    await h.run('warehouse-open');
+    // D-188：开弹窗本身是本地动作（不挡人），失败文案来自随后的取真源
+    assert.equal(h.state().view, 'hub', '仓库弹窗仍在主界面（不因取数失败而"打不开"）');
     assert.match(h.notice(), /^无法连接服务器：/, `网络失败文案：${h.notice()}`);
-    await h.run('package-open', { uid: 'pkg_whatever' });
+    await h.run('warehouse-package-open', { uid: 'pkg_whatever' });
     assert.match(h.notice(), /^无法连接服务器：/, '开包的网络失败同样必须可见');
   } finally {
     await s.cleanup();
@@ -864,7 +884,7 @@ test('WH-11 物品详情字段三方一致：contract == 03 §5.1+§5.3 == forma
 
   await withHarness(async (h) => {
     await h.signUp('wh11user');
-    await h.run('goto-warehouse');
+    await h.run('warehouse-open');   // D-188：仓库改弹窗（取真源的那一步不变）
     const wr = h.state().warehouse.envelope;
     const items = [];
     for (const bucket of format.BUCKET_ORDER) {

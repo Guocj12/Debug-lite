@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 3fb8c8b7d0354390）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: bc92e8264e47c818）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -341,9 +341,18 @@
                     fit: (src.background && src.background.fit) === 'contain' ? 'contain' : 'cover' },
       elements: (Array.isArray(src.elements) ? src.elements : []).map(normalizeElement)
     };
-    // 结构元数据（由 tools/layout/import-layout.js 写入）：插槽屏 / 列表屏的展开规则，必须随归一化保留
+    // 结构元数据（由 tools/layout/import-layout.js 写入）：插槽屏 / 列表屏 / 网格屏的展开规则，必须随归一化保留
     if (src.slotsFrom && typeof src.slotsFrom === 'object') out.slotsFrom = src.slotsFrom;
     if (src.listFrom && typeof src.listFrom === 'object') out.listFrom = src.listFrom;
+    // D-188：`gridFrom` = 按 template/container 的 `grid.flow` 把某个桶排成可滚动的网格
+    //   （{source, container, prototype}）。与 listFrom 的区别见 format.js 的 layBucketItems 注释。
+    if (src.gridFrom && typeof src.gridFrom === 'object') {
+      out.gridFrom = {
+        source: String(src.gridFrom.source || ''),
+        container: String(src.gridFrom.container || ''),
+        prototype: String(src.gridFrom.prototype || ''),
+      };
+    }
     if (out.role === 'modal') {
       var m = src.mask || {};
       out.mask = { color: /^#[0-9a-fA-F]{6}$/.test(String(m.color)) ? String(m.color) : DEFAULT_MASK.color,
@@ -487,7 +496,7 @@
    * 用途：同一份布局在不同状态下某些元素显示/隐藏（例：三个出战配置各自的「出战」角标）。
    * 真代码的渲染层照同一条规则过滤即可（比在 CSS 里堆状态类更好测）。
    */
-  var WHEN_KEYS = ['activeSlot', 'battleSlot'];
+  var WHEN_KEYS = ['activeSlot', 'battleSlot', 'warehouseTab'];
   function whenMatches(el, sstate) {
     var w = el && el.when;
     if (!w || typeof w !== 'object') return true;
@@ -513,8 +522,13 @@
    *   · `when`       决定元素**是否显示**；
    *   · `pressWhen`  决定元素**是否显示为按下**。
    * 缺 `pressKey` / `pressWhen` → false（不按下）；当前态没给该键的值 → false。
+   *
+   * `data` 可选：给了就把 `pressWhen` 里的 `{键}` 先替换掉 ——
+   *   「设为出战」这类按钮要表达的是"**当前显示的那份**是不是出战那份"，
+   *   而"当前显示哪份"只有数据侧知道（`{configId}` = `slot<当前显示槽号>`）。
+   *   不做替换就只能写死某个槽号，玩家一看别的配置就判定错。
    */
-  function pressActive(el, sstate) {
+  function pressActive(el, sstate, data) {
     if (!el || el.press !== 'state') return false;
     var k = el.pressKey;
     if (typeof k !== 'string' || k === '') return false;
@@ -524,6 +538,9 @@
     var got = st[k];
     if (got === undefined || got === null) return false;
     var want = Array.isArray(w) ? w : [w];
+    if (data) {
+      want = want.map(function (v) { return typeof v === 'string' ? resolveTpl(v, data).text : v; });
+    }
     return want.some(function (v) { return String(v) === String(got); });
   }
 
@@ -538,8 +555,10 @@
   var TIER_CN = { common: '绿', rare: '蓝', epic: '紫', legendary: '橙', mythic: '青' };
   var TPL_TEXT_KEYS = ['nickname', 'tierName', 'tier', 'points', 'wins', 'losses', 'unread',
     'slotName', 'roleName', 'roleQuality', 'skill1Name', 'skill2Name', 'skill3Name', 'aiName', 'configLabel',
-    'activeSlot', 'configId', 'battleSlot', 'rowLabel', 'rowUid', 'pickPos', 'pickIdx', 'pickTargetUid'];
-  var TPL_ASSET_KEYS = ['roleIcon', 'skill1Icon', 'skill2Icon', 'skill3Icon', 'aiIcon', 'tierIcon', 'qualityFrame', 'rowIcon'];
+    'activeSlot', 'configId', 'battleSlot', 'rowLabel', 'rowUid', 'pickPos', 'pickIdx', 'pickTargetUid',
+    'itemName', 'itemUid', 'whCapacity', 'detUid', 'detTitle', 'detSub', 'detLines'];
+  var TPL_ASSET_KEYS = ['roleIcon', 'skill1Icon', 'skill2Icon', 'skill3Icon', 'aiIcon', 'tierIcon', 'qualityFrame', 'rowIcon',
+    'itemIcon', 'detIcon'];
   var TPL_KEYS = {};
   TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).forEach(function (k) { TPL_KEYS[k] = TPL_ASSET_KEYS.indexOf(k) >= 0 ? 'asset' : 'text'; });
 
@@ -667,7 +686,7 @@
                  assetPressedRaw: el.assetPressed || '',
                  // D-188：按下行为（`pressActive` 决定 `state` 模式下当前是否按下）
                  press: el.press || '', pressKey: el.pressKey || '', pressWhen: el.pressWhen,
-                 pressed: pressActive(el, sstate),
+                 pressed: pressActive(el, sstate, data),
                  hit: el.hit || 'rect', path: el.path || '',
                  rot: num(el.rot, 0), z: num(el.z, 1),
                  rect: [round(r.x, 2), round(r.y, 2), round(r.w, 2), round(r.h, 2)],
@@ -1077,6 +1096,6 @@
     PRESS_MODES: PRESS_MODES
   };
 })();
-  CORE.CORE_DIGEST = "3fb8c8b7d0354390";
+  CORE.CORE_DIGEST = "bc92e8264e47c818";
   return CORE;
 });

@@ -49,7 +49,12 @@ function assertClean(html, label) {
   //   （转义后的载荷长这样：class="…&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"，不会命中）
   assert.ok(!/<[a-zA-Z][^>]*\son[a-z]+\s*=\s*"/.test(html), `${label}：出现了事件处理器属性注入\n${html}`);
   for (const m of html.matchAll(/<img[^>]*>/g)) {
-    assert.ok(/^<img src="assets\/[^"<>]*" alt="">$/.test(m[0]),
+    // D-188：按下态素材会多一张 `<img class="dl-img-pressed" …>`（形状同样固定、属性同样转义）。
+    //   判据收紧为"只允许两种**固定形状**"：
+    //     · 常态：`<img src="assets/…" alt="">`
+    //     · 按下：`<img class="dl-img-pressed" src="assets/…" alt="">`
+    //   `src` 必须是我们自己的 `assets/` 路径且不含引号/尖括号（否则就是注入）。
+    assert.ok(/^<img (?:class="dl-img-pressed" )?src="assets\/[^"<>]*" alt="">$/.test(m[0]),
       `${label}：<img> 只允许我们自己的素材路径（属性已转义、形状固定），实际：${m[0]}`);
   }
 }
