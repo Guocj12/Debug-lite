@@ -149,12 +149,53 @@
       importText: '',    // 导入用的多行文本（**唯一** textarea 用途，裁决 ③）
       dirty: false,      // 有未保存改动
       confirm: null,     // 屏内二次确认 {kind:'delete'|'discard', aiId?}
+      // ---- D-194（布局表版 AI 编辑屏）----
+      detailOpen: false,   // 右侧参数栏是否展开（false ⇒ 树变宽，用户 Q3）
+      listSel: '',         // D-195：AI 库列表里选中的条目（布局表版：点行选中，打开/删除在底栏）
+      paletteOpen: {},     // 节点库：分类 → 是否展开（默认全折叠）
+      dropY: null,         // 拖动时的插入预览线 y（null = 不在拖动 ⇒ 预览线不显示）
+      dropTarget: null,    // 命中的投放候选 {parentAddr, index, indent, where}
+      zoom: 1,             // 树的缩放（滚轮，0.4~2）
+      history: [],         // 撤销栈（草稿快照，最多 30 步；只作用于本屏）
+      future: [],          // 重做栈
     };
   }
 
+  /* ---- D-194：AI 草稿的撤销/重做（只作用于本屏，不进全局历史）---- */
+  var AI_HISTORY_MAX = 30;
+  function snapDraft(d) { return d === null || d === undefined ? null : JSON.parse(JSON.stringify(d)); }
+  /** 把**当前**草稿压进撤销栈（在替换草稿之前调用），并裁到 30 步 */
+  function pushAiHistory(ed) {
+    var h = (ed.history || []).slice();
+    if (ed.draft !== null && ed.draft !== undefined) h.push(snapDraft(ed.draft));
+    while (h.length > AI_HISTORY_MAX) h.shift();
+    return h;
+  }
+  /** 'undo' | 'redo'：在两栈之间搬一份草稿 */
+  function aiTimeTravel(state, dir) {
+    var ed = state.aiEditor;
+    if (!ed) return state;
+    var h = (ed.history || []).slice(), f = (ed.future || []).slice();
+    var next;
+    if (dir === 'undo') {
+      if (!h.length) return state;                 // 没得撤销 = 幂等（不报错、不脏）
+      next = h.pop();
+      if (ed.draft) f.push(snapDraft(ed.draft));
+    } else {
+      if (!f.length) return state;
+      next = f.pop();
+      if (ed.draft) h.push(snapDraft(ed.draft));
+    }
+    return Object.assign({}, state, {
+      aiEditor: Object.assign({}, ed, {
+        draft: next, history: h, future: f,
+        dirty: true, validate: null, texts: {},   // 草稿变了 → 上次校验结论作废
+      }),
+    });
+  }
+
   // 初始状态（01-auth.md §7.1 + 02-accounts.md §7 + 03 §7）
-  function initialState() {
-    return {
+  function initialState() {    return {
       view: 'login',
       modal: null,     // {kind:'item-detail',uid} / {kind:'config',slotId} —— 至多一个（03 §3.8）
       form: emptyForm(),
@@ -515,12 +556,54 @@
             dirty: true,
             // 草稿一变，上一次的校验结论就作废（避免"过期绿灯"）
             validate: action.keepValidate === true ? state.aiEditor.validate : null,
+            // D-194：**在这里统一记撤销栈** —— 所有结构改动都经过这条 reducer，
+            //   一处记录就够，不必让每个动作自己记得 push（漏一个就 undo 不回来）。
+            history: action.noHistory === true ? (state.aiEditor.history || []) : pushAiHistory(state.aiEditor),
+            future: action.noHistory === true ? (state.aiEditor.future || []) : [],
           }),
         });
       case 'ai.cursor.set':
+        // D-194：`addr: null` = **显式清空选中**（点空白收起详情时用）；缺省/'' 仍回落到 'body'（文字版语义）
         return Object.assign({}, state, {
-          aiEditor: Object.assign({}, state.aiEditor, { cursor: strOf(action.addr) || 'body' }),
+          aiEditor: Object.assign({}, state.aiEditor, {
+            cursor: action.addr === null ? '' : (strOf(action.addr) || 'body'),
+          }),
         });
+      // ---- D-194：布局表版 AI 编辑屏的界面状态（都不进存档、不发请求）----
+      // D-195：列表态选中（'' = 没选）；行点击只改它，打开/删除由底栏按钮施加
+      case 'ai.list.sel':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { listSel: strOf(action.aiId) }),
+        });
+      case 'ai.detail.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, { detailOpen: action.open === true }),
+        });
+      case 'ai.palette.toggle': {
+        var cat = strOf(action.cat);
+        if (cat === '') return state;
+        var cur = Object.assign({}, state.aiEditor.paletteOpen || {});
+        // 默认是"展开"（见 format 的 aiPaletteRows）⇒ 第一次点这里是**收起**
+        cur[cat] = cur[cat] !== false ? false : true;
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { paletteOpen: cur }) });
+      }
+      case 'ai.zoom.set': {
+        var z = Number(action.zoom); if (!isFinite(z)) z = 1;
+        // 40% ~ 200%（用户口径：滚轮直接缩放，不按 Ctrl）
+        z = Math.max(0.4, Math.min(2, Math.round(z * 100) / 100));
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { zoom: z }) });
+      }
+      case 'ai.drop.set':
+        return Object.assign({}, state, {
+          aiEditor: Object.assign({}, state.aiEditor, {
+            dropY: (action.y === null || action.y === undefined || !isFinite(Number(action.y))) ? null : Math.round(Number(action.y)),
+            dropTarget: action.target || null,
+          }),
+        });
+      case 'ai.undo':
+        return aiTimeTravel(state, 'undo');
+      case 'ai.redo':
+        return aiTimeTravel(state, 'redo');
       case 'ai.name.set':
         return Object.assign({}, state, {
           aiEditor: Object.assign({}, state.aiEditor, { name: strOf(action.value), dirty: true }),

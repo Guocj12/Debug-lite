@@ -1,6 +1,6 @@
 'use strict';
 /* public/layout-engine.js —— **由 tools/layout/make-engine.js 生成，请勿手改**
- * 真源：tools/layout/lab.html 的 <script id="core">（core digest: 60997413dfbcbddc）
+ * 真源：tools/layout/lab.html 的 <script id="core">（core digest: d43a813434191a78）
  * 职责：布局表的纯逻辑 —— 归一化 / 断点解算 / 锚点 / 占位符替换 / 多边形解析 / 校验。
  *   不碰 DOM、不发请求、不读响应字段（投影仍归 format.js）。
  * 形态：零依赖双模模块（浏览器挂 window.DL.layoutEngine，Node 可 require）。
@@ -18,6 +18,8 @@
   var HIT_MODES = ['rect', 'ellipse', 'path', 'alpha'];
   // 滚动容器方向（D-185）：none = 只裁剪不滚
   var SCROLL_DIRS = ['v', 'h', 'both', 'none'];
+  // D-194：拖拽平移方向（与 scroll.dir 的区别：scroll 决定"能不能滚"，pan 决定"能不能用鼠标拖"）
+  var PAN_DIRS = ['v', 'h', 'both'];
   var TEXT_ALIGNS = ['left', 'center', 'right'];
   var FIT_MODES = ['contain', 'cover', 'stretch'];
   var BP_KEYS = ['landscape', 'portrait', 'tablet'];
@@ -401,6 +403,29 @@
     // 结构元数据（由 tools/layout/import-layout.js 写入）：插槽屏 / 列表屏 / 网格屏的展开规则，必须随归一化保留
     if (src.slotsFrom && typeof src.slotsFrom === 'object') out.slotsFrom = src.slotsFrom;
     if (src.listFrom && typeof src.listFrom === 'object') out.listFrom = src.listFrom;
+    // D-194：`rowsFrom` = **行模板复制**（按数据缩进的一列行）。
+    //   与 listFrom 的区别：那个只复制"单个固定 x 的按钮"且只认写死的 4 种数据源；
+    //   这个支持 **每行缩进**（indent × indentPx）、宽度随缩进收窄、并回报 contentH 供滚动。
+    //   允许单对象或**数组**（一个画面里可能有多条行列表：AI 编辑屏的"节点库 + 程序树"），
+    //   归一化后**一律是数组**。几何一律走 `rowRects()`（布局台与产品共用同一份算法）。
+    if (src.rowsFrom) {
+      var srcRows = Array.isArray(src.rowsFrom) ? src.rowsFrom : [src.rowsFrom];
+      var rowsOut = [];
+      srcRows.forEach(function (one) {
+        if (!one || typeof one !== 'object') return;
+        var rw = {};
+        rw.source = String(one.source || '');
+        rw.container = String(one.container || '');
+        rw.prototype = String(one.prototype || '');
+        var pitch = num(one.pitch, 0);
+        if (pitch > 0) rw.pitch = round(pitch, 1);
+        if (num(one.indentPx, 0) > 0) rw.indentPx = round(num(one.indentPx, 0), 1);
+        if (num(one.gapY, 0) > 0) rw.gapY = round(num(one.gapY, 0), 1);
+        if (one.uniform !== undefined) rw.uniform = one.uniform === true;
+        rowsOut.push(rw);
+      });
+      if (rowsOut.length) out.rowsFrom = rowsOut;
+    }
     // D-188：`gridFrom` = 按 template/container 的 `grid.flow` 把某个桶排成可滚动的网格
     //   （{source, container, prototype}）。与 listFrom 的区别见 format.js 的 layBucketItems 注释。
     if (src.gridFrom && typeof src.gridFrom === 'object') {
@@ -423,6 +448,8 @@
 
   function normalizeBundle(b) {
     var src = b || {};
+    // ⚠️ 顺序承重：状态键必须在**归一化画面之前**注册好，否则元素上的 when/rectFrom 会被当成未知键
+    setStateKeys(src.stateKeys);
     var canvas = { w: num(src.canvas && src.canvas.w, 1280), h: num(src.canvas && src.canvas.h, 720) };
     var bps = {};
     BP_KEYS.forEach(function (k) {
@@ -439,7 +466,11 @@
       screens[String(src.screen || 'hub')] = normalizeScreen(src, src.screen || 'hub');
     }
     if (!Object.keys(screens).length) screens.hub = normalizeScreen({}, 'hub');
-    return { version: 1, canvas: canvas, breakpoints: bps, screens: screens };
+    var out = { version: 1, canvas: canvas, breakpoints: bps, screens: screens };
+    // 只回写"额外声明"的键（默认 3 个不进文件，避免噪音）
+    var extra = WHEN_KEYS.filter(function (k) { return DEFAULT_STATE_KEYS.indexOf(k) < 0; });
+    if (extra.length) out.stateKeys = extra;
+    return out;
   }
 
   /** 把某个画面包成 layoutAt 能吃的形状（elements 与 breakpoints 保持**同一引用**，便于就地编辑） */
@@ -476,6 +507,40 @@
   function screenAt(bundle, name, bp, sstate, data) {
     var lay = screenLayout(bundle, name);
     return lay ? layoutAt(lay, bp, sstate, data) : [];
+  }
+
+  /**
+   * D-194：**行模板几何** —— 把 base（原型 rect，相对容器内容原点）按 pitch 往下摞，
+   * 每行按 `indent`（缩进层数）× `indentPx` 右移，并把宽度等量收窄（不溢出容器右边界）。
+   *
+   * 为什么放在引擎而不是投影层：设计器（布局台）与产品必须共用**同一份**坐标算法，
+   * 否则会出现"布局台里看着对、实现出来不一样"（D-185/D-188 已确立的原则）。
+   *
+   * @param {number[]} base  原型 rect [x,y,w,h]（相对容器内容原点）
+   * @param {object}   spec  rowsFrom（pitch / indentPx / gapY）
+   * @param {Array}    rows  行数据（每行可带 indent 层数）
+   * @returns {{rects:number[][], contentH:number}}
+   */
+  function rowRects(base, spec, rows) {
+    var b = Array.isArray(base) ? base : [0, 0, 200, 28];
+    var s = spec || {};
+    var pitch = num(s.pitch, 0) > 0 ? num(s.pitch, 0) : (num(b[3], 0) > 0 ? num(b[3], 0) : 28);
+    var indPx = num(s.indentPx, 0) > 0 ? num(s.indentPx, 0) : 16;
+    var gapY = num(s.gapY, 0);
+    var list = Array.isArray(rows) ? rows : [];
+    var rects = [], maxBottom = 0;
+    list.forEach(function (row, i) {
+      var lvl = Math.max(0, Math.round(num(row && row.indent, 0)));
+      // uniform：所有行**同样大**（宽度不随缩进变），但按层真实右移 —— 这才是树的缩进
+      var dx = round(lvl * indPx, 2);
+      // uniform=true：所有行**同宽**（右边界对齐），缩进只移动左边缘
+      var w = s.uniform === true ? Math.max(1, round(num(b[2], 0), 2))
+        : Math.max(1, round(num(b[2], 0) - dx, 2));
+      var y = round(num(b[1], 0) + i * (pitch + gapY), 2);
+      rects.push([round(num(b[0], 0) + dx, 2), y, w, round(num(b[3], 0), 2)]);
+      maxBottom = Math.max(maxBottom, y + num(b[3], 0));
+    });
+    return { rects: rects, contentH: round(maxBottom, 2) };
   }
 
   /**
@@ -553,7 +618,28 @@
    * 用途：同一份布局在不同状态下某些元素显示/隐藏（例：三个出战配置各自的「出战」角标）。
    * 真代码的渲染层照同一条规则过滤即可（比在 CSS 里堆状态类更好测）。
    */
-  var WHEN_KEYS = ['activeSlot', 'battleSlot', 'warehouseTab'];
+  /* ---------- 设计期/运行期状态键（D-194：从"硬编码 3 个"改为"布局表可声明"）----------
+   * `when` / `pressWhen` / `rectFrom` 都按键名去读 `sstate`。以前写死 3 个键
+   * （activeSlot / battleSlot / warehouseTab），任何新屏要新键就得改引擎源码 —— 那不对：
+   * **哪些状态键有意义是布局表的责任，不是引擎的**。
+   * 现在：默认 3 个 + 布局表 `stateKeys:[...]` 声明；未声明的键由校验器报 error（不静默失效）。
+   */
+  var DEFAULT_STATE_KEYS = ['activeSlot', 'battleSlot', 'warehouseTab'];
+  var WHEN_KEYS = DEFAULT_STATE_KEYS.slice();
+  /** 合并默认键与声明键（去重、只留合法标识符）。返回本次生效的键表。 */
+  function setStateKeys(list) {
+    var out = DEFAULT_STATE_KEYS.slice();
+    if (Array.isArray(list)) {
+      list.forEach(function (k) {
+        var s = String(k == null ? '' : k).trim();
+        if (!s || !/^[A-Za-z_][\w]*$/.test(s)) return;
+        if (out.indexOf(s) < 0) out.push(s);
+      });
+    }
+    WHEN_KEYS = out;
+    return out;
+  }
+  function stateKeys() { return WHEN_KEYS.slice(); }
   function whenMatches(el, sstate) {
     var w = el && el.when;
     if (!w || typeof w !== 'object') return true;
@@ -613,7 +699,11 @@
   var TPL_TEXT_KEYS = ['nickname', 'tierName', 'tier', 'points', 'wins', 'losses', 'unread',
     'slotName', 'roleName', 'roleQuality', 'skill1Name', 'skill2Name', 'skill3Name', 'aiName', 'configLabel',
     'activeSlot', 'configId', 'battleSlot', 'rowLabel', 'rowUid', 'pickPos', 'pickIdx', 'pickTargetUid',
-    'itemName', 'itemUid', 'whCapacity', 'detUid', 'detTitle', 'detSub', 'detLines'];
+    'itemName', 'itemUid', 'whCapacity', 'detUid', 'detTitle', 'detSub', 'detLines',
+    // D-194：AI 编辑屏（布局表版）—— 行文本与顶栏/参数区文案键
+    'rowText', 'rowAddr', 'aiNameText', 'aiStatusText', 'aiDirtyText', 'aiUsageText',
+    'aiNodeTitle', 'aiNodeDesc', 'aiP1Text', 'aiP2Text', 'aiP3Text', 'aiPNumText', 'aiCheckText', 'aiShortageText',
+    'aiImportText', 'aiListCountText', 'aiListHintText'];
   var TPL_ASSET_KEYS = ['roleIcon', 'skill1Icon', 'skill2Icon', 'skill3Icon', 'aiIcon', 'tierIcon', 'qualityFrame', 'rowIcon',
     'itemIcon', 'detIcon'];
   var TPL_KEYS = {};
@@ -714,6 +804,23 @@
              w: w * k, h: h * k, scale: k, fromOverride: false };
   }
 
+  /** D-194：`rectFrom` 解算 —— 每个分量可由一个状态键的数值覆盖；取不到数值则用原值。 */
+  function applyRectFrom(spec, rect, sstate) {
+    var out = rect.slice();
+    if (!spec || typeof spec !== 'object') return out;
+    var st = sstate || {};
+    ['x', 'y', 'w', 'h'].forEach(function (k, i) {
+      var key = spec[k];
+      if (!key) return;
+      var v = st[key];
+      if (v === undefined || v === null || v === '') return;
+      var n = Number(v);
+      if (!isFinite(n)) return;
+      out[i] = round(n, 2);
+    });
+    return out;
+  }
+
   function layoutAt(layout, bp, sstate, data) {
     var base = layout.canvas, bpDef = breakpointOf(layout, bp), out = [];
     (layout.elements || []).forEach(function (el) {
@@ -721,6 +828,11 @@
       if (el.hidden || (ov && ov.hidden)) return;
       if (!whenMatches(el, sstate)) return;             // 设计期状态过滤
       var r = resolveElement(el, base, bp, bpDef);
+      // D-194：状态驱动的位置 —— 用 sstate 里的数值覆盖 rect 的对应分量。
+      //   取不到数值（未给 / 非数字）就保持原分量，并且**不**把它当成错误：
+      //   "设计器里还没切到那个状态"是正常情况（例：没在拖动时 aiDropY 是空的）。
+      var rr = applyRectFrom(el.rectFrom, [r.x, r.y, r.w, r.h], sstate);
+      r = { x: rr[0], y: rr[1], w: rr[2], h: rr[3], fromOverride: r.fromOverride };
       var rawLabel = el.label || '', rawAsset = el.asset || '';
       var rt = data ? resolveTpl(rawLabel, data) : { text: rawLabel };
       var ra = data ? resolveTpl(rawAsset, data) : { text: rawAsset };
@@ -736,7 +848,11 @@
       out.push({ id: el.id, label: rawLabel, text: rt.text, asset: ra.text, assetRaw: rawAsset, payload: payload,
                  kind: el.kind || 'button', action: el.action || '', target: el.target || '',
                  setState: el.setState, when: el.when,
-                 parent: el.parent || '', scroll: el.scroll, font: el.font, grid: el.grid, nine: el.nine,
+                 parent: el.parent || '', scroll: el.scroll, pan: el.pan || '',
+                 font: el.font, grid: el.grid, nine: el.nine,
+                 // D-194：文本输入（name/value/placeholder 也要过模板替换）
+                 name: el.name || '', inputValue: el.value === undefined ? '' : (data ? resolveTpl(el.value, data).text : String(el.value)),
+                 placeholder: el.placeholder || '', enter: el.enter !== false,
                  opacity: num(el.opacity, 1), clickThrough: el.clickThrough === true,
                  // D-188：按下态素材（同样过模板替换，便于 `{roleIcon}` 这类键在两态间共用）
                  assetPressed: el.assetPressed ? (data ? resolveTpl(el.assetPressed, data).text : el.assetPressed) : '',
@@ -826,13 +942,38 @@
   function normalizeElement(el) {
     var out = {
       id: String(el.id == null ? '' : el.id),
-      kind: el.kind === 'deco' ? 'deco' : 'button',
+      // D-194：新增 `input`（文本输入）。布局表以前只有 button/deco，AI 名称就没法改。
+      // D-194：新增 `input`（单行文本）与 `textarea`（多行，导入 JSON 用）。布局表以前只有 button/deco。
+      kind: el.kind === 'deco' ? 'deco'
+        : (el.kind === 'input' ? 'input' : (el.kind === 'textarea' ? 'textarea' : 'button')),
       action: String(el.action == null ? '' : el.action),
       hit: HIT_MODES.indexOf(el.hit) >= 0 ? el.hit : 'rect',
       anchor: isValidAnchor(el.anchor) ? el.anchor : 'lt',
       rect: [0, 0, 1, 1].map(function (_, i) { return round(num((el.rect || [])[i], [0, 0, 1, 1][i]), 2); })
     };
     if (el.target) out.target = String(el.target);      // 设计期注解：点我会打开哪个画面（弹窗流程预览用）
+    // D-194：**文本输入**（`kind:'input'`）。`name` = 提交到 store 的字段名（与文字版表单同一套 `field.set`），
+    //   `value` 允许写 `{占位符}`（投影层喂数据）。`enter` = 回车是否提交（默认 true）。
+    if (out.kind === 'input' || out.kind === 'textarea') {
+      out.name = String(el.name == null ? '' : el.name);
+      if (el.value !== undefined && el.value !== null) out.value = String(el.value);
+      if (el.placeholder) out.placeholder = String(el.placeholder);
+      if (el.enter === false) out.enter = false;
+    }
+    // D-194：**状态驱动的位置**：`rectFrom:{x?, y?, w?, h?}` 的每个值 = 一个状态键，
+    //   解算时用 `sstate[键]` 的数值覆盖对应分量（取不到数值就保持原 rect 分量）。
+    //   用途：拖动时的插入预览线（y 由状态算）、详情收起时树变宽（w 由状态算）。
+    if (el.rectFrom && typeof el.rectFrom === 'object') {
+      var rf = {};
+      ['x', 'y', 'w', 'h'].forEach(function (k) {
+        var key = String(el.rectFrom[k] == null ? '' : el.rectFrom[k]).trim();
+        if (key) rf[k] = key;      // 未知键不在归一化里丢，交给 validateLayout 报 error
+      });
+      if (Object.keys(rf).length) out.rectFrom = rf;
+    }
+    // D-194：**拖拽平移**：`pan:'v'|'h'|'both'` ⇒ 渲染出 data-pan，app 用"按下移动 ≥4px"映射到滚动量。
+    //   与 `scroll` 的关系：scroll 决定**能不能滚**（overflow），pan 决定**能不能用鼠标拖**。
+    if (el.pan !== undefined && el.pan !== null && el.pan !== '') out.pan = String(el.pan);
     // desc：**自然语言注释**（这一块是干什么的）。设计期字段，产品渲染不读它，
     //   只用于：① 工具里看清每个元素的职责；② 以后照它把"不完整/未实现"的功能补齐。
     if (el.desc) out.desc = String(el.desc);
@@ -923,8 +1064,13 @@
     if (num(el.z, 1) !== 1) out.z = num(el.z, 1);
     if (el.hidden) out.hidden = true;
     if (el.when && typeof el.when === 'object') {
+      // D-194：**不再按键表过滤** —— 以前这里只留下 WHEN_KEYS 里的键，未声明的键会被**静默丢掉**，
+      //   于是"布局表里明明写了 when，界面就是不按它显示"这种最难查的问题。现在原样保留，
+      //   由 validateLayout 对未声明的键报 error（要么声明 stateKeys，要么别写）。
       var w = {};
-      WHEN_KEYS.forEach(function (k) { if (el.when[k] !== undefined && el.when[k] !== null) w[k] = el.when[k]; });
+      Object.keys(el.when).forEach(function (k) {
+        if (el.when[k] !== undefined && el.when[k] !== null) w[k] = el.when[k];
+      });
       if (Object.keys(w).length) out.when = w;
     }
     var ov = {};
@@ -942,6 +1088,7 @@
 
   function normalizeLayout(layout) {
     var l = layout || {};
+    setStateKeys(l.stateKeys);           // 同上：先注册状态键
     var canvas = { w: num(l.canvas && l.canvas.w, 1280), h: num(l.canvas && l.canvas.h, 720) };
     var bps = {};
     BP_KEYS.forEach(function (k) {
@@ -956,6 +1103,7 @@
       background: { asset: String((l.background && l.background.asset) || ''),
                     fit: (l.background && l.background.fit) === 'contain' ? 'contain' : 'cover' },
       breakpoints: bps,
+      stateKeys: WHEN_KEYS.filter(function (k) { return DEFAULT_STATE_KEYS.indexOf(k) < 0; }),
       elements: (Array.isArray(l.elements) ? l.elements : []).map(normalizeElement)
     };
   }
@@ -971,9 +1119,11 @@
       seen[el.id] = 1;
       // 按钮必须"有反应"：要么有 action（走注册表），要么有 setState（只改本地显示状态，
       //   例：切换主界面显示哪个出战配置 —— 不导航、不进编辑界面）
-      if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+      // D-194：`input` 不是按钮 —— 它靠 `change` 提交（`form.set`），不需要 action；`deco` 也不需要。
+      //   只有真正的 `button` 才必须"点了有反应"。
+      if (el.kind === 'button' && !el.action && !(el.setState && Object.keys(el.setState).length))
         issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
-      else if (el.kind !== 'deco' && el.action && known && known.indexOf(el.action) < 0)
+      else if (el.kind === 'button' && el.action && known && known.indexOf(el.action) < 0)
         issues.push({ level: 'warn', msg: tag + '：动作「' + el.action + '」不在当前注册表里（可能是尚未实现的计划动作 → 会变死按钮）' });
       if (HIT_MODES.indexOf(el.hit) < 0) issues.push({ level: 'error', msg: tag + '：hit 非法（' + el.hit + '）' });
       var r = el.rect || [];
@@ -996,6 +1146,33 @@
         }
       }
       if (el.kind !== 'deco' && !el.asset) issues.push({ level: 'warn', msg: tag + '：还没指定素材路径（暂时显示占位）' });
+      // ---- D-194：文本输入 / 状态驱动位置 / 拖拽平移 / 状态键声明 ----
+      if (el.kind === 'input' || el.kind === 'textarea') {
+        if (!el.name) issues.push({ level: 'error', msg: tag + '：输入框必须写 name（提交到 store 的字段名）' });
+        if (el.action) issues.push({ level: 'error', msg: tag + '：输入框不能同时挂 action（提交走 change，不派发点击动作）' });
+      }
+      if (el.rectFrom) {
+        Object.keys(el.rectFrom).forEach(function (k) {
+          var key = el.rectFrom[k];
+          if (WHEN_KEYS.indexOf(key) < 0)
+            issues.push({ level: 'error', msg: tag + '：rectFrom.' + k + ' 用了未声明的状态键「' + key + '」'
+              + '（在布局表根上写 stateKeys:[...] 声明它）' });
+        });
+      }
+      if (el.pan !== undefined && PAN_DIRS.indexOf(String(el.pan)) < 0)
+        issues.push({ level: 'error', msg: tag + '：pan 非法（' + el.pan + '，只能是 v / h / both）' });
+      if (el.pan && !el.scroll)
+        issues.push({ level: 'warn', msg: tag + '：写了 pan 但没有 scroll —— 拖拽平移需要滚动容器才有意义' });
+      // `when` / `pressWhen` 用了未声明的键 ⇒ 运行时永远不匹配（静默失效），必须报出来
+      if (el.when && typeof el.when === 'object') {
+        Object.keys(el.when).forEach(function (k) {
+          if (WHEN_KEYS.indexOf(k) < 0)
+            issues.push({ level: 'error', msg: tag + '：when 用了未声明的状态键「' + k + '」'
+              + '（在布局表根上写 stateKeys:[...] 声明它，否则这条条件永远不生效）' });
+        });
+      }
+      if (el.pressKey && WHEN_KEYS.indexOf(String(el.pressKey)) < 0)
+        issues.push({ level: 'error', msg: tag + '：pressKey「' + el.pressKey + '」不在已声明的状态键里' });
       // ---- D-185：容器 / 滚动 / 网格 / 文字 / 九宫格 ----
       if (el.scroll) {
         if (SCROLL_DIRS.indexOf(String(el.scroll.dir || '')) < 0)
@@ -1044,7 +1221,7 @@
       tplKeysOf(el).forEach(function (k) {
         if (!TPL_KEYS[k]) issues.push({ level: 'error', msg: tag + '：占位符 {' + k + '} 不在键表里（可用：' + TPL_TEXT_KEYS.concat(TPL_ASSET_KEYS).join('/') + '）' });
       });
-      if (el.kind !== 'deco' && !el.action && !(el.setState && Object.keys(el.setState).length))
+      if (el.kind === 'button' && !el.action && !(el.setState && Object.keys(el.setState).length))
         issues.push({ level: 'error', msg: tag + '：按钮既没有 action 也没有 setState（点了不会有任何反应）' });
     });
     // parent 关系（D-185）：父块必须存在、不能自指、不能成环；装进 path 命中的父块要提醒（不裁剪）
@@ -1169,9 +1346,12 @@
     validateHierarchy: validateHierarchy,
     // D-188：网格自动流式排布 + 按下行为四模式（设计器与产品共用的唯一判据）
     gridFlowRects: gridFlowRects, pressActive: pressActive,
-    PRESS_MODES: PRESS_MODES
+    PRESS_MODES: PRESS_MODES,
+    // D-194：状态键可声明 + 行模板几何 + 状态驱动位置 + 拖拽平移
+    setStateKeys: setStateKeys, stateKeys: stateKeys, DEFAULT_STATE_KEYS: DEFAULT_STATE_KEYS,
+    rowRects: rowRects, applyRectFrom: applyRectFrom, PAN_DIRS: PAN_DIRS
   };
 })();
-  CORE.CORE_DIGEST = "60997413dfbcbddc";
+  CORE.CORE_DIGEST = "d43a813434191a78";
   return CORE;
 });

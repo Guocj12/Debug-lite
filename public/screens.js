@@ -145,9 +145,10 @@
       title: "AI 编辑器",
       status: 'ready',
       plan: null,
-      layout: null,
+      // D-194/D-195：积木蓝图草稿走布局表版（方案 A）；旧 AST 程序仍按文字版渲染
+      layout: "ai_editor",
       project: "aiEditorViewModel",
-      actions: ["ai-new","ai-open","ai-delete","ai-confirm-yes","ai-confirm-no","ai-refresh","ai-select-node","ai-insert","ai-replace","ai-move-up","ai-move-down","ai-wrap-if","ai-delete-node","ai-slot-clear","ai-block-remove","ai-set-field","ai-set-literal-type","ai-save","ai-save-as","ai-save-draft","ai-validate","ai-import-open","ai-import-apply","ai-import-close","ai-close","ai-discard-yes","ai-discard-no","ai-bp-new","ai-bp-preset","ai-node-append","ai-node-del","ai-node-up","ai-node-down","ai-param-set","goto-hub"],
+      actions: ["ai-new","ai-open","ai-delete","ai-confirm-yes","ai-confirm-no","ai-refresh","ai-select-node","ai-insert","ai-replace","ai-move-up","ai-move-down","ai-wrap-if","ai-delete-node","ai-slot-clear","ai-block-remove","ai-set-field","ai-set-literal-type","ai-save","ai-save-as","ai-save-draft","ai-validate","ai-import-open","ai-import-apply","ai-import-close","ai-close","ai-discard-yes","ai-discard-no","ai-bp-new","ai-bp-preset","ai-node-append","ai-node-del","ai-node-up","ai-node-down","ai-param-set","ai-param-step","ai-palette-toggle","ai-detail-close","ai-undo","ai-redo","ai-node-drop","ai-list-select","goto-hub"],
       data: ["me/ai","me/ai/nodes"],
     },
   };

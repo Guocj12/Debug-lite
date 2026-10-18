@@ -172,42 +172,61 @@
    */
   function layPct(v, total) { return ((v / total) * 100).toFixed(4) + '%'; }
 
+  /**
+   * 把元素的 **payload** 落成 `data-*`（动作层靠它拿参数）。
+   *
+   * D-194：改成**通用透传**，不再维护白名单。白名单踩过两次同样的坑：
+   *   · D-188 漏了 `bucket` → 仓库格子打不开正确的详情分组；
+   *   · D-194 漏了 `node`  → 节点库的行拿不到"这是哪个节点"，拖放/追加全哑。
+   *   凡是 payload 里的标量都该到 DOM；名字统一转成 kebab-case（`parentAddr` → `data-parent-addr`）。
+   *   `null` / `undefined` / 空串 / 对象/数组 一律跳过（动作层只认标量）。
+   */
   function layAttrs(button) {
     var out = '';
-    if (button.slot !== undefined && button.slot !== null && button.slot !== '') out += ' data-slot="' + esc(String(button.slot)) + '"';
-    if (button.idx !== undefined && button.idx !== null && button.idx !== '') out += ' data-idx="' + esc(String(button.idx)) + '"';
-    if (button.pos) out += ' data-pos="' + esc(String(button.pos)) + '"';
-    if (button.uid) out += ' data-uid="' + esc(String(button.uid)) + '"';
-    if (button.screen) out += ' data-screen="' + esc(String(button.screen)) + '"';
-    if (button.slotIndex !== undefined && button.slotIndex !== null) out += ' data-slot-index="' + esc(String(button.slotIndex)) + '"';
-    if (button.targetUid) out += ' data-target-uid="' + esc(String(button.targetUid)) + '"';
-    // D-188：仓库网格的格子要带上它属于哪个桶（`warehouse-item-open` 靠它决定详情展示哪组属性、
-    //   以及给不给「开包 / 分解」）。**必须登记在这里**，否则 `payload.bucket` 到不了 DOM
-    //   —— 表现是"点格子能开详情、但详情拿不到桶"（本轮真踩到）。
-    if (button.bucket) out += ' data-bucket="' + esc(String(button.bucket)) + '"';
+    if (!button || typeof button !== 'object') return out;
+    Object.keys(button).forEach(function (k) {
+      var v = button[k];
+      if (v === undefined || v === null || v === '') return;
+      if (typeof v === 'object') return;
+      var name = String(k).replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/[^A-Za-z0-9-]/g, '').toLowerCase();
+      if (name === '' || name === 'action') return;      // action 单独由调用方写成 data-action
+      out += ' data-' + name + '="' + esc(String(v)) + '"';
+    });
     return out;
   }
 
-  function layoutElHtml(el, canvas) {
+  function layoutElHtml(el, canvas, childrenHtml, parentRect) {
     // 只有**载荷**用 `button.` 读（BP-1 用 `button.<字段>` 提取"被搬运的载荷字段"，
     //   展示字段（rect/hit/asset/…）走 `el.`，否则会把展示字段误算成载荷）
     var button = el.payload || {};
     var isDeco = el.kind === 'deco';
-    var cls = 'dl-el ' + (isDeco ? 'dl-deco' : 'dl-btn');
+    var isInput = el.kind === 'input' || el.kind === 'textarea';   // D-194：都不是按钮
+    var cls = 'dl-el ' + (isInput ? 'dl-input' : (isDeco ? 'dl-deco' : 'dl-btn'));
     if (el.hit === 'path') cls += ' dl-hit-path';
     if (el.hit === 'ellipse') cls += ' dl-hit-ellipse';
-    if (!el.asset && !isDeco) cls += ' dl-ph';
+    if (!el.asset && !isDeco && !isInput) cls += ' dl-ph';
     if (el.muted) cls += ' dl-muted';   // 候选不匹配：标灰（原因写在 label 里）
     if (el.scroll) cls += ' dl-scroll';                    // D-185：滚动容器
+    // D-195：可平移的容器自己就是**交互表面**（空白处要接住滚轮 / 拖动 / 点空白收起）。
+    //   `.dl-deco` 默认 pointer-events:none，空白处会穿到 `.dl-screen`，于是滚轮/平移都收不到。
+    if (el.pan) cls += ' dl-pan';
     if (el.clickThrough) cls += ' dl-clickthrough';        // D-185：不可点（透给下层）
     // D-188：按下行为四模式 —— 类名交给 CSS 处理（tap 走 :active、hover 走 :hover），
     //   sticky/state 由引擎算出的 `pressed` 直接落类（服务端状态驱动的"保持按下"）。
     if (el.press) cls += ' dl-press-' + String(el.press).replace(/[^a-z]/g, '');
     if (el.pressed) cls += ' dl-pressed';
+    // D-194：行列表（rowsFrom）的选中态与"槽位头"弱化
+    if (el.sel) cls += ' dl-row-sel';
+    if (el.slot) cls += ' dl-row-slot';
     // 尺寸类：让 CSS 能给大控件配大字号（角色卡 300px 高，用 14px 字太小）
     if (el.rect[3] >= 160) cls += ' dl-lg'; else if (el.rect[3] <= 28) cls += ' dl-sm';
-    var style = 'left:' + layPct(el.rect[0], canvas.w) + ';top:' + layPct(el.rect[1], canvas.h)
-      + ';width:' + layPct(el.rect[2], canvas.w) + ';height:' + layPct(el.rect[3], canvas.h)
+    // D-195：**子元素按父容器换算百分比**（因为现在真嵌套了：% 是相对父元素盒子的）。
+    //   以前全部平铺在 .dl-screen 里，% 一律按画布算；嵌套后必须换成父容器的宽高，
+    //   否则"树面板里的行"会被算成画布的 % ⇒ 尺寸和位置全错。
+    var pw = parentRect ? parentRect[2] : canvas.w;
+    var ph = parentRect ? parentRect[3] : canvas.h;
+    var style = 'left:' + layPct(el.rect[0], pw) + ';top:' + layPct(el.rect[1], ph)
+      + ';width:' + layPct(el.rect[2], pw) + ';height:' + layPct(el.rect[3], ph)
       + ';z-index:' + String(10 + (el.z || 1));
     if (el.rot) style += ';transform:rotate(' + Number(el.rot) + 'deg)';
     if (el.clip) style += ';--dl-clip:' + el.clip;
@@ -234,6 +253,28 @@
     var attrs = ' class="' + cls + '" style="' + style + '" title="' + esc(el.id) + '"' + layAttrs(button) + extraData;
     if (!isDeco && el.action) attrs += ' data-action="' + esc(el.action) + '"';
     if (!isDeco && el.disabled) attrs += ' disabled';
+    // D-194：拖拽平移（滚动容器才用得上）—— 交互在 app.js（按下移动 ≥4px 才进入平移）
+    if (el.pan) attrs += ' data-pan="' + esc(String(el.pan)) + '"';
+    // D-195：行列表容器带上行高/缩进，手势层据此把指针换算成"第几行、第几层"
+    if (el.rowPitch) attrs += ' data-row-pitch="' + Number(el.rowPitch) + '"';
+    if (el.rowIndent) attrs += ' data-row-indent="' + Number(el.rowIndent) + '"';
+    // D-195：容器的画布尺寸 —— 手势层用它把屏幕像素换算回画布单位（否则落点算错一个缩放比）
+    if (el.canvasW) attrs += ' data-cw="' + Number(el.canvasW) + '"';
+    if (el.canvasH) attrs += ' data-ch="' + Number(el.canvasH) + '"';
+    // D-195：节点库的行可**拖**（拖动放置）；值 = 节点 id
+    if (el.dragNode) attrs += ' data-drag-node="' + esc(String(el.dragNode)) + '"';
+    // D-194：**文本输入**。它既不是 button 也不是 div：
+    //   用 <input>/<textarea> 才有原生光标、选中、输入法；提交走 change → `field.set`。
+    if (el.kind === 'input' || el.kind === 'textarea') {
+      var fieldAttrs = ' class="' + cls + '" style="' + style + '" title="' + esc(el.id) + '"'
+        + ' data-field="' + esc(el.name) + '" name="' + esc(el.name) + '"'
+        + ' placeholder="' + esc(el.placeholder || '') + '" spellcheck="false" autocomplete="off"';
+      if (el.disabled) fieldAttrs += ' disabled';
+      if (el.kind === 'textarea') {
+        return '<textarea' + fieldAttrs + '>' + esc(el.inputValue === undefined ? '' : el.inputValue) + '</textarea>';
+      }
+      return '<input type="text"' + fieldAttrs + ' value="' + esc(el.inputValue === undefined ? '' : el.inputValue) + '">';
+    }
     var inner = '';
     if (el.asset) {
       // 九宫格拉伸（D-185）：border-image 按 9 片拉伸，圆角/边框不糊
@@ -250,6 +291,30 @@
       inner += '<img class="dl-img-pressed" src="' + esc(el.assetPressed) + '" alt="">';
     }
     if (el.text) inner += '<span class="dl-txt">' + esc(el.text) + '</span>';
+    // D-195：子元素（按 parent 嵌套）与滚动撑条
+    if (childrenHtml && el.zoom && el.zoom !== 1) {
+      // **整块缩放**：一个 wrapper 里装全部子元素，统一 transform: scale(z)。
+      //   子元素仍按"容器盒子"取百分比（和缩放前完全一样的布局），只是整块被放大 ⇒ 像图片一样。
+      //   另放一根撑条（sibling）负责撑出滚动范围，否则放大后滚不到底。
+      var zf = Number(el.zoom);
+      var contentPct = el.contentH && el.rect[3] ? (Number(el.contentH) / Number(el.rect[3]) * 100) : 100;
+      var spH = (contentPct * zf).toFixed(3);
+      var spW = (100 * zf).toFixed(3);
+      inner += '<div class="dl-zsp" style="position:absolute;left:0;top:0;width:' + spW + '%;height:' + spH
+        + '%;pointer-events:none"></div>'
+        + '<div class="dl-zoom" style="position:absolute;inset:0;transform:scale(' + zf + ');transform-origin:0 0">'
+        + childrenHtml + '</div>';
+    } else {
+      inner += childrenHtml || '';
+    }
+    // 滚动容器：**必须有可滚动的内容高度**，否则滚不动。
+    //   布局里的子元素是绝对定位的，不会撑开父容器 ⇒ 容器始终只有自己那么高。
+    //   这里按 format 算出的 `contentH`（画布单位）换算成百分比，塞一根撑条。
+    if (el.scroll && el.contentH && el.contentH > (el.rect[3] || 0)) {
+      var pctH = canvas && canvas.h ? (Number(el.contentH) / canvas.h * 100).toFixed(4) + '%' : (Number(el.contentH) + 'px');
+      inner += '<div class="dl-spacer" style="position:absolute;left:0;top:0;width:1px;pointer-events:none;'
+        + 'height:' + pctH + '"></div>';
+    }
     return '<' + (isDeco ? 'div' : 'button type="button"') + attrs + '>' + inner + '</' + (isDeco ? 'div' : 'button') + '>';
   }
 
@@ -264,7 +329,21 @@
           + ';opacity:' + String(m.opacity === undefined ? 0.5 : m.opacity) + '"></div>');
         parts.push('<div class="dl-layer">');
       }
-      layer.elements.forEach(function (el) { parts.push(layoutElHtml(el, canvas)); });
+      // D-195：**按 parent 真嵌套**。以前所有元素都平铺在 `.dl-screen` 里，
+      //   于是"滚动容器里的行"其实不是容器的子元素 —— 容器 scrollHeight 永远等于自身高度：
+      //   节点库滚不动、树也滚不动、拖动空白平移看不到内容移动。仓库网格是同一个病。
+      var byId = {};
+      layer.elements.forEach(function (el) { byId[el.id] = el; });
+      var kids = {};
+      layer.elements.forEach(function (el) {
+        var p = el.parent && byId[el.parent] ? el.parent : '';
+        (kids[p] = kids[p] || []).push(el);
+      });
+      var emit = function (el) {
+        var ch = (kids[el.id] || []).map(emit).join('');
+        return layoutElHtml(el, canvas, ch, byId[el.parent] ? byId[el.parent].rect : null);
+      };
+      (kids[''] || []).forEach(function (el) { parts.push(emit(el)); });
       if (layer.role === 'modal') parts.push('</div></div>');
     });
     parts.push('</div>');
@@ -284,6 +363,9 @@
       if (layNotice !== '') lay.push(layNotice);
       if (vm.buttons && vm.buttons.length > 0) lay.push('<div class="buttons">' + buttonsHtml(vm.buttons) + '</div>');
       lay.push(modalHtml(vm));
+      // D-194：**丢弃确认**也要在布局模式下渲染 —— 否则"有未保存改动时点返回列表"什么都不出现
+      //   （D-179 在文字版踩过同一个坑）。`.dl-screen ~ #confirm` 由 CSS 叠在屏上。
+      lay.push(confirmHtml(vm));
       return lay.filter(function (x) { return x !== ''; }).join('\n');
     }
     var parts = [];

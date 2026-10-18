@@ -1490,6 +1490,11 @@
             targetUid: payload && typeof payload.targetUid === 'string' ? payload.targetUid : '',
           },
         });
+        // D-195：候选列表是**从仓库算出来的** —— 仓库还没读就打开，会显示"（没有可用候选）"。
+        //   这里顺手补一次（不阻塞打开，数据回来自己会重渲染）。
+        if (screen !== 'modal_item_detail' && !(ctx.state.warehouse && ctx.state.warehouse.envelope)) {
+          return loadWarehouse(ctx, { quiet: true, background: true });
+        }
         return Promise.resolve();
       },
     },
@@ -1720,7 +1725,7 @@
     'ai-node-del': {
       label: '删除节点',
       run: function (ctx, payload) {
-        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        var addr = addrOrCursor(ctx, payload);
         if (addr === '') return Promise.resolve();
         return mutateBpDraft(ctx, function (draft) { return aiBp.removeAt(draft, addr); }, aiBp.parentAddrOf(addr) || 'body[-1]');
       },
@@ -1728,17 +1733,17 @@
     'ai-node-up': {
       label: '上移',
       run: function (ctx, payload) {
-        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        var addr = addrOrCursor(ctx, payload);
         if (addr === '') return Promise.resolve();
-        return mutateBpDraft(ctx, function (draft) { return aiBp.moveAt(draft, addr, -1); }, addr);
+        return moveSibling(ctx, addr, -1);
       },
     },
     'ai-node-down': {
       label: '下移',
       run: function (ctx, payload) {
-        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        var addr = addrOrCursor(ctx, payload);
         if (addr === '') return Promise.resolve();
-        return mutateBpDraft(ctx, function (draft) { return aiBp.moveAt(draft, addr, 1); }, addr);
+        return moveSibling(ctx, addr, 1);
       },
     },
     'ai-param-set': {
@@ -1764,12 +1769,23 @@
         return validateDraft(ctx, aiEd.emptyProgram());
       },
     },
+    // D-195：列表态**点行 = 选中**（与树"先选中再操作"同一套模型）；打开/删除由底栏按钮施加
+    'ai-list-select': {
+      label: '选中 AI',
+      run: function (ctx, payload) {
+        var aiId = payload !== null && payload && typeof payload.aiId === 'string' ? payload.aiId : '';
+        ctx.dispatch({ type: 'ai.list.sel', aiId: aiId });
+        return Promise.resolve();
+      },
+    },
     'ai-open': {
       label: '打开',
       run: function (ctx, payload) {
         if (ctx.state.busy) return Promise.resolve();
         var ed = aiEdOf(ctx);
-        var aiId = payload !== null && payload && typeof payload.aiId === 'string' ? payload.aiId : '';
+        // D-195：底栏的「打开选中」不带 payload ⇒ 回落到当前选中；文字版列表仍显式传 aiId
+        var aiId = payload !== null && payload && typeof payload.aiId === 'string' && payload.aiId !== ''
+          ? payload.aiId : (ed && ed.listSel ? ed.listSel : '');
         var item = aiId === '' || ed === null ? null : ctx.format.aiItemOf(ed.list, aiId);
         if (item === null) {
           noticeNotice(ctx, 'error', '这条 AI 已经不在库里了：请点「刷新」。');
@@ -1790,8 +1806,13 @@
       label: '删除',
       run: function (ctx, payload) {
         if (ctx.state.busy) return Promise.resolve();
-        var aiId = payload !== null && payload && typeof payload.aiId === 'string' ? payload.aiId : '';
-        if (aiId === '') return Promise.resolve();
+        var ed = aiEdOf(ctx);
+        // D-195：底栏「删除选中」不带 payload ⇒ 回落到当前选中
+        var aiId = payload !== null && payload && typeof payload.aiId === 'string' && payload.aiId !== ''
+          ? payload.aiId : (ed && ed.listSel ? ed.listSel : '');
+        if (aiId === '') {
+          return Promise.resolve(noticeNotice(ctx, 'error', '先在列表里点一行，选中要删除的 AI。'));
+        }
         ctx.dispatch({ type: 'notice.set', notice: null });
         ctx.dispatch({ type: 'ai.confirm.set', confirm: { kind: 'delete', aiId: aiId } });
         return Promise.resolve();
@@ -1828,10 +1849,64 @@
         return Promise.resolve();
       },
     },
+    // D-194：节点库分类展开/收起（"节点可以按类型展开/收起"）
+    'ai-palette-toggle': {
+      label: '展开/收起分类',
+      run: function (ctx, payload) {
+        var cat = payload && payload.cat !== undefined ? String(payload.cat) : '';
+        if (cat === '') return Promise.resolve();
+        ctx.dispatch({ type: 'ai.palette.toggle', cat: cat });
+        return Promise.resolve();
+      },
+    },
+    // D-194：点空白 = 收起参数栏 **并取消选中**（用户 R6：收起后高亮一并消失）
+    'ai-detail-close': {
+      label: '收起详情',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'ai.detail.set', open: false });
+        ctx.dispatch({ type: 'ai.cursor.set', addr: null });   // null = 显式清空（不留高亮）
+        return Promise.resolve();
+      },
+    },
+    // D-194：撤销 / 重做（只作用于本屏草稿；栈在 store 的 ai.draft.set 里统一记录）
+    'ai-undo': {
+      label: '撤销',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        ctx.dispatch({ type: 'ai.undo' });
+        return Promise.resolve();
+      },
+    },
+    'ai-redo': {
+      label: '重做',
+      run: function (ctx) {
+        if (ctx.state.busy) return Promise.resolve();
+        ctx.dispatch({ type: 'ai.redo' });
+        return Promise.resolve();
+      },
+    },
+    // D-194：拖放落地（落点由 ai-blueprint.nearestDrop 在拖动时算好，动作只负责套用）
+    'ai-node-drop': {
+      label: '放入节点',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return runAiNodeDrop(ctx, payload);
+      },
+    },
+    // D-194：数值参数 ±（布局版只有"3 选项槽 + 1 数值槽"）
+    'ai-param-step': {
+      label: '参数步进',
+      run: function (ctx, payload) {
+        if (ctx.state.busy) return Promise.resolve();
+        return runAiParamStep(ctx, payload);
+      },
+    },
     'ai-select-node': {
       label: '选中',
       run: function (ctx, payload) {
+        // D-194：点树行 = 选中 + **展开参数栏**（用户口径："点击树中某个节点再展开该节点的详情栏"）
         ctx.dispatch({ type: 'ai.cursor.set', addr: aiAddrOf(payload) });
+        ctx.dispatch({ type: 'ai.detail.set', open: true });
         return Promise.resolve();
       },
     },
@@ -2234,6 +2309,95 @@
     var v = payload !== null && payload && typeof payload.addr === 'string' && payload.addr !== '' ? payload.addr : null;
     return v === null ? 'body' : v;
   }
+
+  /**
+   * D-194：**地址来自 payload，缺省回落到"当前选中"**。
+   * 布局表版的行操作按钮是"作用于选中节点"的（行内不放按钮，见规格 §7 R-1），
+   * 所以不带 payload；文字版仍显式传 addr。两条路径共用同一套动作。
+   */
+  function addrOrCursor(ctx, payload) {
+    if (payload !== null && payload && typeof payload.addr === 'string' && payload.addr !== '') return payload.addr;
+    var ed = ctx.state.aiEditor;
+    var cur = ed && typeof ed.cursor === 'string' ? ed.cursor : '';
+    return cur === 'body' ? '' : cur;
+  }
+
+  /** 同级重排：`aiBp.moveAt` 只支持顶层（子位是定长槽，换位没有意义）→ 明确告知，不静默失败 */
+  function moveSibling(ctx, addr, delta) {
+    var idxs = aiBp.parseAddr(addr);
+    if (!idxs) return Promise.resolve();
+    if (idxs.length !== 1) {
+      return Promise.resolve(ctx.dispatch({
+        type: 'notice.set', kind: 'error',
+        text: '同级重排只支持最外层节点（子节点位是固定槽位，位置由蓝图结构决定）',
+      }));
+    }
+    return mutateBpDraft(ctx, function (draft) { return aiBp.moveAt(draft, addr, delta); }, addr);
+  }
+
+  /**
+   * D-194：**参数步进**（数值型参数 ±1；百分比类按 5）。
+   * 参数是异构表单，布局版只有"固定 3 选项槽 + 1 数值槽"，所以这里只处理**第一个数值参数**。
+   */
+  function runAiParamStep(ctx, payload) {
+    var ed = ctx.state.aiEditor;
+    if (!ed || !ed.draft || ed.draft.type !== 'blueprint') return Promise.resolve();
+    var addr = ed.cursor;
+    if (!addr || addr === 'body') return Promise.resolve();
+    var form = aiBp.formOf(ed.draft, addr);
+    if (!form || !form.fields) return Promise.resolve();
+    var f = null;
+    form.fields.forEach(function (x) {
+      if (f === null && x.kind !== 'slot' && x.kind !== 'enum') f = x;
+    });
+    if (f === null) return Promise.resolve();
+    var step = f.type === 'pct' ? 5 : 1;
+    if (payload && payload.delta !== undefined && isFinite(Number(payload.delta))) {
+      step = Math.abs(step) * (Number(payload.delta) < 0 ? -1 : 1);
+    }
+    var cur = Number(f.value);
+    if (!isFinite(cur)) cur = f.min === undefined ? 0 : f.min;
+    var next = Math.round((cur + step) * 100) / 100;
+    if (f.min !== undefined && next < f.min) next = f.min;
+    if (f.max !== undefined && next > f.max) next = f.max;
+    if (next === cur) return Promise.resolve();
+    ctx.dispatch({ type: 'ai.draft.set', program: aiBp.setParam(ed.draft, addr, f.key, next) });
+    return Promise.resolve();
+  }
+
+  /**
+   * D-194：**拖放落地** —— 把节点库里拖来的节点按命中候选放进树。
+   * 候选（`{parentAddr, index, where}`）由 `aiBp.nearestDrop()` 在拖动时算好并挂在 payload 上；
+   * 这里**只负责套用**，不重复判断几何（避免"算的时候一套、放的时候另一套"）。
+   * 失败路径一律可解释：节点不存在 / 类型不合 / 父地址失效 → 提示，且**不改草稿**。
+   */
+  function runAiNodeDrop(ctx, payload) {
+    var ed = ctx.state.aiEditor;
+    if (!ed || !ed.draft || ed.draft.type !== 'blueprint') return Promise.resolve();
+    var p = payload || {};
+    var nodeId = String(p.node || '');
+    if (nodeId === '') return Promise.resolve();
+    var node = aiBp.newNode(nodeId);
+    if (node === null) {
+      return Promise.resolve(ctx.dispatch({ type: 'notice.set', kind: 'error', text: '这个节点不在目录里' }));
+    }
+    var target = {
+      parentAddr: String(p.parentAddr || ''),
+      index: Number(p.index || 0) || 0,
+      where: String(p.where || (String(p.parentAddr || '') === '' ? 'body' : 'slot')),
+    };
+    // 类型兼容再确认一次（payload 可能被伪造/过期）
+    if (target.where === 'body') {
+      if (!aiBp.kindFits(aiBp.specOf(nodeId) ? aiBp.specOf(nodeId).kind : 'stmt', 'stmt')) {
+        return Promise.resolve();
+      }
+    }
+    var next = aiBp.placeNode(ed.draft, target, node);
+    ctx.dispatch({ type: 'ai.draft.set', program: next });
+    ctx.dispatch({ type: 'ai.drop.set', y: null, target: null });
+    return Promise.resolve();
+  }
+
   function aiValueOf(payload) {
     return payload !== null && payload && typeof payload.value === 'string' ? payload.value : '';
   }

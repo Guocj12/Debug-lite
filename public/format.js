@@ -2899,9 +2899,66 @@
   }
 
   // 列表态 / 编辑态的分派（编辑态的导入按钮已在 blocks 内就地渲染，无需再拼一份）
+  /** D-195：AI 库列表的布局版视图模型（列表态） */
+  function aiListLayoutVm(state, busy) {
+    if (!LAYOUT || !LAYOUT.data.screens.ai_list) return null;
+    var ed = aiEditorOf(state);
+    var env = ed.list;
+    var items = aiItemsOf(env);
+    var max = num(pick(env, 'data.max'), 20);
+    var stock = aiNodeStockText(ed.nodes);
+    var flat = {
+      aiListCountText: (env === null ? '（还没读取 AI 库）' : ('我的程序 ' + items.length + ' / ' + max))
+        + '　·　' + stock,
+      aiListHintText: items.length
+        ? '点一行选中它，再用「打开选中 / 删除选中」；「正式」的 AI 才能被出战配置选中'
+        : '还没有 AI：点「＋ 新建 AI」开始（新建后点「打开选中」进入积木编辑器）',
+    };
+    var sstate = { aiListSel: ed.listSel || '' };
+    return {
+      canvas: LAYOUT.data.canvas,
+      background: LAYOUT.data.screens.ai_list.background,
+      layers: [{ name: 'ai_list', role: 'screen', mask: null,
+                 elements: layScreen(state, 'ai_list', sstate, flat, {}, busy) }],
+    };
+  }
+
   function aiEditorViewModel(state, notice, busy) {
     var ed = aiEditorOf(state);
-    if (ed === null || ed.mode !== 'edit') return aiListViewModel(state, notice, busy);
+    if (ed === null || ed.mode !== 'edit') {
+      // D-195：**列表态也走布局表版**（否则从主界面点「AI 编辑」看到的是文字列表，
+      //   用户会以为新屏"没接到按钮上"——这正是本轮实测到的问题）。
+      var listLay = aiListLayoutVm(state, busy);
+      if (listLay !== null) {
+        var listConf = null;
+        if (ed.confirm && ed.confirm.kind === 'delete') {
+          listConf = {
+            text: '确认删除这个 AI？删除后无法恢复。',
+            buttons: [
+              { action: 'ai-confirm-yes', label: '确认删除', kind: 'button', disabled: busy },
+              { action: 'ai-confirm-no', label: '取消', kind: 'button', disabled: busy },
+            ],
+          };
+        }
+        return vm('AI 编辑', { notice: notice, layout: listLay, lines: [], buttons: [], confirm: listConf });
+      }
+      return aiListViewModel(state, notice, busy);
+    }
+    // D-194/D-195：积木蓝图草稿走**布局表版**编辑器（方案 A）；拿不到布局或仍是旧 AST 程序 → 文字版
+    var lay = aiLayoutVm(state, busy);
+    if (lay !== null) {
+      var conf = null;
+      if (ed.confirm && ed.confirm.kind === 'discard') {
+        conf = {
+          text: '有未保存改动，确认丢弃并关闭？',
+          buttons: [
+            { action: 'ai-discard-yes', label: '确认丢弃', kind: 'button', disabled: busy },
+            { action: 'ai-discard-no', label: '取消', kind: 'button', disabled: busy },
+          ],
+        };
+      }
+      return vm('AI 编辑', { notice: notice, layout: lay, lines: [], buttons: [], confirm: conf });
+    }
     return aiEditViewModel(state, notice, busy);
   }
 
@@ -2915,6 +2972,12 @@
   var LAYOUT = null;
   function setLayout(engine, data) {
     LAYOUT = (engine && data && data.screens) ? { engine: engine, data: data } : null;
+    // D-194：**必须把布局表声明的状态键注册进引擎**。否则引擎的键表只有默认 3 个，
+    //   而 `whenMatches` 只遍历已注册的键 ⇒ 自定义键（aiDetail/aiP1/aiImport…）的 `when`
+    //   会被**静默忽略**，变成"写了条件却永远显示"（比不写更难查）。
+    if (LAYOUT && typeof engine.setStateKeys === 'function') {
+      engine.setStateKeys(data.stateKeys || []);
+    }
   }
   function layoutReady() { return LAYOUT !== null; }
   var LAY_TIER_CN = { common: '绿', rare: '蓝', epic: '紫', legendary: '橙', mythic: '青' };
@@ -3222,8 +3285,13 @@
     };
     out.forEach(function (e) {
       var opens = OPENS_SCREEN[e.action] === 1;
-      // ① target 优先，但"已经接好的开画面动作"除外
-      if (!opens && e.target && bundle.screens[e.target]) {
+      // ① `target` 优先 —— **但只对"弹窗"目标**。
+      //   `target` 是**设计期注解**，用途是"预览弹窗流程"：标了 target 的按钮在预览里点一下
+      //   能看到目标弹窗。整屏（role:'screen'）不是这么打开的 —— 它由真实动作切换视图
+      //   （`goto-ai-editor` / `goto-hub` …）。D-195 踩过：给主界面 AI 按钮标上
+      //   `target:'ai_list'` 之后，动作被改写成 `layout-open`，于是"点了 AI 编辑没反应"。
+      var isScreenTarget = !!(e.target && bundle.screens[e.target] && bundle.screens[e.target].role === 'screen');
+      if (!opens && !isScreenTarget && e.target && bundle.screens[e.target]) {
         var pos = (e.payload && e.payload.pos) || 'role';
         var item = pos === 'role' ? flat._role : layItem(flat._skills[LAY_POS[pos] || 0]);
         e.action = 'layout-open';
@@ -3278,15 +3346,34 @@
       out = out.filter(function (e) { return e.id !== sc.listFrom.prototype; });
       var rows = layRows(state, sc.listFrom.source, ctx || {}, flat);
       var base = proto ? proto.rect : [880, 208, 340, 56];
+      // D-195：**把候选行挂进面板并让它可滚**。以前行是平铺的、面板没有 scroll，
+      //   角色/技能/插件候选一多就溢出到弹窗外，滚不动（用户报告的"角色选择列表没滚动"）。
+      //   容器 = listFrom.container 指定，否则自动找"把原型完全包住的那块底板"。
+      var listBox = sc.listFrom.container
+        ? out.filter(function (e) { return e.id === sc.listFrom.container; })[0]
+        : out.filter(function (e) {
+            if (e.id === sc.listFrom.prototype) return false;
+            var r = e.rect || [0, 0, 0, 0];
+            return r[0] <= base[0] && r[1] <= base[1]
+              && r[0] + r[2] >= base[0] + base[2] && r[1] + r[3] >= base[1] + base[3];
+          })[0];
+      if (listBox) listBox.scroll = listBox.scroll || { dir: 'v' };
+      var relX = listBox ? base[0] - listBox.rect[0] : base[0];
+      var relY = listBox ? base[1] - listBox.rect[1] : base[1];
+      function pushRow(row) {
+        if (listBox) row.parent = listBox.id;
+        out.push(row);
+      }
       if (!rows.length) {
-        out.push({ id: 'row_empty', kind: 'deco', hit: 'rect', z: 6, rect: base.slice(),
+        pushRow({ id: 'row_empty', kind: 'deco', hit: 'rect', z: 6,
+                   rect: [relX, relY, base[2], base[3]],
                    label: '（没有可用候选）', text: '（没有可用候选）' });
       }
       rows.forEach(function (it, i) {
         var isPick = sc.listFrom.source === 'roles' || sc.listFrom.source === 'skills';
-        out.push({
+        pushRow({
           id: 'row_' + i, kind: 'button', hit: 'rect', z: 6,
-          rect: [base[0], base[1] + i * sc.listFrom.pitch, base[2], base[3]],
+          rect: [relX, relY + i * sc.listFrom.pitch, base[2], base[3]],
           label: it.fits === false ? it.label + '（' + it.reason + '）' : it.label,
           text: it.fits === false ? it.label + '（' + it.reason + '）' : it.label,
           asset: it.icon, muted: it.fits === false,
@@ -3302,10 +3389,17 @@
       if (sc.listFrom.source === 'rolePlugins' || sc.listFrom.source === 'skillPlugins') {
         out.push({
           id: 'row_clear', kind: 'button', hit: 'rect', z: 6,
-          rect: [base[0], base[1] + rows.length * sc.listFrom.pitch, base[2], base[3]],
+          parent: listBox ? listBox.id : undefined,
+          rect: [relX, relY + rows.length * sc.listFrom.pitch, base[2], base[3]],
           label: '清空此槽', text: '清空此槽', action: 'layout-disassemble',
           payload: { uid: (ctx && ctx.targetUid) || '', slotIndex: (ctx && ctx.pickIdx) || 0 },
         });
+      }
+      // 内容高：最后一行底部相对面板 → 渲染层据此撑出滚动高度
+      if (listBox) {
+        var rowCount = rows.length + (sc.listFrom.source === 'rolePlugins' || sc.listFrom.source === 'skillPlugins' ? 1 : 0);
+        var contentBottom = relY + Math.max(rowCount, 1) * sc.listFrom.pitch;
+        if (contentBottom > listBox.rect[3]) listBox.contentH = contentBottom;
       }
     }
     // D-188：**仓库网格**（`gridFrom`）—— 把当前桶的物品按 `grid.flow` 自动流式排布。
@@ -3340,7 +3434,7 @@
             id: 'gitem_' + i, kind: 'button', hit: 'rect', z: 6,
             parent: box.id,
             // 相对父容器内容原点（与 D-185 的 parent 语义一致）
-            rect: [box.rect[0] + rel[0], box.rect[1] + rel[1], rel[2], rel[3]],
+            rect: [rel[0], rel[1], rel[2], rel[3]],   // 相对父容器（渲染层已按 parent 嵌套）
             label: it.label, text: it.label, asset: it.icon,
             action: 'warehouse-item-open',
             // `bucket` 必须带上：详情弹窗按它决定展示哪一组属性、以及给不给「开包 / 分解」按钮
@@ -3350,6 +3444,85 @@
       // 容量行（`{whCapacity}`）：读投影层自己产出的文本（render 层零逻辑）
       var capEl = out.filter(function (e) { return e.id === 'wh_capacity'; })[0];
       if (capEl) capEl.text = warehouseCapacityLine(state, bucket);
+    }
+    // D-194：**行模板展开**（`rowsFrom`）—— 节点库 / 程序树这类"按数据缩进的一列".
+    //   几何一律走引擎的 `rowRects()`（与布局台同一份算法）；本层只喂行数据。
+    //   `rowsFrom` 归一化后是**数组**（一个画面可以有多条行列表）。
+    if (sc.rowsFrom) {
+      // D-195：**缩放只作用于程序树那一组行**（`source === 'tree'`）。
+      //   之前把 zoom 应用到所有行列表，结果"滚轮一滚，左侧节点库的行距也变大"。
+      //   缩放 = 行高 + 缩进 + **字号** 一起放大（只放大行距=看着像"只是变松"，不是缩放）。
+      var zoomNow = (state.aiEditor && Number(state.aiEditor.zoom)) || 1;
+      if (!(zoomNow > 0)) zoomNow = 1;
+      sc.rowsFrom.forEach(function (rf, gi) {
+        var z = 1;   // 行本身不缩放：整块缩放交给渲染层的 wrapper
+        var rfp = out.filter(function (e) { return e.id === rf.prototype; })[0];
+        var rfb = out.filter(function (e) { return e.id === rf.container; })[0];
+        out = out.filter(function (e) { return e.id !== rf.prototype; });
+        if (!rfb) return;
+        var rowList = layRowsFromSource(state, rf.source, flat);
+        var spec = Object.assign({}, rf);
+        // uniform（树）：**所有行同宽**，缩进只移动左边缘；基准宽要扣掉最大缩进，
+        //   否则最深一层的右边界会顶出面板。右边界 = base.x + maxIndent*indentPx + w 恒等。
+        var maxIndent = 0;
+        rowList.forEach(function (r) { maxIndent = Math.max(maxIndent, Math.round(r.indent || 0)); });
+        if (spec.uniform === true) spec.maxIndent = maxIndent;
+        // 行高也要跟着缩放（只放大间距 = 看着像"只是变松"，不是缩放）
+        var protoRect = rfp ? rfp.rect : [0, 0, 200, 26];
+        // uniform：框宽恒定，层级由 x 右移体现（不再扣宽度）
+        if (z !== 1) protoRect = [protoRect[0], protoRect[1], protoRect[2], Math.round(protoRect[3] * z)];
+        var rres = C.rowRects(protoRect, spec, rowList);
+        // 容器内容高撑开：原生滚动才真的能滚到底（渲染层据此插撑条）
+        if (rres.contentH > rfb.rect[3]) rfb.contentH = rres.contentH;
+        if (rf.source === 'tree' && zoomNow !== 1) {
+          rfb.zoom = zoomNow;
+          rfb.contentH = Math.max(rfb.contentH || 0, rres.contentH);
+        }
+        // 手势层要按"行高/缩进"把指针换算成落点
+        rfb.rowPitch = spec.pitch || 0;
+        rfb.rowIndent = spec.indentPx || 0;
+        // 手势层要把屏幕像素换算回画布单位（容器在屏幕上被等比放大/缩小过）
+        rfb.canvasW = rfb.rect[2];
+        rfb.canvasH = rfb.rect[3];
+        if (!rowList.length) {
+          out.push({ id: 'rows_empty_' + gi, kind: 'deco', hit: 'rect', z: rfp ? rfp.z : 6, parent: rfb.id,
+                     rect: [8, 8, 240, 22], label: '（空）', text: '（空）' });
+        }
+        var rowFont = rfp && rfp.font ? rfp.font : null;
+
+        rowList.forEach(function (r, i) {
+          var rr = rres.rects[i];
+          if (!rr) return;
+          out.push({
+            id: 'rf_' + gi + '_' + i, kind: r.kind || 'button', hit: 'rect', z: rfp ? rfp.z : 6,
+            parent: rfb.id,                                  // 必须挂进容器：滚动/平移才作用在行上
+            rect: [rr[0], rr[1], rr[2], rr[3]],             // 相对父容器（渲染层已按 parent 嵌套）
+            label: r.text, text: r.text,
+            action: r.action || '', payload: r.payload || {},
+            muted: !!r.muted, disabled: !!r.disabled, pressed: !!r.pressed,
+            sel: !!r.pressed, slot: !!r.slot,          // D-194：选中行高亮 / 槽位头弱化
+            press: rfp && rfp.press ? rfp.press : '', font: rowFont,
+            // D-195：节点库的行要能被**拖**（拖动放置）—— 渲染层据此写 `data-drag-node`
+            dragNode: r.dragNode || '',
+          });
+        });
+      });
+    }
+    // D-194：**AI 编辑屏的静态按钮要注入载荷**
+    //   布局表里的模板按钮只有 3 个固定位（`ai_preset1..3`），具体套哪个模板由**数据**决定：
+    //   这里把 `preset` id 与文案写进 payload —— 否则点了动作只知道"有个模板按钮"却不知道是哪个。
+    if (name === 'ai_editor') {
+      var aiEd0 = aiEditorOf(state);
+      var presetList = aiEd0 === null ? [] : aiNodesPresetsOf(aiEd0.nodes);
+      ['ai_preset1', 'ai_preset2', 'ai_preset3'].forEach(function (pid, i) {
+        var pel = out.filter(function (e) { return e.id === pid; })[0];
+        if (!pel) return;
+        var pr = presetList[i];
+        if (!pr) { pel.disabled = true; return; }
+        pel.payload = { preset: or(pick(pr, 'id'), '') };
+        pel.label = '套用：' + or(pick(pr, 'name'), '模板');
+        pel.text = pel.label;
+      });
     }
     // D-188：**物品详情弹窗** —— 把当前物品（`state.warehouseItem`）展开成"按类别分组的属性行"。
     //   数据全部来自已读到的 `/me/warehouse`（**零新接口**）；`{detXxx}` 键喂给布局表。
@@ -3406,6 +3579,176 @@
     var lo = pick(cur, 'loadout');
     return lo === undefined ? null : lo;
   }
+  /* ---------- D-194：`rowsFrom` 的数据源（AI 编辑屏用） ---------- */
+
+  /** 行数据源 → [{indent, text, action, payload, muted, disabled, pressed}] */
+  function layRowsFromSource(state, source, flat) {
+    if (source === 'palette') return aiPaletteRows(state);
+    if (source === 'tree') return aiTreeRows(state);
+    if (source === 'ailist') return aiListRows(state);
+    return [];
+  }
+
+  /** D-195：AI 库列表（布局表版）—— 一行一个 AI；点行 = 选中，打开/删除在底栏 */
+  function aiListRows(state) {
+    var ed = aiEditorOf(state);
+    if (ed === null) return [];
+    var env = ed.list;
+    var items = aiItemsOf(env);
+    if (!items.length) {
+      return [{ indent: 0, text: env === null ? '（还没读取 AI 库：点右上「刷新」）' : '（还没有 AI：点右上「＋ 新建 AI」开始）', slot: true }];
+    }
+    var sel = ed.listSel || '';
+    return items.map(function (it) {
+      var aiId = or(pick(it, 'aiId'), '');
+      return {
+        indent: 0,
+        text: or(pick(it, 'name'), '（未命名）') + '   ·   ' + aiItemStatusText(it)
+          + '   ·   ' + aiUsageText(env, aiId) + '   ·   更新 ' + stamp(pick(it, 'updatedAt')),
+        action: 'ai-list-select',
+        payload: { aiId: aiId },
+        pressed: aiId !== '' && aiId === sel,
+      };
+    });
+  }
+
+  /** AI 节点库：按类别分组；`owned === 0` 的**不显示**（用户 R7：只显示总库存里有的） */
+  function aiPaletteRows(state) {
+    var ed = aiEditorOf(state);
+    if (ed === null) return [];
+    var eb = ed.nodes;
+    var catalog = aiNodesCatalogOf(eb);
+    if (catalog !== null) aiBlueprint.setCatalog(catalog, aiNodesLimitsOf(eb));
+    var inv = aiBlueprintInventoryOf(eb);
+    var groups = aiBlueprint.nodeLibrary(inv);
+    var openMap = (ed.paletteOpen && typeof ed.paletteOpen === 'object') ? ed.paletteOpen : {};
+    var rows = [];
+    groups.forEach(function (g) {
+      var usable = g.items.filter(function (it) { return (it.owned || 0) > 0; });
+      if (!usable.length) return;                       // 整类都没有货 → 这一类不出现
+      // D-194：**默认展开**（一进来就看得见节点，符合"仓库里有什么一眼看到"）；
+      //   点分类头才收起。之前写成默认折叠 → 打开编辑器只有 7 个分类标题、一个节点都没有。
+      var open = openMap[g.category] !== false;
+      rows.push({
+        indent: 0,
+        text: (open ? '▾ ' : '▸ ') + g.category + '（' + usable.length + '）',
+        action: 'ai-palette-toggle', payload: { cat: g.category },
+      });
+      if (!open) return;
+      usable.forEach(function (it) {
+        var free = it.free || 0;
+        rows.push({
+          indent: 1,
+          text: it.name + '   ' + free + '/' + (it.owned || 0),
+          action: 'ai-node-append', payload: { node: it.nodeId },
+          muted: free <= 0,
+          disabled: free <= 0,                          // 0/N = 不能拖（R7）
+          dragNode: free > 0 ? it.nodeId : '',          // 可拖：手势层据此拖进程序树
+        });
+      });
+    });
+    return rows;
+  }
+
+  /** AI 程序树：一行一个节点/槽位头，缩进 = 深度（缩放按 zoom 放大行高与缩进，见 D-194 §4.1） */
+  function aiTreeRows(state) {
+    var ed = aiEditorOf(state);
+    if (ed === null || ed.draft === null) return [];
+    var draft = ed.draft;
+    if (draft.type !== 'blueprint') return [];
+    var cursor = ed.cursor === undefined || ed.cursor === null ? '' : String(ed.cursor);
+    var rows = aiBlueprint.treeRows(draft, cursor);
+    if (rows.length === 0) {
+      // 空蓝图要给**引导行**（不是空白一片）：告诉玩家下一步能做什么
+      return [{ indent: 0, text: '（空蓝图：套用下方模板，或点左侧节点加入程序）', slot: true }];
+    }
+    return rows.map(function (r) {
+      return {
+        indent: r.depth,
+        text: r.header ? r.text : r.text,
+        action: r.header ? '' : 'ai-select-node',
+        payload: r.header ? {} : { addr: r.addr },
+        pressed: r.selected === true,
+        slot: r.header === true,                       // 槽位头用浅色
+        muted: r.header === true,
+      };
+    });
+  }
+
+  /** AI 屏的布局版视图模型（D-194）：只有"正在编辑一份积木蓝图"时才走布局 */
+  function aiLayoutVm(state, busy) {
+    if (!LAYOUT || !LAYOUT.data.screens.ai_editor) return null;
+    var ed = aiEditorOf(state);
+    if (ed === null || ed.mode !== 'edit' || ed.draft === null || ed.draft.type !== 'blueprint') return null;
+    var draft = ed.draft;
+    var eb = ed.nodes;
+    var catalog = aiNodesCatalogOf(eb);
+    if (catalog !== null) aiBlueprint.setCatalog(catalog, aiNodesLimitsOf(eb));
+    var inv = aiBlueprintInventoryOf(eb);
+    // 正在编辑的既有条目：它自己的占用不算"别人占着"（D-179 修过的坑，这里同样要扣）
+    var selfItem = ed.aiId === null ? null : aiItemOf(ed.list, ed.aiId);
+    if (selfItem !== null && selfItem.blueprint) inv = aiBlueprint.excludeOwnUsage(inv, selfItem.blueprint);
+
+    // 参数槽：取**第一个选项型**与**第一个数值型**参数（v1 固定 3 选项槽 + 1 数值槽）
+    var form = (ed.cursor && ed.cursor !== 'body') ? aiBlueprint.formOf(draft, ed.cursor) : null;
+    var optField = null, numField = null;
+    ((form && form.fields) || []).forEach(function (f) {
+      if (optField === null && (f.kind === 'slot' || f.kind === 'enum')) optField = f;
+      if (numField === null && f.kind !== 'slot' && f.kind !== 'enum') numField = f;
+    });
+    var opts = optField ? (optField.values || []).slice(0, 3) : [];
+    var presets = aiNodesPresetsOf(eb);
+
+    var sstate = {
+      aiSel: ed.cursor || '',
+      aiDetail: ed.detailOpen === true ? '1' : '0',
+      aiCanUndo: (ed.history || []).length ? '1' : '0',
+      aiCanRedo: (ed.future || []).length ? '1' : '0',
+      aiDragging: (ed.dropY === null || ed.dropY === undefined) ? '0' : '1',
+      aiDropY: (ed.dropY === null || ed.dropY === undefined) ? '' : String(ed.dropY),
+      aiTreeW: ed.detailOpen === true ? '616' : '980',
+      aiP1: opts[0] !== undefined ? '1' : '0',
+      aiP2: opts[1] !== undefined ? '1' : '0',
+      aiP3: opts[2] !== undefined ? '1' : '0',
+      aiPNum: numField !== null ? '1' : '0',
+      aiImport: ed.importOpen === true ? '1' : '0',
+      aiPreset1: presets[0] !== undefined ? '1' : '0',
+      aiPreset2: presets[1] !== undefined ? '1' : '0',
+      aiPreset3: presets[2] !== undefined ? '1' : '0',
+    };
+
+    var details = aiValidateDetailsOf(state);
+    var checkText = details.length ? ('✕ ' + String(details.length) + ' 处问题：'
+      + aiBlueprint.errorLines(draft, details).map(function (e) { return e.message; }).join('；'))
+      : (aiValidateOk(state) === true ? '✓ 已通过（服务端确认）' : '（改动后会自动校验）');
+    var shortage = aiBlueprint.shortageOf(draft, inv);
+
+    var flat = {
+      aiNameText: ed.name === '' ? '' : ed.name,
+      aiStatusText: ed.status === 'draft' ? '草稿' : '正式',
+      aiDirtyText: ed.dirty ? '有改动' : '已保存',
+      aiUsageText: ed.aiId === null ? '（未入库）' : aiUsageText(ed.list, ed.aiId),
+      aiNodeTitle: form ? form.name : '（未选中节点）',
+      aiNodeDesc: form ? form.desc : '在中间的树里点一行，这里显示它的参数',
+      aiP1Text: optField ? optField.label + '=' + String(opts[0]) : '',
+      aiP2Text: optField ? optField.label + '=' + String(opts[1] === undefined ? '' : opts[1]) : '',
+      aiP3Text: optField ? optField.label + '=' + String(opts[2] === undefined ? '' : opts[2]) : '',
+      aiPNumText: numField ? numField.label + '：' + String(numField.value) : '',
+      aiCheckText: checkText,
+      aiImportText: ed.importText || '',
+      aiShortageText: shortage.length
+        ? ('⚠ 节点不足：' + shortage.map(function (s) { return s.name + '（需 ' + s.need + '/空闲 ' + s.free + '）'; }).join('、'))
+        : '',
+    };
+
+    return {
+      canvas: LAYOUT.data.canvas,
+      background: LAYOUT.data.screens.ai_editor.background,
+      layers: [{ name: 'ai_editor', role: 'screen', mask: null,
+                 elements: layScreen(state, 'ai_editor', sstate, flat, {}, busy) }],
+    };
+  }
+
   function hubLayoutVm(state, busy) {
     // 无登录态（无 /me）时不走布局：让 hub 继续用旧文字界面，避免"半屏空数据"
     if (!LAYOUT || !state.profile || state.profile.data === null || state.profile.data === undefined) return null;
@@ -3755,6 +4098,8 @@
     warehouseCapacityLine: warehouseCapacityLine,
     layBucketItems: layBucketItems,
     layItemDetail: layItemDetail,
+    // D-194：布局表版 AI 编辑屏的投影（启用前也给测试/探针直接调）
+    aiLayoutVm: aiLayoutVm,
     // D-178：积木节点（GET /me/ai/nodes）——目录/限额/模板/库存摘要
     aiNodesCatalogOf: aiNodesCatalogOf,
     aiNodesLimitsOf: aiNodesLimitsOf,

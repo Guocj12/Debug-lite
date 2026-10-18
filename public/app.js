@@ -128,10 +128,37 @@
       }
       try {
         doc.title = model.pageTitle;
+        // D-194：**渲染前后保留滚动位置**。整屏是 `innerHTML` 重绘，重绘会把每个滚动容器
+        //   的 scrollTop/Left 归零 —— 树/节点库一操作就跳回顶部，用户会以为"点了没反应"。
+        //   所以按元素 id 记下当前滚动量，重绘后再写回去。
+        var scrollMemo = snapshotScroll(host);
         host.innerHTML = DL.render.render(model);
+        restoreScroll(host, scrollMemo);
       } catch (e3) {
         host.innerHTML = '<h2>界面内部错误</h2><p class="notice">渲染失败，请刷新页面。</p>';
       }
+    }
+
+    /** 记下 host 内所有滚动容器的滚动位置（按 id） */
+    function snapshotScroll(host) {
+      var out = {};
+      var list = host.querySelectorAll ? host.querySelectorAll('.dl-scroll') : [];
+      for (var i = 0; i < list.length; i++) {
+        var el = list[i];
+        if (!el.id) continue;
+        if (el.scrollTop || el.scrollLeft) out[el.id] = [el.scrollTop, el.scrollLeft];
+      }
+      return out;
+    }
+    /** 把记下的滚动位置写回去（重绘后能对上的 id） */
+    function restoreScroll(host, memo) {
+      if (!memo || !host.querySelectorAll) return;
+      Object.keys(memo).forEach(function (id) {
+        var el = host.querySelector('#' + id);
+        if (!el) return;                       // 该容器这次没渲染（切屏/收起）→ 直接放弃
+        el.scrollTop = memo[id][0];
+        el.scrollLeft = memo[id][1];
+      });
     }
 
     function dispatch(action) {
@@ -182,22 +209,26 @@
     // 从被点元素上取行级/元素级目标（render 只搬运 vm 给的字符串，见 public/render.js 的 targetAttrs）
     //   F2：data-player-id / data-public-id；F3：data-uid（物品行）/ data-slot（出战配置）/ data-bucket（分桶）
     //   提交③：data-pos（位置）/ data-idx（插槽序号）/ data-empty（`空`候选）/ data-ai-id（AI 库引用）
+    /**
+     * 把按钮上的 `data-*` 收成动作载荷。
+     *
+     * D-194：两端都改成**通用透传**（render 的 layAttrs 全写、这里全收）。
+     *   白名单踩过两次同样的坑：D-188 漏 `bucket`、D-194 漏 `node` —— 都是"字段明明在
+     *   payload 里，却到不了动作层，按钮点了没反应/行为不对"。现在只排除**明确不是载荷**的：
+     *   `data-action`（就是动作名）、`data-field`（输入框字段，走 change 不派发点击）、
+     *   `data-pan`/`data-depth`/`data-scroll-*`（渲染层的布局标记）。
+     */
+    var NON_PAYLOAD = ['action', 'pan', 'depth', 'scrollTop', 'scrollLeft'];
+
     function payloadOf(el) {
       var ds = el && el.dataset ? el.dataset : null;
       if (!ds) return null;
       var out = {};
-      var keys = ['playerId', 'publicId', 'uid', 'slot', 'bucket', 'pos', 'idx', 'empty', 'aiId', 'tier', 'addr', 'field', 'value'];
-      // D-179：`node`/`preset` 是积木编辑器的「加节点」「套用模板」载荷 —— 此前 render.js 不写、此处不收，
-      //   于是这两个按钮点了毫无反应（与 format.js 的字段级契约由 button-payload-contract 测试钉死）。
-      keys.push('node', 'preset');
-      // F9/D-180：布局表驱动的按钮载荷（子画面 / 候选行 / 插槽序号 / 装配目标）
-      keys.push('screen', 'slotIndex', 'targetUid');
-      // F10/D-180：战绩屏筛选（data-role = attacker/defender）
-      keys.push('role');
-      for (var i = 0; i < keys.length; i++) {
-        var v = ds[keys[i]];
-        if (typeof v === 'string' && v !== '') out[keys[i]] = v;
-      }
+      Object.keys(ds).forEach(function (k) {
+        if (NON_PAYLOAD.indexOf(k) >= 0) return;
+        var v = ds[k];
+        if (typeof v === 'string' && v !== '') out[k] = v;
+      });
       return Object.keys(out).length === 0 ? null : out;
     }
 
@@ -268,10 +299,154 @@
     // F5：AI 编辑器字段「提交」（change = 失焦或回车）→ 写入草稿并自动校验一次（裁决 ⑨）
     function onChange(ev) {
       var t = ev.target;
+      // D-194：布局表里的输入框（`kind:'input'` / `'textarea'`）提交。
+      //   `aiImport` 由 onInput 逐键收进 `ai.import.set`（"应用导入"才解析），这里不重复处理。
+      var fname = t && t.getAttribute ? t.getAttribute('data-field') : null;
+      if (fname === 'aiImport') return;
+      if (fname === 'aiName') { dispatch({ type: 'ai.name.set', value: t.value }); return; }
+      if (fname) { dispatch({ type: 'form.set', field: fname, value: t.value }); return; }
       if (!t || !t.name) return;
       if (DL.store.isAiField && DL.store.isAiField(t.name)) {
         run('ai-field-commit', { field: t.name });
       }
+    }
+
+    /* ---------------- D-194：拖拽平移（`data-pan` 的滚动容器） ----------------
+     * 口径（用户 2026-10-18）：「空白处左键移动视图」。
+     * 要点：
+     *   · 只有**滚动容器**响应（`data-pan`）；
+     *   · 按下后移动 **< 4px** 视为**点击**、不进入平移 —— 否则"点空白收起详情"永远点不到；
+     *   · 平移量 = 位移取反写进 scrollLeft/Top（往左拖 = 看右边内容）；
+     *   · 命中 `[data-action]` / 输入框的元素**不**启动平移（那是按钮、树行、名字框）。
+     */
+    var PAN_THRESHOLD = 4;
+    var panState = null;
+
+    function findPanBox(node) {
+      var walk = node;
+      for (var guard = 0; walk && guard < 32; guard++) {
+        if (walk.getAttribute && walk.getAttribute('data-pan')) return walk;
+        walk = walk.parentNode;
+      }
+      return null;
+    }
+
+    function onPointerDown(ev) {
+      if (ev.button !== undefined && ev.button !== 0) return;      // 只认左键
+      var t = ev.target;
+      if (!t) return;
+      if (t.closest && (t.closest('[data-action]') || t.closest('input, textarea, select'))) return;
+      var box = findPanBox(t);
+      if (!box) return;
+      panState = { box: box, x: ev.clientX, y: ev.clientY,
+                   top: box.scrollTop, left: box.scrollLeft, moved: false };
+    }
+
+    function onPointerMove(ev) {
+      if (!panState) return;
+      var dx = ev.clientX - panState.x, dy = ev.clientY - panState.y;
+      if (!panState.moved && Math.abs(dx) < PAN_THRESHOLD && Math.abs(dy) < PAN_THRESHOLD) return;
+      panState.moved = true;
+      var pan = panState.box.getAttribute('data-pan');
+      if (pan === 'both' || pan === 'h') panState.box.scrollLeft = panState.left - dx;
+      if (pan === 'both' || pan === 'v') panState.box.scrollTop = panState.top - dy;
+      if (ev.preventDefault) ev.preventDefault();
+    }
+
+    function onPointerUp() {
+      // 没移动过 = 一次普通点击（空白点击的语义由 onClick / 动作层处理）
+      if (panState && !panState.moved) panState = null;
+      else panState = null;
+      dragState = null;
+    }
+
+    /* ---------------- D-194：滚轮缩放（树区） ----------------
+     * 用户口径：「滚轮放大缩小」，不按 Ctrl。
+     * 只对**布局屏里的滚动容器**生效（`[data-pan]`），文本屏滚轮照常滚动。
+     * 缩放值是状态（`ai.zoom.set`），由 format 按它放大行高/缩进/字号 —— 不用 transform
+     * （transform 会让浏览器算错滚动尺寸，滚动条到不了底）。
+     */
+    function onWheel(ev) {
+      var t = ev.target;
+      if (!t || !t.closest) return;
+      var box = t.closest('[data-pan]');
+      if (!box) return;
+      var st = store.getState();
+      var ed = st.aiEditor;
+      if (!ed) return;
+      if (ev.preventDefault) ev.preventDefault();
+      var step = (ev.deltaY || 0) > 0 ? -0.1 : 0.1;
+      var next = Math.round((Number(ed.zoom || 1) + step) * 100) / 100;
+      dispatch({ type: 'ai.zoom.set', zoom: next });
+    }
+
+    /* ---------------- D-194：拖动节点进树（含落点预览） ----------------
+     * 口径：按住节点行拖动 ≥4px 才进入拖动；移动时算**最近可插入位**并显示预览线；
+     *   松手按命中的候选落位；没有候选 = 取消（不提示成功）。
+     * 几何全部交给 `aiBlueprint.nearestDrop()`（纯函数，与测试共用）。
+     */
+    var dragState = null;
+    var DND_THRESHOLD = 4;
+
+    function onDragStart(ev) {
+      if (ev.button !== undefined && ev.button !== 0) return;
+      var t = ev.target;
+      if (!t || !t.closest) return;
+      var node = t.closest('[data-action="ai-node-append"]');
+      if (!node || node.disabled) return;
+      var nodeId = node.getAttribute('data-node') || '';
+      if (nodeId === '') return;
+      dragState = { nodeId: nodeId, x: ev.clientX, y: ev.clientY, active: false };
+    }
+
+    function onDragMove(ev) {
+      if (!dragState) return;
+      var dx = ev.clientX - dragState.x, dy = ev.clientY - dragState.y;
+      if (!dragState.active && Math.abs(dx) < DND_THRESHOLD && Math.abs(dy) < DND_THRESHOLD) return;
+      dragState.active = true;
+      var box = doc.querySelector('[data-pan]');
+      if (!box) return;
+      var st = store.getState();
+      var ed = st.aiEditor;
+      if (!ed || !ed.draft) return;
+      // 指针坐标 → **树内容坐标**（扣掉容器位置与滚动量）
+      var r = box.getBoundingClientRect ? box.getBoundingClientRect() : { left: 0, top: 0 };
+      var px = ev.clientX - r.left + box.scrollLeft;
+      var py = ev.clientY - r.top + box.scrollTop;
+      var bpMod = DL.aiBlueprint;
+      if (!bpMod) return;
+      var hit = bpMod.nearestDrop(ed.draft, { x: px, y: py }, {
+        kind: kindOfNode(bpMod, dragState.nodeId),
+        pitch: treePitch(), indentPx: 16,
+      });
+      dispatch({ type: 'ai.drop.set', y: hit ? hit.anchorY : null, target: hit });
+    }
+
+    function onDragEnd() {
+      if (!dragState) return;
+      var st = store.getState();
+      var hit = st.aiEditor && st.aiEditor.dropTarget;
+      var nodeId = dragState.nodeId;
+      var active = dragState.active;
+      dragState = null;
+      if (!active) return;                       // 只是点了一下 → 交给 onClick 的 ai-node-append
+      dispatch({ type: 'ai.drop.set', y: null, target: null });
+      if (!hit) return;                          // 没有可插入位 = 取消放置
+      run('ai-node-drop', {
+        node: nodeId, parentAddr: hit.parentAddr, index: hit.index, where: hit.where,
+      });
+    }
+
+    function kindOfNode(bpMod, nodeId) {
+      var spec = bpMod.specOf(nodeId);
+      return spec && spec.kind ? spec.kind : 'stmt';
+    }
+    /** 树的行走高（与布局表 rowsFrom.pitch 一致；缩放后按 zoom 放大） */
+    function treePitch() {
+      var st = store.getState();
+      var ed = st.aiEditor || {};
+      var z = Number(ed.zoom || 1);
+      return Math.round(24 * z);
     }
 
     // 启动自检（01-auth.md §7.3）：无 token → 登录屏；有 token → GET /me 判定会话真伪
@@ -327,12 +502,30 @@
       });
     }
 
+    /** 手势层的挂载点（`mount()` 里的 host 是局部变量，这里单独取一次） */
+    function viewHost() { return doc.getElementById('view'); }
+
     function start() {
       mount();
       doc.addEventListener('click', onClick);
       doc.addEventListener('submit', onSubmit);
       doc.addEventListener('input', onInput);
       doc.addEventListener('change', onChange);   // F5：AI 编辑器字段提交（失焦/回车）
+      // D-195：**手势层统一走 DL.layoutInteract**（滚轮缩放 / 拖动空白平移 / 拖动节点放置 / 点空白收起）。
+      //   点击仍由本文件的 onClick 负责（传 click:false 避免重复绑定）。
+      //   以前在手势只写在本文件、预览另写一套 ⇒ 同一个界面两套行为。
+      if (DL.layoutInteract && typeof DL.layoutInteract.attach === 'function') {
+        var gh = viewHost();
+        if (gh) {
+          DL.layoutInteract.attach(gh, {
+            DL: DL,
+            getState: function () { return store.getState(); },
+            dispatch: dispatch,
+            run: run,
+            click: false,
+          });
+        }
+      }
       return boot();
     }
 

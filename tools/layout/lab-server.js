@@ -173,6 +173,29 @@ async function handleRequest(req, res) {
       return sendJson(res, { ok: true, path: RAW, bundle: bundle, mtime: fs.statSync(RAW).mtimeMs });
     }
     if (req.method === 'POST' && p === '/api/save-layout') return sendJson(res, saveLayout(await readBody(req)));
+    // D-195：**预览用假的 `/me/ai/nodes`** —— 布局台的预览跑真产品管线，而 AI 编辑屏的左侧节点库
+    //   要"节点目录 + 我的库存"才能渲染。真实运行时这两个来自服务端；预览不发请求，
+    //   于是节点库永远空着（看起来像"没接上"）。这里从服务端数据文件造一份**预览用**的信封：
+    //   目录照 `server/data/ai-node-catalog.json`，库存给每类 3 个空闲（只为看排布，不代表真账号）。
+    if (req.method === 'GET' && p === '/api/ai-nodes') {
+      try {
+        const cat = JSON.parse(fs.readFileSync(path.join(ROOT, 'server', 'data', 'ai-node-catalog.json'), 'utf8'));
+        const pre = JSON.parse(fs.readFileSync(path.join(ROOT, 'server', 'data', 'ai-blueprint-presets.json'), 'utf8'));
+        const catalog = cat.nodes || cat.catalog || [];
+        return sendJson(res, {
+          ok: true, code: null, message: null, details: [],
+          data: {
+            catalog,
+            presets: pre.presets || [],
+            limits: cat.limits || { maxSlots: 20, blueprintVersion: 1 },
+            inventory: catalog.map((n) => ({ nodeId: n.id, quality: n.quality, category: n.category, owned: 3, used: 0, free: 3 })),
+            preview: true,
+          },
+        });
+      } catch (e) {
+        return sendJson(res, { ok: false, error: '读不到节点目录：' + e.message });
+      }
+    }
     if (req.method === 'POST' && p === '/api/manifest') return sendJson(res, runManifest(url.searchParams.get('full') === '1'));
     // GET = 读**上次**生成的清单（不重算）：方便在浏览器地址栏或 curl 里看，也让"只读"语义站得住
     if (req.method === 'GET' && p === '/api/manifest') {

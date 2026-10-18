@@ -55,14 +55,14 @@
   }
  },
  "summary": {
-  "total": 168,
+  "total": 197,
   "present": 0,
   "placeholder": 0,
   "real": 0,
   "inInbox": 0,
-  "missing": 164,
+  "missing": 193,
   "optional": 4,
-  "requiredMissing": 164,
+  "requiredMissing": 193,
   "byKind": {
    "role": {
     "total": 11,
@@ -146,16 +146,16 @@
     "real": 0
    },
    "ui": {
-    "total": 38,
+    "total": 67,
     "present": 0,
-    "missing": 38,
+    "missing": 67,
     "inbox": 0,
     "optional": 0,
     "placeholder": 0,
     "real": 0
    }
   },
-  "coreMissing": 64
+  "coreMissing": 93
  },
  "entries": [
   {
@@ -3166,6 +3166,615 @@
    "usedBy": [
     "modal_item_detail"
    ],
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_back.webp",
+   "kind": "ui",
+   "id": "ai_back",
+   "label": "← 列表",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_back",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_undo.webp",
+   "kind": "ui",
+   "id": "ai_undo",
+   "label": "撤销",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_undo",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_redo.webp",
+   "kind": "ui",
+   "id": "ai_redo",
+   "label": "重做",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_redo",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_validate.webp",
+   "kind": "ui",
+   "id": "ai_validate",
+   "label": "校验",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_validate",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_import.webp",
+   "kind": "ui",
+   "id": "ai_import",
+   "label": "导入",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_import",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_save_draft.webp",
+   "kind": "ui",
+   "id": "ai_save_draft",
+   "label": "存为草稿",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_save_draft",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_save.webp",
+   "kind": "ui",
+   "id": "ai_save",
+   "label": "保存",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_save",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pal_row.webp",
+   "kind": "ui",
+   "id": "ai_pal_row",
+   "label": "{rowText}",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pal_row",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_tree_row.webp",
+   "kind": "ui",
+   "id": "ai_tree_row",
+   "label": "{rowText}",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_tree_row",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_popt1.webp",
+   "kind": "ui",
+   "id": "ai_popt1",
+   "label": "{aiP1Text}",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_popt1",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_popt2.webp",
+   "kind": "ui",
+   "id": "ai_popt2",
+   "label": "{aiP2Text}",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_popt2",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_popt3.webp",
+   "kind": "ui",
+   "id": "ai_popt3",
+   "label": "{aiP3Text}",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_popt3",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pdec.webp",
+   "kind": "ui",
+   "id": "ai_pdec",
+   "label": "−",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pdec",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pinc.webp",
+   "kind": "ui",
+   "id": "ai_pinc",
+   "label": "＋",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pinc",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pup.webp",
+   "kind": "ui",
+   "id": "ai_pup",
+   "label": "↑ 上移",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pup",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pdown.webp",
+   "kind": "ui",
+   "id": "ai_pdown",
+   "label": "↓ 下移",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pdown",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_pdel.webp",
+   "kind": "ui",
+   "id": "ai_pdel",
+   "label": "删除此节点",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_pdel",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_imp_apply.webp",
+   "kind": "ui",
+   "id": "ai_imp_apply",
+   "label": "应用导入",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_imp_apply",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_imp_cancel.webp",
+   "kind": "ui",
+   "id": "ai_imp_cancel",
+   "label": "取消",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_imp_cancel",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_preset1.webp",
+   "kind": "ui",
+   "id": "ai_preset1",
+   "label": "模板1",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_preset1",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_preset2.webp",
+   "kind": "ui",
+   "id": "ai_preset2",
+   "label": "模板2",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_preset2",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_preset3.webp",
+   "kind": "ui",
+   "id": "ai_preset3",
+   "label": "模板3",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_preset3",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ai_preset_new.webp",
+   "kind": "ui",
+   "id": "ai_preset_new",
+   "label": "清空重来",
+   "source": "布局表 ai_editor",
+   "usedBy": [
+    "ai_editor"
+   ],
+   "el": "ai_editor/ai_preset_new",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_new.webp",
+   "kind": "ui",
+   "id": "ail_new",
+   "label": "＋ 新建 AI",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_new",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_refresh.webp",
+   "kind": "ui",
+   "id": "ail_refresh",
+   "label": "刷新",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_refresh",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_back.webp",
+   "kind": "ui",
+   "id": "ail_back",
+   "label": "← 返回",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_back",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_row.webp",
+   "kind": "ui",
+   "id": "ail_row",
+   "label": "{rowText}",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_row",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_open.webp",
+   "kind": "ui",
+   "id": "ail_open",
+   "label": "打开选中",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_open",
+   "present": false,
+   "inbox": null,
+   "status": "缺",
+   "bytes": 0,
+   "placeholder": false
+  },
+  {
+   "format": "webp",
+   "size": "按元素框（见布局表 rect）",
+   "note": "按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形",
+   "optional": false,
+   "priority": "core",
+   "path": "assets/ui/ail_del.webp",
+   "kind": "ui",
+   "id": "ail_del",
+   "label": "删除选中",
+   "source": "布局表 ai_list",
+   "usedBy": [
+    "ai_list"
+   ],
+   "el": "ai_list/ail_del",
    "present": false,
    "inbox": null,
    "status": "缺",

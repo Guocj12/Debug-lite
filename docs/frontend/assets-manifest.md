@@ -5,7 +5,7 @@
 > 然后跑 `node tools/layout/apply-assets.js` —— 它会改名/转格式/缩放并放进 `public/assets/` 对应目录。
 > 🧩 = 程序生成的**占位图**（界面已经不再显示虚线框，但还不是美术成品）；替换方式见下方说明。
 
-**总览**：共 168 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 0 ｜ 📥 收件夹待归位 0 ｜ **缺 164**（可选 4）
+**总览**：共 197 项 ｜ ✅ 你的真素材 0 ｜ 🧩 程序占位 0 ｜ 📥 收件夹待归位 0 ｜ **缺 193**（可选 4）
 
 > 换成真图：把同名文件放进 `assets-inbox/` 跑 `npm run assets:apply`，或直接覆盖 `public/assets/` 下的同名文件。
 > 重新跑生成脚本**不会**覆盖你的真图 —— 脚本只覆盖登记在 `tools/layout/placeholders.json` 里的文件。
@@ -18,7 +18,7 @@
 | 插件 | 41 | 0 | 0 | 41 | 128×128 · webp | 插件图标，透明底，正方形 |
 | AI 积木节点 | 54 | 0 | 0 | 54 | 128×128 · webp | AI 积木节点图标，透明底 |
 | 包/宝箱 | 5 | 0 | 0 | 5 | 256×256 · webp | 包/宝箱图标，透明底 |
-| 界面按钮/控件 | 38 | 0 | 0 | 38 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
+| 界面按钮/控件 | 67 | 0 | 0 | 67 | 按元素框（见布局表 rect） · webp | 按钮/控件底图；不规则形状交 PNG 透明底，我会描出多边形 |
 | 品质边框 | 5 | 0 | 0 | 5 | 256×256 · svg | 品质边框（矢量，颜色按 qualities.json 的 color） |
 | 段位图标 | 5 | 0 | 0 | 5 | 64×64 · svg | 段位图标（矢量，颜色按 qualities.json 的 color） |
 | 音效（可选） | 4 | 0 | 0 | 4 | — · mp3 | 技能音效（可选；布局表暂时不用） |
@@ -169,7 +169,7 @@
 | ❌ 缺 | · 后补 | `skillPlugin.webp` | `assets/package/skillPlugin.webp` | 技能插件包 | server/data/package-config.json |
 | ❌ 缺 | · 后补 | `aiNode.webp` | `assets/package/aiNode.webp` | AI节点包 | server/data/package-config.json |
 
-## 界面按钮/控件（38）
+## 界面按钮/控件（67）
 
 | 状态 | 优先级 | 文件名（放进 assets-inbox） | 目标路径 | 名称 | 用途 |
 |---|---|---|---|---|---|
@@ -211,6 +211,35 @@
 | ❌ 缺 | ★ 先做 | `det_panel.webp` | `assets/ui/det_panel.webp` | det_panel 素材 | modal_item_detail |
 | ❌ 缺 | ★ 先做 | `det_open.webp` | `assets/ui/det_open.webp` | 开包 素材 | modal_item_detail |
 | ❌ 缺 | ★ 先做 | `det_dismantle.webp` | `assets/ui/det_dismantle.webp` | 分解 素材 | modal_item_detail |
+| ❌ 缺 | ★ 先做 | `ai_back.webp` | `assets/ui/ai_back.webp` | ← 列表 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_undo.webp` | `assets/ui/ai_undo.webp` | 撤销 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_redo.webp` | `assets/ui/ai_redo.webp` | 重做 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_validate.webp` | `assets/ui/ai_validate.webp` | 校验 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_import.webp` | `assets/ui/ai_import.webp` | 导入 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_save_draft.webp` | `assets/ui/ai_save_draft.webp` | 存为草稿 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_save.webp` | `assets/ui/ai_save.webp` | 保存 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pal_row.webp` | `assets/ui/ai_pal_row.webp` | {rowText} | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_tree_row.webp` | `assets/ui/ai_tree_row.webp` | {rowText} | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_popt1.webp` | `assets/ui/ai_popt1.webp` | {aiP1Text} | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_popt2.webp` | `assets/ui/ai_popt2.webp` | {aiP2Text} | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_popt3.webp` | `assets/ui/ai_popt3.webp` | {aiP3Text} | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pdec.webp` | `assets/ui/ai_pdec.webp` | − | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pinc.webp` | `assets/ui/ai_pinc.webp` | ＋ | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pup.webp` | `assets/ui/ai_pup.webp` | ↑ 上移 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pdown.webp` | `assets/ui/ai_pdown.webp` | ↓ 下移 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_pdel.webp` | `assets/ui/ai_pdel.webp` | 删除此节点 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_imp_apply.webp` | `assets/ui/ai_imp_apply.webp` | 应用导入 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_imp_cancel.webp` | `assets/ui/ai_imp_cancel.webp` | 取消 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_preset1.webp` | `assets/ui/ai_preset1.webp` | 模板1 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_preset2.webp` | `assets/ui/ai_preset2.webp` | 模板2 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_preset3.webp` | `assets/ui/ai_preset3.webp` | 模板3 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ai_preset_new.webp` | `assets/ui/ai_preset_new.webp` | 清空重来 | ai_editor |
+| ❌ 缺 | ★ 先做 | `ail_new.webp` | `assets/ui/ail_new.webp` | ＋ 新建 AI | ai_list |
+| ❌ 缺 | ★ 先做 | `ail_refresh.webp` | `assets/ui/ail_refresh.webp` | 刷新 | ai_list |
+| ❌ 缺 | ★ 先做 | `ail_back.webp` | `assets/ui/ail_back.webp` | ← 返回 | ai_list |
+| ❌ 缺 | ★ 先做 | `ail_row.webp` | `assets/ui/ail_row.webp` | {rowText} | ai_list |
+| ❌ 缺 | ★ 先做 | `ail_open.webp` | `assets/ui/ail_open.webp` | 打开选中 | ai_list |
+| ❌ 缺 | ★ 先做 | `ail_del.webp` | `assets/ui/ail_del.webp` | 删除选中 | ai_list |
 
 ## 品质边框（5）
 

@@ -93,6 +93,7 @@
             256,
             96
           ],
+          "target": "ai_list",
           "label": "AI 编辑",
           "asset": "assets/ui/btn_ai.webp"
         },
@@ -1574,6 +1575,950 @@
         "blocksBackground": true
       }
     },
+    "ai_editor": {
+      "role": "screen",
+      "name": "ai_editor",
+      "background": {
+        "asset": "",
+        "fit": "cover"
+      },
+      "elements": [
+        {
+          "id": "ai_top",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            0,
+            1280,
+            52
+          ]
+        },
+        {
+          "id": "ai_back",
+          "kind": "button",
+          "action": "ai-close",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            12,
+            8,
+            92,
+            36
+          ],
+          "target": "ai_list",
+          "label": "← 列表",
+          "z": 2
+        },
+        {
+          "id": "ai_name",
+          "kind": "input",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            116,
+            8,
+            236,
+            36
+          ],
+          "name": "aiName",
+          "value": "{aiNameText}",
+          "placeholder": "AI 名称",
+          "z": 2
+        },
+        {
+          "id": "ai_badge",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            364,
+            8,
+            96,
+            36
+          ],
+          "label": "{aiStatusText}",
+          "z": 2
+        },
+        {
+          "id": "ai_dirty",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            464,
+            8,
+            84,
+            36
+          ],
+          "label": "{aiDirtyText}",
+          "z": 2
+        },
+        {
+          "id": "ai_usage",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            556,
+            8,
+            140,
+            36
+          ],
+          "label": "{aiUsageText}",
+          "z": 2
+        },
+        {
+          "id": "ai_undo",
+          "kind": "button",
+          "action": "ai-undo",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            704,
+            8,
+            60,
+            36
+          ],
+          "label": "撤销",
+          "z": 2,
+          "when": {
+            "aiCanUndo": "1"
+          }
+        },
+        {
+          "id": "ai_redo",
+          "kind": "button",
+          "action": "ai-redo",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            768,
+            8,
+            60,
+            36
+          ],
+          "label": "重做",
+          "z": 2,
+          "when": {
+            "aiCanRedo": "1"
+          }
+        },
+        {
+          "id": "ai_validate",
+          "kind": "button",
+          "action": "ai-validate",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            836,
+            8,
+            72,
+            36
+          ],
+          "label": "校验",
+          "z": 2
+        },
+        {
+          "id": "ai_import",
+          "kind": "button",
+          "action": "ai-import-open",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            912,
+            8,
+            84,
+            36
+          ],
+          "label": "导入",
+          "z": 2
+        },
+        {
+          "id": "ai_save_draft",
+          "kind": "button",
+          "action": "ai-save-draft",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1004,
+            8,
+            104,
+            36
+          ],
+          "label": "存为草稿",
+          "z": 2
+        },
+        {
+          "id": "ai_save",
+          "kind": "button",
+          "action": "ai-save",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1116,
+            8,
+            152,
+            36
+          ],
+          "label": "保存",
+          "z": 2
+        },
+        {
+          "id": "ai_pal",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            52,
+            300,
+            624
+          ]
+        },
+        {
+          "id": "ai_pal_list",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            52,
+            300,
+            624
+          ],
+          "pan": "v",
+          "scroll": {
+            "dir": "v"
+          },
+          "z": 2
+        },
+        {
+          "id": "ai_pal_row",
+          "kind": "button",
+          "action": "ai-node-append",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            8,
+            4,
+            268,
+            26
+          ],
+          "font": {
+            "size": 12,
+            "align": "left",
+            "color": "#c8d4e6"
+          },
+          "label": "{rowText}",
+          "press": "tap",
+          "z": 3
+        },
+        {
+          "id": "ai_tree",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            300,
+            52,
+            616,
+            624
+          ],
+          "rectFrom": {
+            "w": "aiTreeW"
+          },
+          "pan": "both",
+          "scroll": {
+            "dir": "both"
+          }
+        },
+        {
+          "id": "ai_tree_list",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            300,
+            52,
+            616,
+            624
+          ],
+          "rectFrom": {
+            "w": "aiTreeW"
+          },
+          "pan": "both",
+          "scroll": {
+            "dir": "both"
+          },
+          "z": 2
+        },
+        {
+          "id": "ai_tree_row",
+          "kind": "button",
+          "action": "ai-select-node",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            0,
+            300,
+            26
+          ],
+          "font": {
+            "size": 13,
+            "align": "left",
+            "color": "#e2eaf6"
+          },
+          "label": "{rowText}",
+          "press": "tap",
+          "z": 3
+        },
+        {
+          "id": "ai_drop",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            300,
+            0,
+            616,
+            2
+          ],
+          "rectFrom": {
+            "y": "aiDropY"
+          },
+          "z": 8,
+          "when": {
+            "aiDragging": "1"
+          }
+        },
+        {
+          "id": "ai_param",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            916,
+            52,
+            364,
+            624
+          ],
+          "when": {
+            "aiDetail": "1"
+          }
+        },
+        {
+          "id": "ai_param_title",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            60,
+            340,
+            28
+          ],
+          "label": "{aiNodeTitle}",
+          "z": 2,
+          "when": {
+            "aiDetail": "1"
+          }
+        },
+        {
+          "id": "ai_param_desc",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            90,
+            340,
+            46
+          ],
+          "label": "{aiNodeDesc}",
+          "z": 2,
+          "when": {
+            "aiDetail": "1"
+          }
+        },
+        {
+          "id": "ai_popt1",
+          "kind": "button",
+          "action": "ai-param-set",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            146,
+            164,
+            34
+          ],
+          "label": "{aiP1Text}",
+          "z": 2,
+          "when": {
+            "aiP1": "1"
+          }
+        },
+        {
+          "id": "ai_popt2",
+          "kind": "button",
+          "action": "ai-param-set",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1104,
+            146,
+            164,
+            34
+          ],
+          "label": "{aiP2Text}",
+          "z": 2,
+          "when": {
+            "aiP2": "1"
+          }
+        },
+        {
+          "id": "ai_popt3",
+          "kind": "button",
+          "action": "ai-param-set",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            186,
+            164,
+            34
+          ],
+          "label": "{aiP3Text}",
+          "z": 2,
+          "when": {
+            "aiP3": "1"
+          }
+        },
+        {
+          "id": "ai_pdec",
+          "kind": "button",
+          "action": "ai-param-step",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            146,
+            60,
+            34
+          ],
+          "label": "−",
+          "payload": {
+            "delta": -1
+          },
+          "z": 2,
+          "when": {
+            "aiPNum": "1"
+          }
+        },
+        {
+          "id": "ai_pval",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            992,
+            146,
+            196,
+            34
+          ],
+          "label": "{aiPNumText}",
+          "z": 2,
+          "when": {
+            "aiPNum": "1"
+          }
+        },
+        {
+          "id": "ai_pinc",
+          "kind": "button",
+          "action": "ai-param-step",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1192,
+            146,
+            76,
+            34
+          ],
+          "label": "＋",
+          "payload": {
+            "delta": 1
+          },
+          "z": 2,
+          "when": {
+            "aiPNum": "1"
+          }
+        },
+        {
+          "id": "ai_check",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            540,
+            340,
+            68
+          ],
+          "scroll": {
+            "dir": "v"
+          },
+          "label": "{aiCheckText}",
+          "z": 2,
+          "when": {
+            "aiDetail": "1"
+          }
+        },
+        {
+          "id": "ai_pdel",
+          "kind": "button",
+          "action": "ai-node-del",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            928,
+            620,
+            340,
+            34
+          ],
+          "label": "删除此节点",
+          "z": 2,
+          "when": {
+            "aiDetail": "1"
+          }
+        },
+        {
+          "id": "ai_imp_bg",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            300,
+            420,
+            616,
+            256
+          ],
+          "z": 9,
+          "when": {
+            "aiImport": "1"
+          }
+        },
+        {
+          "id": "ai_imp_ta",
+          "kind": "textarea",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            312,
+            432,
+            592,
+            196
+          ],
+          "name": "aiImport",
+          "value": "{aiImportText}",
+          "placeholder": "粘贴一份积木蓝图 JSON",
+          "z": 10,
+          "when": {
+            "aiImport": "1"
+          }
+        },
+        {
+          "id": "ai_imp_apply",
+          "kind": "button",
+          "action": "ai-import-apply",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            312,
+            636,
+            140,
+            30
+          ],
+          "label": "应用导入",
+          "z": 10,
+          "when": {
+            "aiImport": "1"
+          }
+        },
+        {
+          "id": "ai_imp_cancel",
+          "kind": "button",
+          "action": "ai-import-close",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            462,
+            636,
+            140,
+            30
+          ],
+          "label": "取消",
+          "z": 10,
+          "when": {
+            "aiImport": "1"
+          }
+        },
+        {
+          "id": "ai_bottom",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            676,
+            1280,
+            44
+          ]
+        },
+        {
+          "id": "ai_preset1",
+          "kind": "button",
+          "action": "ai-bp-preset",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            12,
+            684,
+            132,
+            28
+          ],
+          "label": "模板1",
+          "z": 2,
+          "when": {
+            "aiPreset1": "1"
+          }
+        },
+        {
+          "id": "ai_preset2",
+          "kind": "button",
+          "action": "ai-bp-preset",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            152,
+            684,
+            132,
+            28
+          ],
+          "label": "模板2",
+          "z": 2,
+          "when": {
+            "aiPreset2": "1"
+          }
+        },
+        {
+          "id": "ai_preset3",
+          "kind": "button",
+          "action": "ai-bp-preset",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            292,
+            684,
+            132,
+            28
+          ],
+          "label": "模板3",
+          "z": 2,
+          "when": {
+            "aiPreset3": "1"
+          }
+        },
+        {
+          "id": "ai_preset_new",
+          "kind": "button",
+          "action": "ai-bp-new",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            432,
+            684,
+            120,
+            28
+          ],
+          "label": "清空重来",
+          "z": 2,
+          "when": {
+            "aiPreset1": "1"
+          }
+        },
+        {
+          "id": "ai_shortage",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            760,
+            684,
+            508,
+            26
+          ],
+          "label": "{aiShortageText}",
+          "z": 2
+        }
+      ],
+      "rowsFrom": [
+        {
+          "source": "palette",
+          "container": "ai_pal_list",
+          "prototype": "ai_pal_row",
+          "pitch": 26,
+          "indentPx": 14
+        },
+        {
+          "source": "tree",
+          "container": "ai_tree_list",
+          "prototype": "ai_tree_row",
+          "pitch": 26,
+          "indentPx": 18,
+          "uniform": true
+        }
+      ]
+    },
+    "ai_list": {
+      "role": "screen",
+      "name": "ai_list",
+      "background": {
+        "asset": "",
+        "fit": "cover"
+      },
+      "elements": [
+        {
+          "id": "ail_top",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            0,
+            1280,
+            52
+          ]
+        },
+        {
+          "id": "ail_title",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            16,
+            10,
+            120,
+            32
+          ],
+          "font": {
+            "size": 20,
+            "align": "left",
+            "color": "#e2eaf6",
+            "bold": true
+          },
+          "label": "AI 库",
+          "z": 2
+        },
+        {
+          "id": "ail_count",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            140,
+            12,
+            420,
+            30
+          ],
+          "font": {
+            "size": 13,
+            "align": "left",
+            "color": "#8b98ac"
+          },
+          "label": "{aiListCountText}",
+          "z": 2
+        },
+        {
+          "id": "ail_new",
+          "kind": "button",
+          "action": "ai-new",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            960,
+            8,
+            128,
+            36
+          ],
+          "label": "＋ 新建 AI",
+          "z": 2
+        },
+        {
+          "id": "ail_refresh",
+          "kind": "button",
+          "action": "ai-refresh",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1096,
+            8,
+            84,
+            36
+          ],
+          "label": "刷新",
+          "z": 2
+        },
+        {
+          "id": "ail_back",
+          "kind": "button",
+          "action": "goto-hub",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            1188,
+            8,
+            80,
+            36
+          ],
+          "target": "hub",
+          "label": "← 返回",
+          "z": 2
+        },
+        {
+          "id": "ail_panel",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            52,
+            1280,
+            600
+          ],
+          "pan": "v",
+          "scroll": {
+            "dir": "v"
+          }
+        },
+        {
+          "id": "ail_row",
+          "kind": "button",
+          "action": "ai-list-select",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            16,
+            8,
+            1248,
+            56
+          ],
+          "label": "{rowText}",
+          "payload": {
+            "aiId": "{rowUid}"
+          },
+          "press": "tap",
+          "z": 3
+        },
+        {
+          "id": "ail_bot",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            652,
+            1280,
+            68
+          ]
+        },
+        {
+          "id": "ail_open",
+          "kind": "button",
+          "action": "ai-open",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            16,
+            664,
+            160,
+            44
+          ],
+          "target": "ai_editor",
+          "label": "打开选中",
+          "z": 2
+        },
+        {
+          "id": "ail_del",
+          "kind": "button",
+          "action": "ai-delete",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            184,
+            664,
+            160,
+            44
+          ],
+          "label": "删除选中",
+          "z": 2
+        },
+        {
+          "id": "ail_hint",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            360,
+            668,
+            904,
+            36
+          ],
+          "font": {
+            "size": 13,
+            "align": "left",
+            "color": "#8b98ac"
+          },
+          "label": "{aiListHintText}",
+          "z": 2
+        }
+      ],
+      "rowsFrom": [
+        {
+          "source": "ailist",
+          "container": "ail_panel",
+          "prototype": "ail_row",
+          "pitch": 60
+        }
+      ]
+    },
     "modal_skill1_slots": {
       "role": "modal",
       "name": "modal_skill1_slots",
@@ -1705,5 +2650,23 @@
         "blocksBackground": true
       }
     }
-  }
+  },
+  "stateKeys": [
+    "aiSel",
+    "aiDetail",
+    "aiCanUndo",
+    "aiCanRedo",
+    "aiDragging",
+    "aiDropY",
+    "aiTreeW",
+    "aiP1",
+    "aiP2",
+    "aiP3",
+    "aiPNum",
+    "aiPreset1",
+    "aiPreset2",
+    "aiPreset3",
+    "aiImport",
+    "aiListSel"
+  ]
 }

@@ -330,21 +330,160 @@
 
   // 树行：[{addr, depth, text, header}]（header = 分支/子节点位说明行）
   function treeLines(bp, selectedAddr) {
+    return treeRows(bp, selectedAddr).map(function (r) {
+      return { addr: r.addr, depth: r.depth, text: r.text, selected: r.selected, header: r.header, kind: r.kind };
+    });
+  }
+
+  /**
+   * D-194：树行（**带几何/归属信息**，供拖放吸附用）。
+   * 在 treeLines 的基础上多给：`parentAddr` / `slotIndex` / `nodeId` / `subtreeEnd`。
+   *   · 节点行：`parentAddr` = 它装在哪（'' = 顶层 body），`slotIndex` = 它在父的哪个子位
+   *   · 槽位头行：`parentAddr` = 拥有这个槽的节点地址，`slotIndex` = 槽号
+   *   · `subtreeEnd` = 该节点**整棵子树**最后一行的下标（拖到"块下方"时用它算锚点）
+   */
+  function treeRows(bp, selectedAddr) {
     var rows = [];
-    var visit = function (n, addr, depth) {
+    var visit = function (n, addr, depth, parentAddr, slotIndex) {
       if (!n) return;
+      var start = rows.length;
       var spec = specOf(n.node);
-      rows.push({ addr: addr, depth: depth, text: lineOf(n), selected: addr === selectedAddr, kind: spec ? spec.kind : null });
+      rows.push({ addr: addr, depth: depth, text: lineOf(n), selected: addr === selectedAddr,
+                  kind: spec ? spec.kind : null, header: false, rowKind: 'node',
+                  parentAddr: parentAddr, slotIndex: slotIndex, nodeId: n.node, subtreeEnd: start });
       var ins = Array.isArray(n.inputs) ? n.inputs : [];
       for (var i = 0; i < ins.length; i++) {
-        rows.push({ addr: '', depth: depth + 1, text: inputLabel(n.node, i) + '：', header: true, selected: false });
-        visit(ins[i], childAddr(addr, i), depth + 2);
+        rows.push({ addr: '', depth: depth + 1, text: inputLabel(n.node, i) + '：', header: true, selected: false,
+                    kind: null, rowKind: 'slot', parentAddr: addr, slotIndex: i, nodeId: n.node, subtreeEnd: rows.length });
+        visit(ins[i], childAddr(addr, i), depth + 2, addr, i);
       }
+      rows[start].subtreeEnd = rows.length - 1;
     };
     var body = (bp && bp.body) || [];
-    for (var i = 0; i < body.length; i++) visit(body[i], 'body[' + i + ']', 0);
+    for (var i = 0; i < body.length; i++) visit(body[i], 'body[' + i + ']', 0, '', i);
     return rows;
   }
+
+  /** 某个节点的第 i 个子位期望什么类型的子节点（stmt / bool / value） */
+  function slotKindOf(nodeId, slotIndex) {
+    var spec = specOf(nodeId);
+    var kinds = spec && spec.inputs && spec.inputs.kinds;
+    if (Array.isArray(kinds) && kinds[slotIndex]) return kinds[slotIndex];
+    return 'stmt';
+  }
+  /** 某个节点最多能装几个子节点（<0 或未声明 = 不限） */
+  function slotMaxOf(nodeId) {
+    var spec = specOf(nodeId);
+    var max = spec && spec.inputs ? spec.inputs.max : 0;
+    if (max === undefined || max === null) return Array.isArray(spec && spec.inputs && spec.inputs.labels) ? 0 : 0;
+    return max;
+  }
+  /** 类型兼容：语句位只收语句；条件位收 bool；数值位收 value */
+  function kindFits(movingKind, wantKind) {
+    if (!wantKind) return true;
+    if (wantKind === 'stmt') return movingKind === 'stmt';
+    return movingKind === wantKind;
+  }
+
+  /**
+   * D-194：**枚举可插入位 + 锚点**（拖放吸附的唯一几何出处）。
+   * @param {object} bp   蓝图
+   * @param {string} kind 被拖动节点的类型（stmt / bool / value）
+   * @param {object} opts {pitch, indentPx, movingAddr}
+   * @returns {Array} [{parentAddr, index, indent, anchorY, anchorX, wantKind, where}]
+   */
+  function dropTargets(bp, kind, opts) {
+    var o = opts || {};
+    var pitch = num2(o.pitch, 28);
+    var indPx = num2(o.indentPx, 16);
+    var rows = treeRows(bp, '');
+    var rowOf = {};
+    rows.forEach(function (r, i) { if (r.addr) rowOf[r.addr] = i; });
+    var endY = rows.length * pitch;
+    var out = [];
+
+    // ① 顶层（body）的同级插入位：index 0..len
+    var body = (bp && bp.body) || [];
+    for (var i = 0; i <= body.length; i++) {
+      var anchorY = rowOf['body[' + i + ']'] !== undefined ? rowOf['body[' + i + ']'] * pitch : endY;
+      if (!kindFits(kind, 'stmt')) continue;            // 顶层只收语句
+      out.push({ parentAddr: '', index: i, indent: 0, anchorX: 0, anchorY: anchorY,
+                 wantKind: 'stmt', where: 'body' });
+    }
+
+    // ② 每个容器的**子位追加位**（inputs 是定长子位数组：append 就是填下一个槽）
+    //   锚点放在**该节点自己那一行**（用户口径："拖到节点上视为放进槽位"）——
+    //   之前用"整棵子树之后"，块一大就把指针甩到几十行外，根本吸不上。
+    rows.forEach(function (r, rowIdx) {
+      if (r.rowKind !== 'node') return;
+      var max = slotMaxOf(r.nodeId);
+      var node = nodeAt(bp, r.addr);
+      var len = node && Array.isArray(node.inputs) ? node.inputs.length : 0;
+      if (max >= 0 && len >= max) return;               // 满了 → 没有候选（放不进就取消）
+      var want = slotKindOf(r.nodeId, len);
+      if (!kindFits(kind, want)) return;                // 类型不合 → 候选根本不存在
+      out.push({
+        parentAddr: r.addr, index: len, indent: r.depth + 1,
+        anchorX: (r.depth + 1) * indPx,
+        anchorY: rowIdx * pitch,                         // = 这一行所在的位置
+        wantKind: want, where: 'slot',
+      });
+    });
+
+    // 拖已有节点时，不能放进自己的子树里（会成环）
+    var moving = String(o.movingAddr || '');
+    if (moving !== '') {
+      out = out.filter(function (t) {
+        return !(t.parentAddr === moving || t.parentAddr.indexOf(moving + '.inputs[') === 0);
+      });
+    }
+    return out;
+  }
+
+  /**
+   * D-195：**最近可插入位吸附**。
+   * 判据（按用户口径"不光看上下，还要看缩进"）：
+   *   · **纵向**决定是哪个落点（离某行越近越优先，容差 = 两行高）
+   *   · **横向缩进**决定要落在第几层（`round(px / indentPx)`），层级权重 10（比 1px 的纵向差重要得多）
+   * 早前的写法是"加权欧氏距离"，但行的宽度有 300+，指针落在行右半边时 x 差就有 100+，
+   * 直接把所有候选都顶出阈值 ⇒ 拖了没反应。现在 x 只用来定层级，不再当成距离。
+   * @returns {object|null} 命中的候选（附 score），或 null（不吸附 = 取消放置）
+   */
+  function nearestDrop(bp, pointer, opts) {
+    var o = opts || {};
+    var px = num2(pointer && pointer.x, 0), py = num2(pointer && pointer.y, 0);
+    var pitch = num2(o.pitch, 24);
+    var indPx = num2(o.indentPx, 16) || 16;
+    var tolerance = o.threshold !== undefined ? num2(o.threshold, pitch * 2.5) : pitch * 2.5;
+    var cands = dropTargets(bp, o.kind, o);
+    if (!cands.length) return null;
+    var wantDepth = Math.max(0, Math.round(px / indPx));
+    var best = null;
+    cands.forEach(function (t) {
+      var dy = Math.abs(py - t.anchorY);
+      if (dy > tolerance) return;                       // 太远：不吸附
+      var score = dy + Math.abs((t.indent || 0) - wantDepth) * 10;
+      if (!best || score < best.score) {
+        best = Object.assign({}, t, { score: Math.round(score * 100) / 100 });
+      }
+    });
+    return best;
+  }
+
+  /** D-194：按命中的候选把节点放进去（顶层=插到 index；子位=填下一个槽） */
+  function placeNode(bp, target, nodeObj) {
+    if (!target) return clone(bp);
+    if (target.where === 'body' || target.parentAddr === '') {
+      var out = clone(bp);
+      out.body = out.body || [];
+      var idx = Math.max(0, Math.min(num2(target.index, out.body.length), out.body.length));
+      out.body.splice(idx, 0, nodeObj);
+      return normalizeUids(out);
+    }
+    return appendChild(bp, target.parentAddr, nodeObj);
+  }
+
+  function num2(v, d) { var n = Number(v); return isFinite(n) ? n : d; }
 
   // 表单模型：参数行（服务端目录的 params 直接映射为控件）
   function formOf(bp, addr) {
@@ -508,6 +647,9 @@
     // 统计 / 展示
     walk: walk, statsOf: statsOf, shortageOf: shortageOf, excludeOwnUsage: excludeOwnUsage,
     labelOf: labelOf, lineOf: lineOf, treeLines: treeLines, formOf: formOf,
+    // D-194：拖放吸附（纯几何 + 类型过滤，产品与布局台共用）
+    treeRows: treeRows, slotKindOf: slotKindOf, slotMaxOf: slotMaxOf, kindFits: kindFits,
+    dropTargets: dropTargets, nearestDrop: nearestDrop, placeNode: placeNode,
     // 错误定位 / 导入导出 / 高亮 / 编辑器左栏
     addrOfError: addrOfError, exportText: exportText, importJson: importJson,
     projectTrace: projectTrace, rawTrace: rawTrace, highlightOf: highlightOf,

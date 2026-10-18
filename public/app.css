@@ -37,6 +37,15 @@ body{color:var(--dl-text);font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;
 #view>.dl-screen~#modal>.modal-body{background:var(--dl-panel);border:1px solid var(--dl-line);
   border-radius:8px;padding:16px;max-width:640px;width:100%;color:var(--dl-text)}
 #view>.dl-screen~#modal>.modal-background{position:absolute;inset:0}
+/* D-194：丢弃确认（布局模式下也要叠在屏上，别把屏挤走） */
+#view>.dl-screen~#confirm{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:80;
+  background:var(--dl-panel);border:1px solid var(--dl-line);border-radius:8px;padding:16px 18px;
+  min-width:280px;max-width:520px;color:var(--dl-text);box-shadow:0 10px 30px #000a}
+#view>.dl-screen~#confirm .line{font-size:13px;line-height:1.6;margin-bottom:12px}
+#view>.dl-screen~#confirm .confirm-buttons{display:flex;gap:8px;justify-content:flex-end}
+#view>.dl-screen~#confirm .confirm-buttons>button{background:var(--panel2);color:var(--dl-text);
+  border:1px solid var(--dl-line2);border-radius:6px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+#view>.dl-screen~#confirm .confirm-buttons>button:hover{border-color:var(--dl-accent)}
 /* 文字屏（旧世代）：仍然铺满，但给自己留出可读的边距，别贴着屏幕边缘 */
 #view>:not(.dl-screen){margin-left:16px;margin-right:16px}
 #view>:first-child:not(.dl-screen){margin-top:16px}
@@ -57,6 +66,12 @@ body{color:var(--dl-text);font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;
 .dl-btn:hover{filter:brightness(1.12)}
 .dl-btn:active{transform:translateY(1px)}
 .dl-deco{color:var(--dl-dim);pointer-events:none}
+/* D-195：**按钮必须自己接回点击**。`pointer-events` 是可继承的：`.dl-deco` 设了 none 之后，
+   嵌在它里面的行（节点库/程序树/仓库格子）全都变成"点不到" —— 真实事故：
+   给行加上 parent 嵌套后，点击全部落到 `.dl-screen` 上。 */
+.dl-btn{pointer-events:auto}
+/* D-195：可平移容器是交互表面（空白处接手指） */
+.dl-el.dl-pan{pointer-events:auto}
 .dl-deco.dl-deco-text{color:var(--dl-text)}
 /* 候选不匹配：标灰（原因写在文字里） */
 .dl-muted{opacity:.45}
@@ -100,6 +115,23 @@ body{color:var(--dl-text);font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;
   font-size:var(--dl-fs,inherit);color:var(--dl-color,inherit);
   line-height:var(--dl-lh,1.4);text-align:var(--dl-align,center)}
 .dl-el{text-align:var(--dl-align,center)}
+/* D-194：**文本输入**（`kind:'input'`）。输入框不是按钮：要原生光标、可选中文字、有焦点态。 */
+.dl-el.dl-input{background:#0f1420;border:1px solid var(--dl-line);border-radius:6px;
+  padding:0 10px;color:var(--dl-text);font:inherit;user-select:text;cursor:text;
+  outline:none;min-width:0;text-align:left}
+.dl-el.dl-input::placeholder{color:#5d6a80}
+.dl-el.dl-input:focus{border-color:var(--dl-accent);box-shadow:0 0 0 2px #4c84fa33}
+/* D-194：多行输入（导入 JSON 用）。等宽字体，方便看结构 */
+textarea.dl-el.dl-input{font-family:Consolas,monospace;font-size:11.5px;line-height:1.45;
+  padding:6px 8px;resize:none;white-space:pre;overflow:auto}
+/* D-194：可拖拽平移的容器 —— 抓手光标，让人知道"这里能拖" */
+.dl-scroll[data-pan]{cursor:grab}
+.dl-scroll[data-pan]:active{cursor:grabbing}
+/* D-194：行列表（rowsFrom）—— 选中行高亮、槽位头弱化、插入预览线 */
+.dl-el.dl-row-sel{background:#22304d;box-shadow:inset 0 0 0 1px var(--dl-accent)}
+.dl-el.dl-row-slot{color:#728098}
+/* 插入预览线：元素 id 固定为 `ai_drop`（渲染层会把它写进 title），这里按 id 上样式 */
+.dl-el[title="ai_drop"]{background:var(--dl-accent);box-shadow:0 0 6px var(--dl-accent);pointer-events:none}
 /* D-185：滚动容器 —— 用**原生滚动**（丝滑自然），滚动条外观收敛成游戏 UI 的细样式 */
 .dl-scroll{overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ffffff40 transparent}
 .dl-scroll::-webkit-scrollbar{width:6px;height:6px}
@@ -112,8 +144,8 @@ body{color:var(--dl-text);font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;
 /* D-185：不可点（把点击透给下层） */
 .dl-clickthrough{pointer-events:none}
 /* 尺寸类（渲染层按元素高度加）：大控件用大字号，小角标用小字号 */
-.dl-el.dl-lg .dl-txt{font-size:22px;font-weight:600}
-.dl-el.dl-sm .dl-txt{font-size:11px}
+.dl-el.dl-lg .dl-txt{font-size:var(--dl-fs,22px);font-weight:600}
+.dl-el.dl-sm .dl-txt{font-size:var(--dl-fs,11px)}
 /* 弹窗层 */
 .dl-modal{position:absolute;inset:0;z-index:100}
 .dl-modal[data-depth="2"]{z-index:200}
