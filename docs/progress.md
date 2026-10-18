@@ -611,6 +611,79 @@ D-184/D-185 我报过的"✓ 控件齐备"这一条**当时检的是错的文件
 
 ---
 
+### ✅ 已修复：预览里点弹窗外面关不掉（D-191，2026-10-17）
+
+> 用户报告：**「为什么我预览的时候点击弹窗外的界面仍然无法关闭弹窗」**。
+> D-190 的口径是对的，**实现坏了**；产品侧一直是好的，只有预览坏。
+
+| 项 | 内容 |
+|---|---|
+| **根因** | D-189 的预览**手抄了一份**产品 `.dl-*` 样式，把 `.dl-layer` 写成 `position:absolute;inset:0`。它铺满全屏、在 DOM 里排在 `.dl-mask` **之后** ⇒ 整张遮罩被盖住。点"弹窗外面"命中的是 `.dl-layer`（无 `data-action`）⇒ 无反应。产品 `app.css` 从来没有 `.dl-layer` 的布局规则（静态、零高），所以只有预览坏。 |
+| **测试为什么漏** | jsdom 没有命中测试。之前 `MC-3`/探针都是**直接往遮罩节点派发 click**，绕过了"点击落在哪个元素上"。对"遮挡"这类缺陷，只测事件不测命中的断言是瞎的。 |
+| **修法一（除根）** | 预览改为注入 `<link href="/public/app.css">`，**删掉布局台里全部 `#pvstage .dl-*` 副本**（本次还发现那份副本被**重复粘贴了一次**）。预览与产品共用同一份 CSS ⇒ 不可能再漂移。 |
+| **修法二（写死不变量）** | `app.css`：`.dl-layer{pointer-events:none}`（只这一条，注释明写"不要给它 position/inset/height:100%"）+ `.dl-modal .dl-el{pointer-events:auto}`；并修 `.dl-modal .dl-el.dl-clickthrough{pointer-events:none}`（原先被 `.dl-modal .dl-el` 压过，装进弹窗后失效）。 |
+| **修法三（不依赖 CSS 的兜底）** | 产品 `app.js` 的 `onClick` 与预览 `pvWire` 各加一条：**未命中任何 `[data-action]` 且点在 `.dl-layer`/`.dl-modal` 上 ⇒ 等同点遮罩**。将来若有人又给 `.dl-layer` 加尺寸，功能也不会静默失效。 |
+| **门禁升级** | **MC-6** `.dl-layer` 规则体不得含 absolute/fixed/inset/height:100%，必须 `pointer-events:none`；**MC-7** 布局台不得再有 `#pvstage .dl-*` 副本、必须加载 `/public/app.css`；**MC-8** 遮罩须为 `.dl-modal` 首个直接子元素、`.dl-layer` 不得有内联 style、两处兜底必须存在。 |
+
+**真 HTTP 预览核验 12/12**（关键：这次**派发给 `.dl-layer`**，不是遮罩）：
+`.dl-layer` 计算样式 `position:static` / `pointer-events:none` / 无内联 style；点包装层 → 弹窗关闭；
+点遮罩 → 关闭；**点面板 → 不关**（"里面"与"外面"分得清）；全程零页面错误。
+
+**收口实跑**：`npm test` = **1294 通过 / 0 失败**（+3）；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`check-docs` PASS；`runtime/check-lab.js` 3/3；`test-layout-lab.js` 13 组；`test-layout-lab-browser.js` 16 组。
+
+---
+
+### ✅ 已交付：屏即界面（去掉页面级标题与屏外白框，D-192，2026-10-17）
+
+> 用户口径：**「预览和实际前端效果都应该直接只有这个屏，不应再有上面的 debuglitev3 和外面一圈白框」**。
+
+| 来源 | 修法 | 实测 |
+|---|---|---|
+| **「上面的 debuglitev3」** | `public/index.html` 删掉 `<h1>Debug-Lite v3 · 账号</h1>`（只剩 `#view`）；`render.js` **布局屏不再输出 `<h2>`** | SC-1 / SC-2 |
+| **「外面一圈白框」** | 根因是 `app.css` **从来没有 `body` 规则** ⇒ 深色屏落在浏览器默认**白底** + `<body>` 8px 默认边距里。补 `html,body{margin:0;padding:0;height:100%;background:var(--dl-bg);overflow:hidden}` | SC-3；真 HTTP 计算样式核实 |
+| **屏要铺满** | `#view>.dl-screen{position:absolute;inset:0}`（不再靠 `aspect-ratio` 留上下白边） | SC-3 |
+| **屏外那三块不挤屏** | 改为**叠在屏上**：`#notice` 顶部 toast、`.buttons`（刷新/阵容编辑/对战历史/管理面板）底部悬浮条、旧版 `#modal` 全屏浮层。为此布局分支输出顺序改为 **屏 → 提示 → 兜底按钮 → 旧弹窗**（`#notice` 必须排在屏**之后**，CSS 才能用 `.dl-screen ~ #notice` 选中） | 真产品/预览渲染实测 |
+| **预览里也没有外框** | `#pvbox` 去 1px 描边阴影、`.pvwrap` padding 归零、`#pv` 改深色、`pvScale` 不扣 20px | SC-4；真 HTTP 计算样式 `box-shadow:none` / `padding:0px` |
+
+**口径边界（重要）**：**文字屏（旧世代）仍然保留 `<h2>` 标题** —— 它们靠标题标识自己，
+这条"只留这个屏"的口径**只针对布局屏**。`SC-2b` 专门钉住这一点，免得以后一刀切删错。
+
+**踩到的一个测试陷阱（如实记录）**：删 `<h1>` 时留了说明性注释，注释里**提到了**被删的标签文本；
+探针直接 `indexOf('<h1')` 就被自己的注释骗成"没删"。**断言前必须剥 HTML/CSS 注释** ——
+`screen-chrome.test.js` 里已用 `stripHtmlComments` / `stripCssComments` 统一处理。
+
+**收口实跑**：`npm test` = **1299 通过 / 0 失败**（+5）；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`check-docs` PASS；`runtime/check-lab.js` 3/3；真 HTTP 预览核验 **16/16**。
+
+---
+
+### ✅ 已交付：布局台界面整理（D-193，2026-10-17）
+
+> 用户口径：**「现在这个布局工具太乱了，帮我整理下，把没用的提示信息都删掉，使用体验丝滑整洁一点」**。
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| **顶栏** | 24 个控件一长条散排，还挂着「dev 原型 · 单文件 · 无依赖 · 编辑的是数据（JSON）」 | **5+ 组**（画面/断点/吸附/元素/撤销·缩放/预览·校验·导入导出/存盘），组间竖线；副标题删掉；「素材清单·归位素材」收进「更多」下拉并**点别处自动收起** |
+| **右栏** | 8 个平铺分区、50+ 行控件一路滚到底 | **13 个可折叠分区，默认只开 2 块** |
+| **校验** | 常驻展开 | 收起时标题标数量（`校验 · 无问题` / `校验 · 2 错误 / 15 警告`）；**有 error 才自动摊开**并转红 |
+| **静态讲解** | 层级说明、`when` 讲解、素材出图规范、「怎么被真代码消费」整块、底栏 6 条快捷键 | **全删**；快捷键收进一个悬停提示 `快捷键 ⌨` |
+| **左栏** | 素材目录占一块 | 收进折叠 |
+| **死类** | `class="primary"` **从未定义**（主操作按钮无任何强调） | 补上定义，预览/存盘/一键应用终于能一眼认出来 |
+
+**保留原则（这条很重要）**：只删**无 id 的静态讲解**；**所有有 id 的 `.hint` 必须留** ——
+它们是 JS 实时写的状态行（`pParentInfo`/`pGridInfo`/`pPressInfo`/`sInfo`…），删了运行时直接 null 崩。
+新增 `.hint:empty{display:none}`，空状态行不占位。
+
+**新增自维护护栏 `LT-1`**：把 app 脚本里 **155 个 `$('id')` 引用**逐个与 HTML 对账 ——
+"整理时删掉看着只是提示、其实脚本在写的 DOM"是这类重构最容易犯的错，这条会立刻红。
+
+**收口实跑**：`npm test` = **1305 通过 / 0 失败**（+6）；`npm run gate` = **9 PASS / 0 FAIL / 0 PEND**；
+`check-docs` PASS；`check-lab` 3/3；`test-layout-lab` 13 组；`test-layout-lab-browser` **16 组**；
+整洁度专项探针 **11/11**（13 分区只开 2 块、无静态 hint、选中后 10 个状态行全部有内容、关键控件 30 项齐备、「更多」点画布自动收起、零 jsdom 错误）。
+
+---
+
 ## 1. 文档体系（权威链）
 
 ```

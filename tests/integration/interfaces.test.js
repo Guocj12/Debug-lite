@@ -63,8 +63,11 @@ test('IF-1 T-DC-8：decisions.md 每条 D-编号在 interfaces.md 有落点（�
   //     （`POST /me/warehouse/dismantle`，无产出；`aiNode`/`package` 不可分解）、
   //     D-188 布局表驱动界面重启（引擎 `grid.flow` 自动流式排布 + `press` 按下四模式 + `assetPressed` 双素材）、
   //     D-189 布局台预览改为「真实产品渲染」（点所有控件执行真实动作 + mock 数据 + 「仓库件数」开关验滚动）、
-  //     D-190 弹窗关闭方式统一为「点遮罩」，取消弹窗内关闭键（遮罩成为唯一出口 ⇒ 禁用则判 error））
-  assert.equal(decided.size, 142, `D 编号数量应为 142（decisions.md 无跳段之外的编号）`);
+  //     D-190 弹窗关闭方式统一为「点遮罩」，取消弹窗内关闭键（遮罩成为唯一出口 ⇒ 禁用则判 error）、
+  //     D-191 修「预览里点弹窗外面关不掉」（预览手抄的 `.dl-layer` 盖住遮罩 ⇒ 改为加载真 app.css + DOM 兜底）、
+  //     D-192 屏即界面（去掉页面级 `<h1>` 与布局屏 `<h2>`；body 深色铺满消除白框；屏外三块改为叠加层）、
+  //     D-193 布局台界面整理（顶栏分组 + 右栏 13 个可折叠分区 + 删静态讲解 + 校验按错误数自动展开））
+  assert.equal(decided.size, 145, `D 编号数量应为 145（decisions.md 无跳段之外的编号）`);
 });
 
 test('IF-1b 数据表文本也承载部分 D 落点（schema.js 注释，T-DC-2 侧）', () => {

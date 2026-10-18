@@ -21,14 +21,47 @@
   button.danger:hover{border-color:var(--err);color:#ffd9d9}
   input,select,textarea{background:#0f1420;border:1px solid var(--line);border-radius:7px;padding:4px 7px;width:100%}
   textarea{font-family:Consolas,monospace;font-size:11.5px;line-height:1.45;resize:vertical}
-  header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+  /* ---------- 顶栏：紧凑分组（D-193 整理） ---------- */
+  header{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 10px;
+    background:var(--panel);border-bottom:1px solid var(--line);font-size:12.5px}
   header .grow{flex:1}
   header .tag{color:var(--dim);font-size:12px}
+  /* 分组：每组一块紧凑分段，组间用竖线隔开，比 24 个按钮散排好认很多 */
+  header .grp{display:flex;gap:5px;align-items:center;padding-right:8px;border-right:1px solid var(--line)}
+  header .grp:last-of-type{border-right:0}
+  header .grp>.tag{margin-right:1px}
+  /* 顶栏按钮比属性面板的按钮更矮一点，避免一屏塞不下 */
+  header button{padding:4px 9px;border-radius:7px}
+  /* 分组标签（画/断点/吸附…）：只做视觉锚点，不需要可点 */
+  header .glabel{color:#6d7b91;font-size:11px;letter-spacing:.4px}
+  .vb{width:1px;height:18px;background:var(--line2);flex:none}
+  /* 主操作按钮（预览 / 存盘 / 一键应用）：之前 `class="primary"` 根本没定义，是个死类 */
+  button.primary{background:var(--accent2);border-color:#6f9bff;color:#fff}
+  button.primary:hover{background:#4a7ce8;border-color:#9bbdff}
+  /* 顶栏「更多」下拉：把少用的素材操作收起来，别占一整排 */
+  .hdr-more{position:relative}
+  .hdr-more>summary{list-style:none;cursor:pointer;padding:4px 9px;border:1px solid var(--line2);
+    border-radius:7px;background:var(--panel2);color:var(--text);font-size:12.5px}
+  .hdr-more>summary::-webkit-details-marker{display:none}
+  .hdr-more>summary:hover{border-color:var(--accent)}
+  .hdr-more .pop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;display:flex;flex-direction:column;
+    gap:5px;padding:6px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;
+    box-shadow:0 8px 24px #0009;min-width:150px}
+  .hdr-more .pop>button{width:100%;text-align:left}
   main{flex:1;display:flex;min-height:0}
   .col{display:flex;flex-direction:column;min-height:0}
-  .left{width:260px;background:var(--panel);border-right:1px solid var(--line)}
-  .right{width:330px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
+  .left{width:250px;background:var(--panel);border-right:1px solid var(--line)}
+  .right{width:318px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
   .center{flex:1;display:flex;flex-direction:column;min-width:0;background:repeating-linear-gradient(45deg,#0b0f16,#0b0f16 10px,#0d1220 10px,#0d1220 20px)}
+  /* ---------- 右栏：每个分区都是可折叠的 <details>（D-193） ---------- */
+  details.sect{border-bottom:1px solid var(--line)}
+  details.sect>summary{list-style:none;cursor:pointer;padding:7px 10px;font-size:12px;color:#a9b6c9;
+    font-weight:600;letter-spacing:.3px;display:flex;align-items:center;gap:6px;user-select:none}
+  details.sect>summary::-webkit-details-marker{display:none}
+  details.sect>summary::before{content:'▸';color:#5d6a80;font-size:10px;transition:transform .12s}
+  details.sect[open]>summary::before{transform:rotate(90deg)}
+  details.sect>summary:hover{background:#1b2231;color:var(--text)}
+  details.sect>.body{padding:0 10px 8px}
   .sect{padding:8px 10px;border-bottom:1px solid var(--line)}
   .sect h3{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:600;letter-spacing:.5px}
   .list{overflow:auto;flex:1;padding:6px}
@@ -116,16 +149,19 @@
   .prev .dot{position:absolute;z-index:2;background:#ffffff22;border:1px solid #ffffff33;border-radius:2px}
   .prev .dot.img{background:#0000;border:0}
   .prev .dot.img img{width:100%;height:100%;object-fit:contain;display:block}
-  .row{display:flex;gap:6px;align-items:center;margin:4px 0}
-  .row label{width:76px;color:var(--dim);font-size:12px;flex:none}
+  .row{display:flex;gap:6px;align-items:center;margin:5px 0}
+  .row label{width:74px;color:var(--dim);font-size:12px;flex:none}
   .row .seg{display:flex;gap:4px;flex:1}
   .row .seg button{flex:1;padding:3px 4px;font-size:12px}
   .issues{max-height:120px;overflow:auto;font-size:11.5px}
   .issues div{padding:2px 0}
   .err{color:var(--err)}.warn{color:var(--warn)}.ok{color:var(--ok)}
-  .bar{padding:6px 12px;border-top:1px solid var(--line);background:var(--panel);color:var(--dim);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  .bar{padding:5px 12px;border-top:1px solid var(--line);background:var(--panel);color:var(--dim);
+    font-size:11.5px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
   .kbd{font-family:Consolas,monospace;background:#0f1420;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
-  .hint{color:var(--dim);font-size:11.5px;padding:2px 0}
+  /* 提示文字：只留"活着"的状态行（JS 会写的那种），静态讲解一律不摆在这里（D-193） */
+  .hint{color:#728098;font-size:11.5px;line-height:1.5;padding:1px 0}
+  .hint:empty{display:none}
   #banner{margin:8px 10px 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:1.6;
     background:#2a2314;border:1px solid var(--warn);color:#ffe1a8;display:flex;gap:10px;align-items:flex-start}
   #banner[hidden]{display:none}
@@ -134,77 +170,21 @@
   details summary{cursor:pointer;color:var(--dim);font-size:12px}
   .swatch{width:10px;height:10px;border-radius:2px;flex:none}
   /* 预览弹窗流程：叠加在中间列上 */
-  #pv{position:absolute;inset:0;z-index:40;background:#080b11ee;display:flex;flex-direction:column}
+  #pv{position:absolute;inset:0;z-index:40;background:var(--dl-bg,#0a0e16);display:flex;flex-direction:column}
   #pv[hidden]{display:none}
-  .pvbar{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:12px}
-  .pvwrap{flex:1;overflow:auto;display:flex;padding:10px}
-  #pvbox{margin:auto;position:relative;flex:none;background:#0a0e16;box-shadow:0 0 0 1px var(--line2)}
-  #pvstage{position:relative;transform-origin:top left}
-  /* 旧版预览的类（`.pvel`/`.pvmask`/`.pvhit`）**已随 D-189 删除** —— 预览现在跑产品渲染，
-     那些粗代模型的样式不再有任何宿主。 */
-  /* D-189：预览舞台跑**产品渲染**（format→render），所以产品的界面样式要引进来。
-     全部限定在 `#pvstage` 作用域内，避免污染布局台自己的外观。 */
-  #pvstage{background:#0a0e16;overflow:hidden}
-  #pvstage .dl-screen{position:relative;width:100%;height:100%;overflow:hidden;color:#e2eaf6;
-    font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;background:#0a0e16 center/cover no-repeat;user-select:none}
-  #pvstage .dl-screen-bg{position:absolute;inset:0;background:center/cover no-repeat;pointer-events:none}
-  #pvstage .dl-el{position:absolute;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
-  #pvstage .dl-el>img{width:100%;height:100%;object-fit:contain;pointer-events:none}
-  #pvstage .dl-btn{cursor:pointer;border:0;background:transparent;color:inherit;font:inherit;padding:0;-webkit-tap-highlight-color:transparent}
-  #pvstage .dl-btn:hover{filter:brightness(1.12)}
-  #pvstage .dl-deco{color:#8b98ac;pointer-events:none}
-  #pvstage .dl-deco.dl-deco-text{color:#e2eaf6}
-  #pvstage .dl-muted{opacity:.45}
-  #pvstage .dl-ph{border:1px dashed #3a4458;border-radius:6px;
-    background:repeating-linear-gradient(45deg,#ffffff08,#ffffff08 6px,transparent 6px,transparent 12px)}
-  #pvstage .dl-hit-path{clip-path:var(--dl-clip)}
-  #pvstage .dl-modal{position:absolute;inset:0}
-  #pvstage .dl-mask{position:absolute;inset:0}
-  #pvstage .dl-layer{position:absolute;inset:0}
-  #pvstage .dl-scroll{overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-  #pvstage .dl-scroll::-webkit-scrollbar{width:8px;height:8px}
-  #pvstage .dl-scroll::-webkit-scrollbar-thumb{background:#3a4458;border-radius:4px}
-  #pvstage .dl-clickthrough{pointer-events:none}
-  #pvstage .dl-img-pressed{display:none}
-  #pvstage .dl-press-tap:active .dl-img-pressed,#pvstage .dl-press-tap.dl-pressed .dl-img-pressed{display:block}
-  #pvstage .dl-press-tap:active>img:not(.dl-img-pressed),#pvstage .dl-press-tap.dl-pressed>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-press-hover:hover .dl-img-pressed{display:block}
-  #pvstage .dl-press-hover:hover>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-press-sticky.dl-pressed .dl-img-pressed,#pvstage .dl-press-state.dl-pressed .dl-img-pressed{display:block}
-  #pvstage .dl-press-sticky.dl-pressed>img:not(.dl-img-pressed),#pvstage .dl-press-state.dl-pressed>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-pressed{filter:brightness(1.18)}
-  #pvstage .dl-txt{position:relative;z-index:1}
-  .center{position:relative}
-  #pvstage{background:#0a0e16;overflow:hidden}
-  #pvstage .dl-screen{position:relative;width:100%;height:100%;overflow:hidden;color:#e2eaf6;
-    font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;background:#0a0e16 center/cover no-repeat;user-select:none}
-  #pvstage .dl-screen-bg{position:absolute;inset:0;background:center/cover no-repeat;pointer-events:none}
-  #pvstage .dl-el{position:absolute;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
-  #pvstage .dl-el>img{width:100%;height:100%;object-fit:contain;pointer-events:none}
-  #pvstage .dl-btn{cursor:pointer;border:0;background:transparent;color:inherit;font:inherit;padding:0;-webkit-tap-highlight-color:transparent}
-  #pvstage .dl-btn:hover{filter:brightness(1.12)}
-  #pvstage .dl-deco{color:#8b98ac;pointer-events:none}
-  #pvstage .dl-deco.dl-deco-text{color:#e2eaf6}
-  #pvstage .dl-muted{opacity:.45}
-  #pvstage .dl-ph{border:1px dashed #3a4458;border-radius:6px;
-    background:repeating-linear-gradient(45deg,#ffffff08,#ffffff08 6px,transparent 6px,transparent 12px)}
-  #pvstage .dl-hit-path{clip-path:var(--dl-clip)}
-  #pvstage .dl-modal{position:absolute;inset:0}
-  #pvstage .dl-mask{position:absolute;inset:0}
-  #pvstage .dl-layer{position:absolute;inset:0}
-  #pvstage .dl-scroll{overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-  #pvstage .dl-scroll::-webkit-scrollbar{width:8px;height:8px}
-  #pvstage .dl-scroll::-webkit-scrollbar-thumb{background:#3a4458;border-radius:4px}
-  #pvstage .dl-clickthrough{pointer-events:none}
-  #pvstage .dl-img-pressed{display:none}
-  #pvstage .dl-press-tap:active .dl-img-pressed,#pvstage .dl-press-tap.dl-pressed .dl-img-pressed{display:block}
-  #pvstage .dl-press-tap:active>img:not(.dl-img-pressed),#pvstage .dl-press-tap.dl-pressed>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-press-hover:hover .dl-img-pressed{display:block}
-  #pvstage .dl-press-hover:hover>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-press-sticky.dl-pressed .dl-img-pressed,#pvstage .dl-press-state.dl-pressed .dl-img-pressed{display:block}
-  #pvstage .dl-press-sticky.dl-pressed>img:not(.dl-img-pressed),#pvstage .dl-press-state.dl-pressed>img:not(.dl-img-pressed){display:none}
-  #pvstage .dl-pressed{filter:brightness(1.18)}
-  #pvstage .dl-txt{position:relative;z-index:1}
+  .pvbar{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);
+    color:var(--dim);font-size:12px;background:#080b11}
+  /* D-192：**预览里只留这个屏** —— 去掉外面那圈框（内边距 + 1px 描边 + 阴影）。
+     用户口径：「不应再有上面那行 Debug-Lite 和外面一圈白框」。 */
+  .pvwrap{flex:1;overflow:hidden;display:flex;padding:0;background:var(--dl-bg,#0a0e16)}
+  #pvbox{margin:auto;position:relative;flex:none;background:var(--dl-bg,#0a0e16);box-shadow:none}
+  /* 旧版预览的类（`.pvel`/`.pvmask`/`.pvhit`）**已随 D-189 删除**。
+     D-190 修正：预览**不再手抄**产品的 `.dl-*` 样式 —— 之前抄的那份把 `.dl-layer` 写成了
+     `position:absolute;inset:0`，它铺满全屏、排在遮罩**之后**，把整张遮罩盖住了 ⇒
+     "点弹窗外面没反应"。产品侧 `.dl-layer` 根本没有规则（静态、零高），所以产品是好的、
+     只有预览坏了。现在预览在启动时**直接加载 `/public/app.css`**（单一真源，见 ensureProduct），
+     这里只留预览容器自己的尺寸规则。 */
+  #pvstage{position:relative;transform-origin:top left;background:#0a0e16;overflow:hidden}
   .center{position:relative}
   @media (max-width:900px){ main{flex-direction:column} .left,.right{width:auto;max-height:40vh} }
 </style>
@@ -213,65 +193,84 @@
 
 <header>
   <strong>布局台</strong>
-  <span class="tag">dev 原型 · 单文件 · 无依赖 · 编辑的是数据（JSON）</span>
-  <span class="grow"></span>
-  <label class="tag">画面</label>
-  <select id="screenSel" style="width:150px"></select>
-  <input id="screenNewName" placeholder="新画面名（例 modal_role）" style="width:170px">
-  <button id="btnScreenAdd" title="新增整屏画面（切场景用）">＋整屏</button>
-  <button id="btnScreenModal" title="新增弹窗画面（覆盖在当前画面之上）">＋弹窗</button>
-  <button id="btnScreenDel" class="danger" title="删除当前画面（点两次确认）">删画面</button>
-  <label class="tag">编辑断点</label>
-  <select id="editBp" style="width:190px"></select>
-  <label class="tag">吸附</label>
-  <select id="grid" style="width:96px">
-    <option value="0">关</option><option value="4">4px</option><option value="8" selected>8px</option><option value="16">16px</option>
-  </select>
-  <button id="btnGuides" class="on" title="对齐辅助线">辅助线</button>
-  <span class="grow"></span>
-  <button id="btnUndo">撤销</button>
-  <button id="btnRedo">重做</button>
-  <span class="seg" style="flex:none">
-    <button id="btnZoomOut" title="缩小（Ctrl/⌘ + -）">－</button>
-    <button id="btnZoom100" title="实际大小（Ctrl/⌘ + 1）">100%</button>
-    <button id="btnZoomIn" title="放大（Ctrl/⌘ + +）">＋</button>
-    <button id="btnFit" title="适应窗口（Ctrl/⌘ + 0）">适应</button>
+  <!-- D-193：24 个控件按用途分 4 组，组间竖线隔开（原来一长条散排，找不到东西） -->
+  <span class="grp">
+    <span class="glabel">画面</span>
+    <select id="screenSel" style="width:132px"></select>
+    <input id="screenNewName" placeholder="新画面名" style="width:110px">
+    <button id="btnScreenAdd" title="新增整屏画面（切场景用）">＋整屏</button>
+    <button id="btnScreenModal" title="新增弹窗画面（覆盖在当前画面之上）">＋弹窗</button>
+    <button id="btnScreenDel" class="danger" title="删除当前画面（点两次确认）">删</button>
   </span>
-  <button id="btnAdd">＋元素</button>
-  <button id="btnDup">复制</button>
-  <button id="btnDel" class="danger">删除</button>
-  <button id="btnImport">导入 JSON</button>
-  <button id="btnExport">导出 JSON</button>
-  <button id="btnCheck">校验</button>
-  <button id="btnPreview" title="预览：真实产品渲染。点任意控件都会执行它的真实动作（不发网络请求）">▶ 预览</button>
+  <span class="grp">
+    <span class="glabel">断点</span>
+    <select id="editBp" style="width:132px"></select>
+  </span>
+  <span class="grp">
+    <span class="glabel">吸附</span>
+    <select id="grid" style="width:74px">
+      <option value="0">关</option><option value="4">4px</option><option value="8" selected>8px</option><option value="16">16px</option>
+    </select>
+    <button id="btnGuides" class="on" title="对齐辅助线">辅助线</button>
+  </span>
+  <span class="grp">
+    <button id="btnAdd" title="新增元素（快捷键 A）">＋元素</button>
+    <button id="btnDup" title="复制选中元素（Ctrl/⌘+D）">复制</button>
+    <button id="btnDel" class="danger" title="删除选中元素（Del）">删除</button>
+  </span>
+  <span class="grp">
+    <button id="btnUndo" title="撤销（Ctrl/⌘+Z）">撤销</button>
+    <button id="btnRedo" title="重做（Ctrl/⌘+Shift+Z）">重做</button>
+    <span class="seg" style="flex:none">
+      <button id="btnZoomOut" title="缩小（Ctrl/⌘ + -）">－</button>
+      <button id="btnZoom100" title="实际大小（Ctrl/⌘ + 1）">100%</button>
+      <button id="btnZoomIn" title="放大（Ctrl/⌘ + +）">＋</button>
+      <button id="btnFit" title="适应窗口（Ctrl/⌘ + 0）">适应</button>
+    </span>
+  </span>
+  <span class="grow"></span>
+  <span class="grp">
+    <button id="btnPreview" class="primary" title="预览：真实产品渲染。点任意控件都会执行它的真实动作（不发网络请求）">▶ 预览</button>
+    <button id="btnCheck" title="校验当前布局表（错误 / 警告）">校验</button>
+    <button id="btnImport" title="从 JSON 文件导入整张布局表">导入</button>
+    <button id="btnExport" title="把整张布局表导出成 JSON 文件">导出</button>
+  </span>
   <!-- 需要本地服务（node tools/layout/lab-server.js）才能用：直接双击打开时这些按钮会提示 -->
-  <span class="vb"></span>
-  <button id="btnSaveWs" class="primary" title="把布局表写进工作区 tools/layout/layout-bundle.raw.json 并自动生成 public/layout-data.js">💾 存到工作区</button>
-  <button id="btnManifest" title="算出所有缺失的 UI 图片及名字（写 docs/frontend/assets-manifest.md）">📋 素材清单</button>
-  <button id="btnAssets" title="把 assets-inbox/ 里的素材改名/转 WebP/缩放后放进 public/assets/">🎨 归位素材</button>
-  <button id="btnApplyAll" class="primary" title="存盘 → 生成 → 清单 → 归位，一次做完">⚡ 一键应用</button>
+  <span class="grp">
+    <button id="btnSaveWs" class="primary" title="把布局表写进工作区 tools/layout/layout-bundle.raw.json 并自动生成 public/layout-data.js">💾 存盘</button>
+    <button id="btnApplyAll" class="primary" title="存盘 → 生成 → 清单 → 归位，一次做完">⚡ 一键应用</button>
+  </span>
+  <!-- 少用的素材操作收进「更多」，不再占一整排 -->
+  <details class="hdr-more">
+    <summary title="更多素材相关操作">更多</summary>
+    <div class="pop">
+      <button id="btnManifest" title="算出所有缺失的 UI 图片及名字（写 docs/frontend/assets-manifest.md）">📋 素材清单</button>
+      <button id="btnAssets" title="把 assets-inbox/ 里的素材改名/转 WebP/缩放后放进 public/assets/">🎨 归位素材</button>
+    </div>
+  </details>
 </header>
 
 <main>
   <aside class="col left">
-    <div class="sect">
-      <h3>层级（界面 / 弹窗的包含关系）</h3>
-      <div class="hint">
+    <div class="sect" style="padding-bottom:6px">
+      <div class="row" style="margin:0">
         <span class="seg" style="flex:none">
           <button id="btnSideTree" class="on" title="树状：看得清谁包含谁、点谁能进哪个画面">层级</button>
           <button id="btnSideList" title="平铺：当前画面的元素清单">平铺</button>
         </span>
-        点画面名=切过去 · 点元素名=选中它 · <span class="kbd">↩</span>=已在上方画过（避免死循环）
       </div>
       <div class="hint" id="treeInfo">—</div>
     </div>
     <div class="tree" id="tree"></div>
     <div class="list" id="list" hidden></div>
-    <div class="sect">
-      <h3>素材（可选，仅本地预览）</h3>
-      <div class="row"><button id="btnAssetDir" style="flex:1">选整个素材目录…</button></div>
-      <div class="hint" id="assetInfo">未载入素材：按文件名自动匹配 <span class="kbd">asset</span> 路径的最后一段。</div>
-    </div>
+    <!-- D-193：素材目录只用于本地预览，收进折叠，不占左栏 -->
+    <details class="sect">
+      <summary>素材目录（可选）</summary>
+      <div class="body">
+        <div class="row"><button id="btnAssetDir" style="flex:1">选整个素材目录…</button></div>
+        <div class="hint" id="assetInfo">—</div>
+      </div>
+    </details>
   </aside>
 
   <section class="center col">
@@ -311,273 +310,301 @@
       <span id="stZoom">—</span>
       <span id="stIssues">—</span>
       <span class="grow" style="flex:1"></span>
-      <span>快捷键：<span class="kbd">方向键</span> 微调 · <span class="kbd">Shift</span>+方向 10px · <span class="kbd">Del</span> 删 · <span class="kbd">Ctrl/⌘+D</span> 复制 · <span class="kbd">Ctrl/⌘+Z</span> 撤销 · <span class="kbd">Shift</span> 旋转吸附 15°</span>
+      <!-- D-193：原来把 6 条快捷键平铺在这行，太吵；收进一个悬停提示 -->
+      <span title="方向键：微调 1px
+Shift+方向：微调 10px
+Del：删除选中元素
+Ctrl/⌘+D：复制
+Ctrl/⌘+Z：撤销
+Ctrl/⌘+Shift+Z：重做
+P：编辑多边形形状
+Shift（拖动旋转时）：吸附 15°
+Ctrl/⌘ + / - / 0 / 1：缩放 / 适应 / 100%"
+        style="cursor:help;border-bottom:1px dotted var(--line2)">快捷键 ⌨</span>
     </div>
   </section>
 
   <aside class="col right">
-    <div class="sect">
-      <h3>属性（当前选中元素）</h3>
-      <div class="row"><label>id</label><input id="pId" placeholder="btn_warehouse"></div>
-      <div class="row"><label>显示名</label><input id="pLabel" placeholder="仓库"></div>
-      <div class="row"><label>注释</label>
-        <textarea id="pDesc" rows="4" spellcheck="false"
-          placeholder="用自然语言写清这一块是干什么的、点了会发生什么、有哪些失败路径。例：点它打开「仓库」整屏；仓库为空时列表区显示提示文案。"></textarea>
+    <!-- D-193：右栏原来是一长条平铺（8 个分区、50+ 行控件，找东西要一直滚）。
+         现在每个分区都是可折叠的 <details>：默认只展开常用的两块，其余收起来点开再看。 -->
+    <details class="sect" id="secBasic" open>
+      <summary>元素 · 基本</summary>
+      <div class="body">
+        <div class="row"><label>id</label><input id="pId" placeholder="btn_warehouse"></div>
+        <div class="row"><label>显示名</label><input id="pLabel" placeholder="仓库"></div>
+        <div class="row"><label>类型</label>
+          <select id="pKind"><option value="button">按钮（需 action）</option><option value="deco">装饰件</option></select>
+        </div>
+        <div class="row"><label>action</label><input id="pAction" list="actionList" placeholder="warehouse-open"></div>
+        <datalist id="actionList"></datalist>
+        <div class="row"><label>target 画面</label>
+          <select id="pTarget"><option value="">（无）</option></select>
+        </div>
+        <div class="hint" id="pTargetInfo">—</div>
+        <div class="row"><label>payload</label><input id="pPayload" placeholder='{"slot":"slot1"}'></div>
+        <div class="row"><label>注释</label>
+          <textarea id="pDesc" rows="2" spellcheck="false" placeholder="这一块干什么、点了会发生什么"></textarea>
+        </div>
+        <div class="hint" id="pDescInfo">—</div>
       </div>
-      <div class="hint" id="pDescInfo">—</div>
-      <div class="row"><label>类型</label>
-        <select id="pKind"><option value="button">按钮（需 action）</option><option value="deco">装饰件</option></select>
+    </details>
+
+    <details class="sect" id="secGeom" open>
+      <summary>元素 · 位置 / 形状</summary>
+      <div class="body">
+        <div class="row"><label>rect</label>
+          <input id="pX" type="number" step="1" title="x"><input id="pY" type="number" step="1" title="y">
+          <input id="pW" type="number" step="1" title="w"><input id="pH" type="number" step="1" title="h">
+        </div>
+        <div class="row"><label>锚点</label>
+          <select id="pAnchor"></select>
+        </div>
+        <div class="row"><label>命中区</label>
+          <select id="pHit"><option value="rect">rect 矩形</option><option value="ellipse">ellipse 椭圆</option><option value="path">path 矢量多边形</option><option value="alpha">alpha 像素</option></select>
+        </div>
+        <div class="row"><label>旋转 / 层级</label><input id="pRot" type="number" step="1" title="旋转"><input id="pZ" type="number" step="1" title="z"></div>
+        <div class="row"><label>隐藏</label><input id="pHidden" type="checkbox" style="width:auto"></div>
+        <div class="row"><label>顶点编辑</label><span class="seg"><button id="btnShapeMode" title="开启后才显示多边形顶点手柄（快捷键 P）">编辑形状（P）</button></span></div>
+        <div class="row"><label>多边形</label>
+          <span class="seg">
+            <select id="pPathPreset" style="flex:1"><option value="">预设形状…</option></select>
+            <button id="btnPathAdd" title="在最后一个顶点之后插入一个顶点">＋顶点</button>
+            <button id="btnPathDel" title="删除最后一个顶点（最少 3 个）">－顶点</button>
+          </span>
+        </div>
+        <div class="row"><label>等边矫正</label>
+          <span class="seg"><button id="btnPathRegular" title="按当前 rect 的宽高比，把当前形状矫正为等边正多边形（顶点数不变）">矫正为正 N 边形</button></span>
+        </div>
+        <div class="row"><label>path</label>
+          <textarea id="pPath" rows="2" spellcheck="false" placeholder="M50,0 L100,30 L100,100 L0,100 L0,30 Z"></textarea>
+        </div>
+        <div class="hint" id="pPathInfo">—</div>
       </div>
-      <div class="row"><label>action</label><input id="pAction" list="actionList" placeholder="goto-warehouse"></div>
-      <datalist id="actionList"></datalist>
-      <div class="row"><label>target 画面</label>
-        <select id="pTarget"><option value="">（无）</option></select>
-      </div>
-      <div class="hint" id="pTargetInfo">—</div>
-      <div class="row"><label>payload</label><input id="pPayload" placeholder='{"slot":"slot1"}'></div>
-      <div class="row"><label>素材路径</label><input id="pAsset" placeholder="assets/ui/btn_warehouse.svg"></div>
-      <!-- D-188：按下态素材 + 按下行为四模式 -->
-      <div class="row"><label>按下素材</label><input id="pAssetPressed" placeholder="assets/ui/btn_warehouse_pressed.webp" title="按钮按下时显示的图；与常态图并存，缺任一则不产生视觉变化"></div>
-      <div class="row"><label>按下行为</label>
-        <select id="pPress">
-          <option value="">（不设置）</option>
-          <option value="tap">tap 点击期间按下，松开恢复</option>
-          <option value="hover">hover 鼠标移上去就按下</option>
-          <option value="sticky">sticky 点击后保持按下</option>
-          <option value="state">state 由状态决定（如出战配置）</option>
-        </select>
-      </div>
-      <div class="row" id="pressStateRow"><label>状态键</label>
-        <span class="seg">
-          <select id="pPressKey" style="flex:1">
-            <option value="">（选键）</option>
-            <option value="activeSlot">activeSlot 当前显示的配置</option>
-            <option value="battleSlot">battleSlot 出战配置</option>
+    </details>
+
+    <details class="sect">
+      <summary>元素 · 素材 / 按下态</summary>
+      <div class="body">
+        <div class="row"><label>素材路径</label><input id="pAsset" placeholder="assets/ui/btn_warehouse.webp"></div>
+        <div class="row"><label>按下素材</label><input id="pAssetPressed" placeholder="assets/ui/btn_warehouse_pressed.webp" title="按钮按下时显示的图；与常态图并存，缺任一则不产生视觉变化"></div>
+        <div class="row"><label>本地选图</label><input id="pAssetFile" type="file" accept="image/*" style="padding:2px"></div>
+        <div class="row"><label>按下行为</label>
+          <select id="pPress">
+            <option value="">（不设置）</option>
+            <option value="tap">tap 点击期间按下，松开恢复</option>
+            <option value="hover">hover 鼠标移上去就按下</option>
+            <option value="sticky">sticky 点击后保持按下</option>
+            <option value="state">state 由状态决定（如出战配置）</option>
           </select>
-          <input id="pPressWhen" type="text" placeholder="等于 1，或 1,3" title="该键等于什么时按下（多个用逗号）">
-        </span>
+        </div>
+        <div class="row" id="pressStateRow"><label>状态键</label>
+          <span class="seg">
+            <select id="pPressKey" style="flex:1">
+              <option value="">（选键）</option>
+              <option value="activeSlot">activeSlot 当前显示的配置</option>
+              <option value="battleSlot">battleSlot 出战配置</option>
+            </select>
+            <input id="pPressWhen" type="text" placeholder="等于 1，或 1,3" title="该键等于什么时按下（多个用逗号）">
+          </span>
+        </div>
+        <div class="hint" id="pPressInfo">—</div>
       </div>
-      <div class="hint" id="pPressInfo">—</div>
-      <div class="row"><label>选图预览</label><input id="pAssetFile" type="file" accept="image/*" style="padding:2px"></div>
-      <div class="row"><label>命中区</label>
-        <select id="pHit"><option value="rect">rect 矩形</option><option value="ellipse">ellipse 椭圆</option><option value="path">path 矢量多边形</option><option value="alpha">alpha 像素</option></select>
-      </div>
-      <div class="row"><label>多边形</label>
-        <span class="seg">
-          <select id="pPathPreset" style="flex:1">
-            <option value="">预设形状…</option>
-          </select>
-          <button id="btnPathAdd" title="在最后一个顶点之后插入一个顶点">＋顶点</button>
-          <button id="btnPathDel" title="删除最后一个顶点（最少 3 个）">－顶点</button>
-        </span>
-      </div>
-      <div class="row"><label>等边矫正</label>
-        <span class="seg">
-          <button id="btnPathRegular" title="按当前 rect 的宽高比，把当前形状矫正为等边正多边形（顶点数不变）">矫正为正 N 边形</button>
-        </span>
-      </div>
-      <div class="row"><label>path</label>
-        <textarea id="pPath" rows="3" spellcheck="false" placeholder="M50,0 L100,30 L100,100 L0,100 L0,30 Z"></textarea>
-      </div>
-      <div class="hint" id="pPathInfo">—</div>
-      <div class="row"><label>锚点</label>
-        <select id="pAnchor"></select>
-      </div>
-      <div class="row"><label>rect</label>
-        <input id="pX" type="number" step="1" title="x"><input id="pY" type="number" step="1" title="y">
-        <input id="pW" type="number" step="1" title="w"><input id="pH" type="number" step="1" title="h">
-      </div>
-      <div class="row"><label>顶点编辑</label><span class="seg"><button id="btnShapeMode" title="开启后才显示多边形顶点手柄（快捷键 P）；避免与四角缩放手柄重叠">编辑形状（P）</button></span></div>
-      <div class="row"><label>旋转 / 层级</label><input id="pRot" type="number" step="1" title="旋转"><input id="pZ" type="number" step="1" title="z"></div>
-      <div class="row"><label>隐藏</label><input id="pHidden" type="checkbox" style="width:auto"></div>
-      <!-- ---------- D-185：容器 / 滚动 / 网格 / 文字 / 九宫格 ---------- -->
-      <div class="row"><label>装进谁</label>
-        <select id="pParent"><option value="">（不装，直接放画布上）</option></select>
-      </div>
-      <div class="hint" id="pParentInfo">—</div>
-      <div class="row"><label>滚动容器</label>
-        <span class="seg">
-          <select id="pScrollDir" style="flex:1">
-            <option value="">（不是容器）</option>
-            <option value="v">纵向滚动 v</option>
-            <option value="h">横向滚动 h</option>
-            <option value="both">双向 both</option>
-            <option value="none">只裁剪不滚</option>
-          </select>
-          <button id="btnMakeScroll" title="把选中元素变成滚动容器，并把它盖住的东西装进去">变成容器＋收进去</button>
-        </span>
-      </div>
-      <div class="row"><label>初始滚动</label>
-        <input id="pScrollTop" type="number" step="1" title="初始 scrollTop（设计期定格）">
-        <input id="pScrollLeft" type="number" step="1" title="初始 scrollLeft">
-        <label style="width:auto">渐隐</label><input id="pScrollFade" type="checkbox" style="width:auto">
-      </div>
-      <div class="hint" id="pScrollInfo">—</div>
-      <div class="row"><label>图标大小</label>
-        <span class="seg">
-          <input id="pCellW" type="number" step="1" title="卡片/图标宽">
-          <input id="pCellH" type="number" step="1" title="卡片/图标高">
-          <button id="btnGridApply" title="把子元素按这个尺寸等距排开（图标大小 = 卡片尺寸）">排成网格</button>
-        </span>
-      </div>
-      <div class="row"><label>网格间距</label>
-        <input id="pGapX" type="number" step="1" title="水平间距">
-        <input id="pGapY" type="number" step="1" title="垂直间距">
-        <input id="pPadX" type="number" step="1" title="内边距 x">
-        <input id="pPadY" type="number" step="1" title="内边距 y">
-      </div>
-      <!-- D-188：自动流式排布（不硬性规定几乘几；横放不下换行、竖放不下滚动） -->
-      <div class="row"><label>自动排布</label>
-        <span class="seg">
-          <label style="width:auto">按数量自动</label><input id="pGridFlow" type="checkbox" style="width:auto"
-            title="按容器宽自动算列数，从左到右从上到下排；横放不下自动换行">
-          <label style="width:auto">撑高内容</label><input id="pGridAutoH" type="checkbox" style="width:auto"
-            title="行数超出容器高时把内容高度撑开（外层 scroll 才能真正滚动）">
-        </span>
-      </div>
-      <div class="row"><label>强制列数</label>
-        <input id="pGridCols" type="number" step="1" min="0" title="0 = 按容器宽自动算（推荐）">
-        <label style="width:auto">预览条数</label><input id="pGridPreview" type="number" step="1" min="0"
-          title="设计期按这么多条预览排布结果（0 = 只用现有子元素）">
-      </div>
-      <div class="hint" id="pGridInfo">—</div>
-      <div class="row"><label>文字大小</label>
-        <input id="pFontSize" type="number" step="1" title="字号 px">
-        <button id="btnFontAuto" title="按住当前块高度自动定字号">按高度自算</button>
-      </div>
-      <div class="row"><label>文字样式</label>
-        <span class="seg">
-          <select id="pTextAlign" style="flex:1">
-            <option value="">（默认）</option><option value="left">左</option>
-            <option value="center">居中</option><option value="right">右</option>
-          </select>
-          <input id="pTextColor" type="color" style="width:44px;padding:1px" title="文字颜色">
-          <label style="width:auto">粗体</label><input id="pTextBold" type="checkbox" style="width:auto">
-        </span>
-      </div>
-      <div class="row"><label>九宫格</label>
-        <input id="pNine" type="number" step="1" title="四边切片厚度 px（0 = 关）">
-        <label style="width:auto">不透明</label><input id="pOpacity" type="number" step="0.05" min="0" max="1" title="0..1">
-        <label style="width:auto">不可点</label><input id="pClickThrough" type="checkbox" style="width:auto">
-      </div>
-      <div class="hint" id="pNineInfo">—</div>
-      <div class="row"><label>when</label><input id="pWhen" placeholder='{"activeSlot":1} 或 {"activeSlot":[1,3]}' ></div>
-      <div class="row" id="ovRow">
-        <label>断点覆盖</label>
-        <span class="seg">
-          <button id="btnOvSet" title="把当前显示位置固化为该断点的独立布局">固化到本断点</button>
-          <button id="btnOvClear" title="删除该断点的独立布局，回到自动适配">清除</button>
-        </span>
-      </div>
-      <div class="hint" id="pOvInfo">—</div>
-    </div>
+    </details>
 
-    <div class="sect">
-      <h3>画面属性（当前画面）</h3>
-      <div class="row"><label>角色</label>
-        <select id="sRole"><option value="screen">screen（整屏 · 切场景）</option><option value="modal">modal（弹窗 · 覆盖在底屏上）</option></select>
+    <details class="sect">
+      <summary>元素 · 条件显示 / 断点</summary>
+      <div class="body">
+        <div class="row"><label>when</label><input id="pWhen" placeholder='{"activeSlot":1} 或 {"activeSlot":[1,3]}' ></div>
+        <div class="row" id="ovRow">
+          <label>断点覆盖</label>
+          <span class="seg">
+            <button id="btnOvSet" title="把当前显示位置固化为该断点的独立布局">固化到本断点</button>
+            <button id="btnOvClear" title="删除该断点的独立布局，回到自动适配">清除</button>
+          </span>
+        </div>
+        <div class="hint" id="pOvInfo">—</div>
       </div>
-      <div class="row"><label>背景素材</label><input id="sBg" placeholder="assets/bg/hub_main.webp"></div>
-      <div class="row" id="maskRow"><label>遮罩</label>
-        <input id="sMaskColor" placeholder="#000000" style="width:80px">
-        <input id="sMaskOpacity" type="number" step="0.05" min="0" max="1" title="不透明度">
-        <label style="width:auto"><input id="sMaskClose" type="checkbox" style="width:auto"> 点遮罩关闭</label>
-      </div>
-      <div class="hint" id="sInfo">—</div>
-    </div>
+    </details>
 
-    <div class="sect">
-      <h3>径向生成插槽（正 n 边形方向）</h3>
-      <div class="row"><label>中心</label>
-        <span class="seg">
-          <button id="radFromSel" title="用当前选中元素的中心作为圆心">用选中元素中心</button>
-          <button id="radFromCanvas" title="用画布中心">用画布中心</button>
-        </span>
+    <details class="sect">
+      <summary>元素 · 容器 / 滚动 / 网格</summary>
+      <div class="body">
+        <div class="row"><label>装进谁</label>
+          <select id="pParent"><option value="">（不装，直接放画布上）</option></select>
+        </div>
+        <div class="hint" id="pParentInfo">—</div>
+        <div class="row"><label>滚动容器</label>
+          <span class="seg">
+            <select id="pScrollDir" style="flex:1">
+              <option value="">（不是容器）</option>
+              <option value="v">纵向滚动 v</option>
+              <option value="h">横向滚动 h</option>
+              <option value="both">双向 both</option>
+              <option value="none">只裁剪不滚</option>
+            </select>
+            <button id="btnMakeScroll" title="把选中元素变成滚动容器，并把它盖住的东西装进去">变成容器</button>
+          </span>
+        </div>
+        <div class="row"><label>初始滚动</label>
+          <input id="pScrollTop" type="number" step="1" title="初始 scrollTop（设计期定格）">
+          <input id="pScrollLeft" type="number" step="1" title="初始 scrollLeft">
+          <label style="width:auto">渐隐</label><input id="pScrollFade" type="checkbox" style="width:auto">
+        </div>
+        <div class="hint" id="pScrollInfo">—</div>
+        <div class="row"><label>图标大小</label>
+          <span class="seg">
+            <input id="pCellW" type="number" step="1" title="卡片/图标宽">
+            <input id="pCellH" type="number" step="1" title="卡片/图标高">
+            <button id="btnGridApply" title="把子元素按这个尺寸等距排开（图标大小 = 卡片尺寸）">排成网格</button>
+          </span>
+        </div>
+        <div class="row"><label>网格间距</label>
+          <input id="pGapX" type="number" step="1" title="水平间距">
+          <input id="pGapY" type="number" step="1" title="垂直间距">
+          <input id="pPadX" type="number" step="1" title="内边距 x">
+          <input id="pPadY" type="number" step="1" title="内边距 y">
+        </div>
+        <div class="row"><label>自动排布</label>
+          <span class="seg">
+            <label style="width:auto"><input id="pGridFlow" type="checkbox" style="width:auto"> 按数量自动</label>
+            <label style="width:auto"><input id="pGridAutoH" type="checkbox" style="width:auto"> 撑高内容</label>
+          </span>
+        </div>
+        <div class="row"><label>强制列数</label>
+          <input id="pGridCols" type="number" step="1" min="0" title="0 = 按容器宽自动算（推荐）">
+          <label style="width:auto">预览条数</label><input id="pGridPreview" type="number" step="1" min="0"
+            title="设计期按这么多条预览排布结果（0 = 只用现有子元素）">
+        </div>
+        <div class="hint" id="pGridInfo">—</div>
       </div>
-      <div class="row"><label>数量/半径</label>
-        <input id="radN" type="number" value="6" min="1" max="12" title="数量（6 = 正六边形六个方向）">
-        <input id="radR" type="number" value="250" min="10" title="半径">
-      </div>
-      <div class="row"><label>尺寸/起始角</label>
-        <input id="radW" type="number" value="64" min="8" title="宽">
-        <input id="radH" type="number" value="64" min="8" title="高">
-        <input id="radStart" type="number" value="-90" title="起始角（-90 = 正上方）">
-      </div>
-      <div class="row"><label>id 前缀</label><input id="radPrefix" value="slot_"></div>
-      <div class="row"><label>action</label><input id="radAction" value="plugin-pick" list="actionList"></div>
-      <div class="row"><label>target</label><input id="radTarget" value="modal_role_plugin_pick"></div>
-      <div class="row"><span class="seg"><button id="btnRadial" style="flex:1">在【当前画面】按方向生成</button></span></div>
-      <div class="hint" id="radInfo">半径按基准画布 1280×720 的像素算；生成后可以逐个微调位置。</div>
-    </div>
+    </details>
 
-    <div class="sect">
-      <h3>设计期状态（元素 when 过滤）</h3>
-      <div class="row"><label>出战配置</label>
-        <span class="seg">
-          <button data-as="1">配置1</button><button data-as="2">配置2</button><button data-as="3">配置3</button>
-        </span>
+    <details class="sect">
+      <summary>元素 · 文字 / 视觉</summary>
+      <div class="body">
+        <div class="row"><label>文字大小</label>
+          <input id="pFontSize" type="number" step="1" title="字号 px">
+          <button id="btnFontAuto" title="按住当前块高度自动定字号">按高度自算</button>
+        </div>
+        <div class="row"><label>文字样式</label>
+          <span class="seg">
+            <select id="pTextAlign" style="flex:1">
+              <option value="">（默认）</option><option value="left">左</option>
+              <option value="center">居中</option><option value="right">右</option>
+            </select>
+            <input id="pTextColor" type="color" style="width:44px;padding:1px" title="文字颜色">
+            <label style="width:auto">粗体</label><input id="pTextBold" type="checkbox" style="width:auto">
+          </span>
+        </div>
+        <div class="row"><label>九宫格</label>
+          <input id="pNine" type="number" step="1" title="四边切片厚度 px（0 = 关）">
+          <label style="width:auto">不透明</label><input id="pOpacity" type="number" step="0.05" min="0" max="1" title="0..1">
+          <label style="width:auto">不可点</label><input id="pClickThrough" type="checkbox" style="width:auto">
+        </div>
+        <div class="hint" id="pNineInfo">—</div>
       </div>
-      <div class="hint">元素上写 <span class="kbd">when: {"{"}"activeSlot": 1{"}"}</span> 就只在配置1显示（例：三个「出战」角标）。真代码渲染层照同一条规则过滤。</div>
-    </div>
+    </details>
 
-    <div class="sect">
-      <h3>断点预览（自动适配结果显示）</h3>
-      <div class="row" id="prevMode">
-        <label>适配</label>
-        <span class="seg">
-          <button data-adapt="fit">整屏等比缩放</button>
-          <button data-adapt="anchor">锚点跟随</button>
-        </span>
+    <details class="sect">
+      <summary>画面属性</summary>
+      <div class="body">
+        <div class="row"><label>角色</label>
+          <select id="sRole"><option value="screen">screen（整屏 · 切场景）</option><option value="modal">modal（弹窗 · 覆盖在底屏上）</option></select>
+        </div>
+        <div class="row"><label>背景素材</label><input id="sBg" placeholder="assets/bg/hub_main.webp"></div>
+        <div class="row" id="maskRow"><label>遮罩</label>
+          <input id="sMaskColor" placeholder="#000000" style="width:80px">
+          <input id="sMaskOpacity" type="number" step="0.05" min="0" max="1" title="不透明度">
+          <label style="width:auto"><input id="sMaskClose" type="checkbox" style="width:auto"> 点遮罩关闭</label>
+        </div>
+        <div class="hint" id="sInfo">—</div>
       </div>
-      <div class="prevs" id="prevs"></div>
-      <div class="hint" id="prevHint">—</div>
-    </div>
+    </details>
 
-    <div class="sect">
-      <h3>校验</h3>
-      <div class="issues" id="issues"></div>
-    </div>
+    <details class="sect">
+      <summary>径向生成插槽</summary>
+      <div class="body">
+        <div class="row"><label>中心</label>
+          <span class="seg">
+            <button id="radFromSel" title="用当前选中元素的中心作为圆心">用选中元素中心</button>
+            <button id="radFromCanvas" title="用画布中心">用画布中心</button>
+          </span>
+        </div>
+        <div class="row"><label>数量/半径</label>
+          <input id="radN" type="number" value="6" min="1" max="12" title="数量（6 = 正六边形六个方向）">
+          <input id="radR" type="number" value="250" min="10" title="半径">
+        </div>
+        <div class="row"><label>尺寸/起始角</label>
+          <input id="radW" type="number" value="64" min="8" title="宽">
+          <input id="radH" type="number" value="64" min="8" title="高">
+          <input id="radStart" type="number" value="-90" title="起始角（-90 = 正上方）">
+        </div>
+        <div class="row"><label>id 前缀</label><input id="radPrefix" value="slot_"></div>
+        <div class="row"><label>action</label><input id="radAction" value="plugin-pick" list="actionList"></div>
+        <div class="row"><label>target</label><input id="radTarget" value="modal_role_plugin_pick"></div>
+        <div class="row"><span class="seg"><button id="btnRadial" style="flex:1">在【当前画面】按方向生成</button></span></div>
+        <div class="hint" id="radInfo">—</div>
+      </div>
+    </details>
 
-    <div class="sect">
-      <details id="jsonPanel" open>
-        <summary>布局 JSON（真源）—— 也可以直接把这里的内容发给我</summary>
+    <details class="sect">
+      <summary>设计期状态</summary>
+      <div class="body">
+        <div class="row"><label>出战配置</label>
+          <span class="seg">
+            <button data-as="1">配置1</button><button data-as="2">配置2</button><button data-as="3">配置3</button>
+          </span>
+        </div>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary>断点预览</summary>
+      <div class="body">
+        <div class="row" id="prevMode">
+          <label>适配</label>
+          <span class="seg">
+            <button data-adapt="fit">整屏等比缩放</button>
+            <button data-adapt="anchor">锚点跟随</button>
+          </span>
+        </div>
+        <div class="prevs" id="prevs"></div>
+        <div class="hint" id="prevHint">—</div>
+      </div>
+    </details>
+
+    <details class="sect" id="secIssues">
+      <summary>校验</summary>
+      <div class="body">
+        <div class="issues" id="issues"></div>
+      </div>
+    </details>
+
+    <details class="sect" id="jsonPanel">
+      <summary>布局 JSON（真源）</summary>
+      <div class="body">
         <div class="row" style="margin-top:6px">
           <button id="btnJsonRefresh" style="flex:1">刷新</button>
-          <button id="btnJsonApply" style="flex:1">应用粘贴的 JSON</button>
-          <button id="btnJsonCopy" style="flex:1">复制 JSON</button>
+          <button id="btnJsonApply" style="flex:1">应用粘贴</button>
+          <button id="btnJsonCopy" style="flex:1">复制</button>
         </div>
-        <textarea id="json" rows="14" spellcheck="false"></textarea>
+        <textarea id="json" rows="12" spellcheck="false"></textarea>
         <div class="hint" id="saveInfo">—</div>
-      </details>
-    </div>
+      </div>
+    </details>
 
-    <div class="sect">
-      <details id="toolPanel" open>
-        <summary>存盘 / 素材（需要本地服务：node tools/layout/lab-server.js）</summary>
+    <details class="sect" id="toolPanel">
+      <summary>存盘 / 素材（需本地服务）</summary>
+      <div class="body">
         <div class="hint" id="toolInfo" style="margin:6px 0">检测中…</div>
         <div class="row">
           <button id="btnReloadWs" style="flex:1" title="丢弃本地草稿，重新读工作区里的布局表">⟲ 从工作区载入</button>
           <button id="btnStatus" style="flex:1">刷新状态</button>
-          <button id="btnMissing" style="flex:1">看缺哪些图</button>
-          <button id="btnMissingAll" style="flex:1">全部（含图鉴类）</button>
+          <button id="btnMissing" style="flex:1">缺哪些图</button>
+          <button id="btnMissingAll" style="flex:1">全部</button>
         </div>
-        <div class="hint">素材出图规范：文件名 = 清单里的 <b>ID</b>（例 <code>role_bal.png</code>），丢进仓库根的
-          <code>assets-inbox/</code>，然后点「归位素材」——会自动改名 / 转 WebP / 缩放并落到 <code>public/assets/</code>。</div>
-      </details>
-    </div>
-
-    <div class="sect">
-      <details>
-        <summary>这份布局表怎么被真代码消费？</summary>
-        <div class="hint" style="margin-top:6px">
-          ① 渲染层从 <span class="kbd">layout.json</span> 读元素位置与素材，<b>文字与数值仍由 format.js 投影</b>（渲染零逻辑）；
-          ② 每个 <span class="kbd">kind:"button"</span> 元素渲染时把 <span class="kbd">action</span>/<span class="kbd">payload</span> 落到
-          <span class="kbd">data-action</span>/<span class="kbd">data-*</span>，UI-2/AU-1 的双向核对继续成立；
-          ③ 适配只在渲染时算（<span class="kbd">resolveElement</span>），不写进 CSS；
-          ④ 素材按 <span class="kbd">asset</span> 路径取，缺图回落占位。
-        </div>
-      </details>
-    </div>
+      </div>
+    </details>
   </aside>
 </main>
 
@@ -2765,8 +2792,29 @@ var LAYOUT_CORE = (function () {
     perBucket: 24,       // mock 仓库每桶件数（默认 24：足以让网格换行；60/200 可验滚动）
   };
 
+  /**
+   * D-190：**把产品样式表引进来**（`/public/app.css`）—— 单一真源。
+   *
+   * 为什么必须这样：预览跑的是产品渲染（D-189），所以它必须用**产品的样式**。
+   *   之前是手抄一份 `#pvstage .dl-*`，抄的时候把 `.dl-layer` 写成了 `position:absolute;inset:0`，
+   *   于是它铺满全屏、排在遮罩之后，把遮罩整个盖住 ⇒ **点弹窗外面关不掉**（真实故障）。
+   *   手抄的副本必然与产品漂移，所以这里改成直接加载同一份文件。
+   *
+   * 只加载一次；`<link>` 已存在则跳过。
+   */
+  function ensureProductCss() {
+    if (document.getElementById('dl-product-css')) return;
+    var css = document.createElement('link');
+    css.id = 'dl-product-css';
+    css.rel = 'stylesheet';
+    css.href = '/public/app.css';
+    document.head.appendChild(css);
+  }
+
   /** 按需加载产品模块（同源 /public/*.js；已加载则直接返回） */
   function ensureProduct(cb) {
+    // 样式表无论走哪条分支都要引进来（包括"DL 已预置"的测试路径）
+    ensureProductCss();
     if (PV.ready) return cb(true);
     // 已经有人把产品命名空间装配好了（真页面上是 index.html 的脚本；无头测试里是预置）→ 直接用。
     //   这条**先于**加载分支，否则在无 HTTP 的环境（jsdom）里会白白走一遍注定失败的 fetch。
@@ -2951,11 +2999,24 @@ var LAYOUT_CORE = (function () {
         pvRun(action, payload);
       });
     });
+    // D-190 兜底（与产品 `app.js` 的 onClick 同一条规则）：点在弹窗**包装层/空白**上
+    //   = 点在遮罩上 = 关闭。遮罩是弹窗的唯一出口，所以这条不能只靠 CSS 的 pointer-events
+    //   （真实踩过：预览里手抄的 `.dl-layer{position:absolute;inset:0}` 把遮罩整块盖住，
+    //    于是"点弹窗外面没反应"）。per-node 的监听已 stopPropagation，因此这里只会收到
+    //   **没命中任何动作**的点击，不会与遮罩自己的监听冲突。
+    Array.prototype.slice.call(root.querySelectorAll('.dl-layer, .dl-modal')).forEach(function (box) {
+      box.addEventListener('click', function (ev) {
+        if (ev.target !== box) return;          // 只在"点到这一层本身"时处理（子元素自己管）
+        ev.stopPropagation();
+        pvRun('modal-close', null);
+      });
+    });
   }
   function pvScale(bp) {
     var d = C.breakpointOf(state.bundle, bp);
     var wr = $('pvwrap');
-    var availW = (wr.clientWidth || 900) - 20, availH = (wr.clientHeight || 600) - 20;
+    // D-192：预览外面不再留内边距（"只留这个屏"），所以不再从可用空间里扣 20px
+    var availW = wr.clientWidth || 900, availH = wr.clientHeight || 600;
     return { z: Math.max(0.1, Math.min(2, Math.min(availW / d.w, availH / d.h))), def: d };
   }
   function togglePreview() {
@@ -3021,6 +3082,19 @@ var LAYOUT_CORE = (function () {
   function renderIssues() {
     var box = $('issues'), iss = C.validateBundle(state.bundle, KNOWN_ACTIONS);
     box.innerHTML = '';
+    // D-193：校验块默认收起，标题上直接标数量；**有 error 才自动摊开**（没问题时别占地方）
+    var sec = $('secIssues');
+    var errs = 0, warns = 0;
+    iss.forEach(function (i) { if (i.level === 'error') errs += 1; else warns += 1; });
+    if (sec) {
+      var sum = sec.querySelector('summary');
+      if (sum) {
+        sum.textContent = errs === 0 && warns === 0 ? '校验 · 无问题'
+          : '校验 · ' + (errs ? errs + ' 错误' : '') + (errs && warns ? ' / ' : '') + (warns ? warns + ' 警告' : '');
+        sum.style.color = errs ? 'var(--err)' : '';
+      }
+      if (errs > 0) sec.open = true;
+    }
     if (!iss.length) { box.innerHTML = '<div class="ok">✓ 没有发现问题</div>'; return; }
     iss.forEach(function (i) {
       var d = document.createElement('div');
@@ -3929,6 +4003,21 @@ var LAYOUT_CORE = (function () {
     var i = C.BP_KEYS.indexOf(pvBp);
     pvBp = C.BP_KEYS[(i + 1) % C.BP_KEYS.length];
     renderPreview();
+  });
+
+  /* ---------------- 顶栏「更多」下拉：点别处自动收起（D-193） ----------------
+   * `<details>` 默认要再点一次 summary 才关，点别处不会关 —— 那用起来很别扭。
+   * 这里统一收：点到下拉以外就关。 */
+  window.addEventListener('click', function (ev) {
+    Array.prototype.slice.call(document.querySelectorAll('.hdr-more[open]')).forEach(function (d) {
+      if (!d.contains(ev.target)) d.open = false;
+    });
+  });
+  // 选中下拉里的按钮后立刻收起（不然它会一直挡着画布）
+  Array.prototype.slice.call(document.querySelectorAll('.hdr-more .pop > button')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      Array.prototype.slice.call(document.querySelectorAll('.hdr-more[open]')).forEach(function (d) { d.open = false; });
+    });
   });
 
   /* ---------------- 键盘 ---------------- */

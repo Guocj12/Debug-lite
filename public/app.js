@@ -201,9 +201,27 @@
       return Object.keys(out).length === 0 ? null : out;
     }
 
+    // D-190：点在弹窗"包装层/空白"上要等同于点遮罩。
+    //   遮罩是弹窗的**唯一出口**（弹窗内已无关闭键），所以这条兜底不能只靠 CSS 的 pointer-events：
+    //   一旦有人给 `.dl-layer` 加了尺寸（真实踩过：`position:absolute;inset:0` 把遮罩整块盖住），
+    //   CSS 层面就静默失效了。这里在 DOM 层面再判一次，保证"点弹窗外面"永远能关。
+    var MODAL_CHROME = ['dl-layer', 'dl-modal'];
+
+    function isModalChrome(node) {
+      if (!node || !node.classList) return false;
+      for (var i = 0; i < MODAL_CHROME.length; i++) {
+        if (node.classList.contains(MODAL_CHROME[i])) return true;
+      }
+      return false;
+    }
+
     function onClick(ev) {
       var el = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
-      if (!el) return;
+      if (!el) {
+        // 没命中任何动作：如果点在弹窗的包装层/空白上 → 等同点遮罩（关闭）
+        if (isModalChrome(ev.target)) run('modal-close', null);
+        return;
+      }
       var action = el.getAttribute('data-action');
       if (!action) return;
       // submit 型按钮交给 form 的 submit 事件处理，避免同一动作跑两遍

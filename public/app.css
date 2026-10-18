@@ -11,6 +11,35 @@
   --dl-accent:#4c84fa; --dl-accent2:#3a6cdc;
   --dl-common:#2ecc71; --dl-rare:#3498db; --dl-epic:#9b59b6; --dl-legendary:#e67e22; --dl-mythic:#1abc9c;
 }
+/* D-192：**页面本身就是屏幕** —— 整页铺满、不留白边。
+ *   此前 `app.css` 没有 `body` 规则 ⇒ 深色 `.dl-screen` 坐在浏览器默认的**白色**页面里，
+ *   `<body>` 还有 8px 默认边距 ⇒ 屏外面一圈白框（用户口径：「不应再有外面一圈白框」）。 */
+html,body{margin:0;padding:0;height:100%;background:var(--dl-bg);overflow:hidden}
+body{color:var(--dl-text);font:14px/1.4 "Microsoft YaHei",system-ui,sans-serif;
+  -webkit-text-size-adjust:100%}
+#view{height:100%;position:relative;overflow:auto}
+/* 布局屏：铺满视口（不再靠 aspect-ratio 留出白边），并用绝对定位占满 #view，
+   这样后面那几块（状态提示 / 兜底入口 / 旧版弹窗）可以叠在屏上而不把屏挤小。 */
+#view>.dl-screen{position:absolute;inset:0;width:auto;height:auto;aspect-ratio:auto}
+/* 状态提示：叠在屏顶，不占版面（否则屏会被挤得只剩一截） */
+#view>.dl-screen~#notice{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:60;
+  max-width:78%;padding:6px 12px;border-radius:6px;background:#000000cc;color:var(--dl-text);
+  font-size:13px;pointer-events:none;text-align:center}
+/* 布局表没画、但必须有入口的那几颗（刷新 / 阵容编辑 / 对战历史 / 管理面板）：同样叠在屏底 */
+#view>.dl-screen~.buttons{position:absolute;left:0;right:0;bottom:10px;z-index:55;
+  display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:0 10px}
+#view>.dl-screen~.buttons>button{background:#000000aa;color:var(--dl-text);border:1px solid var(--dl-line);
+  border-radius:6px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+#view>.dl-screen~.buttons>button:hover{background:#000000dd}
+/* 旧文字版弹窗（出战配置编辑器等）：浮在屏上，别把屏推走 */
+#view>.dl-screen~#modal{position:absolute;inset:0;z-index:70;overflow:auto;padding:24px;
+  background:#000000b3;display:flex;align-items:flex-start;justify-content:center}
+#view>.dl-screen~#modal>.modal-body{background:var(--dl-panel);border:1px solid var(--dl-line);
+  border-radius:8px;padding:16px;max-width:640px;width:100%;color:var(--dl-text)}
+#view>.dl-screen~#modal>.modal-background{position:absolute;inset:0}
+/* 文字屏（旧世代）：仍然铺满，但给自己留出可读的边距，别贴着屏幕边缘 */
+#view>:not(.dl-screen){margin-left:16px;margin-right:16px}
+#view>:first-child:not(.dl-screen){margin-top:16px}
 /* 屏幕容器：等比画布（--w/--h 由渲染层按基准画布写入） */
 .dl-screen{position:relative;width:100%;aspect-ratio:var(--dl-w,1280)/var(--dl-h,720);
   background:var(--dl-bg) center/cover no-repeat;overflow:hidden;color:var(--dl-text);
@@ -90,6 +119,13 @@
 .dl-modal[data-depth="2"]{z-index:200}
 .dl-modal[data-depth="3"]{z-index:300}
 .dl-mask{position:absolute;inset:0;cursor:pointer}
+/* D-190：**遮罩是弹窗的唯一出口**（弹窗内不再有关闭键），所以 `.dl-layer` 这一层只是包装，
+   必须**绝不接收点击** —— 否则它会把遮罩整块盖住，表现就是"点弹窗外面没反应"。
+   只保留 `pointer-events:none`，**不要**给它 position/inset/height:100%（这是真实踩过的坑）。 */
+.dl-layer{pointer-events:none}
+/* 元素自己重新接回点击（按钮要能点、可滚容器要能滚、面板要能挡住"点外面"） */
 .dl-modal .dl-el{pointer-events:auto}
+/* `clickthrough` 优先级要高于上一条，否则装进弹窗里就失效了 */
+.dl-modal .dl-el.dl-clickthrough{pointer-events:none}
 /* 小屏：整屏等比缩放由 aspect-ratio 负责，这里只压字号 */
 @media (max-width:560px){ .dl-screen{font-size:12px} }

@@ -1174,10 +1174,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            175,
-            74,
-            150,
-            44
+            200,
+            57,
+            64,
+            64
           ],
           "desc": "切到「角色」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "角色",
@@ -1198,10 +1198,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            331,
-            74,
-            150,
-            44
+            280,
+            57,
+            64,
+            64
           ],
           "desc": "切到「技能」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "技能",
@@ -1222,10 +1222,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            487,
-            74,
-            150,
-            44
+            360,
+            57,
+            64,
+            64
           ],
           "desc": "切到「角色插件」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "角色插件",
@@ -1246,10 +1246,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            643,
-            74,
-            150,
-            44
+            440,
+            57,
+            64,
+            64
           ],
           "desc": "切到「技能插件」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "技能插件",
@@ -1270,10 +1270,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            799,
-            74,
-            150,
-            44
+            520,
+            57,
+            64,
+            64
           ],
           "desc": "切到「包」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "包",
@@ -1294,10 +1294,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            955,
-            74,
-            150,
-            44
+            600,
+            57,
+            64,
+            64
           ],
           "desc": "切到「AI节点」分类。选中时保持按下（press:state 由 warehouseTab 决定）。",
           "label": "AI节点",
@@ -1387,10 +1387,10 @@
           "hit": "rect",
           "anchor": "ct",
           "rect": [
-            216,
+            200,
             108,
-            848,
-            26
+            880,
+            24
           ],
           "desc": "当前分类的容量与件数（由投影层按 /me/warehouse 的 counts/caps 填）。",
           "font": {
@@ -1529,7 +1529,7 @@
           "hit": "rect",
           "anchor": "cb",
           "rect": [
-            512,
+            580,
             524,
             120,
             44
@@ -1551,7 +1551,7 @@
           "hit": "rect",
           "anchor": "cb",
           "rect": [
-            648,
+            580,
             524,
             120,
             44

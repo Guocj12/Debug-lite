@@ -273,10 +273,15 @@
 
   function render(vm) {
     if (vm && vm.layout && Array.isArray(vm.layout.layers)) {
-      var lay = ['<h2>' + esc(vm.title) + '</h2>'];
+      // D-192：**布局屏就是整个界面，不再额外输出 `<h2>` 标题**。
+      //   用户口径：「预览和实际前端效果都应该直接只有这个屏」—— 屏上方不该有「Debug-Lite」字样。
+      //   （标题仍保留在 `vm.title` 里，供 `<title>` 与文档使用；只是不画到屏上。）
+      //
+      // 顺序也是承重的：状态提示与兜底入口要排在 `.dl-screen` **之后**，
+      //   这样 CSS 能用 `.dl-screen ~ …` 把它们叠成覆盖层（不占版面，屏才铺得满）。
+      var lay = [layoutHtml(vm.layout)];
       var layNotice = noticeHtml(vm);
       if (layNotice !== '') lay.push(layNotice);
-      lay.push(layoutHtml(vm.layout));
       if (vm.buttons && vm.buttons.length > 0) lay.push('<div class="buttons">' + buttonsHtml(vm.buttons) + '</div>');
       lay.push(modalHtml(vm));
       return lay.filter(function (x) { return x !== ''; }).join('\n');

@@ -489,6 +489,38 @@
 |---|---|---|
 | **D-190** | ⚠️ **弹窗的唯一关闭方式 = 点弹窗外的遮罩；弹窗内不再画关闭键**：<br>① **删掉关闭键**：`modal_warehouse` 的 `wh_close`、`modal_item_detail` 的 `det_close` 从布局表移除（工作区真源 `layout-bundle.raw.json` 与布局台内置示例 `DEFAULT_BUNDLE` **同步删除**）。删除的是**关闭键**，不是操作键 —— `det_open`（开包）/ `det_dismantle`（分解）/ 6 个分类选项卡 / 网格原型**全部保留**。<br>② **遮罩是唯一出口，所以它必须可用**：`role='modal'` 的画面 `mask.closeOnMaskClick` **不得**为 `false` ⇒ 引擎 `validateLayout` 判 **error**（`弹窗禁用了「点遮罩关闭」，而弹窗已取消关闭键 → 玩家将无法关闭它`）。**这条是 D-190 的必要配套**：取消关闭键后，一旦遮罩也关不掉，玩家点哪儿都出不去 —— 这类"死胡同"必须在布局表校验阶段拦下，而不是等走查时才发现。<br>③ **连带把"遮罩不拦背景"降级为 warn 但仍报告**：`blocksBackground:false` 时底下按钮仍能被点到（弹窗形同穿透），给出可见提示。<br>④ **预览与产品同一套行为**：预览本就跑产品渲染 + 产品动作（D-189），所以删掉关闭键后，预览里也只能点遮罩关闭 —— **不需要为预览单独写关闭逻辑**（这正是 D-189 选"跑真管线"的回报）。<br>⑤ **修订 FR-10**：原文「弹窗内另有显式「取消」按钮」作废（见 `docs/frontend/00-rules.md` **FR-16**）。<br>⑥ **不在本轮范围**：**旧文字版弹窗**（`state.modal` 的出战配置编辑器 / AI 逻辑查看器等，`format.js` 的 `closeButton()` 8 处）仍带「关闭」按钮。它们属于被逐步替代的旧 UI 世代，且其「关闭」是文本按钮行的一员（不是叠加在界面上的关闭键）；其背景同样已支持点外关闭。**如用户要求统一，再单独一批处理**。 | 代码：`tools/layout/layout-bundle.raw.json`（删 `wh_close`/`det_close`）、`tools/layout/lab.html`（内置示例同步删 + 校验新增死胡同 error）、`public/layout-engine.js`（再生成）、`public/layout-data.js`（`import-layout` 再生成）<br>文档：`docs/frontend/00-rules.md` **FR-16**（并修订 FR-10）、`docs/frontend/07-layout-tool.md`<br>核对：**新增** `tests/frontend/modal-close-contract.test.js` **MC-1…MC-5**（布局表无关闭键 / 遮罩必须可关 / 渲染出的遮罩能逐层关闭 / 死胡同进校验器 / 操作键未被误删）；真 HTTP 预览核验 **10/10**（预览里无关闭键、点遮罩逐层关闭、操作键仍在）<br>引擎 digest `60997413dfbcbddc` |
 
+---
+
+### 14.25 修掉「预览里点弹窗外面关不掉」（2026-10-17 追加，D-191）
+
+> 触发：用户 2026-10-17 —— **「为什么我预览的时候点击弹窗外的界面仍然无法关闭弹窗」**。
+> D-190 的口径是对的，**实现坏了**：产品侧能用，只有预览不能用。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-191** | ⚠️ **`dl-layer` 不得拦截点击；预览改为加载产品真样式表（单一真源），并加 DOM 级兜底**：<br>① **根因**：D-189 的预览**手抄了一份**产品 `.dl-*` 样式（`#pvstage .dl-*`），抄的时候把 `.dl-layer` 写成 `position:absolute;inset:0`。它铺满全屏、在 DOM 里排在 `.dl-mask` **之后** ⇒ 把整张遮罩盖住。点"弹窗外面"命中的是 `.dl-layer`（无 `data-action`）⇒ 什么都不发生。产品侧 `app.css` **从来没有 `.dl-layer` 的布局规则**（静态、零高），所以产品一直是对的 —— **只有预览坏**。<br>② **为什么之前的测试没抓到**：jsdom 没有命中测试，`modal-close-contract` / `probe` 都是**直接往遮罩节点派发 click**，绕过了"点击落在哪个元素上"。这类"只测事件不测命中"的断言对遮挡类缺陷是瞎的。<br>③ **修法一：预览不再手抄样式** —— `ensureProduct` 里注入 `<link href="/public/app.css">`，删掉布局台里全部 `#pvstage .dl-*` 副本（本轮还发现那份副本被**重复粘贴了一次**）。预览与产品从此共用同一份 CSS，不存在漂移。<br>④ **修法二：产品 CSS 把不变量写死** —— `.dl-layer{pointer-events:none}`（**只**这一条，注释里明写"不要给它 position/inset/height:100%"），元素用 `.dl-modal .dl-el{pointer-events:auto}` 重新接回点击；另修 `.dl-modal .dl-el.dl-clickthrough{pointer-events:none}`（原先 `.dl-clickthrough` 单类选择器被 `.dl-modal .dl-el` 压过，装进弹窗后失效）。<br>⑤ **修法三：DOM 级兜底（不依赖 CSS）** —— 产品 `app.js` 的 `onClick` 与预览的 `pvWire` 都加一条：**没命中任何 `[data-action]` 且点在 `.dl-layer`/`.dl-modal` 上 ⇒ 等同点遮罩**。这样即使将来有人又给 `.dl-layer` 加了尺寸，功能也不会再静默失效。<br>⑥ **门禁从"事件级"升级为"结构级"**：新增 `MC-6`（`.dl-layer` 规则体里不得出现 absolute/fixed/inset/height:100%，且必须 `pointer-events:none`）、`MC-7`（布局台不得再有 `#pvstage .dl-*` 副本、必须加载 `/public/app.css`）、`MC-8`（遮罩必须是 `.dl-modal` 的第一个直接子元素；`.dl-layer` 不得带内联 style；两处兜底必须存在）。 | 代码：`tools/layout/lab.html`（删手抄 CSS ×2、新增 `ensureProductCss`、`pvWire` 加包装层兜底）、`public/app.css`（`.dl-layer` 不变量 + clickthrough 优先级）、`public/app.js`（`isModalChrome` 兜底）<br>核对：`tests/frontend/modal-close-contract.test.js` **MC-6/MC-7/MC-8**；真 HTTP 预览核验 **12/12**（含**派发给 `.dl-layer`** 而非遮罩：计算样式 `position:static`/`pointer-events:none`/无内联 style，点包装层→关闭，点面板→**不关**）<br>文档：`docs/frontend/07-layout-tool.md` 预览节补"加载真样式表"与"`.dl-layer` 不变量" |
+
+---
+
+### 14.26 屏即界面：去掉页面级标题与屏外白框（2026-10-17 追加，D-192）
+
+> 触发：用户 2026-10-17 —— **「预览和实际前端效果都应该直接只有这个屏，
+> 不应再有上面的 debuglitev3 和外面一圈白框」**。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-192** | ⚠️ **布局屏 = 整个界面；页面级 chrome 一律去掉**：<br>① **删页面级标题**：`public/index.html` 的 `<h1>Debug-Lite v3 · 账号</h1>` 移除；`index.html` 只剩 `#view` 一个可见容器。<br>② **布局屏不再输出 `<h2>`**：`render.js` 的布局分支原先固定 `['<h2>'+title+'</h2>']`，现在不画标题（`vm.title` 仍保留，供 `<title>`/文档用）。**文字屏（旧世代）仍保留 `<h2>`** —— 它们靠标题标识自己，这条口径只针对布局屏。<br>③ **白框根因**：`app.css` **从来没有 `body` 规则** ⇒ 深色 `.dl-screen` 落在浏览器默认**白色**页面里，且 `<body>` 有 8px 默认边距。修法：`html,body{margin:0;padding:0;height:100%;background:var(--dl-bg);overflow:hidden}`。<br>④ **屏铺满**：`#view>.dl-screen{position:absolute;inset:0}` —— 绝对占满 `#view`，不再靠 `aspect-ratio` 留出上下白边。<br>⑤ **屏外的三块改为"叠在屏上"**（否则它们会把屏挤小、甚至挤出滚动条）：`#notice` → 顶部居中 toast；`.buttons`（布局表没画但必须有入口的那几颗：刷新/阵容编辑/对战历史/管理面板）→ 底部居中悬浮条；旧文字版弹窗 `#modal` → 全屏浮层。为此 `render.js` 的布局分支把输出顺序改为 **屏 → 提示 → 兜底按钮 → 旧弹窗**（`#notice` 必须排在屏**之后**，CSS 才能用 `.dl-screen ~ #notice` 选中它）。<br>⑥ **预览侧**：`#pvbox` 去掉 `0 0 0 1px` 描边阴影、`.pvwrap` 内边距改 0、`#pv` 背景改深色；`pvScale` 不再从可用空间里扣 20px。预览里同样没有标题（它跑的就是 `render.js`）。<br>⑦ **注意 `index.html` 的注释**：删 `<h1>` 时留了说明性注释，里面**提到了**被删的标签文本 —— 断言前必须剥 HTML 注释，否则会被自己的注释骗成"没删"（本轮真踩到）。 | 代码：`public/index.html`（删 `<h1>`）、`public/render.js`（布局屏不输出 `<h2>`；输出顺序改为 屏→提示→按钮→旧弹窗）、`public/app.css`（`html,body` 深色铺满 + `#view>.dl-screen` 绝对铺满 + `~#notice`/`~.buttons`/`~#modal` 叠加层）、`tools/layout/lab.html`（`#pvbox`/`.pvwrap`/`#pv` 去框、`pvScale` 不扣 20px）<br>核对：**新增** `tests/frontend/screen-chrome.test.js` **SC-1/SC-2/SC-2b/SC-3/SC-4**（index.html 无 h1 且只有 #view / 布局屏无 `<h2>` 无「Debug-Lite」且首块是 `.dl-screen` / **文字屏仍保留 h2** / app.css body 深色铺满 + 屏绝对占满 / 预览无外框且不抄产品样式）；真 HTTP 预览核验 **16/16**（`#pvbox` box-shadow 计算值 `none`、`#pvwrap` padding `0px`、舞台无 h2、无「Debug-Lite」）<br>文档：`docs/frontend/07-layout-tool.md` 预览节 |
+
+---
+
+### 14.27 布局台界面整理：删静态讲解、右栏折叠、顶栏分组（2026-10-17 追加，D-193）
+
+> 触发：用户 2026-10-17 —— **「现在这个布局工具太乱了，帮我整理下，把没用的提示信息都删掉，使用体验丝滑整洁一点」**。
+
+| D | 决策 | 落点 |
+|---|---|---|
+| **D-193** | ⚠️ **布局台只留"活的状态行"，静态讲解一律清掉；结构改为折叠＋分组**：<br>① **顶栏 24 个控件散排 → 5+ 组**：画面 / 断点 / 吸附 / 元素 / 撤销·缩放 / 预览·校验·导入导出 / 存盘，组间竖线分隔；删掉冗长副标题「dev 原型 · 单文件 · 无依赖 · 编辑的是数据（JSON）」；「素材清单 / 归位素材」收进「更多」下拉（并实现**点别处自动收起** —— `<details>` 默认要再点一次才关，用起来别扭）。<br>② **右栏 8 个平铺分区 → 13 个可折叠 `<details>`**（元素·基本 / 位置形状 / 素材按下态 / 条件显示断点 / 容器滚动网格 / 文字视觉 / 画面属性 / 径向 / 设计期状态 / 断点预览 / 校验 / JSON / 存盘）。默认**只展开 2 块**（基本 + 位置形状），其余点开再看。<br>③ **校验块**收起时在标题上直接标数量（「校验 · 无问题」/「校验 · 2 错误 / 15 警告」），**有 error 才自动摊开**、标题转红。<br>④ **删掉的纯静态讲解**（用户点名的"没用的提示信息"）：层级区那段「点画面名=切过去…」、设计期状态那段 `when` 讲解、存盘区「素材出图规范…」长文、右栏最底部「这份布局表怎么被真代码消费？」整块 4 条要点、底栏铺开的 6 条快捷键（收进一个悬停提示 `快捷键 ⌨`）。<br>⑤ **保留**：所有**有 id 的 `.hint`** —— 它们是 JS 实时写的状态行（`pParentInfo`/`pGridInfo`/`pPressInfo`/`sInfo`…），删了会 null 崩。新增 `.hint:empty{display:none}`，空状态行不占位。<br>⑥ **左栏**：层级/平铺切换与统计压成一行，素材目录收进折叠（它只用于本地预览）。<br>⑦ **顺手修掉一个死类**：`class="primary"` 之前**从未定义**，主操作按钮（预览/存盘/一键应用）其实没有任何强调；现在补上定义。 | 代码：`tools/layout/lab.html`（CSS：顶栏分组/`details.sect` 折叠/`.hint:empty`/`button.primary`/`.hdr-more` 下拉；HTML：顶栏与左右两栏重排；app：`renderIssues` 写标题数量并按 error 自动展开、`hdr-more` 点别处收起）<br>核对：**新增** `tests/frontend/layout-tool-ui.test.js` **LT-1…LT-5** —— 其中 **LT-1 是自维护护栏**：把 app 脚本里 155 个 `$('id')` 引用逐个与 HTML 对账（整理最易犯的错就是删掉"看着只是提示"其实脚本在写的 DOM）；LT-2 默认展开 ≤3 块；LT-3 不得有无 id 的静态 hint；LT-1b core 不碰 DOM<br>实测：`node runtime/check-lab.js` 3/3；`test-layout-lab.js` 13 组；`test-layout-lab-browser.js` **16 组**；整洁度专项探针 **11/11**（13 个分区只开 2 块、无静态 hint、选中后 10 个状态行全部有内容、关键控件 30 项齐备、「更多」点画布自动收起、零 jsdom 错误） |
+
 ## 15. 待补充的数值（B21 已统一校准，见 D-127/D-128）
 - **2026-09-28（D-173）变更**：`crit: 1.5` → **`critBonus: 1.0`**（暴击倍率 = `1 + critBonus + ΣcritMul` = 2.0）；新增 `lowHpThreshold: 0.5`（`rp_lowhp` 低血加攻阈值）。`defK` **保持 40 不变**。
 
