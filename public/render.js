@@ -211,6 +211,7 @@
     //   `.dl-deco` 默认 pointer-events:none，空白处会穿到 `.dl-screen`，于是滚轮/平移都收不到。
     if (el.pan) cls += ' dl-pan';
     if (el.clickThrough) cls += ' dl-clickthrough';        // D-185：不可点（透给下层）
+    if (el.dropHi) cls += ' dl-drop-hi';                   // 功能B：拖动落点高亮
     // D-188：按下行为四模式 —— 类名交给 CSS 处理（tap 走 :active、hover 走 :hover），
     //   sticky/state 由引擎算出的 `pressed` 直接落类（服务端状态驱动的"保持按下"）。
     if (el.press) cls += ' dl-press-' + String(el.press).replace(/[^a-z]/g, '');

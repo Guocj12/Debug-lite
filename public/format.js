@@ -3501,6 +3501,7 @@
             action: r.action || '', payload: r.payload || {},
             muted: !!r.muted, disabled: !!r.disabled, pressed: !!r.pressed,
             sel: !!r.pressed, slot: !!r.slot,          // D-194：选中行高亮 / 槽位头弱化
+            dropHi: !!r.dropHi,                        // 功能B：拖动落点行高亮
             press: rfp && rfp.press ? rfp.press : '', font: rowFont,
             // D-195：节点库的行要能被**拖**（拖动放置）—— 渲染层据此写 `data-drag-node`
             dragNode: r.dragNode || '',
@@ -3662,7 +3663,20 @@
       // 空蓝图要给**引导行**（不是空白一片）：告诉玩家下一步能做什么
       return [{ indent: 0, text: '（空蓝图：套用下方模板，或点左侧节点加入程序）', slot: true }];
     }
-    return rows.map(function (r) {
+    var dropT = ed.dropTarget || null;
+    return rows.map(function (r, rowIdx) {
+      // 功能B：**落点高亮** —— 拖动时把"要放进去的那一行"整行高亮（不是只有一条细线）。
+      //   两种落点区分：slot（放进这个节点的槽）→ 高亮节点所在行；body（插到两节点之间）→ 画落点线。
+      var hi = false;
+      if (dropT && r.rowKind === 'node') {
+        if (dropT.where === 'slot') {
+          hi = dropT.parentAddr === r.addr;              // 放进这个节点的槽 → 高亮它自己
+        } else if (dropT.pitch) {
+          // 插入到两行之间 → 高亮"将被顶下去的那一行"（新节点就落在它上面）
+          hi = Math.abs(dropT.anchorY - Math.round(dropT.anchorY / dropT.pitch) * dropT.pitch) < 0.01
+            && Math.round(dropT.anchorY / dropT.pitch) === rowIdx;
+        }
+      }
       return {
         indent: r.depth,
         text: r.header ? r.text : r.text,
@@ -3671,6 +3685,7 @@
         pressed: r.selected === true,
         slot: r.header === true,                       // 槽位头用浅色
         muted: r.header === true,
+        dropHi: hi,
       };
     });
   }

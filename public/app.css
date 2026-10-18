@@ -161,3 +161,6 @@ textarea.dl-el.dl-input{font-family:Consolas,monospace;font-size:11.5px;line-hei
 .dl-modal .dl-el.dl-clickthrough{pointer-events:none}
 /* 小屏：整屏等比缩放由 aspect-ratio 负责，这里只压字号 */
 @media (max-width:560px){ .dl-screen{font-size:12px} }
+
+/* 功能B：拖动落点——整行高亮（比一条细线清楚） */
+.dl-el.dl-drop-hi{outline:2px solid #7fb2ff;outline-offset:-2px;background:rgba(127,178,255,.18)}

@@ -426,6 +426,7 @@
         parentAddr: r.addr, index: len, indent: r.depth + 1,
         anchorX: (r.depth + 1) * indPx,
         anchorY: rowIdx * pitch,                         // = 这一行所在的位置
+        band: [rowIdx * pitch, (rowIdx + 1) * pitch],    // 这一行占据的纵向区间（用来判"拖到节点上"）
         wantKind: want, where: 'slot',
       });
     });
@@ -458,13 +459,22 @@
     var cands = dropTargets(bp, o.kind, o);
     if (!cands.length) return null;
     var wantDepth = Math.max(0, Math.round(px / indPx));
+    // ① 先看"指针落在哪一行里" —— 落在节点行内 = 放进这个节点的槽位（用户口径：拖到节点上）
+    var inBand = null;
+    cands.forEach(function (t) {
+      if (t.where !== 'slot' || !t.band) return;
+      if (py >= t.band[0] && py < t.band[1]) inBand = t;
+    });
+    if (inBand) return Object.assign({}, inBand, { score: 0, hit: 'row', pitch: pitch });
+    // ② 否则找最近的"两行之间"的插入位（用户口径：拖到两个节点之间 = 插入其之间）
     var best = null;
     cands.forEach(function (t) {
+      if (t.where === 'slot') return;
       var dy = Math.abs(py - t.anchorY);
       if (dy > tolerance) return;                       // 太远：不吸附
       var score = dy + Math.abs((t.indent || 0) - wantDepth) * 10;
       if (!best || score < best.score) {
-        best = Object.assign({}, t, { score: Math.round(score * 100) / 100 });
+        best = Object.assign({}, t, { score: Math.round(score * 100) / 100, hit: 'gap', pitch: pitch });
       }
     });
     return best;
