@@ -1886,6 +1886,74 @@
       },
     },
     // D-194：拖放落地（落点由 ai-blueprint.nearestDrop 在拖动时算好，动作只负责套用）
+    'ai-drop-cancel': {
+      label: '放回仓库',
+      run: function (ctx) {
+        ctx.dispatch({ type: 'notice.set', kind: 'info',
+          text: '没放到合法位置：节点已放回仓库（未消耗）' });
+        return Promise.resolve();
+      },
+    },
+
+    'ai-node-move': {
+      label: '移动节点',
+      run: function (ctx, payload) {
+        var ed = ctx.state.aiEditor;
+        if (!ed || !ed.draft || ed.draft.type !== 'blueprint') return Promise.resolve();
+        var p = payload || {};
+        var from = String(p.from || '');
+        if (from === '') return Promise.resolve();
+        var fromIdxs = aiBp.parseAddr(from);
+        var node = aiBp.nodeAt(ed.draft, from);
+        if (!fromIdxs || !node) return Promise.resolve();
+        var spec = aiBp.specOf(node.node);
+        var target = {
+          parentAddr: String(p.parentAddr || ''),
+          index: Number(p.index || 0) || 0,
+          mode: String(p.mode || 'insert'),
+          wantKind: String(p.wantKind || (spec ? spec.kind : 'stmt')),
+          where: String(p.where || (String(p.parentAddr || '') === '' ? 'body' : 'slot')),
+        };
+        // 先摘下，再按"不顶掉原语句"的规则放进新位置（D-196：语句槽可容纳多条）
+        var without = aiBp.removeAt(ed.draft, from);
+        var fromParent = fromIdxs.length <= 1 ? '' : aiBp.parentAddrOf(from);
+        if (String(target.parentAddr) === fromParent && fromIdxs[fromIdxs.length - 1] < target.index) {
+          target.index -= 1;
+        }
+        var next = placeIntoStmtSlot(ctx, without, target, node);
+        if (next === null) {
+          ctx.dispatch({ type: 'notice.set', kind: 'info', text: '这个位置放不进去：节点保持原位' });
+          return Promise.resolve();
+        }
+        if (!aiBp.addrOfUid(next, node.uid)) {
+          ctx.dispatch({ type: 'notice.set', kind: 'info', text: '这个位置放不进去：节点保持原位' });
+          return Promise.resolve();
+        }
+        // ⚠️ reducer 读的是 `program`（不是 `draft`）—— 用错字段名会"点了没反应"
+        ctx.dispatch({ type: 'ai.draft.set', program: next });
+        return Promise.resolve();
+      },
+    },
+
+    // D-196：**拖到树外 = 退回仓库**（用户口径：光标附近没有合法位置就把节点退回仓库）。
+    //   与 `ai-node-del`（参数栏的"删除此节点"）分开：那条是显式删除，这条是拖放语义，
+    //   提示文案不同、也便于机器核对"拖出树"真的走的是回仓库路径。
+    'ai-node-eject': {
+      label: '退回仓库',
+      run: function (ctx, payload) {
+        var addr = payload !== null && payload && typeof payload.addr === 'string' ? payload.addr : '';
+        if (addr === '') return Promise.resolve();
+        var ed = ctx.state.aiEditor;
+        if (!ed || !ed.draft || ed.draft.type !== 'blueprint') return Promise.resolve();
+        var before = aiBp.statsOf(ed.draft).slots;
+        var next = aiBp.removeAt(ed.draft, addr);
+        if (aiBp.statsOf(next).slots === before) return Promise.resolve();   // 地址不在了：无操作
+        ctx.dispatch({ type: 'ai.draft.set', program: next });
+        ctx.dispatch({ type: 'notice.set', kind: 'info', text: '拖到树外：节点已退回仓库（库存 +1）' });
+        return Promise.resolve();
+      },
+    },
+
     'ai-node-drop': {
       label: '放入节点',
       run: function (ctx, payload) {
@@ -2366,10 +2434,53 @@
   }
 
   /**
+   * D-196：把节点放进**语句槽**且不顶掉原有语句（用户口径：一个语句块能容纳多个节点）。
+   *   · 槽里已经是「按顺序」→ 直接追加到它的末尾（不再消耗）
+   *   · 槽里是一条普通语句 → 用 1 个「按顺序」把两条串成一个块
+   *   · 库存没有「按顺序」→ null（调用方给可见提示，草稿不变）
+   */
+  function placeIntoStmtSlot(ctx, draft, target, nodeObj) {
+    var t = target || {};
+    if (t.mode !== 'replace' || t.wantKind !== 'stmt') return aiBp.placeNode(draft, t, nodeObj);
+    var host = aiBp.nodeAt(draft, t.parentAddr);
+    if (!host || !Array.isArray(host.inputs)) return null;
+    var at = Number(t.index || 0) || 0;
+    var old = host.inputs[at];
+    if (!old) return aiBp.placeNode(draft, t, nodeObj);
+    var oldAddr = String(t.parentAddr) + '.inputs[' + at + ']';
+    if (old.node === 'f_seq') {
+      return aiBp.placeNode(draft, {
+        parentAddr: oldAddr, index: (old.inputs || []).length, mode: 'insert', where: 'slot',
+      }, nodeObj);
+    }
+    if (seqFreeOf(ctx) <= 0) return null;
+    var seq = aiBp.newNode('f_seq', aiBp.nextUid(draft));
+    if (seq === null) return null;
+    seq.inputs = [old, nodeObj];
+    return aiBp.normalizeUids(aiBp.replaceAt(draft, oldAddr, seq));
+  }
+
+  /** 草稿还能再消耗几个「按顺序」（服务端 used 含已保存蓝图；草稿里新增的还没保存 → 本地扣） */
+  function seqFreeOf(ctx) {
+    var ed = ctx.state.aiEditor;
+    if (!ed) return 0;
+    var inv = ctx.format.aiBlueprintInventoryOf ? ctx.format.aiBlueprintInventoryOf(ed.nodes) : null;
+    var row = null;
+    (inv || []).forEach(function (r) { if (r && r.nodeId === 'f_seq') row = r; });
+    if (row === null) return 0;
+    var owned = typeof row.owned === 'number' ? row.owned : 0;
+    var usedSaved = typeof row.used === 'number' ? row.used : 0;
+    var saved = ed.aiId === null || ed.aiId === undefined ? null : ctx.format.aiItemOf(ed.list, ed.aiId);
+    var savedSeq = saved && saved.blueprint ? (aiBp.statsOf(saved.blueprint).byNode['f_seq'] || 0) : 0;
+    var draftSeq = ed.draft && ed.draft.type === 'blueprint' ? (aiBp.statsOf(ed.draft).byNode['f_seq'] || 0) : 0;
+    return owned - (usedSaved - savedSeq) - draftSeq;
+  }
+
+  /**
    * D-194：**拖放落地** —— 把节点库里拖来的节点按命中候选放进树。
-   * 候选（`{parentAddr, index, where}`）由 `aiBp.nearestDrop()` 在拖动时算好并挂在 payload 上；
+   * 候选（`{parentAddr, index, mode, where}`）由 `aiBp.nearestDrop()` 在拖动时算好并挂在 payload 上；
    * 这里**只负责套用**，不重复判断几何（避免"算的时候一套、放的时候另一套"）。
-   * 失败路径一律可解释：节点不存在 / 类型不合 / 父地址失效 → 提示，且**不改草稿**。
+   * 失败路径一律可解释：节点不存在 / 类型不合 / 父地址失效 / 语句块串联节点不足 → 提示，且**不改草稿**。
    */
   function runAiNodeDrop(ctx, payload) {
     var ed = ctx.state.aiEditor;
@@ -2384,6 +2495,8 @@
     var target = {
       parentAddr: String(p.parentAddr || ''),
       index: Number(p.index || 0) || 0,
+      mode: String(p.mode || 'insert'),
+      wantKind: aiBp.specOf(nodeId) ? aiBp.specOf(nodeId).kind : 'stmt',
       where: String(p.where || (String(p.parentAddr || '') === '' ? 'body' : 'slot')),
     };
     // 类型兼容再确认一次（payload 可能被伪造/过期）
@@ -2392,7 +2505,13 @@
         return Promise.resolve();
       }
     }
-    var next = aiBp.placeNode(ed.draft, target, node);
+    var next = placeIntoStmtSlot(ctx, ed.draft, target, node);
+    if (next === null) {
+      return Promise.resolve(ctx.dispatch({
+        type: 'notice.set', kind: 'info',
+        text: '这里已经有一条语句了：再放一条需要「按顺序」节点来串联（库存不足，先去开包/分解腾出来）',
+      }));
+    }
     ctx.dispatch({ type: 'ai.draft.set', program: next });
     ctx.dispatch({ type: 'ai.drop.set', y: null, target: null });
     return Promise.resolve();

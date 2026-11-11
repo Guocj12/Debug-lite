@@ -1891,15 +1891,41 @@
           "hit": "rect",
           "anchor": "lt",
           "rect": [
-            300,
             0,
-            616,
+            0,
+            600,
             2
           ],
           "rectFrom": {
-            "y": "aiDropY"
+            "x": "aiDropX",
+            "y": "aiDropY",
+            "w": "aiDropW"
           },
+          "parent": "ai_tree_list",
           "z": 8,
+          "when": {
+            "aiDropOn": "1"
+          }
+        },
+        {
+          "id": "ai_ghost",
+          "kind": "deco",
+          "action": "",
+          "hit": "rect",
+          "anchor": "lt",
+          "rect": [
+            0,
+            0,
+            260,
+            24
+          ],
+          "rectFrom": {
+            "x": "aiDragX",
+            "y": "aiDragY"
+          },
+          "clickThrough": true,
+          "label": "拖动中",
+          "z": 30,
           "when": {
             "aiDragging": "1"
           }
@@ -2667,6 +2693,12 @@
     "aiPreset2",
     "aiPreset3",
     "aiImport",
-    "aiListSel"
+    "aiListSel",
+    "aiDropOn",
+    "aiDropX",
+    "aiDropW",
+    "aiDragX",
+    "aiDragY",
+    "aiGhostText"
   ]
 }

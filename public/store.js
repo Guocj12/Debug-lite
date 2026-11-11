@@ -154,7 +154,10 @@
       listSel: '',         // D-195：AI 库列表里选中的条目（布局表版：点行选中，打开/删除在底栏）
       paletteOpen: {},     // 节点库：分类 → 是否展开（默认全折叠）
       dropY: null,         // 拖动时的插入预览线 y（null = 不在拖动 ⇒ 预览线不显示）
-      dropTarget: null,    // 命中的投放候选 {parentAddr, index, indent, where}
+      dropX: null,         // 预览线起点 x（按落点缩进走；null = 用布局表默认值）
+      dropW: null,         // 预览线宽度（到树容器右边缘）
+      dropTarget: null,    // 命中的投放候选 {parentAddr, index, mode, depth, y}
+      drag: null,          // D-196：拖动中的幽灵节点 {x, y, text}（画布坐标；null = 没在拖）
       zoom: 1,             // 树的缩放（滚轮，0.4~2）
       history: [],         // 撤销栈（草稿快照，最多 30 步；只作用于本屏）
       future: [],          // 重做栈
@@ -597,9 +600,20 @@
         return Object.assign({}, state, {
           aiEditor: Object.assign({}, state.aiEditor, {
             dropY: (action.y === null || action.y === undefined || !isFinite(Number(action.y))) ? null : Math.round(Number(action.y)),
+            dropX: (action.x === null || action.x === undefined || !isFinite(Number(action.x))) ? null : Math.round(Number(action.x)),
+            dropW: (action.w === null || action.w === undefined || !isFinite(Number(action.w))) ? null : Math.round(Number(action.w)),
             dropTarget: action.target || null,
           }),
         });
+      // D-196：拖动中的**幽灵节点**（跟随光标）。`active:false` / 空坐标 = 拖动结束。
+      //   坐标是**画布单位**（相对 `.dl-screen` 左上角），布局表用 rectFrom 直接吃。
+      case 'ai.drag.set': {
+        var dragging = action.active !== false && isFinite(Number(action.x)) && isFinite(Number(action.y));
+        var drag = dragging
+          ? { x: Math.round(Number(action.x) * 100) / 100, y: Math.round(Number(action.y) * 100) / 100, text: strOf(action.text) }
+          : null;
+        return Object.assign({}, state, { aiEditor: Object.assign({}, state.aiEditor, { drag: drag }) });
+      }
       case 'ai.undo':
         return aiTimeTravel(state, 'undo');
       case 'ai.redo':

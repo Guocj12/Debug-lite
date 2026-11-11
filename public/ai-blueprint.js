@@ -336,10 +336,26 @@
   }
 
   /**
+   * D-196：**槽位数量**（空槽也常驻）。
+   * 用户 2026-10-18：「条件节点应常驻"如果 那么 否则"，就算为空也显示这几个（其他类似逻辑也是这样）」。
+   *   · 固定槽（`如果` 的条件/那么/否则、循环体…）= `max` / `kinds.length` 个，**不随实际子节点数收缩**
+   *   · 不限槽（`按顺序` 的步骤）= 已有 N 个 + **1 个空位**（拖进去就是追加）
+   */
+  function slotCountOf(nodeId, len) {
+    var spec = specOf(nodeId);
+    var specIn = (spec && spec.inputs) || { min: 0, max: 0, kinds: [] };
+    var kinds = Array.isArray(specIn.kinds) ? specIn.kinds : [];
+    var max = specIn.max === undefined || specIn.max === null ? 0 : specIn.max;
+    if (max < 0) return Math.max(Number(len) + 1, 1);
+    return Math.max(kinds.length, max, Number(len));
+  }
+
+  /**
    * D-194：树行（**带几何/归属信息**，供拖放吸附用）。
    * 在 treeLines 的基础上多给：`parentAddr` / `slotIndex` / `nodeId` / `subtreeEnd`。
    *   · 节点行：`parentAddr` = 它装在哪（'' = 顶层 body），`slotIndex` = 它在父的哪个子位
    *   · 槽位头行：`parentAddr` = 拥有这个槽的节点地址，`slotIndex` = 槽号
+   *   · 空槽行（`rowKind:'empty'`）：占位行，拖放目标是"这个槽的第一个位置"
    *   · `subtreeEnd` = 该节点**整棵子树**最后一行的下标（拖到"块下方"时用它算锚点）
    */
   function treeRows(bp, selectedAddr) {
@@ -352,10 +368,16 @@
                   kind: spec ? spec.kind : null, header: false, rowKind: 'node',
                   parentAddr: parentAddr, slotIndex: slotIndex, nodeId: n.node, subtreeEnd: start });
       var ins = Array.isArray(n.inputs) ? n.inputs : [];
-      for (var i = 0; i < ins.length; i++) {
+      var count = slotCountOf(n.node, ins.length);
+      for (var i = 0; i < count; i += 1) {
         rows.push({ addr: '', depth: depth + 1, text: inputLabel(n.node, i) + '：', header: true, selected: false,
                     kind: null, rowKind: 'slot', parentAddr: addr, slotIndex: i, nodeId: n.node, subtreeEnd: rows.length });
-        visit(ins[i], childAddr(addr, i), depth + 2, addr, i);
+        if (ins[i]) {
+          visit(ins[i], childAddr(addr, i), depth + 2, addr, i);
+        } else {
+          rows.push({ addr: '', depth: depth + 2, text: '（空）', header: false, selected: false,
+                      kind: null, rowKind: 'empty', parentAddr: addr, slotIndex: i, nodeId: n.node, subtreeEnd: rows.length });
+        }
       }
       rows[start].subtreeEnd = rows.length - 1;
     };
@@ -392,105 +414,353 @@
    * @param {object} opts {pitch, indentPx, movingAddr}
    * @returns {Array} [{parentAddr, index, indent, anchorY, anchorX, wantKind, where}]
    */
-  function dropTargets(bp, kind, opts) {
-    var o = opts || {};
-    var pitch = num2(o.pitch, 28);
-    var indPx = num2(o.indentPx, 16);
-    var rows = treeRows(bp, '');
-    var rowOf = {};
-    rows.forEach(function (r, i) { if (r.addr) rowOf[r.addr] = i; });
-    var endY = rows.length * pitch;
-    var out = [];
-
-    // ① 顶层（body）的同级插入位：index 0..len
-    var body = (bp && bp.body) || [];
-    for (var i = 0; i <= body.length; i++) {
-      var anchorY = rowOf['body[' + i + ']'] !== undefined ? rowOf['body[' + i + ']'] * pitch : endY;
-      if (!kindFits(kind, 'stmt')) continue;            // 顶层只收语句
-      out.push({ parentAddr: '', index: i, indent: 0, anchorX: 0, anchorY: anchorY,
-                 wantKind: 'stmt', where: 'body' });
+  /** 槽头行在树里的行号（`parentAddr` + `slotIndex` 唯一定位一行） */
+  function slotRowIndex(rows, parentAddr, slotIndex) {
+    for (var i = 0; i < rows.length; i += 1) {
+      var r = rows[i];
+      if (r.rowKind === 'slot' && r.parentAddr === parentAddr && r.slotIndex === slotIndex) return i;
     }
-
-    // ② 每个容器的**子位追加位**（inputs 是定长子位数组：append 就是填下一个槽）
-    //   锚点放在**该节点自己那一行**（用户口径："拖到节点上视为放进槽位"）——
-    //   之前用"整棵子树之后"，块一大就把指针甩到几十行外，根本吸不上。
-    rows.forEach(function (r, rowIdx) {
-      if (r.rowKind !== 'node') return;
-      var max = slotMaxOf(r.nodeId);
-      var node = nodeAt(bp, r.addr);
-      var len = node && Array.isArray(node.inputs) ? node.inputs.length : 0;
-      if (max >= 0 && len >= max) return;               // 满了 → 没有候选（放不进就取消）
-      var want = slotKindOf(r.nodeId, len);
-      if (!kindFits(kind, want)) return;                // 类型不合 → 候选根本不存在
-      out.push({
-        parentAddr: r.addr, index: len, indent: r.depth + 1,
-        anchorX: (r.depth + 1) * indPx,
-        anchorY: rowIdx * pitch,                         // = 这一行所在的位置
-        band: [rowIdx * pitch, (rowIdx + 1) * pitch],    // 这一行占据的纵向区间（用来判"拖到节点上"）
-        wantKind: want, where: 'slot',
-      });
-    });
-
-    // 拖已有节点时，不能放进自己的子树里（会成环）
-    var moving = String(o.movingAddr || '');
-    if (moving !== '') {
-      out = out.filter(function (t) {
-        return !(t.parentAddr === moving || t.parentAddr.indexOf(moving + '.inputs[') === 0);
-      });
-    }
-    return out;
+    return -1;
   }
 
   /**
-   * D-195：**最近可插入位吸附**。
-   * 判据（按用户口径"不光看上下，还要看缩进"）：
-   *   · **纵向**决定是哪个落点（离某行越近越优先，容差 = 两行高）
-   *   · **横向缩进**决定要落在第几层（`round(px / indentPx)`），层级权重 10（比 1px 的纵向差重要得多）
-   * 早前的写法是"加权欧氏距离"，但行的宽度有 300+，指针落在行右半边时 x 差就有 100+，
-   * 直接把所有候选都顶出阈值 ⇒ 拖了没反应。现在 x 只用来定层级，不再当成距离。
-   * @returns {object|null} 命中的候选（附 score），或 null（不吸附 = 取消放置）
+   * D-196：**枚举可插入位**（拖放吸附的唯一几何出处）。
+   *
+   * 语义（用户 2026-10-18 口径）：
+   *   · **纵向**决定"插到哪两行之间"（候选的 `y` = 插入后该行出现的行顶位置）
+   *   · **横向缩进**决定"处于哪个语句块"（候选的 `depth` = 该位置的行深度，Python 缩进语义）
+   *   · 语句槽满（如 `如果` 的"那么"位已有一个占位节点）→ 候选是**替换**（`mode:'replace'`），
+   *     因为固定槽位每格只收一个节点；不给替换就等于"这个槽永远拖不进去"。
+   *
+   * @param {object} bp   蓝图
+   * @param {string} kind 被拖动节点的类型（stmt / bool / value）
+   * @param {object} opts {pitch, indentPx, exclude}
+   * @returns {Array} [{parentAddr, index, mode, depth, y, wantKind, where, indent, anchorY}]
+   */
+  function dropTargets(bp, kind, opts) {
+    var o = opts || {};
+    var pitch = num2(o.pitch, 26);
+    var indPx = num2(o.indentPx, 18);
+    var exclude = String(o.exclude || '');      // 正在拖的树内节点：不能在自己的子树里找落点
+    var rows = treeRows(bp, '');
+    var rowOf = {};
+    rows.forEach(function (r, i) { if (r.addr) rowOf[r.addr] = i; });
+    var total = rows.length * pitch;
+    var out = [];
+    /** 落点是否落在"被拖节点自己的子树里"（那样会成环） */
+    var inSelf = function (parentAddr) {
+      if (exclude === '') return false;
+      var p = String(parentAddr || '');
+      return p === exclude || p.indexOf(exclude + '.') === 0;
+    };
+    var push = function (t) {
+      if (inSelf(t.parentAddr)) return;
+      t.indent = t.depth;           // 旧字段名（布局台/测试沿用）
+      t.anchorY = t.y;
+      t.anchorX = t.depth * indPx;
+      out.push(t);
+    };
+
+    // ① 顶层（body）：0..len 每个间隙都是候选，深度恒为 0
+    var body = (bp && bp.body) || [];
+    if (kindFits(kind, 'stmt')) {
+      for (var i = 0; i <= body.length; i += 1) {
+        var addr = 'body[' + i + ']';
+        push({
+          parentAddr: '', index: i, mode: 'insert', depth: 0,
+          y: rowOf[addr] !== undefined ? rowOf[addr] * pitch : total,
+          wantKind: 'stmt', where: 'body',
+        });
+      }
+    }
+
+    // ② 每个能收子节点的节点：逐个槽位生成候选
+    rows.forEach(function (r, rowIdx) {
+      if (r.rowKind !== 'node') return;
+      var max = slotMaxOf(r.nodeId);
+      if (max === 0) return;                                  // 动作/条件类收不了子节点
+      var node = nodeAt(bp, r.addr);
+      if (!node) return;
+      var inputs = Array.isArray(node.inputs) ? node.inputs : [];
+      var depth = r.depth + 2;                                // 子节点行 = 槽头行 + 1
+      if (homogeneousSlots(r.nodeId)) {
+        // 同质列表（可串多条语句，如 `按顺序`）：可插到任意两个子节点之间
+        var full = max > 0 && inputs.length >= max;
+        if (full) {
+          // 满了 → 每个已有子位都是"替换"候选
+          for (var k = 0; k < inputs.length; k += 1) {
+            var wk = slotKindOf(r.nodeId, k);
+            if (!kindFits(kind, wk)) continue;
+            var childRow = rowOf[r.addr + '.inputs[' + k + ']'];
+            push({
+              parentAddr: r.addr, index: k, mode: 'replace', depth: depth,
+              y: childRow !== undefined ? childRow * pitch : (rowIdx + 1) * pitch,
+              wantKind: wk, where: 'slot',
+            });
+          }
+          return;
+        }
+        for (var j = 0; j <= inputs.length; j += 1) {
+          var want = slotKindOf(r.nodeId, j);
+          if (!kindFits(kind, want)) continue;
+          // 空槽也常驻（treeRows 为每个槽位都生成了槽头行）→ 插入位置就是"第 j 个槽头行"
+          var sr = slotRowIndex(rows, r.addr, j);
+          var y = (sr !== -1 ? sr : (rowIdx + 1)) * pitch;
+          push({ parentAddr: r.addr, index: j, mode: 'insert', depth: depth, y: y, wantKind: want, where: 'slot' });
+        }
+        return;
+      }
+      // 固定槽位（如 `如果` 的条件/那么/否则）：每格只收一个 → 空则插入、有则替换
+      var kinds = (specOf(r.nodeId) && specOf(r.nodeId).inputs && specOf(r.nodeId).inputs.kinds) || [];
+      var slotCount = Math.max(kinds.length, max > 0 ? max : 0, inputs.length);
+      for (var k2 = 0; k2 < slotCount; k2 += 1) {
+        if (max > 0 && k2 >= max) continue;
+        var want2 = slotKindOf(r.nodeId, k2);
+        if (!kindFits(kind, want2)) continue;
+        var childRow2 = rowOf[r.addr + '.inputs[' + k2 + ']'];
+        var slotRow = slotRowIndex(rows, r.addr, k2);
+        var yAdd;
+        if (childRow2 !== undefined) {
+          yAdd = childRow2;                                  // 有子节点：预览线画在它上面（= 替换）
+        } else if (slotRow !== -1) {
+          yAdd = slotRow + 1;                                // 空槽：画在槽头行的下一行（（空）占位行）
+        } else {
+          yAdd = rowIdx + 1;
+        }
+        push({
+          parentAddr: r.addr, index: k2, mode: childRow2 !== undefined ? 'replace' : 'insert',
+          depth: depth,
+          y: yAdd * pitch,
+          wantKind: want2, where: 'slot',
+        });
+      }
+    });
+    return out;
+  }
+
+  /** 从候选集里精确取一个落点（同父、同下标、指定模式、类型兼容） */
+  function pickTarget(cands, parentAddr, index, mode, kind) {
+    for (var i = 0; i < cands.length; i += 1) {
+      var c = cands[i];
+      if (String(c.parentAddr || '') !== String(parentAddr || '')) continue;
+      if (c.index !== index) continue;
+      if (mode && c.mode !== mode) continue;
+      if (kind && !kindFits(kind, c.wantKind)) continue;
+      return c;
+    }
+    return null;
+  }
+  /** 同一下标：先找 insert，再退 replace（固定槽位满 = 替换） */
+  function pickInsertOrReplace(cands, parentAddr, index, kind) {
+    return pickTarget(cands, parentAddr, index, 'insert', kind)
+      || pickTarget(cands, parentAddr, index, 'replace', kind);
+  }
+  /** 这个节点的"语句子位"里最合适的候选（同质槽取末尾追加；固定槽取第一个空槽，否则第一个可替换槽） */
+  function childSlotTarget(cands, nodeAddr, kind) {
+    var insert = null, replace = null;
+    cands.forEach(function (c) {
+      if (String(c.parentAddr || '') !== String(nodeAddr || '')) return;
+      if (!kindFits(kind, c.wantKind)) return;
+      if (c.mode === 'insert') {
+        if (insert === null || c.index > insert.index) insert = c;
+      } else if (replace === null) {
+        replace = c;
+      }
+    });
+    return insert || replace;
+  }
+  /** 某个地址的祖先节点行（按 depth 找） */
+  function ancestorRowAt(rows, row, depth) {
+    var addr = row.rowKind === 'node' ? row.addr : row.parentAddr;
+    var guard = 0;
+    while (addr && guard < 64) {
+      guard += 1;
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i].rowKind === 'node' && rows[i].addr === addr) {
+          if (rows[i].depth === depth) return rows[i];
+          break;
+        }
+      }
+      var idxs = parseAddr(addr);
+      if (!idxs || idxs.length <= 1) return null;
+      addr = addrOfIdxs(idxs.slice(0, -1));
+    }
+    return null;
+  }
+
+  /**
+   * D-196：**按"指针所在行 + 横向缩进"解析意图落点**（Python 缩进语义的唯一入口）。
+   *
+   * 规则（用户 2026-10-18 口径）：
+   *   · 指针在某行 → 该行的**上半** = 插到这一行之前；**下半** = 插到这一行之后（同级）
+   *   · 指针横向缩进比该行更深（`x / indentPx` 更大）→ 插进该节点的**语句槽**
+   *   · 指针在槽头行（`条件：` / `那么：` / `第 N 步：`）→ 放进该槽（空则插入、满则替换）
+   *   · 指针横向缩进比该行更浅 → 回到对应祖先层级，插到该祖先之后
+   *   · 落在树外（下方空白 / 上方空白）→ null（调用方把节点退回仓库）
+   *
+   * 合法性一律以 `dropTargets()` 为准（本函数只解析意图，不自己发明位置）。
    */
   function nearestDrop(bp, pointer, opts) {
     var o = opts || {};
     var px = num2(pointer && pointer.x, 0), py = num2(pointer && pointer.y, 0);
-    var pitch = num2(o.pitch, 24);
-    var indPx = num2(o.indentPx, 16) || 16;
-    var tolerance = o.threshold !== undefined ? num2(o.threshold, pitch * 2.5) : pitch * 2.5;
-    var cands = dropTargets(bp, o.kind, o);
+    var pitch = num2(o.pitch, 26) || 26;
+    var indPx = num2(o.indentPx, 18) || 18;
+    var kind = o.kind || 'stmt';
+    var rows = treeRows(bp, '');
+    var cands = dropTargets(bp, kind, o);
     if (!cands.length) return null;
     var wantDepth = Math.max(0, Math.round(px / indPx));
-    // ① 先看"指针落在哪一行里" —— 落在节点行内 = 放进这个节点的槽位（用户口径：拖到节点上）
-    var inBand = null;
-    cands.forEach(function (t) {
-      if (t.where !== 'slot' || !t.band) return;
-      if (py >= t.band[0] && py < t.band[1]) inBand = t;
-    });
-    if (inBand) return Object.assign({}, inBand, { score: 0, hit: 'row', pitch: pitch });
-    // ② 否则找最近的"两行之间"的插入位（用户口径：拖到两个节点之间 = 插入其之间）
-    var best = null;
-    cands.forEach(function (t) {
-      if (t.where === 'slot') return;
-      var dy = Math.abs(py - t.anchorY);
-      if (dy > tolerance) return;                       // 太远：不吸附
-      var score = dy + Math.abs((t.indent || 0) - wantDepth) * 10;
-      if (!best || score < best.score) {
-        best = Object.assign({}, t, { score: Math.round(score * 100) / 100, hit: 'gap', pitch: pitch });
+    var wrap = function (t) {
+      if (!t) return null;
+      return Object.assign({}, t, { pitch: pitch, indentPx: indPx, wantDepth: wantDepth, score: 0 });
+    };
+    if (!rows.length) return wrap(pickInsertOrReplace(cands, '', 0, kind));
+
+    var H = rows.length * pitch;
+    if (py < -pitch * 0.6 || py > H + pitch * 0.6) return null;      // 树外 = 取消
+    var bodyLen = (bp && bp.body ? bp.body.length : 0);
+    if (py >= H) return wrap(pickTarget(cands, '', bodyLen, 'insert', kind));   // 拖到最末行之后
+
+    var rowIdx = Math.max(0, Math.min(rows.length - 1, Math.floor(py / pitch)));
+    var row = rows[rowIdx];
+    var upper = (py - rowIdx * pitch) < pitch / 2;
+
+    // ① 空槽占位行（「（空）」）→ 放进这个槽
+    if (row.rowKind === 'empty') {
+      var tEmpty = pickInsertOrReplace(cands, row.parentAddr, row.slotIndex, kind);
+      if (tEmpty) return wrap(tEmpty);
+    }
+
+    // ①b 槽头行 → 放进这个槽（空则插入、满则替换）
+    if (row.rowKind === 'slot') {
+      var tSlot = pickInsertOrReplace(cands, row.parentAddr, row.slotIndex, kind);
+      if (tSlot) return wrap(tSlot);
+      // 这个槽不收这种类型 → 退回到"该槽拥有者之后"
+      var ownerRow = null;
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i].rowKind === 'node' && rows[i].addr === row.parentAddr) { ownerRow = rows[i]; break; }
       }
-    });
-    return best;
+      if (ownerRow) {
+        // 这个槽不收这种类型 → 退到"该槽拥有者之后"（槽内没有可放的位置）
+        var tAfter = pickInsertOrReplace(cands, ownerRow.parentAddr, ownerRow.slotIndex + 1, kind);
+        if (tAfter) return wrap(tAfter);
+      }
+      return null;
+    }
+
+    // ② 节点行、横向更深 → 进它的语句槽
+    if (wantDepth > row.depth) {
+      var tChild = childSlotTarget(cands, row.addr, kind);
+      if (tChild) return wrap(tChild);
+    }
+
+    // ③ 节点行、横向 >= 本行深度 → 同级：上半插前面、下半插后面
+    if (wantDepth >= row.depth) {
+      if (upper) {
+        var tBefore = pickInsertOrReplace(cands, row.parentAddr, row.slotIndex, kind);
+        if (tBefore) return wrap(tBefore);
+      }
+      var tAfter2 = pickInsertOrReplace(cands, row.parentAddr, row.slotIndex + 1, kind);
+      if (tAfter2) return wrap(tAfter2);
+      if (!upper) {
+        var tBefore2 = pickInsertOrReplace(cands, row.parentAddr, row.slotIndex, kind);
+        if (tBefore2) return wrap(tBefore2);
+      }
+      return null;
+    }
+
+    // ④ 横向更浅 → 回到对应祖先层级，插到它之后
+    var anc = ancestorRowAt(rows, row, wantDepth);
+    if (anc) {
+      var tAnc = pickInsertOrReplace(cands, anc.parentAddr, anc.slotIndex + 1, kind)
+        || pickInsertOrReplace(cands, anc.parentAddr, anc.slotIndex, kind);
+      if (tAnc) return wrap(tAnc);
+    }
+    return null;
   }
 
-  /** D-194：按命中的候选把节点放进去（顶层=插到 index；子位=填下一个槽） */
+  /** D-196：按命中的候选把节点放进去（insert = 插到 index；replace = 替换该槽现有节点） */
   function placeNode(bp, target, nodeObj) {
     if (!target) return clone(bp);
+    var out = clone(bp);
+    var kind = specOf(nodeObj.node) ? specOf(nodeObj.node).kind : 'stmt';
+    if (target.mode === 'replace') {
+      var hostR = nodeAt(out, target.parentAddr);
+      if (!hostR) return clone(bp);
+      hostR.inputs = Array.isArray(hostR.inputs) ? hostR.inputs : [];
+      var atR = num2(target.index, 0);
+      if (atR < 0 || atR >= hostR.inputs.length) return clone(bp);
+      if (!kindFits(kind, slotKindOf(hostR.node, atR))) return clone(bp);
+      hostR.inputs[atR] = nodeObj;
+      return normalizeUids(out);
+    }
     if (target.where === 'body' || target.parentAddr === '') {
-      var out = clone(bp);
       out.body = out.body || [];
       var idx = Math.max(0, Math.min(num2(target.index, out.body.length), out.body.length));
       out.body.splice(idx, 0, nodeObj);
       return normalizeUids(out);
     }
-    return appendChild(bp, target.parentAddr, nodeObj);
+    // 插进某个节点的**子位数组**：同质列表（如 `按顺序` 的步骤）可插中间；
+    //   固定槽位（`如果` 的条件/那么/否则）每格只收一个 → 由 dropTargets 生成 replace 候选。
+    var host = nodeAt(out, target.parentAddr);
+    if (!host) return out;
+    host.inputs = Array.isArray(host.inputs) ? host.inputs : [];
+    var max = slotMaxOf(host.node);
+    var at = Math.max(0, Math.min(num2(target.index, host.inputs.length), host.inputs.length));
+    if (!kindFits(kind, slotKindOf(host.node, at))) return clone(bp);
+    if (max >= 0 && host.inputs.length >= max) return clone(bp);
+    if (at !== host.inputs.length && !homogeneousSlots(host.node)) return clone(bp);
+    host.inputs.splice(at, 0, nodeObj);
+    return normalizeUids(out);
+  }
+
+  /** 这个节点的子位是不是"同质列表"（每一位收同一种节点）—— 同质才允许插到中间。
+   *  ⚠️ `max < 0` = 不限（如 `按顺序`）**也是同质列表**；以前写成 `max <= 0 → false`
+   *  会让 f_seq 掉进"固定槽位"分支，于是每个子位都变成 replace（拖第二个语句就顶掉第一个）。 */
+  function homogeneousSlots(nodeId) {
+    var max = slotMaxOf(nodeId);
+    if (max === 0) return false;                 // 收不了子节点
+    var k0 = slotKindOf(nodeId, 0);
+    var n = max < 0 ? 1 : max;
+    for (var i = 1; i < n; i += 1) if (slotKindOf(nodeId, i) !== k0) return false;
+    return true;
+  }
+
+  /** 按 uid 找地址（用于校验"移动真的落地了"） */
+  function addrOfUid(bp, uid) {
+    var hit = null;
+    function rec(node, addr) {
+      if (!node || hit) return;
+      if (node.uid === uid) { hit = addr; return; }
+      var list = Array.isArray(node.inputs) ? node.inputs : [];
+      list.forEach(function (ch, i) { rec(ch, addr + '.inputs[' + i + ']'); });
+    }
+    (bp.body || []).forEach(function (n, i) { rec(n, 'body[' + i + ']'); });
+    return hit;
+  }
+
+  /** 移动：把 fromAddr 的节点摘下来，插到 target（支持嵌套与 replace）。
+   *  放不进去（槽满 / 类型不合 / 移进自己的子树）→ 返回 null（调用方当"放回仓库"处理）。
+   *  拖到自己**原位** → 返回原蓝图的副本（无操作，不进撤销栈）。 */
+  function moveTo(bp, fromAddr, target) {
+    var node = nodeAt(bp, fromAddr);
+    if (!node || !target) return null;
+    var tParent = String(target.parentAddr || '');
+    if (tParent === String(fromAddr) || tParent.indexOf(String(fromAddr) + '.') === 0) return null;
+    var fromIdxs = parseAddr(fromAddr);
+    if (!fromIdxs) return null;
+    var fromParent = fromIdxs.length <= 1 ? '' : addrOfIdxs(fromIdxs.slice(0, -1));
+    var fromIdx = fromIdxs[fromIdxs.length - 1];
+    var ti = num2(target.index, 0);
+    var targetAddr = tParent === '' ? 'body[' + ti + ']' : tParent + '.inputs[' + ti + ']';
+    if (targetAddr === fromAddr) return clone(bp);                 // 原位 = 无操作
+    if (target.mode === 'replace' && targetAddr.indexOf(String(fromAddr) + '.') === 0) return null;
+    var t = { where: target.where, mode: target.mode, parentAddr: tParent, index: ti };
+    if (fromParent === tParent && fromIdx < t.index) t.index -= 1;
+    var without = removeAt(bp, fromAddr);
+    var placed = placeNode(without, t, node);
+    if (!addrOfUid(placed, node.uid)) return null;      // 没插进去 = 本次移动无效
+    return placed;
   }
 
   function num2(v, d) { var n = Number(v); return isFinite(n) ? n : d; }
@@ -660,6 +930,7 @@
     // D-194：拖放吸附（纯几何 + 类型过滤，产品与布局台共用）
     treeRows: treeRows, slotKindOf: slotKindOf, slotMaxOf: slotMaxOf, kindFits: kindFits,
     dropTargets: dropTargets, nearestDrop: nearestDrop, placeNode: placeNode,
+    moveTo: moveTo, addrOfUid: addrOfUid,
     // 错误定位 / 导入导出 / 高亮 / 编辑器左栏
     addrOfError: addrOfError, exportText: exportText, importJson: importJson,
     projectTrace: projectTrace, rawTrace: rawTrace, highlightOf: highlightOf,

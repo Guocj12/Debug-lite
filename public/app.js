@@ -166,6 +166,9 @@
       // 输入不重绘，避免光标跳动（F1 表单 / F2 管理面板 / F3 开箱与设置输入框 / F5 AI 编辑器同理）
       if (action && (action.type === 'form.set' || action.type === 'admin.form.set' || action.type === 'screen.form.set'
         || action.type === 'ai.text.set' || action.type === 'ai.import.set')) return;
+      // D-196：幽灵节点跟手时**不重绘**（每帧重建整屏会掉帧、也会打断拖动）；
+      //   只有"开始拖动"那一次（redraw:true）才重绘，让幽灵节点出现。
+      if (action && action.type === 'ai.drag.set' && action.redraw !== true) return;
       mount();
     }
 

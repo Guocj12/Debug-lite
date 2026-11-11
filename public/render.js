@@ -259,11 +259,15 @@
     // D-195：行列表容器带上行高/缩进，手势层据此把指针换算成"第几行、第几层"
     if (el.rowPitch) attrs += ' data-row-pitch="' + Number(el.rowPitch) + '"';
     if (el.rowIndent) attrs += ' data-row-indent="' + Number(el.rowIndent) + '"';
+    // D-196：**落点容器**标记（程序树）。手势层据此区分"拖进树"与"拖到节点库"。
+    if (el.dropBox) attrs += ' data-drop-box="1"';
     // D-195：容器的画布尺寸 —— 手势层用它把屏幕像素换算回画布单位（否则落点算错一个缩放比）
     if (el.canvasW) attrs += ' data-cw="' + Number(el.canvasW) + '"';
     if (el.canvasH) attrs += ' data-ch="' + Number(el.canvasH) + '"';
     // D-195：节点库的行可**拖**（拖动放置）；值 = 节点 id
     if (el.dragNode) attrs += ' data-drag-node="' + esc(String(el.dragNode)) + '"';
+    // 树内节点也能拖（拖动=移动）：值是节点地址
+    if (el.dragAddr) attrs += ' data-drag-addr="' + esc(String(el.dragAddr)) + '"';
     // D-194：**文本输入**。它既不是 button 也不是 div：
     //   用 <input>/<textarea> 才有原生光标、选中、输入法；提交走 change → `field.set`。
     if (el.kind === 'input' || el.kind === 'textarea') {

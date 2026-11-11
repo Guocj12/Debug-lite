@@ -49,6 +49,7 @@
     var drag = null;        // 拖动节点
     var pan = null;         // 平移
     var swallowClick = false;
+    var lastKey = null;     // 上一次落点候选的 key（只在变化时重绘）
 
     /** 吞掉"拖完之后浏览器补发的那一次 click"。
      *  宿主自己的点击接线（app.js 的 onClick）不经过本模块，所以要**在 document 捕获阶段**拦一次，
@@ -79,6 +80,30 @@
         y: (ev.clientY - r.top + box.scrollTop) / scale,
       };
     }
+    /** 屏幕坐标 → **整屏画布坐标**（幽灵节点挂在屏级，坐标相对 `.dl-screen`） */
+    function stagePos(ev) {
+      var screen = el.querySelector ? el.querySelector('.dl-screen') : null;
+      if (!screen) return null;
+      var r = screen.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      var canvas = (DL && DL.layoutData && DL.layoutData.canvas) || { w: 1280, h: 720 };
+      return {
+        x: (ev.clientX - r.left) / r.width * canvas.w,
+        y: (ev.clientY - r.top) / r.height * canvas.h,
+      };
+    }
+    /** 幽灵节点**直接跟手**：只改 style，不重绘（重绘会丢帧、也会打断拖动）
+     *  —— state 里同时记最新坐标（`ai.drag.set` 不重绘），下次因落点变化重绘时位置不会跳回去。 */
+    function moveGhost(p) {
+      if (!p) return;
+      var g = el.querySelector ? el.querySelector('[title="ai_ghost"]') : null;
+      if (!g) return;
+      var canvas = (DL && DL.layoutData && DL.layoutData.canvas) || { w: 1280, h: 720 };
+      g.style.left = (p.x / canvas.w * 100).toFixed(4) + '%';
+      g.style.top = (p.y / canvas.h * 100).toFixed(4) + '%';
+    }
+    function pitchOf(box) { return Number(box.getAttribute('data-row-pitch')) || 26; }
+    function indentOf(box) { return Number(box.getAttribute('data-row-indent')) || 18; }
 
     // ---------- 点击（动作） ----------
     //   宿主如果自己已经有点击接线（产品 app.js 的 onClick / 预览的 pvWireOnce），
@@ -95,10 +120,13 @@
       });
     }
 
-    // ---------- 滚轮 = 缩放 ----------
+    // ---------- 滚轮 = 缩放（**只对程序树**；节点库列表用原生滚动） ----------
     el.addEventListener('wheel', function (ev) {
       var box = panBoxOf(ev.target);
       if (!box) return;                       // 不是可平移容器 → 让页面正常滚
+      // 用户 2026-10-18：「光标在左侧列表滚动滚轮时不应缩放中间的视图，应滚动左边的列表」
+      //   节点库容器有 scroll 但没有 data-drop-box ⇒ 直接放行，交给浏览器原生滚动。
+      if (!box.hasAttribute('data-drop-box')) return;
       ev.preventDefault();
       var st = getState();
       var cur = (st.aiEditor && Number(st.aiEditor.zoom)) || 1;
@@ -112,11 +140,30 @@
     el.addEventListener('mousedown', function (ev) {
       if (ev.button !== undefined && ev.button !== 0) return;
       var t = ev.target;
+      var dragAddrEl = closest(t, '[data-drag-addr]');
       var dragRow = closest(t, '[data-drag-node]');
       var box = panBoxOf(t);
-      if (dragRow) {
-        if (dragRow.disabled) return;         // 库存为 0 的行不能拖
-        drag = { node: dragRow.getAttribute('data-drag-node'), x: ev.clientX, y: ev.clientY, moved: false, box: box };
+      if (dragAddrEl || (dragRow && !dragRow.disabled)) {
+        var st0 = getState();
+        var ed0 = st0.aiEditor;
+        var bp0 = ed0 && ed0.draft;
+        var addr = dragAddrEl ? (dragAddrEl.getAttribute('data-drag-addr') || '') : '';
+        var nodeId = dragRow ? (dragRow.getAttribute('data-drag-node') || '') : '';
+        var bpMod0 = DL && DL.aiBlueprint;
+        if (addr !== '' && bpMod0 && bp0) {
+          var nd = bpMod0.nodeAt(bp0, addr);
+          nodeId = nd ? nd.node : '';
+        }
+        if (addr === '' && nodeId === '') return;
+        var spec = bpMod0 && bpMod0.specOf ? bpMod0.specOf(nodeId) : null;
+        drag = {
+          addr: addr,
+          node: nodeId,
+          kind: (spec && spec.kind) || 'stmt',
+          text: String((dragAddrEl || dragRow).textContent || '').replace(/\s+/g, ' ').trim(),
+          x: ev.clientX, y: ev.clientY, active: false,
+        };
+        el.__dlLast = 'drag-armed';
         return;
       }
       if (!box) { el.__dlLast = 'no-pan-box'; return; }
@@ -126,26 +173,59 @@
     });
 
     el.addEventListener('mousemove', function (ev) {
-      // 拖节点：算落点并显示预览线
+      // 拖节点：幽灵跟手 + 算落点 + 显示预览线
       if (drag) {
         var dx0 = ev.clientX - drag.x, dy0 = ev.clientY - drag.y;
-        if (!drag.moved && Math.abs(dx0) < MOVE_PX && Math.abs(dy0) < MOVE_PX) return;
-        drag.moved = true;
+        if (!drag.active && Math.abs(dx0) < MOVE_PX && Math.abs(dy0) < MOVE_PX) return;
         var st = getState();
         var ed = st.aiEditor;
         var bp = ed && ed.draft;
-        // **落点容器 = 指针当前所在的那个**（不能用 querySelector 取第一个：
-        //   节点库和程序树都带 data-row-pitch，取第一个会把落点算到节点库上）
-        var treeBox = closest(ev.target, '[data-row-pitch]') || drag.box;
         var bpMod = DL && DL.aiBlueprint;
-        if (!bp || !bpMod || !treeBox) return;
-        var pitch = Number(treeBox.getAttribute('data-row-pitch')) || 24;
-        var indent = Number(treeBox.getAttribute('data-row-indent')) || 16;
+        if (!bp || !bpMod) return;
+        // **每次重新取容器**：落点变化会重绘，旧引用已脱离文档
+        var treeBox = el.querySelector ? el.querySelector('[data-drop-box]') : null;
+        var sp = stagePos(ev);
+        if (!drag.active) {
+          drag.active = true;
+          lastKey = null;
+          // 第一次进入拖动：**重绘一次**让幽灵节点出现（之后只改 style，不重绘）
+          dispatch({ type: 'ai.drag.set', x: sp ? sp.x : 0, y: sp ? sp.y : 0, text: drag.text, active: true, redraw: true });
+        } else {
+          // 只更新 state（不重绘）—— app.js 的 dispatch 对 ai.drag.set 有"不重绘"约定
+          dispatch({ type: 'ai.drag.set', x: sp ? sp.x : 0, y: sp ? sp.y : 0, text: drag.text, active: true });
+        }
+        moveGhost(sp);
+        if (!treeBox) { ev.preventDefault(); return; }
         var p = posIn(treeBox, ev);
-        var kind = (bpMod.specOf && bpMod.specOf(drag.node) && bpMod.specOf(drag.node).kind) || 'stmt';
-        var hit = bpMod.nearestDrop(bp, p, { kind: kind, pitch: pitch, indentPx: indent });
-        el.__dlDrag = { p: p, pitch: pitch, indent: indent, kind: kind, hit: hit };   // 调试用（真实浏览器验收时读它）
-        dispatch({ type: 'ai.drop.set', y: hit ? hit.anchorY : null, target: hit });
+        var boxW = Number(treeBox.getAttribute('data-cw')) || 616;
+        // 横向离开树干 = 树旁边的空白 → 没有合法位置（松手即退回仓库）
+        var inside = p.x >= -2 && p.x <= boxW + 2 && p.y >= -pitchOf(treeBox) && p.y <= 1e6;
+        var hit = inside ? bpMod.nearestDrop(bp, p, {
+          kind: drag.kind,
+          pitch: pitchOf(treeBox),
+          indentPx: indentOf(treeBox),
+          exclude: drag.addr || '',
+        }) : null;
+        var key = hit ? (hit.parentAddr + '|' + hit.index + '|' + hit.mode) : '';
+        // 真实浏览器验收用的探针：拖动几何全在这里（只读，不影响行为）
+        el.__dlDrag = {
+          p: { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 },
+          boxW: boxW, inside: inside, kind: drag.kind,
+          pitch: pitchOf(treeBox), indent: indentOf(treeBox),
+          hit: hit ? { parentAddr: hit.parentAddr, index: hit.index, mode: hit.mode, depth: hit.depth, y: hit.y } : null,
+        };
+        if (key !== lastKey) {
+          lastKey = key;
+          var ind = indentOf(treeBox);
+          var dropX = hit ? Math.round((hit.depth || 0) * ind + 4) : null;
+          dispatch({
+            type: 'ai.drop.set',
+            y: hit ? hit.y : null,
+            x: dropX,
+            w: hit ? Math.max(24, boxW - dropX - 8) : null,
+            target: hit,
+          });
+        }
         ev.preventDefault();
         return;
       }
@@ -164,13 +244,30 @@
       if (drag) {
         var d = drag;
         drag = null;
-        var st = getState();
-        var hit = st.aiEditor && st.aiEditor.dropTarget;
-        dispatch({ type: 'ai.drop.set', y: null, target: null });
-        if (!d.moved) return;                       // 只是点了一下 → 交给 click（追加到末尾）
-        swallowClick = true; swallowNextClick();   // 拖过之后吞掉浏览器补发的 click
-        if (!hit) return;                           // 没落点 = 取消放置
-        run('ai-node-drop', { node: d.node, parentAddr: hit.parentAddr, index: hit.index, where: hit.where });
+        if (!d.active) return;                      // 只是点了一下 → 交给 click（追加到末尾）
+        swallowClick = true; swallowNextClick();    // 拖过之后吞掉浏览器补发的 click
+        var st2 = getState();
+        var hit2 = st2.aiEditor && st2.aiEditor.dropTarget;
+        // 真实浏览器验收探针：这一笔最终走了哪条路
+        el.__dlLast = (hit2 ? 'hit' : 'miss') + '|' + (d.addr ? ('addr:' + d.addr) : ('node:' + d.node))
+          + (hit2 ? ('|t:' + String(hit2.parentAddr || '') + '#' + hit2.index + ':' + (hit2.mode || '-') + ':' + (hit2.y | 0)) : '');
+        // 先把幽灵/预览线收掉（一次重绘），再执行落地动作（另一次重绘）
+        dispatch({ type: 'ai.drag.set', x: null, y: null, active: false });
+        dispatch({ type: 'ai.drop.set', y: null, x: null, w: null, target: null });
+        if (d.addr) {
+          // 树内节点：没落点 = **退回仓库**（从树里摘掉，库存 free 实时 +1）
+          if (!hit2) { run('ai-node-eject', { addr: d.addr }); return; }
+          run('ai-node-move', {
+            from: d.addr, parentAddr: hit2.parentAddr, index: hit2.index,
+            mode: hit2.mode || 'insert', where: hit2.where || '',
+          });
+          return;
+        }
+        if (!hit2) { run('ai-drop-cancel', null); return; }   // 节点库拖出：放回仓库（未消耗）
+        run('ai-node-drop', {
+          node: d.node, parentAddr: hit2.parentAddr, index: hit2.index,
+          mode: hit2.mode || 'insert', where: hit2.where || '',
+        });
         return;
       }
       if (pan) {

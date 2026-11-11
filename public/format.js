@@ -2490,6 +2490,34 @@
   //   进入条件：草稿是蓝图（`{type:'blueprint'}`）；旧 AST 程序继续走下面的旧编辑器（过渡期兼容）。
   function aiBlueprintInventoryOf(env) { return arrayOf(env === null ? null : pick(env, 'data.inventory')); }
 
+  /**
+   * D-196：**库存口径统一**（节点库与程序树必须看到同一份"还剩几个"）。
+   *   · 服务端 `used` 只算"已保存蓝图"的占用 → 先把自己的旧占用还回去（D-179 的 excludeOwnUsage）
+   *   · 再把**草稿**的用量扣掉：放一个 free-1、删一个 free+1（用户口径：拖出树 = 退回仓库）
+   * 以前只有程序树侧扣了草稿、节点库没有 ⇒ 拖进去后左侧还显示"1/1"，玩家以为没生效。
+   */
+  function aiInventoryWithDraft(state, ed) {
+    if (!ed) return [];
+    var eb = ed.nodes;
+    var inv = aiBlueprintInventoryOf(eb);
+    if (!Array.isArray(inv)) return [];
+    var selfItem = ed.aiId === null || ed.aiId === undefined ? null : aiItemOf(ed.list, ed.aiId);
+    if (selfItem !== null && selfItem.blueprint) inv = aiBlueprint.excludeOwnUsage(inv, selfItem.blueprint);
+    if (ed.draft && ed.draft.type === 'blueprint') {
+      var usedNow = aiBlueprint.statsOf(ed.draft).byNode;
+      inv = inv.map(function (row) {
+        var owned = pick(row, 'owned');
+        var usedByDraft = usedNow[pick(row, 'nodeId')] || 0;
+        return Object.assign({}, row, {
+          owned: owned,
+          used: usedByDraft,
+          free: Math.max(0, (typeof owned === 'number' ? owned : 0) - usedByDraft),
+        });
+      });
+    }
+    return inv;
+  }
+
   // 顶部状态行：槽位用量 + 本次用到的节点种类 + 余量不足的种类数（只提示；判决在服务端）
   function aiBlueprintStockLine(draft, inv) {
     var stats = aiBlueprint.statsOf(draft);
@@ -2525,6 +2553,21 @@
     //   玩家会以为保存不了（实际能存），且"再加一个同类节点"被误判为不可用。
     var selfItem = ed.aiId === null ? null : aiItemOf(ed.list, ed.aiId);
     if (selfItem !== null && selfItem.blueprint) inv = aiBlueprint.excludeOwnUsage(inv, selfItem.blueprint);
+    // 功能D/E：**库存实时反映草稿** —— 放一个节点 free-1，删一个 free+1（= 回仓库）。
+    //   服务端的 used 是"已保存蓝图"的占用，编辑期不算草稿；所以这里用草稿自己的用量覆盖：
+    //   free = owned − 草稿里用了几个。保存后服务端会重新算，口径一致。
+    if (ed.draft && ed.draft.type === 'blueprint') {
+      var usedNow = aiBlueprint.statsOf(ed.draft).byNode;
+      inv = inv.map(function (row) {
+        var owned = pick(row, 'owned');
+        var usedByDraft = usedNow[pick(row, 'nodeId')] || 0;
+        return Object.assign({}, row, {
+          owned: owned,
+          used: usedByDraft,
+          free: Math.max(0, (typeof owned === 'number' ? owned : 0) - usedByDraft),
+        });
+      });
+    }
     var ok = aiValidateOk(state) === true;
 
     var blocks = [];
@@ -3484,6 +3527,9 @@
         // 手势层要把屏幕像素换算回画布单位（容器在屏幕上被等比放大/缩小过）
         rfb.canvasW = rfb.rect[2];
         rfb.canvasH = rfb.rect[3];
+        // D-196：**程序树容器**打标记 —— 手势层据此区分"拖进树"与"拖到节点库"
+        //   （两块容器都带 data-row-pitch，不能只靠它选）。
+        rfb.dropBox = rf.source === 'tree';
         if (!rowList.length) {
           out.push({ id: 'rows_empty_' + gi, kind: 'deco', hit: 'rect', z: rfp ? rfp.z : 6, parent: rfb.id,
                      rect: [8, 8, 240, 22], label: '（空）', text: '（空）' });
@@ -3505,6 +3551,8 @@
             press: rfp && rfp.press ? rfp.press : '', font: rowFont,
             // D-195：节点库的行要能被**拖**（拖动放置）—— 渲染层据此写 `data-drag-node`
             dragNode: r.dragNode || '',
+            // D-196：**树内行**要能被拖（拖动 = 移动位置）—— 渲染层据此写 `data-drag-addr`
+            dragAddr: r.dragAddr || '',
           });
         });
       });
@@ -3524,6 +3572,13 @@
         pel.label = '套用：' + or(pick(pr, 'name'), '模板');
         pel.text = pel.label;
       });
+      // D-196：幽灵节点的**文案**（布局表只给一个占位标签，真实文字来自拖动中的那一行）。
+      //   位置由布局表的 rectFrom（aiDragX/aiDragY）驱动，文字在这里覆盖。
+      var ghostEl = out.filter(function (e) { return e.id === 'ai_ghost'; })[0];
+      if (ghostEl) {
+        var dragState = aiEd0 === null ? null : aiEd0.drag;
+        ghostEl.text = dragState ? ('↕ ' + dragState.text) : '';
+      }
     }
     // D-188：**物品详情弹窗** —— 把当前物品（`state.warehouseItem`）展开成"按类别分组的属性行"。
     //   数据全部来自已读到的 `/me/warehouse`（**零新接口**）；`{detXxx}` 键喂给布局表。
@@ -3620,7 +3675,8 @@
     var eb = ed.nodes;
     var catalog = aiNodesCatalogOf(eb);
     if (catalog !== null) aiBlueprint.setCatalog(catalog, aiNodesLimitsOf(eb));
-    var inv = aiBlueprintInventoryOf(eb);
+    // D-196：节点库与程序树用**同一份**库存口径（草稿用量实时扣减）
+    var inv = aiInventoryWithDraft(state, ed);
     var groups = aiBlueprint.nodeLibrary(inv);
     var openMap = (ed.paletteOpen && typeof ed.paletteOpen === 'object') ? ed.paletteOpen : {};
     var rows = [];
@@ -3665,29 +3721,46 @@
     }
     var dropT = ed.dropTarget || null;
     return rows.map(function (r, rowIdx) {
-      // 功能B：**落点高亮** —— 拖动时把"要放进去的那一行"整行高亮（不是只有一条细线）。
-      //   两种落点区分：slot（放进这个节点的槽）→ 高亮节点所在行；body（插到两节点之间）→ 画落点线。
+      // 功能B/D-196：**落点高亮** —— 拖动时把"落点所在的那一行"整行高亮（不是只有一条细线）。
+      //   槽头行 / 空槽行也会被高亮（拖进"那么"槽时，玩家要看见高亮的是那一槽）。
       var hi = false;
-      if (dropT && r.rowKind === 'node') {
-        if (dropT.where === 'slot') {
-          hi = dropT.parentAddr === r.addr;              // 放进这个节点的槽 → 高亮它自己
-        } else if (dropT.pitch) {
-          // 插入到两行之间 → 高亮"将被顶下去的那一行"（新节点就落在它上面）
-          hi = Math.abs(dropT.anchorY - Math.round(dropT.anchorY / dropT.pitch) * dropT.pitch) < 0.01
-            && Math.round(dropT.anchorY / dropT.pitch) === rowIdx;
-        }
+      if (dropT) {
+        var dropPitch = Number(dropT.pitch) > 0 ? Number(dropT.pitch) : 26;
+        var dropRow = Math.round(Number(dropT.y) / dropPitch);
+        hi = isFinite(dropRow) && dropRow === rowIdx;
       }
+      var isSlot = r.rowKind === 'slot' || r.rowKind === 'empty';
       return {
         indent: r.depth,
-        text: r.header ? r.text : r.text,
-        action: r.header ? '' : 'ai-select-node',
-        payload: r.header ? {} : { addr: r.addr },
+        text: r.text,
+        action: r.rowKind === 'node' ? 'ai-select-node' : '',
+        payload: r.rowKind === 'node' ? { addr: r.addr } : {},
         pressed: r.selected === true,
-        slot: r.header === true,                       // 槽位头用浅色
-        muted: r.header === true,
+        slot: isSlot,                                  // 槽位头/空槽用浅色
+        muted: isSlot,
         dropHi: hi,
+        // 功能/D-196：树内节点也能拖（拖动=移动位置）；值是该节点的地址。
+        //   ⚠️ 必须由 layScreen 转成 `data-drag-addr`，否则手势层看不到它（曾因漏传 → 树内拖动失效）。
+        dragAddr: r.rowKind === 'node' ? r.addr : '',
       };
     });
+  }
+
+  /** AI 编辑屏「程序树」的行规格（行高 / 缩进）—— 与布局表同源，不在这里写死第二套 */
+  function aiTreeRowsSpec() {
+    var fallback = { pitch: 26, indentPx: 18 };
+    if (!LAYOUT || !LAYOUT.data.screens.ai_editor) return fallback;
+    var arr = LAYOUT.data.screens.ai_editor.rowsFrom;
+    if (!arr) return fallback;
+    for (var i = 0; i < arr.length; i += 1) {
+      if (arr[i] && arr[i].source === 'tree') {
+        return {
+          pitch: Number(arr[i].pitch) || fallback.pitch,
+          indentPx: Number(arr[i].indentPx) || fallback.indentPx,
+        };
+      }
+    }
+    return fallback;
   }
 
   /** AI 屏的布局版视图模型（D-194）：只有"正在编辑一份积木蓝图"时才走布局 */
@@ -3699,10 +3772,8 @@
     var eb = ed.nodes;
     var catalog = aiNodesCatalogOf(eb);
     if (catalog !== null) aiBlueprint.setCatalog(catalog, aiNodesLimitsOf(eb));
-    var inv = aiBlueprintInventoryOf(eb);
-    // 正在编辑的既有条目：它自己的占用不算"别人占着"（D-179 修过的坑，这里同样要扣）
-    var selfItem = ed.aiId === null ? null : aiItemOf(ed.list, ed.aiId);
-    if (selfItem !== null && selfItem.blueprint) inv = aiBlueprint.excludeOwnUsage(inv, selfItem.blueprint);
+    // D-196：库存口径统一（节点库/程序树/动作层共用 aiInventoryWithDraft）
+    var inv = aiInventoryWithDraft(state, ed);
 
     // 参数槽：取**第一个选项型**与**第一个数值型**参数（v1 固定 3 选项槽 + 1 数值槽）
     var form = (ed.cursor && ed.cursor !== 'body') ? aiBlueprint.formOf(draft, ed.cursor) : null;
@@ -3714,13 +3785,29 @@
     var opts = optField ? (optField.values || []).slice(0, 3) : [];
     var presets = aiNodesPresetsOf(eb);
 
+    // D-196：拖动中的**幽灵节点**与**落点预览线**的几何（全部在本层算好，渲染层零逻辑）
+    var dragNow = ed.drag || null;
+    var dropT = ed.dropTarget || null;
+    var rowsSpec = aiTreeRowsSpec();
+    var treeW = ed.detailOpen === true ? 616 : 980;
+    var dropXv = dropT ? Math.round(Number(dropT.depth || 0) * rowsSpec.indentPx + 4) : null;
+    var dropWv = dropT ? Math.max(24, treeW - dropXv - 8) : null;
+
     var sstate = {
       aiSel: ed.cursor || '',
       aiDetail: ed.detailOpen === true ? '1' : '0',
       aiCanUndo: (ed.history || []).length ? '1' : '0',
       aiCanRedo: (ed.future || []).length ? '1' : '0',
-      aiDragging: (ed.dropY === null || ed.dropY === undefined) ? '0' : '1',
-      aiDropY: (ed.dropY === null || ed.dropY === undefined) ? '' : String(ed.dropY),
+      // 幽灵节点：拖动中才显示；坐标是画布单位
+      aiDragging: dragNow ? '1' : '0',
+      aiDragX: dragNow ? String(dragNow.x) : '',
+      aiDragY: dragNow ? String(dragNow.y) : '',
+      aiGhostText: dragNow ? dragNow.text : '',
+      // 落点预览线：只有命中了合法位置才显示
+      aiDropOn: dropT ? '1' : '0',
+      aiDropY: dropT ? String(Math.round(Number(dropT.y) || 0)) : '',
+      aiDropX: dropXv === null ? '' : String(dropXv),
+      aiDropW: dropWv === null ? '' : String(dropWv),
       aiTreeW: ed.detailOpen === true ? '616' : '980',
       aiP1: opts[0] !== undefined ? '1' : '0',
       aiP2: opts[1] !== undefined ? '1' : '0',
@@ -3740,6 +3827,7 @@
 
     var flat = {
       aiNameText: ed.name === '' ? '' : ed.name,
+      aiGhostText: dragNow ? dragNow.text : '',
       aiStatusText: ed.status === 'draft' ? '草稿' : '正式',
       aiDirtyText: ed.dirty ? '有改动' : '已保存',
       aiUsageText: ed.aiId === null ? '（未入库）' : aiUsageText(ed.list, ed.aiId),
@@ -4118,6 +4206,8 @@
     // D-178：积木节点（GET /me/ai/nodes）——目录/限额/模板/库存摘要
     aiNodesCatalogOf: aiNodesCatalogOf,
     aiNodesLimitsOf: aiNodesLimitsOf,
+    // D-196：动作层要判断"还能不能再消耗一个「按顺序」"，必须问投影层要库存（动作层不读响应字段）
+    aiBlueprintInventoryOf: aiBlueprintInventoryOf,
     aiNodesPresetsOf: aiNodesPresetsOf,
     aiNodeStockText: aiNodeStockText,
     usageText: usageText,

@@ -164,3 +164,11 @@ textarea.dl-el.dl-input{font-family:Consolas,monospace;font-size:11.5px;line-hei
 
 /* 功能B：拖动落点——整行高亮（比一条细线清楚） */
 .dl-el.dl-drop-hi{outline:2px solid #7fb2ff;outline-offset:-2px;background:rgba(127,178,255,.18)}
+/* D-196：拖动中的**幽灵节点**（跟随光标的那一块）。位置由布局表的 rectFrom(aiDragX/Y) 驱动；
+ *   拖动时手势层直接改 left/top（不重绘），松手即消失。不挡指针，避免自己接收 mousemove。 */
+.dl-el[title="ai_ghost"]{
+  display:flex;align-items:center;padding:0 8px;pointer-events:none;opacity:.96;
+  background:#1b2740f2;border:1px solid var(--dl-accent);border-radius:5px;
+  box-shadow:0 8px 20px #000b;color:var(--dl-text);font-size:13px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.dl-el[title="ai_ghost"] .dl-txt{pointer-events:none}
